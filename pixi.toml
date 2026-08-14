@@ -1,0 +1,35 @@
+[workspace]
+authors = ["ehsanmok <ehsanmok@users.noreply.github.com>"]
+channels = ["https://conda.modular.com/max", "conda-forge"]
+name = "ember"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[dependencies]
+mojo = "==1.0.0"
+max = "==26.5"
+
+[tasks]
+format = "mojo format ember examples tests benchmarks"
+test-dual = "mojo -I . tests/test_dual.mojo"
+test-compensated = "mojo -I . tests/test_compensated.mojo"
+test-special = "mojo -I . tests/test_special.mojo"
+test-tensor = "mojo -I . tests/test_tensor.mojo"
+test-tensor-reduce = "mojo -I . tests/test_tensor_reduce.mojo"
+test-activations = "mojo -I . tests/test_activations.mojo"
+test-erf = "mojo -I . tests/test_erf.mojo"
+test-gamma = "mojo -I . tests/test_gamma.mojo"
+test-bessel = "mojo -I . tests/test_bessel.mojo"
+test-lambertw = "mojo -I . tests/test_lambertw.mojo"
+test-decimal = "mojo -I . tests/test_decimal.mojo"
+tests = "mojo -I . tests/test_dual.mojo && mojo -I . tests/test_compensated.mojo && mojo -I . tests/test_special.mojo && mojo -I . tests/test_tensor.mojo && mojo -I . tests/test_tensor_reduce.mojo && mojo -I . tests/test_activations.mojo && mojo -I . tests/test_erf.mojo && mojo -I . tests/test_gamma.mojo && mojo -I . tests/test_bessel.mojo && mojo -I . tests/test_lambertw.mojo && mojo -I . tests/test_decimal.mojo"
+example-gaussian = "mojo -I . examples/gaussian.mojo"
+example-activations = "mojo -I . examples/activations.mojo"
+example-gaussian-gpu = "mojo -I . examples/gaussian_gpu.mojo"
+example-softmax = "mojo -I . examples/softmax.mojo"
+example-special-functions = "mojo -I . examples/special_functions.mojo"
+examples = "mojo -I . examples/gaussian.mojo && mojo -I . examples/activations.mojo && mojo -I . examples/softmax.mojo && mojo -I . examples/special_functions.mojo"
+# Same as `examples`, minus `softmax.mojo`, which launches a GPU kernel
+# alongside its CPU path -- this is what CI runs, on GPU-less runners.
+examples-cpu = "mojo -I . examples/gaussian.mojo && mojo -I . examples/activations.mojo && mojo -I . examples/special_functions.mojo"
+bench = "mojo -I . benchmarks/bench_tensor_map.mojo"

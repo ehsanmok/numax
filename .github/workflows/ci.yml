@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    # ember's only supported platform today is osx-arm64 (see pixi.toml);
+    # macos-14 is GitHub's Apple Silicon runner.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          cache: true
+
+      - name: Run unit tests
+        run: pixi run tests
+
+      - name: Run CPU examples
+        run: pixi run examples-cpu
+
+      - name: Run CPU benchmark
+        run: pixi run bench
+
+      # examples/gaussian_gpu.mojo and examples/softmax.mojo's GPU path need
+      # a real GPU (Metal, on this project's target hardware); GitHub-hosted
+      # runners don't have one, so the GPU examples are local/manual-only
+      # checks for now, not part of CI.
