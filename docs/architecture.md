@@ -45,6 +45,9 @@ trait FloatLike(Copyable, Movable, Deinitable):
     def constant(v: Float64) -> Self: ...
     def abs(self) -> Self: ...
     def copysign(self, sign_source: Self) -> Self: ...
+    def floor(self) -> Self: ...
+    def ceil(self) -> Self: ...
+    def trunc(self) -> Self: ...
 ```
 
 The trait grew only when a kernel genuinely needed a new operation
@@ -63,7 +66,7 @@ workaround turned out to be inaccurate, not merely verbose -- see
 | `Decimal[width, scale]` | Exact base-10 fixed-point: `0.1 + 0.2 == 0.3` exactly. Different problem than `Compensated`, not a replacement. |
 | `Complex[Inner: FloatLike]` | Complex number over any other conformer -- `Complex[Dual[Plain[...]]]` differentiates holomorphically for free. |
 | `Gradient[Inner: FloatLike, n_vars: Int]` | `Dual`'s multi-input counterpart: full gradient vector from one call. Nests with `Dual` for Hessian columns. |
-| `Interval[Inner: FloatLike]` | Bounds instead of a value: run a kernel over `[lo, hi]` and get the range. Not a rigorous enclosure (no directed rounding on SIMD/GPU); `inflate` is the manual widening. |
+| `Interval[Inner: FloatLike]` | Bounds instead of a value: run a kernel over `[lo, hi]` and get the range. Not a rigorous enclosure (no directed rounding on SIMD/GPU); `inflate` is the manual widening. `sin`/`cos` detect an enclosed peak or trough via `floor` and return a tight bound rather than the trivial `[-1, 1]`. |
 
 Each conformer's module docstring carries its design rationale and
 documented limitations; `tests/` has the numerical margins.
@@ -133,14 +136,37 @@ instead of `map[gpu=False]`. **No `FloatLike` kernel needed an edit to
 become GPU-launchable.** That's the benefit the fixed-iteration invariant
 buys.
 
-## What's not here yet (Track F)
+## The NumPy/SciPy parity surface (Track F)
 
-`numax` does not yet ship a NumPy-named array surface
-(`zeros`/`ones`/`arange`/`reshape`/...), a statistics module
-(`mean`/`var`/`std`), `numax.io`, or `numax.random`. The dispositions for
-those -- which to absorb, which to route to MAX, which to leave out --
-are in [`.cursor/rules/parity.mdc`](../.cursor/rules/parity.mdc) and the
-phased roadmap in
-[`.cursor/rules/design-v0.1.mdc`](../.cursor/rules/design-v0.1.mdc)
-points to them. The spine (Tracks A-E: special functions, conformers,
-algorithms, linalg/FFT, performance layer) is what's shipped today.
+Four modules fill the gaps `parity.mdc`'s Track F identified against
+NuMojo-shaped coverage -- each picked because MAX ships no equivalent,
+verified by direct probe rather than assumed:
+
+- **`numax.array`** -- NumPy-named creation (`zeros`/`ones`/`full`/`empty`/
+  `eye`/`linspace`/`logspace`/`*_like`) and manipulation (`transpose`/
+  `squeeze`/`stack`) over a `Tensor` wrapper that owns its storage (a bare
+  `TileTensor` is a view, not memory, and dangles once the function that
+  built it returns). Comptime-shape and `Plain`-only, matching
+  `numax.tensor`'s own contract.
+- **`numax.statistics`** -- `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`
+  `Plain`-only over `TileTensor`, plus `argmax`/`argmin` routed straight to
+  `nn.argmaxmin` (MAX-first). `mean`/`variance`/`stddev`/`cumsum` also have
+  a `FloatLike`-generic form over `List[T]`, so calling them at
+  `Compensated` recovers precision a long summation loses at `Plain` -- the
+  one place in this surface where axis 1 (the composable-type spine) and
+  axis 2 (NumPy parity) meet.
+- **`numax.io`** -- a binary save/load format for `Tensor` (own format, not
+  NumPy's `.npy`, since MAX ships no array I/O to interchange with) plus a
+  configurable `print_tensor`. `Plain`-only, axis 2.
+- **`numax.random`** -- `uniform`/`normal`/`exponential` into a `Tensor`,
+  over `std.random` on the host (MAX's own `nn.rand_uniform`/`rand_normal`
+  turned out to be graph-fusion machinery, not an eager API `numax` can
+  call directly -- see the module's own docstring). No `Random[FloatLike]`
+  conformer: RNG isn't mathematically differentiable, the same scoping gap
+  as Kelvin's units in `strategy.mdc` Track B.
+
+Each module's docstring records the MAX-first probe that justified adding
+it. Full per-piece dispositions -- including the pieces deliberately left
+out (`sort`/`argsort`, the fixed-iteration invariant's cleanest example of
+filtering the parity surface) -- are in
+[`.cursor/rules/parity.mdc`](../.cursor/rules/parity.mdc).

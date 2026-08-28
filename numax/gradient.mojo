@@ -185,3 +185,14 @@ struct Gradient[Inner: FloatLike, n_vars: Int](Copyable, FloatLike, Movable):
         for i in range(Self.n_vars):
             g[i] = self.grad[i] * flip.copy()
         return Self(self.value.copysign(sign_source.value), g^)
+
+    def floor(self) -> Self:
+        # A step function, same as `Dual.floor()` -- the gradient is zero
+        # in every direction almost everywhere.
+        return Self(self.value.floor(), _zero_grad[Self.Inner, Self.n_vars]())
+
+    def ceil(self) -> Self:
+        return Self(self.value.ceil(), _zero_grad[Self.Inner, Self.n_vars]())
+
+    def trunc(self) -> Self:
+        return Self(self.value.trunc(), _zero_grad[Self.Inner, Self.n_vars]())

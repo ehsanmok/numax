@@ -36,13 +36,13 @@ Monotone functions (`exp`, `ln`, `sqrt`, `erf`) map endpoints to endpoints,
 extremes over all combinations of endpoints -- all exact enclosures up to
 the rounding caveat above.
 
-`sin` and `cos` are the exception, and they return the trivial `[-1, 1]`
-rather than a tight bound. A tight enclosure has to know whether the input
-interval contains a peak or trough, which is a `floor` of a scaled
-argument, and `FloatLike` has no `floor` (nor a way to add one that would
-mean anything for `Dual`). `[-1, 1]` is sound and useless in equal measure;
-it is documented as a gap rather than approximated with something
-unsound. Everything downstream of `sin`/`cos` inherits the looseness.
+`sin` and `cos` used to return the trivial `[-1, 1]` rather than a tight
+bound, because a tight enclosure needs to know whether the input interval
+contains a peak or trough -- a `floor` of a scaled argument -- and
+`FloatLike` didn't have one. Now that it does (see `numax/numeric.mojo`'s
+`floor` docstring, added specifically for this), `sin`/`cos` below detect
+the peak/trough case directly and only fall back to `[-1, 1]` when the
+interval genuinely spans both (or more) -- see their own docstrings.
 
 ## The dependency problem, which will bite you first
 
@@ -67,7 +67,33 @@ would mean branching on data, and lanes can disagree about whether their
 own divisor straddles zero.
 """
 
-from .numeric import FloatLike, ge_indicator, max_of, min_of
+from .numeric import FloatLike, blend, ge_indicator, max_of, min_of
+
+comptime _PI = 3.14159265358979323846
+comptime _TWO_PI = 2.0 * _PI
+comptime _HALF_PI = _PI / 2.0
+comptime _THREE_HALF_PI = 3.0 * _PI / 2.0
+
+
+def _period_contains[T: FloatLike](lo: T, hi: T, phase: T) -> T:
+    """`1` if `[lo, hi]` contains `phase + 2*pi*k` for some integer `k`,
+    else `0` -- the branchless building block `sin`/`cos`'s tight
+    enclosure is built from below.
+
+    `[lo, hi]` contains such a point exactly when
+    `ceil((lo - phase) / (2*pi)) <= floor((hi - phase) / (2*pi))`: the
+    smallest candidate `k` at or after `lo` doesn't overshoot past `hi`.
+    `ceil` is expressed as `-floor(-x)` (`FloatLike.ceil()` exists too, but
+    reusing `floor` for both keeps this to one new capability rather than
+    two independent ones, mirroring how `numax.gamma`'s reflection and
+    `numax.bessel`'s near/far blend each lean on a single primitive twice).
+    """
+    var two_pi = T.constant(_TWO_PI)
+    var a = (lo + (-phase)) / two_pi
+    var b = (hi + (-phase)) / two_pi
+    var ceil_a = -((-a).floor())
+    var floor_b = b.floor()
+    return ge_indicator(floor_b + (-ceil_a), T.constant(0.0))
 
 
 @fieldwise_init
@@ -166,13 +192,54 @@ struct Interval[Inner: FloatLike](Copyable, FloatLike, Movable):
         return Self(self.hi.erfc(), self.lo.erfc())
 
     def sin(self) -> Self:
-        """The trivial enclosure `[-1, 1]` -- sound, and loose. See this
-        module's docstring for why a tight one isn't available."""
-        return Self(-Self.Inner.one(), Self.Inner.one())
+        """A tight enclosure of `{sin(x) : x in [lo, hi]}`.
+
+        `sin`'s extrema alternate every `pi`: a peak (`sin = 1`) at
+        `pi/2 + 2*k*pi`, a trough (`sin = -1`) at `3*pi/2 + 2*k*pi`, for
+        every integer `k`. `_period_contains` (module-level, above) tests
+        each branchlessly; three cases collapse into two independent
+        `blend`s because each bound only ever depends on one flag:
+
+        - the lower bound is `-1` whenever a trough is enclosed, and
+          `min(sin(lo), sin(hi))` otherwise (whether or not a peak is also
+          enclosed doesn't change which value is smaller);
+        - the upper bound is symmetric, `1` whenever a peak is enclosed,
+          `max(sin(lo), sin(hi))` otherwise.
+
+        Neither flag set means `[lo, hi]` contains no extremum at all,
+        which (since extrema are spaced `pi` apart) also proves `sin` is
+        monotonic on `[lo, hi]` -- so the two endpoint values already
+        bracket every value in between.
+        """
+        var sin_lo = self.lo.sin()
+        var sin_hi = self.hi.sin()
+        var has_peak = _period_contains(
+            self.lo, self.hi, Self.Inner.constant(_HALF_PI)
+        )
+        var has_trough = _period_contains(
+            self.lo, self.hi, Self.Inner.constant(_THREE_HALF_PI)
+        )
+        var one = Self.Inner.one()
+        var lo = blend(has_trough, -one, min_of(sin_lo.copy(), sin_hi.copy()))
+        var hi = blend(has_peak, Self.Inner.one(), max_of(sin_lo, sin_hi))
+        return Self(lo^, hi^)
 
     def cos(self) -> Self:
-        """The trivial enclosure `[-1, 1]`, for the same reason as `sin`."""
-        return Self(-Self.Inner.one(), Self.Inner.one())
+        """A tight enclosure of `{cos(x) : x in [lo, hi]}`, the same
+        construction as `sin` shifted by a quarter period: `cos`'s peaks
+        are at `2*k*pi`, its troughs at `pi + 2*k*pi`."""
+        var cos_lo = self.lo.cos()
+        var cos_hi = self.hi.cos()
+        var has_peak = _period_contains(
+            self.lo, self.hi, Self.Inner.constant(0.0)
+        )
+        var has_trough = _period_contains(
+            self.lo, self.hi, Self.Inner.constant(_PI)
+        )
+        var one = Self.Inner.one()
+        var lo = blend(has_trough, -one, min_of(cos_lo.copy(), cos_hi.copy()))
+        var hi = blend(has_peak, Self.Inner.one(), max_of(cos_lo, cos_hi))
+        return Self(lo^, hi^)
 
     def abs(self) -> Self:
         """`[mig, mag]`: the smallest and largest magnitude in the interval.
@@ -215,3 +282,28 @@ struct Interval[Inner: FloatLike](Copyable, FloatLike, Movable):
             + straddles * magnitudes.hi
         )
         return Self(lo^, hi^)
+
+    def floor(self) -> Self:
+        """`[floor(lo), floor(hi)]` -- `floor` is monotonic non-decreasing,
+        so applying it to each bound separately still encloses every
+        `floor(x)` for `x` in `self`, and does so tightly."""
+        return Self(self.lo.floor(), self.hi.floor())
+
+    def ceil(self) -> Self:
+        """`[ceil(lo), ceil(hi)]`, for the same monotonicity reason as
+        `floor`."""
+        return Self(self.lo.ceil(), self.hi.ceil())
+
+    def trunc(self) -> Self:
+        """`[min(trunc(lo), trunc(hi)), max(trunc(lo), trunc(hi))]`.
+
+        Unlike `floor`/`ceil`, `trunc` (round toward zero) is not monotonic
+        across zero -- `trunc(-0.5) = 0 > trunc(-1.5) = -1`, so applying it
+        to `lo` and `hi` in order doesn't guarantee `lo_result <=
+        hi_result` the way `floor`/`ceil` do. Sorting the two `trunc`ed
+        bounds keeps this a valid interval (`lo <= hi`) in every case,
+        including one that straddles zero.
+        """
+        var t_lo = self.lo.trunc()
+        var t_hi = self.hi.trunc()
+        return Self(min_of(t_lo.copy(), t_hi.copy()), max_of(t_lo, t_hi))

@@ -257,3 +257,15 @@ struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
             self._modulus().copysign(sign_source.re),
             Self.Inner.constant(0.0),
         )
+
+    def floor(self) -> Self:
+        # Same "no canonical complex meaning" embedding as `abs`/`copysign`
+        # above: `self._modulus()` is a real `Inner`, `floor`ed on that real
+        # axis, then re-embedded as `Complex(x, 0)`.
+        return Self(self._modulus().floor(), Self.Inner.constant(0.0))
+
+    def ceil(self) -> Self:
+        return Self(self._modulus().ceil(), Self.Inner.constant(0.0))
+
+    def trunc(self) -> Self:
+        return Self(self._modulus().trunc(), Self.Inner.constant(0.0))

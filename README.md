@@ -96,8 +96,8 @@ from numax import erf, gamma, bessel_j0, lambertw, elliptic_k  # special functio
 - **[`.cursor/rules/`](.cursor/rules/)** — the design intent:
   - [`design-v0.1.mdc`](.cursor/rules/design-v0.1.mdc) — this release:
     the rename from `ember`, the repositioning as the MAX-NumPy/SciPy
-    layer, the phased roadmap (Track F: `numax.array`, `numax.statistics`,
-    `numax.io`, `numax.random`).
+    layer, and the phased rollout of Track F (`numax.array`,
+    `numax.statistics`, `numax.io`, `numax.random`).
   - [`parity.mdc`](.cursor/rules/parity.mdc) — the NumPy/SciPy parity
     dispositions (per-piece pick / route-to-MAX / not-pick, with the
     file-level mapping table comparing against
@@ -134,6 +134,9 @@ trait FloatLike(Copyable, Movable, Deinitable):
     def constant(v: Float64) -> Self: ...
     def abs(self) -> Self: ...
     def copysign(self, sign_source: Self) -> Self: ...
+    def floor(self) -> Self: ...
+    def ceil(self) -> Self: ...
+    def trunc(self) -> Self: ...
 ```
 
 ## The `FloatLike` conformers
@@ -146,7 +149,7 @@ trait FloatLike(Copyable, Movable, Deinitable):
 | `Decimal[width, scale]` | Exact base-10 fixed-point arithmetic, so `0.1 + 0.2 == 0.3` exactly. A different problem than `Compensated` solves, not a replacement for it. |
 | `Complex[Inner: FloatLike]` | A complex number over any other conformer, nesting the same way `Dual` does — `Complex[Dual[Plain[...]]]` differentiates holomorphically for free. |
 | `Gradient[Inner: FloatLike, n_vars: Int]` | `Dual`'s multi-input counterpart: `value` plus a full gradient vector `grad`, one call returning every partial derivative. Nests with `Dual` in either order (`Gradient[Dual[Plain[...]], n]`) for Hessian columns and Hessian-vector products. |
-| `Interval[Inner: FloatLike]` | Bounds instead of a value: run a kernel over `[lo, hi]` and get the range it can produce. Tight to a few ULP rather than provably sound (no directed rounding on SIMD/GPU); `inflate` is the manual widening. `sin`/`cos` return the trivial `[-1, 1]`. |
+| `Interval[Inner: FloatLike]` | Bounds instead of a value: run a kernel over `[lo, hi]` and get the range it can produce. Tight to a few ULP rather than provably sound (no directed rounding on SIMD/GPU); `inflate` is the manual widening. `sin`/`cos` detect an enclosed peak or trough and return a tight bound, falling back to `[-1, 1]` only when the interval spans both. |
 
 Each conformer's own module docstring carries its design rationale and
 documented limitations; `tests/` has the numerical margins backing them.
@@ -185,8 +188,8 @@ calls (`gamma`, Bessel — these fail to compile for a GPU target with
 `"constraint failed: libm operations are only available on CPU targets"`,
 so adopting them would trade GPU support for domain coverage). Each module's
 docstring records which way it went and why. See
-`examples/special_functions.mojo` for all of the above differentiated via
-`Dual` with no extra code.
+`examples/intermediate/special_functions.mojo` for all of the above
+differentiated via `Dual` with no extra code.
 
 ## Algorithms
 
@@ -297,37 +300,67 @@ and GPU paths — required for the GPU path to work through
 has one signature instead of two. See `numax/tensor.mojo`'s module
 docstring for the full rationale.
 
-A NumPy-named forward layer over `TileTensor` — `zeros`, `ones`,
-`arange`, `linspace`, `reshape`, `transpose`, `stack`, `split`, and the
-rest of the array-creation/manipulation surface — is specified in
-[`parity.mdc`](.cursor/rules/parity.mdc)'s Track F and on the v0.2+
-roadmap in [`design-v0.1.mdc`](.cursor/rules/design-v0.1.mdc). It's a
-thin layer over MAX's `layout` package (no competing array type),
-deliberately scoped against the composable-type spine.
+## Array, statistics, I/O, and random
+
+`numax.array`, `numax.statistics`, `numax.io`, and `numax.random` are the
+NumPy-named parity surface [`parity.mdc`](.cursor/rules/parity.mdc)'s
+Track F specifies — each added only where MAX ships no equivalent,
+verified by direct probe rather than assumed:
+
+- **`numax.array`** — `zeros`/`ones`/`full`/`empty`/`eye`/`linspace`/
+  `logspace`/`*_like` plus `transpose`/`squeeze`/`stack`, returning a
+  `Tensor` that owns its storage (a bare `TileTensor` is a view and
+  dangles once the function that built it returns). Comptime-shape,
+  `Plain`-only — a thin layer over MAX's `layout` package, not a
+  competing array type.
+- **`numax.statistics`** — `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`
+  `Plain`-only over `TileTensor`, `argmax`/`argmin` routed to
+  `nn.argmaxmin` (MAX-first). `mean`/`variance`/`stddev`/`cumsum` also
+  take a `List[T]` for any `FloatLike` `T`: calling one at `Compensated`
+  recovers precision a long summation loses at `Plain`, the one place
+  this surface and the composable-type spine meet.
+- **`numax.io`** — binary `save`/`load` for a `Tensor` (`numax`'s own
+  round-trip format, not NumPy's `.npy` — MAX ships no array I/O to
+  interchange with) and a configurable `print_tensor`.
+- **`numax.random`** — `uniform`/`normal`/`exponential` into a `Tensor`,
+  over `std.random` on the host; `examples/intermediate/random_ensemble.mojo`
+  seeds a GPU ensemble instead with `std.random.philox`'s per-thread
+  generators. No `Random[FloatLike]` conformer — RNG isn't
+  mathematically differentiable, the same scoping gap as Kelvin's units
+  in `strategy.mdc` Track B.
+
+Each module's docstring records the MAX-first probe behind it; see
+[`docs/architecture.md`](docs/architecture.md#the-numpyscipy-parity-surface-track-f)
+for the fuller writeup and `parity.mdc` for the pieces left out on
+purpose (`sort`/`argsort`, the cleanest example of the fixed-iteration
+invariant filtering this surface).
 
 ## Examples
 
-- `examples/gaussian.mojo` — `Plain`/`Dual`/`Compensated` three ways, via
+Tiered by complexity under `examples/basic/`, `examples/intermediate/`,
+and `examples/advanced/` — see [`examples/README.md`](examples/README.md)
+for the full index. A few highlights:
+
+- `basic/gaussian.mojo` — `Plain`/`Dual`/`Compensated` three ways, via
   `numax.tensor.map` at native SIMD width, checked against a reference.
-- `examples/activations.mojo` — activations differentiated via `Dual`,
-  checked against their closed-form derivatives.
-- `examples/gaussian_gpu.mojo` — the same kernel and types, run on GPU via
-  `numax.tensor.map[gpu=True]`, no code changes versus the CPU example.
-- `examples/softmax.mojo` — row-wise softmax on CPU and GPU, checked against
-  each other and against each row summing to 1.
-- `examples/special_functions.mojo` — every special function above,
-  differentiated via `Dual`.
-- `examples/complex.mojo` — `Complex[Plain]` arithmetic, plus
-  `Complex[Dual[Plain]]` differentiating `z^2` holomorphically.
-- `examples/gradient.mojo` — `Gradient[Plain, 2]` recovering both partial
-  derivatives of a two-variable kernel from one call.
-- `examples/hessian.mojo` — `Gradient[Dual[Plain], 2]` producing a full
+- `basic/array_creation.mojo` — `numax.array`'s NumPy-named creation
+  (`zeros`/`ones`/`full`/`eye`/`linspace`) and manipulation
+  (`transpose`/`squeeze`/`stack`) over `TileTensor`.
+- `basic/hessian.mojo` — `Gradient[Dual[Plain], 2]` producing a full
   Hessian (and Hessian-vector products) purely by nesting, with no
   second-order code in either type.
-- `examples/quadrature.mojo` — root-finding from `f` alone, 8-point
-  Gauss-Legendre against a 64-point uniform grid, and differentiating
-  through an integral.
-- `examples/ode.mojo` — 1024 ODE trajectories, one GPU thread each, with
+- `intermediate/special_functions.mojo` — every special function above,
+  differentiated via `Dual`.
+- `intermediate/statistics.mojo` — `numax.statistics`'s `Plain`-only
+  surface, plus `variance`/`stddev` at `Compensated` recovering precision
+  a long summation would lose at `Plain`.
+- `intermediate/random_ensemble.mojo` — `numax.random.uniform` drawing an
+  ODE ensemble's initial conditions on CPU, versus `std.random.philox`
+  drawing them independently per GPU thread.
+- `advanced/gaussian_gpu.mojo` — the same kernel and types as
+  `basic/gaussian.mojo`, run on GPU via `numax.tensor.map[gpu=True]`, no
+  code changes versus the CPU example.
+- `advanced/ode.mojo` — 1024 ODE trajectories, one GPU thread each, with
   solution sensitivities from the same integrator.
 
 ## GPU
@@ -339,8 +372,8 @@ pointers, scalars, `TileTensor`), not what a kernel builds internally. Every
 pointers or allocations of its own, so all of them — including
 `Compensated`, once its `exp()` coefficients moved to compile-time
 `dtype`-native constants instead of a runtime `float64` table — run inside a
-kernel body unchanged. `examples/gaussian_gpu.mojo` imports the exact same
-`gaussian`, `Plain`, and `Dual` the CPU example does and drives them with
+kernel body unchanged. `examples/advanced/gaussian_gpu.mojo` imports the exact
+same `gaussian`, `Plain`, and `Dual` the CPU example does and drives them with
 `map[gpu=True]` instead of `map[gpu=False]`.
 
 ## Testing
@@ -503,9 +536,11 @@ representable resolution and cannot be observed. See
   `numax` (Numerical MAX). Repositioned explicitly as the
   NumPy/SciPy layer on Mojo that uses MAX's core abstractions
   (`TileTensor`, `max.linalg`, `max.algorithm`, `max.random`) as the
-  substrate, with the composable-type layer over them. Same code, same
-  trait, same conformers, same algorithms, same benchmarks; only the
-  name changed. No API signature changes. See
+  substrate, with the composable-type layer over them. The trait, the
+  conformers, and the algorithms carried over with no API signature
+  changes; new in this release is the NumPy-named parity surface
+  (`numax.array`, `numax.statistics`, `numax.io`, `numax.random`) and
+  `floor`/`ceil`/`trunc` on `FloatLike`, added for `Interval`'s
+  `sin`/`cos` to enclose tightly instead of returning `[-1, 1]`. See
   [`design-v0.1.mdc`](.cursor/rules/design-v0.1.mdc) for the rename's
-  rollup and the v0.2+ phased roadmap (`numax.array`, `numax.statistics`,
-  `numax.io`, `numax.random`).
+  rollup and the parity surface's phased rollout.

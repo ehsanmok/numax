@@ -6,7 +6,19 @@ the thin wrapper that lets it. Instantiating a `FloatLike` kernel with `Plain`
 is the baseline: no derivative, no extra precision, just the hardware.
 """
 
-from std.math import copysign, cos, erf, erfc, exp, log, sin, sqrt
+from std.math import (
+    ceil,
+    copysign,
+    cos,
+    erf,
+    erfc,
+    exp,
+    floor,
+    log,
+    sin,
+    sqrt,
+    trunc,
+)
 
 from .numeric import FloatLike
 
@@ -67,3 +79,12 @@ struct Plain[dtype: DType, width: Int](
         self, sign_source: Self
     ) -> Self where Self.dtype.is_floating_point():
         return Self(copysign(self.v, sign_source.v))
+
+    def floor(self) -> Self where Self.dtype.is_floating_point():
+        return Self(floor(self.v))
+
+    def ceil(self) -> Self where Self.dtype.is_floating_point():
+        return Self(ceil(self.v))
+
+    def trunc(self) -> Self where Self.dtype.is_floating_point():
+        return Self(trunc(self.v))

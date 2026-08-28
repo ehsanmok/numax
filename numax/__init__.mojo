@@ -15,6 +15,23 @@ adds a fifth conformer, a complex number over any of the other four.
 `Gradient` generalizes `Dual` to several input variables at once.
 """
 
+from .array import (
+    Tensor,
+    empty,
+    empty_like,
+    eye,
+    full,
+    full_like,
+    linspace,
+    logspace,
+    ones,
+    ones_like,
+    squeeze,
+    stack,
+    transpose,
+    zeros,
+    zeros_like,
+)
 from .bessel import bessel_j0, bessel_j1, bessel_y0, bessel_y1
 from .beta import beta, betainc, betaincc
 from .compensated import Compensated
@@ -25,6 +42,7 @@ from .elliptic import elliptic_e, elliptic_k
 from .erf import erf, erfc
 from .gamma import digamma, gamma, gammainc, gammaincc, lgamma
 from .gradient import Gradient
+from .io import load, print_tensor, save
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p
 from .distributions import (
@@ -80,7 +98,23 @@ from .ode import dopri5, dopri5_with_error, rk4, rk4_system
 from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 from .plain import Plain
 from .quadrature import gauss_legendre, simpson, trapezoid
+from .random import exponential, normal, seed, uniform
 from .solve import bisection, halley, newton
+from .statistics import (
+    argmax,
+    argmin,
+    cumprod,
+    cumsum,
+    max,
+    mean,
+    median,
+    min,
+    mode,
+    prod,
+    stddev,
+    sum,
+    variance,
+)
 from .special import (
     gaussian,
     gelu,

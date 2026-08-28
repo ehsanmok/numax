@@ -16,6 +16,7 @@ Single-feature entry points -- one concept per file.
 | File | What it shows |
 |---|---|
 | [gaussian.mojo](basic/gaussian.mojo) | `Plain` / `Dual` / `Compensated` three ways, via `numax.tensor.map` at native SIMD width, checked against a reference. |
+| [array_creation.mojo](basic/array_creation.mojo) | `numax.array`'s NumPy-named creation (`zeros`/`ones`/`full`/`eye`/`linspace`) and manipulation (`transpose`/`squeeze`/`stack`) surface over `TileTensor`. |
 | [activations.mojo](basic/activations.mojo) | Activations differentiated via `Dual`, checked against their closed-form derivatives. |
 | [complex.mojo](basic/complex.mojo) | `Complex[Plain]` arithmetic, plus `Complex[Dual[Plain]]` differentiating `z^2` holomorphically. |
 | [gradient.mojo](basic/gradient.mojo) | `Gradient[Plain, 2]` recovering both partial derivatives of a two-variable kernel from one call. |
@@ -30,6 +31,8 @@ Multi-feature compositions -- more than one concept per file.
 | [softmax.mojo](intermediate/softmax.mojo) | Row-wise softmax on CPU and GPU, checked against each other and against each row summing to 1. |
 | [quadrature.mojo](intermediate/quadrature.mojo) | Root-finding from `f` alone, 8-point Gauss-Legendre against a 64-point uniform grid, and differentiating through an integral. |
 | [special_functions.mojo](intermediate/special_functions.mojo) | Every special function (erf, gamma, Bessel, Lambert W, elliptic integrals, orthogonal polynomials) differentiated via `Dual`. |
+| [statistics.mojo](intermediate/statistics.mojo) | `numax.statistics`'s `Plain`-only `TileTensor` surface (`sum`/`median`/`argmax`/...), plus `variance`/`stddev` at `Compensated` recovering precision a long summation would lose at `Plain`. |
+| [random_ensemble.mojo](intermediate/random_ensemble.mojo) | `numax.random.uniform` drawing an ODE ensemble's initial conditions on CPU, versus `std.random.philox.Random` drawing them independently per GPU thread inside a `map[gpu=True]` kernel. Needs a GPU. |
 
 ## advanced/
 
@@ -42,7 +45,7 @@ GPU + ensembles -- needs the actual hardware.
 
 ## GPU note
 
-`gaussian_gpu.mojo`, `softmax.mojo`, and `ode.mojo` launch GPU kernels
-alongside their CPU paths. They need real Metal hardware, so they're a
-local-only check; `pixi run examples-cpu` skips them, `pixi run examples`
-includes them.
+`gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`, and `random_ensemble.mojo`
+launch GPU kernels alongside their CPU paths. They need real Metal
+hardware, so they're a local-only check; `pixi run examples-cpu` skips
+them, `pixi run examples` includes them.

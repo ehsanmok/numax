@@ -49,6 +49,30 @@ Consequences worth knowing:
 
 For a general non-symmetric solve where you can't vouch for the pivots,
 this module is the wrong tool.
+
+## Use MAX past N (Track F, `parity.mdc`)
+
+Every function in this module is register-resident and register-bound: an
+`n x n` matrix is `n*n` values of `Array[T, n*n]`, so both compile time and
+register pressure grow with `n`, and the naive triple-loop `matmul` this
+module uses is the right algorithm at small `n` and the wrong one past it.
+`bench/bench_matmul.mojo`'s measured crossover on an M3 Pro is `n = 8` for
+a single matrix, `n = 16` against the 4-wide batched form, and by `n = 64`
+`max.linalg.matmul` is ~130x faster -- see `matmul`'s own docstring below
+and `docs/performance.md`'s "Use MAX past N" table for the numbers.
+
+`max.linalg.matmul` and `max.linalg.qr_factorization` (both over
+`TileTensor`, both CPU/GPU, both monomorphic in a raw `dtype`) are the only
+two dense-linear-algebra primitives MAX itself ships (verified against
+`~/workspace/modular/max/kernels/src/linalg/` -- there is no MAX
+`lu`/`solve`/`det`/`trace`/`norm`/`inverse` at all, generic or otherwise).
+So for `lu`/`solve`/`det`/`inverse`/`cholesky_solve` at a large, plain-`T`
+`n`, there is no direct MAX function to call in this function's place --
+the honest recommendation is to build the large-matrix equivalent from
+`max.linalg.qr_factorization` (Householder QR is what LAPACK-style solvers
+use for exactly this), not to expect a drop-in replacement. Each function's
+own docstring below repeats this where it applies, so the note is visible
+at the call site, not only here.
 """
 
 from std.collections import Array
@@ -65,7 +89,14 @@ def _zeros[T: FloatLike, size: Int]() -> Array[T, size]:
 def matvec[
     T: FloatLike, n: Int
 ](a: Array[T, n * n], x: Array[T, n]) -> Array[T, n]:
-    """`A @ x` for a row-major `n x n` matrix."""
+    """`A @ x` for a row-major `n x n` matrix.
+
+    For a large, plain-`dtype` `A` (past the crossover `matmul`'s own
+    docstring documents), `max.linalg.matmul` still applies -- a
+    matrix-vector product is a matrix-matrix product against an `n x 1`
+    `TileTensor`, and MAX has no separate matvec-specific fast path to
+    prefer over that.
+    """
     var out = _zeros[T, n]()
     for i in range(n):
         var total = T.constant(0.0)
@@ -144,6 +175,11 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     them avoids returning two matrices where the two halves never overlap.
 
     See this module's docstring for what "without pivoting" costs.
+
+    No MAX equivalent exists to route to for a large, plain-`dtype` `A`
+    (verified: MAX ships no `lu` at any size). `max.linalg.qr_factorization`
+    is the large-matrix building block LAPACK-style solvers use in `lu`'s
+    place; see this module's own "Use MAX past N" section.
     """
     var out = _zeros[T, n * n]()
     for i in range(n * n):
@@ -199,7 +235,13 @@ def back_substitution[
 def solve[
     T: FloatLike, n: Int
 ](a: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
-    """Solve `A @ x = b` by unpivoted LU followed by two substitutions."""
+    """Solve `A @ x = b` by unpivoted LU followed by two substitutions.
+
+    No MAX equivalent exists to route to for a large, plain-`dtype`
+    system (verified: MAX ships no `solve` at any size) -- see this
+    module's own "Use MAX past N" section for what to build the
+    large-matrix case from instead.
+    """
     var factored = lu[T, n](a)
     var y = forward_substitution[T, n, unit_diagonal=True](factored, b)
     return back_substitution[T, n](factored, y)
@@ -213,6 +255,11 @@ def cholesky_solve[
     Takes the factor rather than `A` because the point of a factorization
     is reusing it: a Gaussian process solves against the same `L` for every
     new right-hand side.
+
+    No MAX equivalent exists to route to at any size (verified: MAX ships
+    neither `cholesky` nor a triangular solve) -- this module's own
+    register-resident version is the only one available regardless of `n`,
+    plain-`dtype` or not.
     """
     var y = forward_substitution[T, n](lower, b)
 
@@ -232,6 +279,11 @@ def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
 
     Unpivoted, so the sign is always the product's own -- there is no row
     swap count to correct for.
+
+    No MAX equivalent exists to route to for a large, plain-`dtype` `A`
+    (verified: MAX ships no `det` at any size) -- see this module's own
+    "Use MAX past N" section for what to build the large-matrix case from
+    instead (`prod(diag(R))` up to sign, from `max.linalg.qr_factorization`).
     """
     var factored = lu[T, n](a)
     var product = T.one()
@@ -259,6 +311,14 @@ def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
 
     Factors once and substitutes `n` times rather than calling `solve` `n`
     times, which would redo the factorization for every column.
+
+    No MAX equivalent exists to route to for a large, plain-`dtype` `A`
+    (verified: MAX ships no `inv` at any size) -- see this module's own
+    "Use MAX past N" section. Note that inverting explicitly is rarely the
+    right move at any size; solving against a specific right-hand side
+    (`solve`/`cholesky_solve`) is both cheaper and better-conditioned than
+    forming `A^-1` and multiplying, the same trade-off that holds for
+    `numax`'s own register-resident version.
     """
     var factored = lu[T, n](a)
     var out = _zeros[T, n * n]()

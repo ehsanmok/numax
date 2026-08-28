@@ -7,6 +7,8 @@ result falls inside the returned bounds, which catches an endpoint swap or
 a dropped corner that a spot check of two numbers would not.
 """
 
+from std.math import cos as cos_f64
+from std.math import sin as sin_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Compensated, Dual, FloatLike, Plain
@@ -176,15 +178,60 @@ def test_splitting_the_input_tightens_the_bound() raises:
     assert_almost_equal(hi_bound, 4.0)
 
 
-def test_sin_and_cos_return_the_trivial_enclosure() raises:
-    # Documented as sound-but-loose. Asserted so the docstring can't drift
-    # away from the behaviour.
+comptime _PI = 3.14159265358979323846
+
+
+def test_sin_tightly_encloses_a_range_containing_the_peak() raises:
+    # [0, pi/2] contains sin's peak at pi/2, so the tight enclosure is
+    # [sin(0), 1] = [0, 1] -- not the trivial [-1, 1].
+    var s = _interval(0.0, _PI / 2.0).sin()
+    assert_almost_equal(s.lo.v[0], 0.0, atol=1e-12)
+    assert_almost_equal(s.hi.v[0], 1.0, atol=1e-12)
+
+
+def test_sin_tightly_encloses_a_range_containing_the_trough() raises:
+    # [pi, 3*pi/2] contains sin's trough at 3*pi/2, so the tight enclosure
+    # is [-1, sin(pi)] = [-1, 0].
+    var s = _interval(_PI, 3.0 * _PI / 2.0).sin()
+    assert_almost_equal(s.lo.v[0], -1.0, atol=1e-12)
+    assert_almost_equal(s.hi.v[0], 0.0, atol=1e-12)
+
+
+def test_sin_falls_back_to_the_trivial_enclosure_when_it_spans_both() raises:
+    # A wide interval spanning many periods contains both a peak and a
+    # trough, so [-1, 1] is the correct (and now the only sound) answer.
+    var s = _interval(0.0, 100.0 * _PI).sin()
+    assert_almost_equal(s.lo.v[0], -1.0, atol=1e-12)
+    assert_almost_equal(s.hi.v[0], 1.0, atol=1e-12)
+
+
+def test_sin_is_tight_on_a_monotone_piece() raises:
+    # [0.1, 0.2] contains neither extremum, so sin is monotone there and
+    # the tight enclosure is exactly the two endpoint values -- no [-1, 1]
+    # looseness left at all.
     var s = _interval(0.1, 0.2).sin()
-    assert_almost_equal(s.lo.v[0], -1.0)
-    assert_almost_equal(s.hi.v[0], 1.0)
-    var c = _interval(0.1, 0.2).cos()
-    assert_almost_equal(c.lo.v[0], -1.0)
-    assert_almost_equal(c.hi.v[0], 1.0)
+    assert_almost_equal(s.lo.v[0], sin_f64(0.1), atol=1e-12)
+    assert_almost_equal(s.hi.v[0], sin_f64(0.2), atol=1e-12)
+
+
+def test_cos_tightly_encloses_a_range_containing_the_peak() raises:
+    # cos's peak is at 0; [-0.1, 0.1] contains it.
+    var c = _interval(-0.1, 0.1).cos()
+    assert_almost_equal(c.hi.v[0], 1.0, atol=1e-12)
+    assert_almost_equal(c.lo.v[0], cos_f64(0.1), atol=1e-12)
+
+
+def test_cos_tightly_encloses_a_range_containing_the_trough() raises:
+    # cos's trough is at pi; [pi - 0.1, pi + 0.1] contains it.
+    var c = _interval(_PI - 0.1, _PI + 0.1).cos()
+    assert_almost_equal(c.lo.v[0], -1.0, atol=1e-12)
+    assert_almost_equal(c.hi.v[0], cos_f64(_PI - 0.1), atol=1e-12)
+
+
+def test_cos_falls_back_to_the_trivial_enclosure_when_it_spans_both() raises:
+    var c = _interval(0.0, 100.0 * _PI).cos()
+    assert_almost_equal(c.lo.v[0], -1.0, atol=1e-12)
+    assert_almost_equal(c.hi.v[0], 1.0, atol=1e-12)
 
 
 def test_inflate_widens_both_ends() raises:

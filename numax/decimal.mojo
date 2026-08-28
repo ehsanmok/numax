@@ -192,3 +192,28 @@ struct Decimal[width: Int, scale: Int](
         var mag_f = abs(self.raw).cast[DType.float64]()
         var sign_f = sign_source.raw.cast[DType.float64]()
         return Self(_copysign_f64(mag_f, sign_f).cast[DType.int64]())
+
+    def floor(self) -> Self:
+        # `raw` is exact, so this is exact too, and it never touches a
+        # float: `//` on `SIMD[DType.int64, ...]` already floors (rounds
+        # toward negative infinity, confirmed directly: `-7 // 10 == -1`),
+        # which is exactly what `floor` of `raw/10^scale` needs.
+        comptime factor = _pow10[Self.scale]()
+        return Self((self.raw // factor) * factor)
+
+    def ceil(self) -> Self:
+        # `ceil(a/b) = -floor(-a/b)`, reusing the same floor-division `//`.
+        comptime factor = _pow10[Self.scale]()
+        return Self(-((-self.raw) // factor) * factor)
+
+    def trunc(self) -> Self:
+        # Round toward zero: floor of the magnitude, sign reattached --
+        # `//` on a non-negative numerator is already truncation, so this
+        # only needs the sign split `copysign` above also needs.
+        comptime factor = _pow10[Self.scale]()
+        var mag = (abs(self.raw) // factor) * factor
+        var is_neg = self.raw.lt(SIMD[DType.int64, Self.width](0)).select(
+            SIMD[DType.int64, Self.width](-1),
+            SIMD[DType.int64, Self.width](1),
+        )
+        return Self(mag * is_neg)

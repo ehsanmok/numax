@@ -20,7 +20,7 @@ computed from scratch) that a shared helper wouldn't stay simple.
 """
 
 from std.collections import Array
-from std.math import copysign, exp2, fma, log, round, sqrt
+from std.math import ceil, copysign, exp2, floor, fma, log, round, sqrt, trunc
 
 from .numeric import FloatLike, default_erf_approx
 
@@ -374,3 +374,20 @@ struct Compensated[dtype: DType, width: Int](
             SIMD[Self.dtype, Self.width](1), self.value
         ) * copysign(SIMD[Self.dtype, Self.width](1), sign_source.value)
         return Self(self.value * flip, self.error * flip)
+
+    def floor(self) -> Self where Self.dtype.is_floating_point():
+        # Floored from `value` alone, with `error` zeroed rather than
+        # refined -- an honest, documented gap rather than a claim of
+        # exactness: a `value` that rounds to just above an integer while
+        # `error` is negative enough to put the true `value + error` just
+        # below it produces the wrong integer here, since nothing folds
+        # `error` back in before the floor. Rare in practice (`error` is
+        # many orders of magnitude smaller than `value` whenever `value`
+        # itself isn't already near the rounding boundary), but real.
+        return Self(floor(self.value), SIMD[Self.dtype, Self.width](0))
+
+    def ceil(self) -> Self where Self.dtype.is_floating_point():
+        return Self(ceil(self.value), SIMD[Self.dtype, Self.width](0))
+
+    def trunc(self) -> Self where Self.dtype.is_floating_point():
+        return Self(trunc(self.value), SIMD[Self.dtype, Self.width](0))

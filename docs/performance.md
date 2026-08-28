@@ -124,6 +124,45 @@ magnitude below the representable resolution and cannot be observed.
 See `bench/accuracy/README.md` for the full table and the defect
 writeup.
 
+## Use MAX past N (small-matrix linalg)
+
+`numax/linalg.mojo`'s matrices are `Array[T, n*n]` in registers -- a
+compile-time size that keeps them GPU-launchable (one matrix per SIMD
+lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual` or
+`Compensated`, at the cost of both compile time and register pressure
+growing with `n`. Past a certain `n`, MAX's own `TileTensor`-based,
+`dtype`-monomorphic routines win on raw speed. `bench/bench_matmul.mojo`
+measures exactly where, for `matmul` (nanoseconds per `n x n` product,
+lower is better; the batched column runs 4 independent products per call,
+one per SIMD lane, divided by 4 to stay comparable):
+
+| n | MAX | numax scalar | numax batched (per matrix) |
+|---|---|---|---|
+| 4 | 102 | 57 | 15 |
+| 8 | 143 | 323 | 74 |
+| 16 | 366 | 1,870 | 492 |
+| 32 | 380 | 14,335 | 3,690 |
+| 64 | 900 | 117,440 | 30,170 |
+
+MAX wins from `n = 8` on for a single matrix, from `n = 16` on even
+against the 4-wide batched form, and is ~130x ahead by `n = 64`. See
+`bench/README.md`'s "Matmul: where MAX overtakes the generic loop" for
+the full writeup.
+
+`matmul` and `qr_factorization` (Householder, in-place) are the only two
+dense-linear-algebra primitives MAX itself ships -- there is no MAX
+`lu`/`solve`/`det`/`trace`/`norm`/`inverse` at any size, generic or
+otherwise (verified against `~/workspace/modular/max/kernels/src/linalg/`).
+So for a large, plain-`dtype` system past the crossover above, the
+practical move is not a drop-in MAX function call for every name in this
+module -- it's building the large-matrix equivalent from
+`max.linalg.qr_factorization` the way a LAPACK-style solver does
+(`solve`/`det`/`inverse` all reduce to `R` and `Q^T b` once `A = QR`).
+`cholesky`/`cholesky_solve`/`tridiagonal_solve` have no MAX equivalent to
+route to at any size, since MAX ships neither a Cholesky factorization nor
+a triangular solve. Every function's own docstring in `numax/linalg.mojo`
+states which of these two cases it falls into.
+
 ## Bench tasks
 
 ```bash

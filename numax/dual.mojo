@@ -118,3 +118,16 @@ struct Dual[Inner: FloatLike](Copyable, FloatLike, Movable):
             self.value
         ) * Self.Inner.one().copysign(sign_source.value)
         return Self(self.value.copysign(sign_source.value), self.deriv * flip)
+
+    def floor(self) -> Self:
+        # A step function -- constant almost everywhere, so its derivative
+        # is zero almost everywhere (undefined exactly at the integers,
+        # which this doesn't special-case, matching `abs`'s own silence at
+        # its own non-differentiable point at zero).
+        return Self(self.value.floor(), Self.Inner.constant(0.0))
+
+    def ceil(self) -> Self:
+        return Self(self.value.ceil(), Self.Inner.constant(0.0))
+
+    def trunc(self) -> Self:
+        return Self(self.value.trunc(), Self.Inner.constant(0.0))

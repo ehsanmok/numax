@@ -102,6 +102,42 @@ trait FloatLike(Copyable, Deinitable, Movable):
         """
         ...
 
+    def floor(self) -> Self:
+        """The largest integer value `<= self`, as a `Self`.
+
+        Held out of the trait for a long time on the same "one call site
+        isn't reason enough" rule that delayed `sqrt` -- until
+        `numax.interval`'s `sin`/`cos` needed it for real: a tight
+        enclosure has to know whether an input interval contains a peak or
+        trough, which is a `floor` of a scaled argument (see
+        `numax/interval.mojo`'s own docstring). That's a genuine kernel
+        that needed a genuinely new capability, the same bar `sqrt`'s
+        promotion was held to.
+        """
+        ...
+
+    def ceil(self) -> Self:
+        """The smallest integer value `>= self`, as a `Self`.
+
+        Added alongside `floor` for the same kernel (`numax.interval`'s
+        tight `sin`/`cos` enclosure needs both directions of rounding, one
+        per bound of the interval it's enclosing).
+        """
+        ...
+
+    def trunc(self) -> Self:
+        """`self` rounded toward zero, as a `Self`.
+
+        The third of the pair, added for the same kernel:
+        `numax.interval`'s peak/trough detection composes `floor`/`ceil`
+        of a *shifted* argument, but the branchless index computation
+        underneath (turning "does this interval contain a peak" into an
+        arithmetic comparison of two rounded quantities) is most directly
+        expressed with a round-toward-zero, which `floor`/`ceil` alone
+        don't give without an extra sign check.
+        """
+        ...
+
 
 def max_of[T: FloatLike](a: T, b: T) -> T:
     """The larger of `a` and `b`, lane-wise and branchless.
