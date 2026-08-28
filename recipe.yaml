@@ -1,0 +1,51 @@
+# rattler-build recipe for numax
+# Distributes numax as its *source* tree under $PREFIX/lib/mojo/ rather than
+# a pre-compiled .mojopkg artifact -- same shape as ehsanmok/json and
+# ehsanmok/sqlite. Consumers' Mojo resolves ``from numax import ...``
+# directly from these source files at their own compile time.
+#
+# Why source-level distribution rather than ``mojo package``: a ``.mojopkg``
+# embeds the exact compiler version it was built with and refuses to load
+# against any other version (``Mojo package is incompatible``), which
+# tightly couples the published .conda artifact to one Mojo release. Source
+# distribution has no ABI-locked binary content at all -- the ``run: mojo
+# == ...`` pin below is what tells solvers which compiler to install, and
+# it's a one-line bump here rather than a rebuild.
+#
+# numax has no FFI shim and no C++ build step (unlike json's simdjson
+# wrapper), so this recipe is just a copy -- no ${{ compiler(...) }}
+# requirement, no host/build split.
+
+context:
+  name: numax
+  version: "0.1.0"
+
+package:
+  name: ${{ name }}
+  version: ${{ version }}
+
+source:
+  path: .
+
+build:
+  script:
+    - mkdir -p $PREFIX/lib/mojo
+    - cp -r numax $PREFIX/lib/mojo/
+
+requirements:
+  run:
+    - mojo ==1.0.0
+    - max ==26.5
+
+about:
+  homepage: https://github.com/ehsanmok/numax
+  license: MIT
+  summary: A composable numeric-type trait for Mojo -- SIMD, autodiff, and extra precision from one kernel body.
+  description: |
+    numax lets you write a numeric kernel once, against a trait (FloatLike),
+    and get plain SIMD, forward-mode autodiff (Dual), extra precision
+    (Compensated), or exact decimal arithmetic (Decimal) for free by the
+    type you call it with. Includes a vectorized special-function library
+    (erf, gamma, Bessel, Lambert W, activations, softmax) built on that
+    trait, and numax.tensor to drive any of it across MAX's TileTensor on
+    CPU or GPU.

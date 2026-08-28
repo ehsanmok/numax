@@ -1,11 +1,11 @@
-"""Tests for `ember.special`'s `relu`/`leaky_relu`/`gelu`/`softmax`."""
+"""Tests for `numax.special`'s `relu`/`leaky_relu`/`gelu`/`softmax`."""
 
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major
 from std.math import exp
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
-from ember import Dual, Plain, gelu, leaky_relu, relu, softmax
+from numax import Dual, Plain, gelu, leaky_relu, relu, softmax
 
 comptime dtype = DType.float64
 comptime width = 1

@@ -1,8 +1,8 @@
-"""Tests for `ember.erf` against closed-form values and derivatives."""
+"""Tests for `numax.erf` against closed-form values and derivatives."""
 
 from std.testing import TestSuite, assert_almost_equal
 
-from ember import Dual, Plain, erf, erfc
+from numax import Dual, Plain, erf, erfc
 
 comptime dtype = DType.float64
 comptime width = 1

@@ -1,4 +1,4 @@
-"""Tests for `ember.Dual` against closed-form derivatives.
+"""Tests for `numax.Dual` against closed-form derivatives.
 
 `comptime InnerT = Plain[dtype, width]` and `comptime D = Dual[InnerT]` give
 first-order duals their old, flat shape (`D(value, deriv)` where both fields
@@ -9,7 +9,7 @@ second `comptime` alias, `Dual[D]`, on top of that.
 
 from std.testing import TestSuite, assert_almost_equal
 
-from ember import Dual, Plain
+from numax import Dual, Plain
 
 comptime dtype = DType.float64
 comptime width = 1

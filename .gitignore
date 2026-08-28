@@ -3,6 +3,7 @@
 
 # Cursor (local agent config/rules, not shipped with the repo)
 .cursor/
+.claude/
 
 # pixi environments
 .pixi/*
@@ -10,6 +11,7 @@
 
 # Build outputs
 target/
+*.conda
 
 # Mojo cache
 __pycache__/

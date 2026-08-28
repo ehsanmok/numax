@@ -1,8 +1,8 @@
-"""Tests for `ember.Decimal`, the base-10 fixed-point `FloatLike` conformer."""
+"""Tests for `numax.Decimal`, the base-10 fixed-point `FloatLike` conformer."""
 
 from std.testing import TestSuite, assert_equal, assert_true
 
-from ember import Decimal, gaussian, sigmoid
+from numax import Decimal, gaussian, sigmoid
 
 comptime width = 1
 comptime scale = 6

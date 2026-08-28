@@ -1,0 +1,86 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # mojodoc's pixi-build-backend pin ("pixi-build-rattler-build
+      # ==0.3.13") is incompatible with numax's (">=0.4"), and the
+      # 0.3.x backend has no candidates on the channels numax solves
+      # against today -- so mojodoc is invoked as a CLI rather than
+      # depended on via pixi. CI clones it as a sibling so the
+      # MOJODOC_CLI path that pixi.toml's docs-build task expects
+      # resolves. See `.cursor/rules/design-v0.1.mdc` §7 and the
+      # comment above [feature.dev.dependencies] in pixi.toml.
+      - name: Clone mojodoc as a sibling checkout
+        run: |
+          git clone --depth 1 https://github.com/ehsanmok/mojodoc.git ../mojodoc
+          cd ../mojodoc
+          # Install the CLI's build dependencies (pnpm + nodejs are
+          # in mojodoc's own [dependencies] when its pixi env solves,
+          # but its env currently fails the same way numax's would).
+          # Install via the system package manager + npm instead.
+          sudo apt-get update && sudo apt-get install -y nodejs npm
+          sudo npm install -g pnpm
+          pnpm install --frozen-lockfile
+          pnpm run build
+          ls packages/cli/dist/index.js
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.9.4
+        with:
+          environments: dev
+          cache: false
+          post-cleanup: false
+
+      - name: Generate docs with mojodoc
+        run: pixi run -e dev docs-build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-22.04
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    # ember's only supported platform today is osx-arm64 (see pixi.toml);
+    # numax's only supported platform today is osx-arm64 (see pixi.toml);
     # macos-14 is GitHub's Apple Silicon runner.
     runs-on: macos-14
     steps:

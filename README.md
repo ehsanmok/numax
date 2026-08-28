@@ -1,10 +1,13 @@
-# ember
+<h1 align="center">numax</h1>
 
-[![CI](https://github.com/ehsanmok/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/ehsanmok/ember/actions/workflows/ci.yml)
-[![Mojo 1.0.0](https://img.shields.io/badge/Mojo-1.0.0-orange)](https://docs.modular.com/mojo/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/ehsanmok/numax/actions/workflows/ci.yml"><img src="https://github.com/ehsanmok/numax/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ehsanmok/numax/actions/workflows/docs.yaml"><img src="https://github.com/ehsanmok/numax/actions/workflows/docs.yaml/badge.svg" alt="Docs"></a>
+  <a href="https://mojolang.org"><img src="https://img.shields.io/badge/Mojo-1.0.0-orange" alt="Mojo 1.0.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
-Ember lets you write a numeric kernel once, against a trait, and get three
+numax lets you write a numeric kernel once, against a trait, and get several
 different things out of it depending on what you call it with:
 
 ```mojo
@@ -19,14 +22,16 @@ def gaussian[T: FloatLike](x: T) -> T:
   precision, recovered from the rounding error ordinary arithmetic would
   otherwise discard.
 
-Same function body, no edits between them. `ember` ships a growing library of
+Same function body, no edits between them. `numax` ships a growing library of
 kernels built the same way — activations (`gaussian`, `sigmoid`, `swish`,
 `tanh`, `relu`, `gelu`, `softmax`) and special functions (`erf`, `gamma`,
-`bessel_j0`, `lambertw`, ...) — each one differentiable and extra-precise for
-free.
+`bessel_j0`, `lambertw`, `elliptic_k`, ...) — each one differentiable and
+extra-precise for free. `Complex[Inner]` nests over any other conformer so
+those kernels work over complex numbers; `Gradient[Inner, n_vars]` gets a
+full multi-variable gradient from one call instead of `Dual`'s one derivative.
 
 Mojo's `SIMD[dtype, width]` is already a native, portable vector type, so
-`ember` doesn't try to add another cross-ISA vector abstraction on top of it.
+`numax` doesn't try to add another cross-ISA vector abstraction on top of it.
 What it adds is the composable numeric-type layer: swap `Plain` for `Dual` or
 `Compensated` and the kernel adapts with no changes of its own.
 
@@ -34,34 +39,81 @@ This is a young, experimental library. APIs may change.
 
 ## Install
 
-Ember targets Mojo `1.0.0` and is managed with [pixi](https://pixi.sh). Clone
-this repo, then:
+```toml
+[workspace]
+channels = ["https://conda.modular.com/max", "conda-forge"]
+preview = ["pixi-build"]
+
+[dependencies]
+numax = { git = "https://github.com/ehsanmok/numax.git", tag = "<latest-release>" }
+```
 
 ```bash
 pixi install
-pixi run examples-cpu   # run the CPU-only examples
-pixi run tests          # run the full test suite
-pixi run bench          # compare ember.tensor.map_simd against raw SIMD
 ```
 
-`ember` isn't published anywhere yet, so from another project the simplest
-path is to check it out alongside your code and pass `-I <path-to-ember>` (or
-`-I .` if you're running from this directory) so the compiler can resolve the
-package:
+Requires [pixi](https://pixi.sh). Pin to a released tag for reproducible
+builds; track unreleased work via `branch = "main"` (breaking changes
+possible between tags). `mojo` and `max` install as transitive dependencies;
+`numax` is distributed as source so `from numax import ...` resolves with no
+`-I <path>` flag needed — see `pixi.toml`/`recipe.yaml`.
 
-```mojo
-from ember import Compensated, Decimal, Dual, FloatLike, Plain, gaussian, sigmoid, swish, tanh
-from ember import erf, gamma, bessel_j0, lambertw  # special functions, see below
-```
+To work on `numax` itself instead of consuming it, clone this repo:
 
 ```bash
-mojo -I /path/to/ember your_script.mojo
+git clone https://github.com/ehsanmok/numax.git && cd numax
+pixi install
+pixi run examples-cpu   # run the CPU-only examples
+pixi run tests          # run the full test suite
+pixi run bench          # compare numax.tensor.map against raw SIMD
 ```
+
+## Quick start
+
+```mojo
+from numax import Compensated, Complex, Decimal, Dual, FloatLike, Gradient, Plain
+from numax import gaussian, sigmoid, swish, tanh
+from numax import erf, gamma, bessel_j0, lambertw, elliptic_k  # special functions, see below
+```
+
+## Documentation
+
+- **This README** is the entry point: a tour of the trait, the
+  conformers, the special functions, the algorithm layer, the tensor
+  layer, the GPU story, and the perf/accuracy numbers.
+- **[`docs/architecture.md`](docs/architecture.md)** — the short
+  architecture summary, expanded with the two-axes framing (composable
+  types + NumPy/SciPy parity, MAX-first).
+- **[`docs/performance.md`](docs/performance.md)** — the performance
+  framing: the kernel, the CPU and GPU paths, the roofline, the
+  cross-language baselines.
+- **API reference** — generated by
+  [mojodoc](https://github.com/ehsanmok/mojodoc) on every push to
+  `main`, published to <https://ehsanmok.github.io/numax/> by the
+  [`docs.yaml`](.github/workflows/docs.yaml) workflow. To preview
+  locally: `pixi run -e dev docs` (opens in a browser); to build
+  silently: `pixi run -e dev docs-build` → `target/doc/`.
+- **[`.cursor/rules/`](.cursor/rules/)** — the design intent:
+  - [`design-v0.1.mdc`](.cursor/rules/design-v0.1.mdc) — this release:
+    the rename from `ember`, the repositioning as the MAX-NumPy/SciPy
+    layer, the phased roadmap (Track F: `numax.array`, `numax.statistics`,
+    `numax.io`, `numax.random`).
+  - [`parity.mdc`](.cursor/rules/parity.mdc) — the NumPy/SciPy parity
+    dispositions (per-piece pick / route-to-MAX / not-pick, with the
+    file-level mapping table comparing against
+    [NuMojo](https://github.com/Mojo-Numerics-and-Algorithms-group/NuMojo)).
+  - [`strategy.mdc`](.cursor/rules/strategy.mdc) — the composable-type
+    spine (Tracks A-E: special functions, conformers, algorithms,
+    linalg/FFT, performance layer) and the fixed-iteration invariant.
+  - [`findings.mdc`](.cursor/rules/findings.mdc) — bug log: the
+    `std.math` not-correctly-rounded defect, the two benchmark bugs,
+    the Mojo language gotchas.
 
 ## The trait
 
 `FloatLike` is deliberately small — just what `special`'s kernels need, and
-no more:
+no more. Adding an operation here is a real cost (every conformer has to
+implement it), so the trait only grows when a kernel genuinely needs it:
 
 ```mojo
 trait FloatLike(Copyable, Movable, Deinitable):
@@ -73,223 +125,387 @@ trait FloatLike(Copyable, Movable, Deinitable):
     def __truediv__(self, rhs: Self) -> Self: ...
     def exp(self) -> Self: ...
     def ln(self) -> Self: ...
+    def sqrt(self) -> Self: ...
+    def erf(self) -> Self: ...
+    def erfc(self) -> Self: ...
+    def sin(self) -> Self: ...
+    def cos(self) -> Self: ...
     @staticmethod
     def constant(v: Float64) -> Self: ...
     def abs(self) -> Self: ...
     def copysign(self, sign_source: Self) -> Self: ...
 ```
 
-Adding an operation here is a real cost: every conforming type has to
-implement it. Grow the trait only when a kernel genuinely needs the
-operation.
+## The `FloatLike` conformers
 
-## The three types
+| Type | What you get |
+|---|---|
+| `Plain[dtype, width]` | A thin wrapper around `SIMD[dtype, width]` — the bridge that lets ordinary SIMD conform to `FloatLike`. |
+| `Dual[Inner: FloatLike]` | Forward-mode automatic differentiation: value paired with derivative, propagated by the chain rule. Nests (`Dual[Dual[Plain[...]]]`) for second derivatives. Single-variable per call — see `Gradient` for several inputs at once. |
+| `Compensated[dtype, width]` | Double-double arithmetic (`value` + `error`), recovering the rounding error `dtype` alone would discard — roughly double precision. |
+| `Decimal[width, scale]` | Exact base-10 fixed-point arithmetic, so `0.1 + 0.2 == 0.3` exactly. A different problem than `Compensated` solves, not a replacement for it. |
+| `Complex[Inner: FloatLike]` | A complex number over any other conformer, nesting the same way `Dual` does — `Complex[Dual[Plain[...]]]` differentiates holomorphically for free. |
+| `Gradient[Inner: FloatLike, n_vars: Int]` | `Dual`'s multi-input counterpart: `value` plus a full gradient vector `grad`, one call returning every partial derivative. Nests with `Dual` in either order (`Gradient[Dual[Plain[...]], n]`) for Hessian columns and Hessian-vector products. |
+| `Interval[Inner: FloatLike]` | Bounds instead of a value: run a kernel over `[lo, hi]` and get the range it can produce. Tight to a few ULP rather than provably sound (no directed rounding on SIMD/GPU); `inflate` is the manual widening. `sin`/`cos` return the trivial `[-1, 1]`. |
 
-| Type | Fields | What instantiating a kernel with it gets you |
-|---|---|---|
-| `Plain[dtype, width]` | `v` | A thin wrapper around `SIMD[dtype, width]` — Mojo can't retroactively make `SIMD` conform to `FloatLike`, so this is the bridge. |
-| `Dual[Inner: FloatLike]` | `value`, `deriv` | Forward-mode automatic differentiation. Seed `deriv=Inner.one()` and the kernel's return value carries its derivative alongside its value, propagated by the chain rule through every operation. `Inner` is any `FloatLike` — usually `Plain[dtype, width]`, giving the classic single-direction dual number — but `Dual` itself conforms to `FloatLike`, so `Dual[Dual[Plain[dtype, width]]]` nests: seeded correctly, it carries a value, first derivative, *and* second derivative through one kernel call (see `test_dual.mojo`'s nested-`Dual` tests). Still single-variable — no `Dual<V, N>` gradient across multiple inputs. |
-| `Compensated[dtype, width]` | `value`, `error` | Double-double arithmetic. Every operation is an error-free transformation (`two_sum`/`two_prod`, built on `fma`) that recovers the rounding error `dtype` alone would discard and folds it into `error`. `value + error` (as `Float64`, say) lands far closer to a true result than `value` alone — see `test_compensated.mojo` for the exact margins. |
-| `Decimal[width, scale]` | `raw` | Base-10 fixed-point arithmetic: `raw` is the value times `10^scale`, stored as an exact integer, so `0.1 + 0.2` is exactly `0.3` — never `0.30000000000000004`. A different problem than `Compensated` solves (base-10 exactness vs. extra *binary* significand bits), so it's a fourth conformer next to it, not a replacement. `exp()`/`ln()` use fixed-iteration series/Newton's method for the same GPU-motivated reason `ember.gamma`'s kernels do — see `ember/decimal.mojo`'s docstring for its scoped magnitude/precision trade-offs. |
+Each conformer's own module docstring carries its design rationale and
+documented limitations; `tests/` has the numerical margins backing them.
 
 ## Special functions
 
 Every special function is written once against `FloatLike`, one file per
-family (matching the project's `plain.mojo`/`dual.mojo`/`compensated.mojo`
-convention):
+family, and comes with `Dual`-differentiability and extra precision for free:
 
-**`ember.special`** — activations:
+- **`numax.special`** — `gaussian`, `sigmoid`, `swish`, `tanh`, `relu`,
+  `leaky_relu`, `gelu` (activations), plus `softmax` (the one
+  non-`FloatLike`-generic exception — it needs a whole row, not one element,
+  so it's built from `numax.tensor`'s `reduce_rows`/`broadcast_op_rows`).
+- **`numax.erf`** — `erf`/`erfc`. `Plain` calls `std.math` directly (exact,
+  GPU-compatible); other conformers use an Abramowitz & Stegun approximation.
+- **`numax.gamma`** — `gamma`/`lgamma` (valid for any `x` except the
+  non-positive integers, via reflection), `gammainc`/`gammaincc`, and
+  `digamma`, which is `lgamma` differentiated by `Dual` rather than a
+  separate expansion.
+- **`numax.beta`** — `beta`, plus `betainc`/`betaincc`, the regularized
+  incomplete beta (`0 <= x <= 1`, `a,b > 0`) behind the Beta, Student-t,
+  F, and binomial distributions.
+- **`numax.legendre`** / **`numax.orthopoly`** — `legendre_p` by Bonnet's
+  recurrence, plus `hermite_h`, `laguerre_l`, `chebyshev_t`, and
+  `chebyshev_u`. All exact rather than approximated, for any real `x`.
+- **`numax.bessel`** — `bessel_j0`/`j1`/`y0`/`y1`, valid for any `x`
+  (`y0`/`y1` for `x > 0`) via a near/far branch blend.
+- **`numax.lambertw`** — `lambertw` (principal branch, `x >= -1/e`) and
+  `lambertw_m1` (the other real branch, `-1/e <= x < 0`).
+- **`numax.elliptic`** — `elliptic_k`/`elliptic_e`, the complete elliptic
+  integrals of the first and second kind (`0 <= m <= 1`).
 
-- `gaussian(x)` — the unnormalized Gaussian bump, `exp(-x^2)`.
-- `sigmoid(x)` — the logistic function, `1 / (1 + exp(-x))`.
-- `swish(x)` — `x * sigmoid(x)` (SiLU).
-- `tanh(x)` — hyperbolic tangent, via `(exp(2x) - 1) / (exp(2x) + 1)`.
-- `relu(x)` — `max(x, 0)`, via `(x + |x|) / 2` so it's branch-free.
-- `leaky_relu(x, alpha)` — `x` for `x >= 0`, `alpha * x` otherwise, the same
-  branch-free shape as `relu`.
-- `gelu(x)` — the GELU activation's `tanh` approximation, reusing `tanh`
-  above rather than `erf` directly.
+`std.math`/MAX's accelerator library are used directly where they're
+GPU-compatible (`erf`, `sin`/`cos`) and skipped where they're CPU-only libm
+calls (`gamma`, Bessel — these fail to compile for a GPU target with
+`"constraint failed: libm operations are only available on CPU targets"`,
+so adopting them would trade GPU support for domain coverage). Each module's
+docstring records which way it went and why. See
+`examples/special_functions.mojo` for all of the above differentiated via
+`Dual` with no extra code.
 
-Every one of them differentiates and gains precision for free, by virtue of
-being written against `FloatLike` rather than against `Plain` or `SIMD`
-directly — see `examples/activations.mojo`.
+## Algorithms
 
-`softmax` is the one exception in `ember.special`, and isn't
-`FloatLike`-generic: computing `softmax(xs)[i]` needs the whole row `xs`
-belongs to (its max, for numerical stability, and its sum of exponentials),
-not just `xs[i]`, so it can't be a single-element kernel that `map` drives.
-It's a small CPU-side orchestration of `ember.tensor`'s `reduce_rows` and
-`broadcast_op_rows` instead — see the next section and
-`examples/softmax.mojo`.
+Written against `FloatLike` like everything else, which is what makes them
+differentiable and extra-precise without a second implementation:
 
-**`ember.erf`** — `erf(x)` / `erfc(x)`, the error function and its
-complement, via the Abramowitz & Stegun 7.1.26 rational approximation (max
-absolute error ~1.5e-7), extended to negative `x` with `copysign`.
+- **`numax.solve`** — `newton`, `halley`, and a branchless `bisection`. The
+  caller supplies only `f`: the solver evaluates it at `Dual` (or nested
+  `Dual` for Halley's second derivative) and reads the derivatives off the
+  result, so there's no separate formula to write or keep in sync.
+- **`numax.quadrature`** — `gauss_legendre`, `simpson`, `trapezoid`. The
+  Gauss nodes are roots of a Legendre polynomial found by the `newton`
+  above, computed at compile time, so the self-referential chain costs
+  nothing at run time. Integrating at `Dual` differentiates the integral
+  itself with respect to its limits or parameters.
+- **`numax.linalg`** — compile-time-sized `cholesky`, unpivoted `lu`,
+  `solve`, `inverse`, `det`, `matmul`/`matvec`, and an `O(n)`
+  `tridiagonal_solve`. MAX's own `linalg` is faster on large raw-`dtype`
+  matrices and should be preferred there; this exists for the small
+  matrices inside a per-element kernel, and because calling `cholesky` at
+  `Dual` differentiates it — which is what a Gaussian process or Kalman
+  filter needs and a BLAS call can't give. No pivoting, deliberately; see
+  the module docstring.
+- **`numax.fft`** — radix-2 Cooley-Tukey `fft`/`ifft` and
+  `circular_convolve` at a compile-time size, over `Complex[Inner]`. Sized
+  for the small transforms that appear inside a per-element kernel, and
+  differentiable: `fft` over `Complex[Dual[...]]` returns the transform and
+  its derivative with no adjoint rule anywhere.
+- **`numax.interp`** — `horner`, natural cubic splines on a uniform grid,
+  and near-minimax `chebyshev_fit`/`chebyshev_eval`. Uniform grids only:
+  locating an arbitrary knot interval is a per-lane binary search, which
+  is exactly what the fixed-work rule rules out.
+- **`numax.distributions`** — PDFs, CDFs, and quantiles for the normal,
+  exponential, gamma, chi-square, beta, Student-t, F, Poisson, and
+  binomial families. Nearly all composition: a CDF is a special function
+  already here under a change of variables, so each one inherits
+  differentiability from it. Evaluating any `*_cdf` at `Dual` returns the
+  matching PDF, which is how the two are tested against each other.
+- **`numax.ode`** — fixed-step `rk4`, `rk4_system`, and Dormand-Prince
+  `dopri5`. Integrating at `Dual` returns sensitivities alongside the
+  solution, with no variational equation or adjoint pass; because a
+  fixed-step integrator has no data-dependent control flow, a whole
+  trajectory also fits inside a `map[gpu=True]` kernel body, so an
+  ensemble runs one thread per initial condition.
 
-**`ember.gamma`** — `gamma(x)` / `lgamma(x)`, via a 9-term Lanczos
-approximation (`x > 0` — no reflection formula, since that needs `sin`,
-which isn't in `FloatLike`); `gammainc(a, x)` / `gammaincc(a, x)`, the
-regularized lower/upper incomplete gamma functions, via a fixed 100-term
-series (most accurate when `x` isn't much larger than `a`; no
-continued-fraction branch for the opposite regime).
+```mojo
+def cos_minus_x[U: FloatLike](x: U) -> U:
+    return x.cos() + (-x)
 
-**`ember.bessel`** — `bessel_j0(x)`, the order-zero Bessel function of the
-first kind, via the Abramowitz & Stegun 9.4.1 polynomial (valid for
-`|x| <= 3`, max absolute error ~5e-8; no asymptotic branch for `|x| > 3`
-yet).
+var root = newton[f=cos_minus_x](Plain[dtype, width](1.0))  # no f' needed
+```
 
-**`ember.lambertw`** — `lambertw(x)`, the principal branch of the Lambert W
-function (`x >= 0`), via Halley's method seeded from `ln(1 + x)`.
-
-`gamma`/`gammainc`/`lambertw` all use a **fixed** number of terms or
-iterations rather than a data-dependent convergence check — a GPU thread
-can't branch per-lane on "has this series converged yet" the way a scalar
-loop could, so each trades adaptive precision for a bounded, uniform amount
-of work. See `examples/special_functions.mojo`, which also exercises their
-derivatives via `Dual` (`Gamma'(x) = Gamma(x) * digamma(x)` and
-`dW/dx = W(x) / (x*(1+W(x)))` fall out with no extra code).
+Every iteration count here is fixed rather than tolerance-driven. That is a
+deliberate constraint the whole library holds to: a `FloatLike` value may be
+a SIMD vector whose lanes disagree about whether they have converged, and
+there is no way to branch per lane, so every kernel does a fixed amount of
+uniform work and selects per lane arithmetically instead. The cost is
+accuracy at the extremes of a domain (documented per function); the benefit
+is that all of this is launchable inside a GPU thread unmodified. Adaptive
+variants are out of scope rather than missing.
 
 ## Tensors
 
-`ember.tensor` drives a `FloatLike` kernel over MAX's `TileTensor` — the same
-tensor type `TileTensor` uses for both CPU- and GPU-resident data — instead
-of a hand-rolled pointer loop:
+`numax.tensor` drives a `FloatLike` kernel over MAX's `TileTensor` — the same
+tensor type used for both CPU- and GPU-resident data — instead of a
+hand-rolled pointer loop, picking CPU or GPU with one `gpu: Bool`
+compile-time parameter rather than two differently-named functions:
 
 ```mojo
-from ember.tensor import map  # CPU-backed TileTensor, one fixed width
-from ember.tensor import map_simd  # CPU-backed TileTensor, native SIMD width + scalar tail
-from ember.tensor import map_gpu  # DeviceBuffer-backed TileTensor, launched via enqueue_function
-```
+from numax.tensor import map
 
-`map` and `map_gpu` take the same three ingredients: `kernel` (a
-`FloatLike`-generic function, e.g. `gaussian[Plain[dtype, 1]]`), `wrap` (raw
-`SIMD` in, `T` out), and `unwrap` (`T` in, raw `SIMD` out — the caller's
-choice of which field of `T` is "the answer", since `Dual` and `Compensated`
-carry two). `map` walks a CPU tensor with a loop at one fixed `width`;
-`map_gpu` is the body of one GPU thread, launched once per element via
-`DeviceContext.enqueue_function` — GPU parallelism comes from thread count,
-not per-thread SIMD registers, so it stays one-element-per-thread rather than
-vectorizing.
-
-`map_simd` is the CPU entry point that gets real SIMD width without the
-caller doing the arithmetic: give it one `step` function generic over its own
-width (`def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w]`, typically `wrap`
-→ kernel → `unwrap` composed inline), and a `width` (usually
-`simd_width_of[dtype]()`), and it walks the tensor in non-overlapping
-`width`-wide groups via `TileTensor.vectorize()`, then finishes off whatever
-doesn't divide evenly with a scalar (`width=1`) tail loop using the same
-`step`:
-
-```mojo
 def gaussian_step[w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return gaussian(Plain[dtype, w](x)).v
 
-map_simd[width = simd_width_of[dtype](), step=gaussian_step](xs, ys)
+# CPU: native SIMD width via TileTensor.vectorize(), scalar tail for the rest.
+map[width = simd_width_of[dtype](), step=gaussian_step](xs, ys)
+
+# GPU: the body of one thread, launched once per element.
+ctx.enqueue_function[map[step=gaussian_step, gpu=True]](
+    xs, ys, grid_dim=..., block_dim=...
+)
 ```
 
-`ember.tensor` also has `reduce`/`reduce_block_gpu` (fold a whole tensor down
-to one value, e.g. a sum or max) and the 2D row-wise pair
-`reduce_rows`/`reduce_rows_gpu` + `broadcast_op_rows`/`broadcast_op_rows_gpu`
-(fold each row to one value; combine a 2D tensor with a per-row value) --
-see `examples/softmax.mojo`, which is what these two exist for.
+`map_threaded` is the same walk distributed across CPU cores by
+`max.algorithm.elementwise`, taking the identical `step` plus a
+`DeviceContext(api="cpu")`. It's worth 3-5x above a million elements and
+costs more than it saves below ~250K — and above a million it beats this
+machine's own GPU path too, since a single elementwise pass has to be large
+before GPU dispatch pays for itself. It stays a separate name because
+`map`'s signature is shared with the GPU kernel body, which cannot take a
+host-side context argument. See `bench/README.md` for the sweep and for the
+one behavioral difference (the threaded path flushes denormals to zero).
+
+`map` and `reduce` accept a `TileTensor` of any rank directly (coalesced
+internally before the flat walk). `reduce_axis` folds any rank along any
+axis and `broadcast_op_axis` combines a tensor with one missing that axis,
+so the two compose into fold-then-broadcast pipelines;
+`reduce_rows`/`broadcast_op_rows` are the rank-2 special cases `softmax` is
+built from. A second `map` overload takes two input tensors and a
+two-argument `step` (`out[i] = step(lhs[i], rhs[i])`) for the cases needing
+a second buffer to read from; anything beyond that composes inside `step`
+rather than chaining `map` calls, which is what keeps a `FloatLike` kernel
+a single fused pass — worth a measured 2-3x on both CPU and GPU, see
+`bench/README.md`. `step`/`combine` are plain,
+non-capturing functions passed as compile-time parameters on both the CPU
+and GPU paths — required for the GPU path to work through
+`DeviceContext.enqueue_function`, and kept the same shape on CPU so `map`
+has one signature instead of two. See `numax/tensor.mojo`'s module
+docstring for the full rationale.
+
+A NumPy-named forward layer over `TileTensor` — `zeros`, `ones`,
+`arange`, `linspace`, `reshape`, `transpose`, `stack`, `split`, and the
+rest of the array-creation/manipulation surface — is specified in
+[`parity.mdc`](.cursor/rules/parity.mdc)'s Track F and on the v0.2+
+roadmap in [`design-v0.1.mdc`](.cursor/rules/design-v0.1.mdc). It's a
+thin layer over MAX's `layout` package (no competing array type),
+deliberately scoped against the composable-type spine.
 
 ## Examples
 
-- `examples/gaussian.mojo` — the `Plain`/`Dual`/`Compensated` three-ways demo
-  over 4096 points, walked with `ember.tensor.map_simd` at the CPU's native
-  SIMD width, with a max-error check against a `Float64` reference.
-- `examples/activations.mojo` — `sigmoid`, `swish`, `tanh`, `relu`,
-  `leaky_relu`, and `gelu` differentiated via `Dual`, checked against their
-  closed-form derivatives.
-- `examples/gaussian_gpu.mojo` — the same `gaussian` kernel and `Plain`/
-  `Dual`/`Compensated` types as `examples/gaussian.mojo`, run on the GPU via
-  `ember.tensor.map_gpu` and `DeviceContext`. All three are built entirely
-  from `SIMD` lanes already on the device side, so no code changes at all
-  versus the CPU example.
-- `examples/softmax.mojo` — row-wise softmax over a 2D `TileTensor`, on CPU
-  via `ember.special.softmax` and on GPU via the same
-  `reduce_rows_gpu`/`broadcast_op_rows_gpu` primitives hand-launched as a
-  four-kernel sequence, checked against each other and against each row
-  summing to 1.
-- `examples/special_functions.mojo` — `gamma`/`lgamma`, `gammainc`,
-  `bessel_j0`, and `lambertw`, run over `Dual` to get derivatives
-  (`Gamma'(x) = Gamma(x)*digamma(x)`, `dW/dx = W(x)/(x*(1+W(x)))`) with no
-  extra code in either kernel.
+- `examples/gaussian.mojo` — `Plain`/`Dual`/`Compensated` three ways, via
+  `numax.tensor.map` at native SIMD width, checked against a reference.
+- `examples/activations.mojo` — activations differentiated via `Dual`,
+  checked against their closed-form derivatives.
+- `examples/gaussian_gpu.mojo` — the same kernel and types, run on GPU via
+  `numax.tensor.map[gpu=True]`, no code changes versus the CPU example.
+- `examples/softmax.mojo` — row-wise softmax on CPU and GPU, checked against
+  each other and against each row summing to 1.
+- `examples/special_functions.mojo` — every special function above,
+  differentiated via `Dual`.
+- `examples/complex.mojo` — `Complex[Plain]` arithmetic, plus
+  `Complex[Dual[Plain]]` differentiating `z^2` holomorphically.
+- `examples/gradient.mojo` — `Gradient[Plain, 2]` recovering both partial
+  derivatives of a two-variable kernel from one call.
+- `examples/hessian.mojo` — `Gradient[Dual[Plain], 2]` producing a full
+  Hessian (and Hessian-vector products) purely by nesting, with no
+  second-order code in either type.
+- `examples/quadrature.mojo` — root-finding from `f` alone, 8-point
+  Gauss-Legendre against a 64-point uniform grid, and differentiating
+  through an integral.
+- `examples/ode.mojo` — 1024 ODE trajectories, one GPU thread each, with
+  solution sensitivities from the same integrator.
 
 ## GPU
 
-A GPU kernel in Mojo is a plain function; the `DevicePassable` trait only
-constrains values crossing the host/device boundary as a kernel's arguments
-(buffers, pointers, scalars, and `TileTensor` itself), not whatever a kernel
-builds from them internally. `Plain` and `Dual` hold nothing but `SIMD`
-fields with no pointers or allocations of their own, so neither needs any
-change to run inside a kernel body — `examples/gaussian_gpu.mojo` imports the
-exact same `gaussian`, `Plain`, and `Dual` the CPU example does, and drives
-them with `ember.tensor.map_gpu` instead of `map`.
-
-`Compensated` used to be the exception, for a mundane reason rather than a
-fundamental one: its `exp()` built its coefficient table as an
-`Array[Float64, ...]` at runtime, and Apple's Metal backend has no float64
-support at all, so that kernel failed to compile for GPU regardless of
-`Self.dtype`. It's fixed now — each coefficient is split into a `dtype`-
-native hi/lo pair at compile time (see `_split_f64` in
-`ember/compensated.mojo`), so the only float64 arithmetic left happens in
-the Mojo compiler itself, never in generated device code.
-
-## What's not here (yet)
-
-- **Runtime ISA dispatch.** Mojo compiles for one target rather than carrying
-  every backend in a single binary and picking at runtime, so `ember` doesn't
-  attempt that kind of dispatch.
-- **A wider special-function library.** `gamma`/`gammainc` are scoped to
-  `x > 0`, `bessel_j0` to `|x| <= 3`, and `lambertw` to `x >= 0` -- reflection
-  formulas, the asymptotic Bessel regime, other branches/orders, and
-  elliptic integrals aren't implemented yet (see `.cursor/rules/strategy.mdc`
-  for why each is scoped the way it is).
-- **Multi-variable duals / complex numbers.** `Dual[Inner]` nests for
-  higher-order *single-variable* derivatives (`Dual[Dual[Plain[...]]]` gets a
-  second derivative), but there's no multi-input `Dual<V, N>` gradient or
-  `Complex<V>` yet.
-- **Multi-dimensional `ember.tensor` walks.** `map`/`map_simd`/`map_gpu` are
-  rank-1 — flatten a multi-dimensional `TileTensor` with `.coalesce()` first
-  if its storage is contiguous.
+A GPU kernel in Mojo is a plain function; `DevicePassable` only constrains
+values crossing the host/device boundary as kernel arguments (buffers,
+pointers, scalars, `TileTensor`), not what a kernel builds internally. Every
+`FloatLike` conformer here is built entirely from `SIMD` fields with no
+pointers or allocations of its own, so all of them — including
+`Compensated`, once its `exp()` coefficients moved to compile-time
+`dtype`-native constants instead of a runtime `float64` table — run inside a
+kernel body unchanged. `examples/gaussian_gpu.mojo` imports the exact same
+`gaussian`, `Plain`, and `Dual` the CPU example does and drives them with
+`map[gpu=True]` instead of `map[gpu=False]`.
 
 ## Testing
 
 ```bash
-pixi run test-dual
-pixi run test-compensated
-pixi run test-special
-pixi run test-tensor
-pixi run test-tensor-reduce
-pixi run test-activations
-pixi run test-erf
-pixi run test-gamma
-pixi run test-bessel
-pixi run test-lambertw
-pixi run test-decimal
+pixi run tests         # everything, in sequence
+pixi run test-gradient # or any single suite -- see pixi.toml for the full list
 ```
 
 Each test file uses Mojo's `TestSuite` for automatic discovery — see
 `tests/` for the full suite, including the numerical margins that back the
-precision claims above. `pixi run tests` runs all of them in sequence, and
-is what CI runs on every push (see `.github/workflows/ci.yml`) alongside the
-CPU examples (`pixi run examples-cpu`) — the GPU examples need real Metal
-hardware, so they're a local-only check for now.
+precision claims above. `pixi run tests` is what CI runs on every push (see
+`.github/workflows/ci.yml`) alongside the CPU examples
+(`pixi run examples-cpu`) — the GPU examples need real Metal hardware, so
+they're a local-only check for now.
 
 ## Benchmarks
 
 ```bash
-pixi run bench
+pixi run bench          # CPU: numax.tensor.map vs. a hand-rolled raw-SIMD loop
+pixi run bench-gpu      # CPU vs. GPU (map[gpu=True]) across a size sweep
+pixi run bench-roofline # GPU: how much memory bandwidth map[gpu=True] reaches
+pixi run bench-numpy    # cross-language: NumPy, CPU
+pixi run bench-mlx      # cross-language: Apple MLX, CPU + GPU
+pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
+pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON)
 ```
 
-`benchmarks/bench_tensor_map.mojo` runs the same `gaussian(x) = exp(-x^2)`
-sweep two ways — a hand-rolled `std.algorithm.functional.vectorize` loop over
-raw `SIMD`, and `ember.tensor.map_simd` over `Plain` — and reports both
-timings side by side. The trait-and-`TileTensor` layer costs nothing
-measurable over the raw loop it's standing in for; that's the whole basis for
-"swap `Plain` for `Dual` or `Compensated` for free."
+`bench/bench_tensor_map.mojo` runs the same `gaussian(x) = exp(-x^2)`
+sweep two ways — a hand-rolled raw-`SIMD` loop, and `numax.tensor.map` over
+`Plain` — and reports both timings side by side. The trait-and-`TileTensor`
+layer costs nothing measurable over the raw loop it's standing in for;
+that's the whole basis for "swap `Plain` for `Dual` or `Compensated` for
+free." `bench/bench_tensor_map_gpu.mojo` runs the same kernel through
+`map[gpu=True]` at six sizes and shows where the GPU path actually earns
+back its own dispatch overhead over the CPU path (on an Apple M3 Pro,
+somewhere between 1M and 4M elements — below that, CPU wins).
+
+`bench/bench_gpu_roofline.mojo` answers a different question: not "is the
+GPU faster than the CPU" but "how close to the memory bandwidth ceiling is
+the GPU path, and what is holding it back". It separates memory traffic from
+arithmetic by running an identity copy alongside `gaussian`, and sweeps
+per-thread `width` against `block_dim`. The answers on this machine —
+bandwidth-bound at ~84% of peak, with thread coarsening buying nothing — are
+recorded in its module docstring, along with the two benchmark measurement
+bugs it caught.
+
+`bench/numpy/`, `bench/mlx/`, `bench/torch/`, and `bench/thermite/` go
+further and compare `numax` against NumPy, Apple MLX (CPU + the same Metal
+GPU), PyTorch (eager and `torch.compile`'d, CPU + GPU), and the Rust
+`thermite` crate this project's pattern was ported from — each is a real
+dependency of its own pixi environment (`bench-python`, `bench-rust`, both
+solving on macOS and Linux), so the `pixi run` tasks above install what
+they need and run them, no manually-managed virtualenv or system `cargo`
+required. See `bench/README.md` for methodology, how to run each, and the
+full results table.
+
+## Performance
+
+Measured on an Apple M3 Pro (12 CPU cores, 36GB unified memory, ~150 GB/s
+memory bandwidth), same `gaussian(x) = exp(-x^2)` kernel, `float32`, six
+sizes from 64K to ~67M elements. Throughput in millions of elements/sec —
+higher is better.
+
+Read the ceiling before the table. This kernel moves 8 bytes per element (a
+float32 read and a write) however it is written, so 150 GB/s ÷ 8 =
+**18,750 M elem/s is the hardware limit**, and at large `n` every library
+below is competing for bandwidth rather than for arithmetic. That is
+measured, not assumed: an identity copy with no arithmetic at all runs at
+the same speed as `gaussian` through the same walk (118 vs 120 GB/s at 67M),
+so the `exp` is free.
+
+**CPU-only:**
+
+`numax` has two CPU walks — serial `map` (one thread, SIMD-vectorized) and
+`map_threaded` (`max.algorithm.elementwise`, multi-threaded).
+
+| n | numax `map` | numax `map_threaded` | thermite (NEON) | NumPy | MLX | torch eager | torch compile |
+|---|---|---|---|---|---|---|---|
+| 65,536 | 2,348 | 3,744 | 1,706 | 680 | 249 | 1,194 | 576 |
+| 262,144 | 2,340 | 2,776 | 1,298 | 660 | 811 | 1,737 | 2,214 |
+| 1,048,576 | 2,355 | 11,560 | 1,311 | 511 | 1,586 | 2,165 | 3,544 |
+| 4,194,304 | 2,349 | 10,099 | 1,508 | 626 | 1,647 | 2,221 | 4,136 |
+| 16,777,216 | 2,343 | 8,736 | 1,627 | 508 | 1,893 | 1,989 | 4,015 |
+| 67,108,864 | 2,347 | 9,026 | 1,632 | 493 | 1,954 | 1,935 | 4,046 |
+
+**GPU (same Metal device):**
+
+Two columns per library, because where the device synchronize goes changes
+the answer by more than 2x: **per-call** synchronizes inside every timed
+iteration (the latency of one call), **amortized** enqueues all of them and
+synchronizes once (steady-state throughput). An earlier version of this
+table mixed `numax`'s per-call numbers with PyTorch's amortized ones, which
+flattered PyTorch by ~1.6x at the top end.
+
+| n | numax per-call | numax amortized | torch compile per-call | torch compile amortized | MLX per-call | torch eager amortized |
+|---|---|---|---|---|---|---|
+| 65,536 | 301 | 1,280 | 231 | 799 | 328 | 888 |
+| 262,144 | 639 | 4,064 | 1,007 | 4,800 | 864 | 2,580 |
+| 1,048,576 | 3,230 | 13,206 | 3,320 | 9,119 | 3,242 | 4,612 |
+| 4,194,304 | 7,897 | 13,902 | 9,615 | 13,080 | 3,684 | 4,423 |
+| 16,777,216 | 11,722 | 15,086 | 12,332 | 15,695 | 4,514 | 5,082 |
+| 67,108,864 | 14,465 | 15,755 | 13,831 | 14,380 | 4,866 | 4,809 |
+
+At 67M amortized, `numax` reaches 126 GB/s — **84% of the hardware
+ceiling** — against `torch.compile`'s 115 GB/s (77%). Across the sweep the
+two trade wins by a few percent in either direction, which given run-to-run
+spread is a tie rather than a ranking: both are pressed against the same
+roofline, and neither has much room left. `numax`'s threaded CPU walk is
+the fastest CPU number above ~1M, and beats this machine's own GPU path
+per-call until about 4M elements.
+
+Two caveats worth stating plainly. `map_threaded` is noisy (individual runs
+at 1M ranged 7,955-12,307; the table is a median of three), and MLX's own
+amortized column is omitted because MLX's laziness forces that benchmark to
+hold ten live output buffers, which makes its amortized number worse than
+its per-call one for reasons unrelated to MLX's speed. See
+`bench/README.md` for the full methodology, both measurement bugs this
+sweep uncovered, and an honest read of every baseline's caveats.
+
+## Accuracy
+
+```bash
+pixi run accuracy
+```
+
+Every approximation here documents an error bound taken from the literature
+its formula came from. `bench/accuracy/` checks that this implementation of
+each one actually delivers it, measuring max absolute, relative, and ULP
+error per function per domain against
+[mpmath](https://mpmath.org/) references computed at 50 decimal digits.
+The references are checked in, so the harness runs in the default Mojo
+environment with no Python.
+
+The bounds hold. A&S 7.1.26's ~1.5e-7 for `default_erf_approx` measures
+1.38e-07; A&S 17.3.36's ~2e-8 for `elliptic_e` measures 1.57e-08, which
+also confirms the `b4` coefficient recovered by fitting after every OCR'd
+copy of the source table turned out to be misdigitized; the Bessel family
+lands at 1.6e-08 to 3.9e-08 absolute across both its branches and their
+blend. The orthogonal polynomial recurrences are exact to within rounding,
+at 3 to 253 ULP.
+
+One caveat governs the whole table, and the harness found it: Mojo's
+`std.math` `exp`, `log`, and `erf` are not correctly rounded at float64
+(`exp(1.0)` is wrong from the 13th significant digit, while `sin` and
+`sqrt` are exact). Every `numax` function built on `exp`/`ln` inherits that
+floor, so their measured errors are an upper bound on their own error
+rather than a measurement of it. At float32 — the `dtype` this library is
+normally used at — the floor sits two orders of magnitude below the
+representable resolution and cannot be observed. See
+`bench/accuracy/README.md` for the full table and the defect writeup.
 
 ## License
 
-MIT.
+[MIT](LICENSE)
+
+## Change log
+
+- **v0.1.0** — the project formerly named `ember` is renamed to
+  `numax` (Numerical MAX). Repositioned explicitly as the
+  NumPy/SciPy layer on Mojo that uses MAX's core abstractions
+  (`TileTensor`, `max.linalg`, `max.algorithm`, `max.random`) as the
+  substrate, with the composable-type layer over them. Same code, same
+  trait, same conformers, same algorithms, same benchmarks; only the
+  name changed. No API signature changes. See
+  [`design-v0.1.mdc`](.cursor/rules/design-v0.1.mdc) for the rename's
+  rollup and the v0.2+ phased roadmap (`numax.array`, `numax.statistics`,
+  `numax.io`, `numax.random`).

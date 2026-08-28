@@ -1,8 +1,8 @@
-"""Tests for `ember.special` against closed-form values and derivatives."""
+"""Tests for `numax.special` against closed-form values and derivatives."""
 
 from std.testing import TestSuite, assert_almost_equal
 
-from ember import Dual, Plain, gaussian, sigmoid, swish, tanh
+from numax import Dual, Plain, gaussian, sigmoid, swish, tanh
 
 comptime dtype = DType.float64
 comptime width = 1

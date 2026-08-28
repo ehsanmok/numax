@@ -1,16 +1,137 @@
 [workspace]
 authors = ["ehsanmok <ehsanmok@users.noreply.github.com>"]
 channels = ["https://conda.modular.com/max", "conda-forge"]
-name = "ember"
-platforms = ["osx-arm64"]
+name = "numax"
 version = "0.1.0"
+preview = ["pixi-build"]
+
+# The plain "osx-arm64"/"linux-64"/"linux-aarch64" entries are what the
+# default (mojo/max) environment solves against. The "-mac14"/"-glibc235"
+# aliases below are for feature.bench-python only: mlx/torch only ship
+# wheels for macOS 14+ / glibc 2.35+ (manylinux_2_35), both newer than
+# pixi's default assumed `__osx`/`__glibc` baseline, which makes the pypi
+# solver reject every wheel for those two otherwise.
+platforms = [
+    "osx-arm64",
+    { name = "osx-arm64-mac14", platform = "osx-arm64", macos = "14.0" },
+    "linux-64",
+    { name = "linux-64-glibc235", platform = "linux-64", glibc = "2.35" },
+    "linux-aarch64",
+    { name = "linux-aarch64-glibc235", platform = "linux-aarch64", glibc = "2.35" },
+]
+
+[package]
+name = "numax"
+version = "0.1.0"
+
+[package.build]
+# This channel set no longer carries any 0.3.x build with a resolvable
+# `pixi-build-api-version` (only >=6 has candidates today), and the
+# installed pixi (0.76.1) already speaks that version. ">=0.4" is the
+# floor that actually solves; unpinned "*" also solves today but would
+# silently ride whatever the channel publishes next.
+backend = { name = "pixi-build-rattler-build", version = ">=0.4" }
 
 [dependencies]
 mojo = "==1.0.0"
 max = "==26.5"
 
+# Cross-language baselines for bench/{numpy,mlx,torch,thermite}/ -- kept as
+# separate features/environments, not the default one, so `pixi install`
+# for the Mojo library itself doesn't also pull in NumPy/MLX/PyTorch/a Rust
+# toolchain. `no-default-feature` on both below means neither pulls in
+# mojo/max either; they have nothing to do with each other.
+[feature.bench-python]
+platforms = ["osx-arm64-mac14", "linux-64-glibc235", "linux-aarch64-glibc235"]
+
+[feature.bench-python.dependencies]
+python = ">=3.11,<3.13"
+
+[feature.bench-python.pypi-dependencies]
+numpy = ">=2.0"
+mlx = ">=0.30"
+torch = ">=2.5"
+# Reference values for the accuracy harness. Only needed to *regenerate*
+# bench/accuracy/reference_data.mojo, which is checked in -- `pixi run
+# accuracy` itself runs in the default Mojo environment.
+mpmath = ">=1.3"
+
+[feature.bench-python.tasks]
+bench-numpy = { cmd = "python3 gaussian.py", cwd = "bench/numpy" }
+bench-mlx = { cmd = "python3 gaussian.py", cwd = "bench/mlx" }
+bench-torch = { cmd = "python3 gaussian.py", cwd = "bench/torch" }
+accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
+
+[feature.bench-rust]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
+
+[feature.bench-rust.dependencies]
+rust = ">=1.95"
+
+[feature.bench-rust.tasks]
+bench-thermite = { cmd = "cargo run --release", cwd = "bench/thermite" }
+
+# ------------------------------------------------------------------
+# Dev feature: everything beyond "run the library + tests". Activate
+# via `pixi run -e dev <task>` or `pixi shell -e dev`. End users of the
+# library (and CI's default test matrix) don't need these deps, so the
+# default environment stays lean.
+# ------------------------------------------------------------------
+[feature.dev.dependencies]
+pre-commit = ">=4.2.0,<5"
+# mojodoc (the docs builder) is intentionally NOT a pixi dependency
+# here: as of this writing, mojodoc's own `[package.build]` pin
+# (`pixi-build-rattler-build ==0.3.13`) is incompatible with numax's
+# (`>=0.4`) -- mixing the two in a single pixi solve fails with
+# "no viable candidates for pixi-build-api-version >=4,<5", and the
+# 0.3.x series no longer has candidates on the channels numax solves
+# against. The sibling json library hits the same wall.
+#
+# The `docs`/`docs-build` tasks below invoke mojodoc's CLI directly via
+# `node` against a sibling checkout at `../mojodoc`, which is the
+# pattern the user has confirmed works locally. CI (the docs.yaml
+# workflow) builds the docs the same way. To use a different mojodoc
+# location, set the MOJODOC_CLI env var:
+#
+#   pixi run -e dev docs-build       # uses ../mojodoc by default
+#   MOJODOC_CLI=/path/to/mojodoc/packages/cli/dist/index.js pixi run -e dev docs-build
+#
+# This is deliberately a CLI-shim approach rather than a pixi dep
+# until mojodoc's [package.build] pin is bumped upstream.
+
+[feature.dev.tasks]
+install-pre-commit = "pre-commit install"
+# `format` lives in the dev feature (not the default env) because it
+# depends-on `install-pre-commit`, which needs pre-commit installed.
+format = { cmd = "mojo format numax examples tests bench", depends-on = ["install-pre-commit"] }
+format-check = { cmd = "bash -c 'mojo format numax examples tests bench && git diff --exit-code numax examples tests bench || (echo \"Error: Code is not formatted. Run \\\"pixi run -e dev format\\\" to fix.\" && exit 1)'" }
+# Docs -- `--open` previews in the browser; build produces target/doc/
+# which the docs.yaml workflow publishes to GitHub Pages.
+#
+# Invokes mojodoc's node CLI. Defaults to ../mojodoc/packages/cli/dist/index.js
+# (the standard sibling-checkout location). To use a different path,
+# set MOJODOC_CLI before invoking the task:
+#
+#   MOJODOC_CLI=/path/to/mojodoc/packages/cli/dist/index.js pixi run -e dev docs-build
+#
+# See the comment above [feature.dev.dependencies] for why mojodoc is
+# not a pixi dep (build-backend pin mismatch).
+docs      = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --open'" }
+docs-build = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --out-dir target/doc --base-url /numax/'" }
+
+[environments]
+# `default` stays lean -- just mojo + max, enough to build + test the library.
+# `dev` layers mojodoc tooling + pre-commit on top of the default env's
+# mojo + max (it inherits the default feature), so `pixi run -e dev docs-build`
+# can drive mojo doc through the mojodoc CLI. The bench-python/bench-rust
+# envs keep their own no-default-feature isolation; the dev env does not,
+# because mojodoc invokes mojo at build time.
+default = { features = [], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+bench-python = { features = ["bench-python"], no-default-feature = true }
+bench-rust = { features = ["bench-rust"], no-default-feature = true }
+
 [tasks]
-format = "mojo format ember examples tests benchmarks"
 test-dual = "mojo -I . tests/test_dual.mojo"
 test-compensated = "mojo -I . tests/test_compensated.mojo"
 test-special = "mojo -I . tests/test_special.mojo"
@@ -22,14 +143,91 @@ test-gamma = "mojo -I . tests/test_gamma.mojo"
 test-bessel = "mojo -I . tests/test_bessel.mojo"
 test-lambertw = "mojo -I . tests/test_lambertw.mojo"
 test-decimal = "mojo -I . tests/test_decimal.mojo"
-tests = "mojo -I . tests/test_dual.mojo && mojo -I . tests/test_compensated.mojo && mojo -I . tests/test_special.mojo && mojo -I . tests/test_tensor.mojo && mojo -I . tests/test_tensor_reduce.mojo && mojo -I . tests/test_activations.mojo && mojo -I . tests/test_erf.mojo && mojo -I . tests/test_gamma.mojo && mojo -I . tests/test_bessel.mojo && mojo -I . tests/test_lambertw.mojo && mojo -I . tests/test_decimal.mojo"
-example-gaussian = "mojo -I . examples/gaussian.mojo"
-example-activations = "mojo -I . examples/activations.mojo"
-example-gaussian-gpu = "mojo -I . examples/gaussian_gpu.mojo"
-example-softmax = "mojo -I . examples/softmax.mojo"
-example-special-functions = "mojo -I . examples/special_functions.mojo"
-examples = "mojo -I . examples/gaussian.mojo && mojo -I . examples/activations.mojo && mojo -I . examples/softmax.mojo && mojo -I . examples/special_functions.mojo"
-# Same as `examples`, minus `softmax.mojo`, which launches a GPU kernel
-# alongside its CPU path -- this is what CI runs, on GPU-less runners.
-examples-cpu = "mojo -I . examples/gaussian.mojo && mojo -I . examples/activations.mojo && mojo -I . examples/special_functions.mojo"
-bench = "mojo -I . benchmarks/bench_tensor_map.mojo"
+test-sincos = "mojo -I . tests/test_sincos.mojo"
+test-elliptic = "mojo -I . tests/test_elliptic.mojo"
+test-complex = "mojo -I . tests/test_complex.mojo"
+test-gradient = "mojo -I . tests/test_gradient.mojo"
+test-legendre = "mojo -I . tests/test_legendre.mojo"
+test-beta = "mojo -I . tests/test_beta.mojo"
+test-hessian = "mojo -I . tests/test_hessian.mojo"
+test-sqrt = "mojo -I . tests/test_sqrt.mojo"
+test-solve = "mojo -I . tests/test_solve.mojo"
+test-quadrature = "mojo -I . tests/test_quadrature.mojo"
+test-ode = "mojo -I . tests/test_ode.mojo"
+test-distributions = "mojo -I . tests/test_distributions.mojo"
+test-linalg = "mojo -I . tests/test_linalg.mojo"
+test-interp = "mojo -I . tests/test_interp.mojo"
+test-fft = "mojo -I . tests/test_fft.mojo"
+test-interval = "mojo -I . tests/test_interval.mojo"
+# Listed as dependencies rather than one long `&&` chain so a new suite is
+# one line to add in one place; pixi runs them in the order given.
+tests = { depends-on = [
+    "test-dual",
+    "test-compensated",
+    "test-special",
+    "test-tensor",
+    "test-tensor-reduce",
+    "test-activations",
+    "test-erf",
+    "test-gamma",
+    "test-bessel",
+    "test-lambertw",
+    "test-decimal",
+    "test-sincos",
+    "test-elliptic",
+    "test-complex",
+    "test-gradient",
+    "test-legendre",
+    "test-beta",
+    "test-hessian",
+    "test-sqrt",
+    "test-solve",
+    "test-quadrature",
+    "test-ode",
+    "test-distributions",
+    "test-linalg",
+    "test-interp",
+    "test-fft",
+    "test-interval",
+] }
+example-gaussian = "mojo -I . examples/basic/gaussian.mojo"
+example-activations = "mojo -I . examples/basic/activations.mojo"
+example-gaussian-gpu = "mojo -I . examples/advanced/gaussian_gpu.mojo"
+example-softmax = "mojo -I . examples/intermediate/softmax.mojo"
+example-special-functions = "mojo -I . examples/intermediate/special_functions.mojo"
+example-complex = "mojo -I . examples/basic/complex.mojo"
+example-gradient = "mojo -I . examples/basic/gradient.mojo"
+example-hessian = "mojo -I . examples/basic/hessian.mojo"
+example-quadrature = "mojo -I . examples/intermediate/quadrature.mojo"
+example-ode = "mojo -I . examples/advanced/ode.mojo"
+examples = { depends-on = [
+    "examples-cpu",
+    "example-softmax",
+    "example-ode",
+] }
+# Every example except `softmax.mojo` and `ode.mojo`, which launch GPU
+# kernels alongside their CPU paths -- this is what CI runs, on GPU-less
+# runners.
+examples-cpu = { depends-on = [
+    "example-gaussian",
+    "example-activations",
+    "example-special-functions",
+    "example-complex",
+    "example-gradient",
+    "example-hessian",
+    "example-quadrature",
+] }
+bench = "mojo -I . bench/bench_tensor_map.mojo"
+bench-matmul = "mojo -I . bench/bench_matmul.mojo"
+bench-elementwise = "mojo -I . bench/bench_elementwise.mojo"
+# The fusion sweep runs a GPU half, so it needs real Metal hardware too.
+bench-fusion = "mojo -I . bench/bench_fusion.mojo"
+# Needs real Metal hardware, like the GPU examples -- a local-only check.
+bench-gpu = "mojo -I . bench/bench_tensor_map_gpu.mojo"
+# Diagnoses *why* the GPU path lands where it does: bandwidth vs arithmetic,
+# per-thread width, block size, and sync accounting. Metal hardware too.
+bench-roofline = "mojo -I . bench/bench_gpu_roofline.mojo"
+# Max error per function per domain against checked-in mpmath references.
+# CPU-only and hermetic, so CI can run it; regenerate the references with
+# `pixi run -e bench-python accuracy-gen` after changing a domain.
+accuracy = "mojo -I . -I bench/accuracy bench/accuracy/accuracy.mojo"

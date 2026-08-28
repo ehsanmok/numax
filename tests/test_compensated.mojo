@@ -1,4 +1,4 @@
-"""Tests for `ember.Compensated` against float64 references.
+"""Tests for `numax.Compensated` against float64 references.
 
 `dtype` is `float32` throughout, so a plain `float32` result is only good to
 about `1e-7`. Every assertion here checks that `value + error` -- the
@@ -10,7 +10,8 @@ recover the bits a bare `float32` would discard.
 from std.math import exp, log
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
-from ember import Compensated, Plain, erf
+from numax import Compensated, Plain
+from numax.numeric import default_erf_approx
 
 comptime dtype = DType.float32
 comptime width = 1
@@ -133,24 +134,40 @@ def test_ln_undoes_exp() raises:
     assert_true(abs(combined(roundtrip) - 2.5) < 1e-6)
 
 
-def test_erf_compensated_beats_plain_for_small_x() raises:
-    # `erf`'s rational approximation computes `1 - poly(x) * exp(-x^2)`,
-    # which is a near-total cancellation for small `x` -- exactly the
-    # pattern compensated arithmetic is built to survive. At x=1e-5, plain
-    # float32 loses most of its significant digits in that subtraction;
-    # the compensated pair should not.
+def test_erf_approx_compensated_beats_plain_for_small_x() raises:
+    # `default_erf_approx` (`numax.numeric`) computes `1 - poly(x) *
+    # exp(-x^2)`, a near-total cancellation for small `x` -- exactly the
+    # pattern compensated arithmetic is built to survive. At x=1e-5, that
+    # formula run in plain float32 loses most of its significant digits in
+    # the subtraction; run through `Compensated`'s `+`/`*`/`exp` instead,
+    # it shouldn't.
+    #
+    # This compares the *shared formula* at two precisions, not
+    # `Plain.erf()` (which no longer runs this formula at all -- it calls
+    # `std.math.erf` directly, a differently-conditioned implementation
+    # that sidesteps this cancellation entirely and beats both of the
+    # numbers compared here; see `test_erf_matches_known_values` above and
+    # `numax.numeric.default_erf_approx`'s docstring for why `Compensated`
+    # still carries this approximation on its own).
     var x = SIMD[dtype, width](1e-05)
     var reference: Float64 = 1.1283791670579e-05
 
-    var plain_err = abs(Float64(erf(Plain[dtype, width](x)).v) - reference)
+    var plain_err = abs(
+        Float64(default_erf_approx(Plain[dtype, width](x)).v) - reference
+    )
 
-    var c = erf(Compensated[dtype, width](x, SIMD[dtype, width](0)))
+    var c = default_erf_approx(
+        Compensated[dtype, width](x, SIMD[dtype, width](0))
+    )
     var compensated_err = abs(combined(c) - reference)
 
     assert_true(
         compensated_err < plain_err,
         msg=String(
-            "compensated erf should beat plain f32 for small x: compensated=",
+            (
+                "compensated erf_approx should beat plain f32 for small x:"
+                " compensated="
+            ),
             compensated_err,
             " plain=",
             plain_err,
