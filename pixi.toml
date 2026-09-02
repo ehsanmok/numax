@@ -5,6 +5,15 @@ name = "numax"
 version = "0.1.0"
 preview = ["pixi-build"]
 
+# The aliased platform entries below (`{ name = ..., platform = ..., glibc =
+# ... }`) are a newer-pixi manifest feature: an older pixi rejects the whole
+# file with a bare `expected a string, found table` pointing at the platforms
+# array, which says nothing about the actual problem. Declaring the floor here
+# turns that into "this project requires pixi '>=0.76', but you have pixi
+# X.Y.Z" plus a `pixi self-update` hint, because the version gate is checked
+# before the manifest is parsed.
+requires-pixi = ">=0.76"
+
 # The plain "osx-arm64"/"linux-64"/"linux-aarch64" entries are what the
 # default (mojo/max) environment solves against. The "-mac14"/"-glibc235"
 # aliases below are for feature.bench-python only: mlx/torch only ship
