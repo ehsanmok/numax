@@ -135,7 +135,7 @@ def _compare[
     step: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[
         DType.bool, w
     ],
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     comptime n = _product[*dims]()
@@ -151,7 +151,7 @@ def _predicate[
     dtype: DType,
     *dims: Int,
     step: def[w: Int](SIMD[dtype, w]) thin -> SIMD[DType.bool, w],
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[DType.bool, *dims]:
+](a: Tensor[dtype, *dims]) raises -> Tensor[DType.bool, *dims]:
     comptime n = _product[*dims]()
     var values = a.to_host()
     var out = List[Scalar[DType.bool]](length=n, fill=False)
@@ -162,7 +162,7 @@ def _predicate[
 
 def equal[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     """`a == b`, elementwise. `numpy.equal`."""
@@ -171,7 +171,7 @@ def equal[
 
 def not_equal[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     """`a != b`, elementwise. `numpy.not_equal`."""
@@ -180,7 +180,7 @@ def not_equal[
 
 def less[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     """`a < b`, elementwise. `numpy.less`."""
@@ -189,7 +189,7 @@ def less[
 
 def less_equal[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     """`a <= b`, elementwise. `numpy.less_equal`."""
@@ -198,7 +198,7 @@ def less_equal[
 
 def greater[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     """`a > b`, elementwise. `numpy.greater`."""
@@ -207,7 +207,7 @@ def greater[
 
 def greater_equal[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ]:
     """`a >= b`, elementwise. `numpy.greater_equal`."""
@@ -216,7 +216,7 @@ def greater_equal[
 
 def isnan[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ] where dtype.is_floating_point():
     """Which elements are NaN. `numpy.isnan`."""
@@ -225,7 +225,7 @@ def isnan[
 
 def isinf[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ] where dtype.is_floating_point():
     """Which elements are an infinity of either sign. `numpy.isinf`."""
@@ -234,7 +234,7 @@ def isinf[
 
 def isfinite[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ] where dtype.is_floating_point():
     """Which elements are neither NaN nor infinite. `numpy.isfinite`."""
@@ -243,7 +243,7 @@ def isfinite[
 
 def isposinf[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ] where dtype.is_floating_point():
     """Which elements are `+inf`. `numpy.isposinf`."""
@@ -252,7 +252,7 @@ def isposinf[
 
 def isneginf[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[
+](a: Tensor[dtype, *dims]) raises -> Tensor[
     DType.bool, *dims
 ] where dtype.is_floating_point():
     """Which elements are `-inf`. `numpy.isneginf`."""
@@ -261,41 +261,41 @@ def isneginf[
 
 def logical_and[
     *dims: Int
-](
-    mut a: Tensor[DType.bool, *dims], mut b: Tensor[DType.bool, *dims]
-) raises -> Tensor[DType.bool, *dims]:
+](a: Tensor[DType.bool, *dims], b: Tensor[DType.bool, *dims]) raises -> Tensor[
+    DType.bool, *dims
+]:
     """`a and b`, elementwise. `numpy.logical_and`."""
     return _compare[DType.bool, *dims, step=_and_step](a, b)
 
 
 def logical_or[
     *dims: Int
-](
-    mut a: Tensor[DType.bool, *dims], mut b: Tensor[DType.bool, *dims]
-) raises -> Tensor[DType.bool, *dims]:
+](a: Tensor[DType.bool, *dims], b: Tensor[DType.bool, *dims]) raises -> Tensor[
+    DType.bool, *dims
+]:
     """`a or b`, elementwise. `numpy.logical_or`."""
     return _compare[DType.bool, *dims, step=_or_step](a, b)
 
 
 def logical_xor[
     *dims: Int
-](
-    mut a: Tensor[DType.bool, *dims], mut b: Tensor[DType.bool, *dims]
-) raises -> Tensor[DType.bool, *dims]:
+](a: Tensor[DType.bool, *dims], b: Tensor[DType.bool, *dims]) raises -> Tensor[
+    DType.bool, *dims
+]:
     """`a xor b`, elementwise. `numpy.logical_xor`."""
     return _compare[DType.bool, *dims, step=_xor_step](a, b)
 
 
 def logical_not[
     *dims: Int
-](mut a: Tensor[DType.bool, *dims]) raises -> Tensor[DType.bool, *dims]:
+](a: Tensor[DType.bool, *dims]) raises -> Tensor[DType.bool, *dims]:
     """`not a`, elementwise. `numpy.logical_not`."""
     return _predicate[DType.bool, *dims, step=_not_step](a)
 
 
 def to_mask[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) raises -> Tensor[DType.bool, *dims]:
+](a: Tensor[dtype, *dims]) raises -> Tensor[DType.bool, *dims]:
     """Nonzero-means-true, as a boolean tensor.
 
     The bridge to `numax.sorting.extract`/`select`, which take a same-dtype
@@ -304,7 +304,7 @@ def to_mask[
     return _predicate[dtype, *dims, step=_nonzero_step[dtype, _]](a)
 
 
-def all_true[*dims: Int](mut a: Tensor[DType.bool, *dims]) raises -> Bool:
+def all_true[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
     """Whether every element is true. `numpy.all`, named around the builtin.
 
     Short-circuits on the first false, which is why this is tier 2.
@@ -316,7 +316,7 @@ def all_true[*dims: Int](mut a: Tensor[DType.bool, *dims]) raises -> Bool:
     return True
 
 
-def any_true[*dims: Int](mut a: Tensor[DType.bool, *dims]) raises -> Bool:
+def any_true[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
     """Whether any element is true. `numpy.any`. Short-circuits, tier 2."""
     var values = a.to_host()
     for i in range(_product[*dims]()):
@@ -328,8 +328,8 @@ def any_true[*dims: Int](mut a: Tensor[DType.bool, *dims]) raises -> Bool:
 def isclose[
     dtype: DType, *dims: Int
 ](
-    mut a: Tensor[dtype, *dims],
-    mut b: Tensor[dtype, *dims],
+    a: Tensor[dtype, *dims],
+    b: Tensor[dtype, *dims],
     rtol: Scalar[dtype] = 1e-5,
     atol: Scalar[dtype] = 1e-8,
 ) raises -> Tensor[DType.bool, *dims] where dtype.is_floating_point():
@@ -351,8 +351,8 @@ def isclose[
 def allclose[
     dtype: DType, *dims: Int
 ](
-    mut a: Tensor[dtype, *dims],
-    mut b: Tensor[dtype, *dims],
+    a: Tensor[dtype, *dims],
+    b: Tensor[dtype, *dims],
     rtol: Scalar[dtype] = 1e-5,
     atol: Scalar[dtype] = 1e-8,
 ) raises -> Bool where dtype.is_floating_point():
@@ -363,7 +363,7 @@ def allclose[
 
 def array_equal[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], mut b: Tensor[dtype, *dims]) raises -> Bool:
+](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Bool:
     """Whether every element is exactly equal. `numpy.array_equal`.
 
     Exact, so NaN compares unequal to itself and two tensors of NaN are not

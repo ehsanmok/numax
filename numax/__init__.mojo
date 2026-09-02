@@ -44,6 +44,34 @@ from .complex import Complex
 from .decimal import Decimal
 from .dual import Dual
 from .elliptic import elliptic_e, elliptic_k
+from .elementwise import (
+    absolute,
+    arccos,
+    arccosh,
+    arcsin,
+    arcsinh,
+    arctan,
+    arctan2,
+    arctanh,
+    cbrt,
+    clip,
+    diff,
+    exp,
+    exp2,
+    expm1,
+    gradient,
+    hypot,
+    log,
+    log10,
+    log1p,
+    log2,
+    maximum,
+    minimum,
+    remainder,
+    rsqrt,
+    sqrt,
+    tan,
+)
 from .erf import erf, erfc
 from .gamma import digamma, gamma, gammainc, gammaincc, lgamma
 from .gradient import Gradient
