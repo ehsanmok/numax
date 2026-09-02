@@ -181,6 +181,7 @@ test-sqrt = "mojo -I . tests/test_sqrt.mojo"
 test-solve = "mojo -I . tests/test_solve.mojo"
 test-quadrature = "mojo -I . tests/test_quadrature.mojo"
 test-ode = "mojo -I . tests/test_ode.mojo"
+test-optimize = "mojo -I . tests/test_optimize.mojo"
 test-distributions = "mojo -I . tests/test_distributions.mojo"
 test-linalg = "mojo -I . tests/test_linalg.mojo"
 test-interp = "mojo -I . tests/test_interp.mojo"
@@ -216,6 +217,7 @@ tests = { depends-on = [
     "test-solve",
     "test-quadrature",
     "test-ode",
+    "test-optimize",
     "test-distributions",
     "test-linalg",
     "test-interp",
@@ -239,6 +241,7 @@ example-hessian = "mojo -I . examples/basic/hessian.mojo"
 example-quadrature = "mojo -I . examples/intermediate/quadrature.mojo"
 example-statistics = "mojo -I . examples/intermediate/statistics.mojo"
 example-ode = "mojo -I . examples/advanced/ode.mojo"
+example-optimize = "mojo -I . examples/advanced/optimize.mojo"
 example-random-ensemble = "mojo -I . examples/intermediate/random_ensemble.mojo"
 examples = { depends-on = [
     "examples-cpu",
@@ -259,6 +262,7 @@ examples-cpu = { depends-on = [
     "example-hessian",
     "example-quadrature",
     "example-statistics",
+    "example-optimize",
 ] }
 bench = "mojo -I . bench/bench_tensor_map.mojo"
 bench-matmul = "mojo -I . bench/bench_matmul.mojo"

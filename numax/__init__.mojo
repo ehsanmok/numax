@@ -105,6 +105,13 @@ from .linalg import (
 )
 from .numeric import FloatLike
 from .ode import dopri5, dopri5_with_error, rk4, rk4_system
+from .optimize import (
+    MinimizeResult,
+    OptimizeResult,
+    bfgs,
+    brentq,
+    newton_tol,
+)
 from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 from .plain import Plain
 from .quadrature import gauss_legendre, simpson, trapezoid
