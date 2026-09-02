@@ -1,10 +1,21 @@
 name: CI
 
+# Prose-only changes cannot break the build, so they do not spend a matrix of
+# macOS and Linux runners. Mojo docstrings live in .mojo files and are still
+# covered: `**.md` and `docs/` are markdown and images only.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
 
 jobs:
   test:
