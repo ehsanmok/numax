@@ -78,7 +78,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/3c/2e/8d0c2ab90a8c1d9a24f0399058ab8519a3279d1bd4289511d74e909f060e/markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/3c/35/a9bf80a609e74e3b000fef598933235c908fcefcef9026042b8e6dfde2a9/nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/3f/70/4f193de89a48b71714e74602ee14d04e4019ad36a5a9f20c425776e72cd6/nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/40/ef/c326e05070f35c43a9775ce9dceaf155c8a9b2706a4c52d64e8999d4929a/mlx-0.32.0-cp312-cp312-manylinux_2_35_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/5f/67/cba3777620cdacb99102da4042883709c41c709f4b6323c10781a9c3aa34/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl
@@ -91,7 +90,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/a5/9f/be0a41ca4a4917abf5cb9ae0daff1a6060cc5de950aec0396de9f3b52bc5/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/a7/8e/50f46a9c0ce8d2861a394c1347caae037ea0431d2f67d7feb151cbc4649a/filelock-3.32.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a8/2f/7b57e29836ea8714f81e9898409196f47d772d5ddedddf1592eadb8ab743/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/b6/44/fb97e22367e1def980ea408596c332a4b2631b22988a8684429f1a42d10b/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c2/f3/d86c845465a2723ad7e1e5c36dcd75ddb82898b3f53be47ebd429fb2fa5d/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c3/68/483a78f5e8f31b08fb1bb671559968c0ca3a065ac7acabfc7cee55214fd6/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c4/6f/fb96d15db6f36d6eae4cafb998c2e0353bf59d7c4ea1662d7497f269134a/triton-3.7.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -4060,22 +4058,6 @@ packages:
   version: 1.15.1.6
   sha256: 08a3ecefae5a01c7f5117351c64f17c7c62efa5fffdbe24fc7d298da19cd0b44
   requires_python: '>=3'
-- pypi: https://files.pythonhosted.org/packages/40/ef/c326e05070f35c43a9775ce9dceaf155c8a9b2706a4c52d64e8999d4929a/mlx-0.32.0-cp312-cp312-manylinux_2_35_x86_64.whl
-  name: mlx
-  version: 0.32.0
-  sha256: 78804098c9f64978b6048ffdfd78689b9e06efa2a530c541d0bd73ce44d2f589
-  requires_dist:
-  - mlx-metal==0.32.0 ; sys_platform == 'darwin'
-  - ml-dtypes ; extra == 'dev'
-  - numpy>=2 ; extra == 'dev'
-  - pre-commit ; extra == 'dev'
-  - torch>=2.9 ; extra == 'dev'
-  - typing-extensions ; extra == 'dev'
-  - mlx-cuda-12==0.32.0 ; sys_platform == 'linux' and extra == 'cuda'
-  - mlx-cuda-12==0.32.0 ; sys_platform == 'linux' and extra == 'cuda12'
-  - mlx-cuda-13==0.32.0 ; sys_platform == 'linux' and extra == 'cuda13'
-  - mlx-cpu==0.32.0 ; sys_platform == 'linux' and extra == 'cpu'
-  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl
   name: mpmath
   version: 1.3.0
@@ -4339,17 +4321,6 @@ packages:
   version: 1.15.1.6
   sha256: bdc0deedc61f548bddf7733bdc216456c2fdb101d020e1ab4b88d232d5e2f6d1
   requires_python: '>=3'
-- pypi: https://files.pythonhosted.org/packages/b6/44/fb97e22367e1def980ea408596c332a4b2631b22988a8684429f1a42d10b/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl
-  name: mlx-cuda-13
-  version: 0.32.0
-  sha256: f49a0691a811dd5d0a1200435c76405c1fb85d50b1f4856f2e3d3a96a89f3955
-  requires_dist:
-  - nvidia-cudnn-cu13==9.*
-  - nvidia-nccl-cu13
-  - nvidia-cublas
-  - nvidia-cufft
-  - nvidia-cuda-nvrtc
-  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/b7/dc/6bb80850e0b7edd6588d560758f17e0550893a1feaf436807d64d2da040f/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
   name: nvidia-cuda-nvrtc
   version: 13.0.88

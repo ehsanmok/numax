@@ -94,7 +94,7 @@ general verdict on any of these libraries.
 pixi run bench-gpu       # numax, CPU + GPU sweep (both sync shapes)
 pixi run bench-roofline  # numax, bandwidth diagnosis (needs a GPU)
 pixi run bench-numpy     # NumPy, CPU
-pixi run bench-mlx       # MLX, CPU + GPU (Metal or CUDA)
+pixi run bench-mlx       # MLX, CPU + GPU (macOS only)
 pixi run bench-torch     # PyTorch, eager + compile, CPU + CUDA/MPS
 pixi run bench-thermite  # Rust thermite, CPU (NEON or AVX2)
 ```
@@ -103,7 +103,10 @@ Each `pixi run bench-*` task above resolves and installs whatever that
 baseline needs the first time it's run (a Python interpreter plus
 NumPy/MLX/PyTorch for the first three, a Rust toolchain for the last) into
 its own pixi environment, cached in `.pixi/` like every other environment
-in this repo -- there's no separate setup step.
+in this repo -- there's no separate setup step. `bench-mlx` is declared only
+on the macOS target, so it does not appear at all on Linux: MLX's Linux
+backend is an opt-in wheel whose name pins a CUDA major version, and a pin
+that is only correct on one machine is worse than no baseline.
 
 ## Results
 
@@ -113,8 +116,8 @@ MLX (Metal GPU device), PyTorch 2.13.0, `thermite` 0.2.1 (NEON backend). All
 throughput in millions of elements/sec — higher is better.
 
 These are one machine's numbers. Every benchmark here also runs on
-Linux/x86_64 with a CUDA GPU (`thermite` picks its AVX2 backend, MLX and
-PyTorch their CUDA ones); the figures differ, the conclusions below about
+Linux/x86_64 with a CUDA GPU (`thermite` picks its AVX2 backend, PyTorch its
+CUDA one; MLX is macOS-only); the figures differ, the conclusions below about
 *where the time goes* are the ones worth carrying across hardware, and
 where they have been re-checked on CUDA that is said explicitly.
 

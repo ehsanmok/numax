@@ -88,8 +88,9 @@ measures the cost of getting it wrong at 1.4-3x.
 input values, and warmup/timed-iteration counts as standalone
 scripts, on the same Apple M3 Pro. M elem/s, higher is better. Every
 one of these also runs on Linux/CUDA (`thermite` on AVX2 rather than
-NEON, torch and MLX on CUDA rather than Metal); the tables below are
-one machine's numbers, not a statement about which platforms work.
+NEON, torch on CUDA rather than Metal; MLX is macOS-only); the tables
+below are one machine's numbers, not a statement about which platforms
+work.
 
 **CPU-only:**
 
@@ -233,7 +234,7 @@ pixi run bench-elementwise # CPU: serial vs. threaded at six sizes
 pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
 pixi run bench-matmul   # CPU: numax.linalg.matmul vs. max.linalg.matmul
 pixi run bench-numpy    # cross-language: NumPy, CPU
-pixi run bench-mlx      # cross-language: MLX, CPU + GPU (Metal or CUDA)
+pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
 pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON/AVX2)
 pixi run accuracy       # CPU: max error per function vs. checked-in mpmath refs

@@ -66,26 +66,23 @@ mpmath = ">=1.3"
 
 # MLX ships its compute backend as a separate wheel and only selects one
 # automatically on macOS (`mlx-metal`, via a `platform_system == "Darwin"`
-# marker in mlx's own metadata). On Linux the backend is an opt-in extra,
-# so a bare `mlx` there resolves and installs but fails at import with
-# "libmlx.so: cannot open shared object file" -- which `bench-mlx` hits
-# immediately, since it benchmarks the `mx.cpu`/`mx.gpu` stream switch and
-# has no backend-less path. Hence one pinned backend per target rather than
-# a single unconditional `mlx` entry.
+# marker in mlx's own metadata). On Linux the backend is an opt-in extra
+# whose name pins a CUDA major version (`cuda12`/`cuda13`) that has to match
+# the host driver, and a bare `mlx` there installs but fails at import with
+# "libmlx.so: cannot open shared object file". Rather than carry a pin that
+# is only correct on one machine, MLX is macOS-only here -- it is Apple's
+# array framework, and that is where the comparison means something.
 [feature.bench-python.target.osx-arm64-mac14.pypi-dependencies]
 mlx = ">=0.30"
 
-# `cuda13` matches the CUDA 13.x driver on this project's Linux box. A CUDA
-# 12 host wants `cuda12` instead, and a Linux host with no NVIDIA GPU wants
-# `cpu` -- though `bench-mlx`'s GPU half needs a real device either way.
-# linux-aarch64 is deliberately absent: MLX publishes no backend wheel for
-# it, so `bench-mlx` is macOS + Linux/CUDA only.
-[feature.bench-python.target.linux-64-glibc235.pypi-dependencies]
-mlx = { version = ">=0.30", extras = ["cuda13"] }
+# `bench-mlx` is declared on the same target as its dependency, so it does
+# not appear in `pixi task list` on Linux rather than appearing and failing
+# at import.
+[feature.bench-python.target.osx-arm64-mac14.tasks]
+bench-mlx = { cmd = "python3 gaussian.py", cwd = "bench/mlx" }
 
 [feature.bench-python.tasks]
 bench-numpy = { cmd = "python3 gaussian.py", cwd = "bench/numpy" }
-bench-mlx = { cmd = "python3 gaussian.py", cwd = "bench/mlx" }
 bench-torch = { cmd = "python3 gaussian.py", cwd = "bench/torch" }
 accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
 
