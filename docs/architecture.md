@@ -168,46 +168,31 @@ buys.
 
 ## The NumPy/SciPy parity surface
 
-Five modules fill the gaps in NumPy/SciPy-shaped coverage -- each picked
-because MAX ships no usable equivalent, verified by direct probe rather
-than assumed. [`parity.md`](parity.md) has the full disposition table and
-the survey of what MAX does ship.
+Modules that fill NumPy/SciPy-shaped gaps, each picked because MAX ships no
+usable equivalent. [`parity.md`](parity.md) has the disposition table and the
+survey of what MAX does ship.
 
-- **`numax.array`** -- NumPy-named creation (`zeros`/`ones`/`full`/`empty`/
-  `eye`/`linspace`/`logspace`/`arange`/`*_like`) and manipulation
-  (`reshape`/`ravel`/`transpose`/`squeeze`/`stack`/`concatenate`/`split`)
-  over a `Tensor` wrapper that owns its storage (a bare `TileTensor` is a
-  view, not memory, and dangles once the function that built it returns).
-  That storage is a MAX `DeviceBuffer`, so one tensor type serves both
-  devices: the `DeviceContext` passed to a factory decides where it lives
-  (`DeviceContext(api="cpu")` for host memory, `DeviceContext()` for the
-  accelerator), and `.view()` hands back the same `TileTensor` either way.
-  Comptime-shape and `Plain`-only, matching `numax.tensor`'s own contract.
-  Element access goes through `to_host`/`copy_from_host`, never
-  `DeviceBuffer.unsafe_ptr()` -- on CUDA that returns a device pointer and
-  a host read segfaults, so `Tensor.__getitem__` only takes the pointer
-  path on a CPU context and maps to host otherwise.
-- **`numax.statistics`** -- `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`
-  `Plain`-only over `TileTensor`, plus `argmax`/`argmin` routed straight to
-  `nn.argmaxmin` (MAX-first). `mean`/`variance`/`stddev`/`cumsum` also have
-  a `FloatLike`-generic form over `List[T]`, so calling them at
-  `Compensated` recovers precision a long summation loses at `Plain` -- the
-  one place in this surface where the composable-type spine and NumPy
-  parity meet.
-- **`numax.linalg`** -- small dense linear algebra, `FloatLike`-generic:
-  factorizations (`cholesky`, `lu`, `qr`), solves, `det`, `inverse`,
-  `trace`, and the `norm_frobenius`/`norm_1`/`norm_inf` family. The point
-  is differentiability, not speed: MAX's `matmul` and `qr_factorization`
+- **`numax.array`** — creation and manipulation over a `Tensor` that owns its
+  storage, because a bare `TileTensor` is a view and dangles once the function
+  that built it returns. The storage is a MAX `DeviceBuffer`, so the
+  `DeviceContext` passed to a factory decides host or device memory and
+  `.view()` yields the same `TileTensor` either way. Element access goes
+  through `to_host`/`copy_from_host`: on CUDA `unsafe_ptr()` returns a device
+  pointer and a host read segfaults.
+- **`numax.ops`, `numax.elementwise`, `numax.logic`** — arithmetic and
+  operators on `Tensor`, the elementwise math surface, and comparisons
+  returning `Tensor[DType.bool]`. `Plain`-only, tier 2.
+- **`numax.statistics`** — whole-tensor reductions, with `argmax`/`argmin`
+  routed to `nn.argmaxmin`. `mean`/`variance`/`stddev`/`cumsum` also have a
+  `FloatLike`-generic form over `List[T]`, so calling them at `Compensated`
+  recovers precision a long summation loses at `Plain` — the one place this
+  surface and the composable-type spine meet.
+- **`numax.linalg`** — small dense linear algebra, `FloatLike`-generic. The
+  point is differentiability, not speed: MAX's `matmul` and `qr_factorization`
   are monomorphic in a raw `dtype`, so no `Dual` passes through them.
-- **`numax.io`** -- a binary save/load format for `Tensor` (own format, not
-  NumPy's `.npy`, since MAX ships no array I/O to interchange with) plus a
-  configurable `print_tensor`. `Plain`-only.
-- **`numax.random`** -- `uniform`/`normal`/`exponential` into a `Tensor`
-  on the caller's device,
-  over `std.random` on the host (MAX's own `nn.rand_uniform`/`rand_normal`
-  turned out to be graph-fusion machinery, not an eager API `numax` can
-  call directly -- see the module's own docstring). No `Random[FloatLike]`
-  conformer: RNG isn't mathematically differentiable.
+- **`numax.io`, `numax.random`** — a binary format of numax's own, since MAX
+  ships no array I/O; and sampling over `std.random` on the host, with no
+  `Random[FloatLike]` conformer because RNG is not differentiable.
 
 ## Static and runtime shapes
 

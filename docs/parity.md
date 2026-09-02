@@ -1,22 +1,15 @@
 # NumPy/SciPy parity: what numax absorbs, and what it doesn't
 
-This is the disposition table. For every piece of NumPy/SciPy surface that a
-caller might expect, it records what numax does about it and why — absorb it,
-route it to MAX, or leave it out.
-
-It is tracked, and deliberately so: several shipped modules cite these
-dispositions from their own docstrings, and what tracked code cites has to be
-readable from a fresh clone.
+For every piece of NumPy/SciPy surface a caller might expect, this records
+what numax does about it and why: absorb it, route it to MAX, or leave it out.
 
 ## The two axes
 
 A piece is worth absorbing if it satisfies either:
 
 1. **Composable types.** One kernel, several meanings — the `FloatLike` trait
-   and its seven conformers (`Plain`, `Dual`, `Compensated`, `Decimal`,
-   `Complex`, `Gradient`, `Interval`). If running a routine at `Dual` or
-   `Compensated` gives something no NumPy/SciPy equivalent can, that is a
-   reason on its own.
+   and its seven conformers. If running a routine at `Dual` or `Compensated`
+   gives something no NumPy/SciPy equivalent can, that is a reason on its own.
 2. **Parity entry surface, MAX-first.** A NumPy or SciPy caller should find a
    Mojo entry point of comparable shape, and numax should lean on what MAX
    already ships rather than rebuild on bare `SIMD`.
@@ -27,12 +20,11 @@ writing for the entry surface alone.
 
 ## What MAX actually ships
 
-The MAX-first check is only as good as its facts, so they are recorded here
-rather than assumed. Surveyed against `max 26.5`. Import roots are top-level
-`layout`, `linalg`, `nn`, `algorithm`, plus `max.algorithm` and `max.gpu` —
-there is no `max.linalg`, no `max.kernels`, and no `max.random`.
+Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
+`nn`, `algorithm`, plus `max.algorithm` and `max.gpu` — there is no
+`max.linalg`, no `max.kernels`, and no `max.random`.
 
-**Available, so numax routes to it rather than reimplementing:**
+**Available, so numax routes to it:**
 
 | Area | Names | Root |
 |---|---|---|
@@ -49,286 +41,74 @@ there is no `max.linalg`, no `max.kernels`, and no `max.random`.
 
 **Not available, so numax writes it:**
 
-- **`scipy.linalg`, almost all of it.** MAX ships exactly one matrix
-  decomposition — `qr_factorization` (Householder, CPU-only, scalar loops, on
-  the older `LayoutTensor`). No LU, Cholesky, SVD, eig, `solve`, triangular
-  solve, inverse, determinant, or matrix norm of any kind, and no BLAS-1 at
-  all (no `dot`, `axpy`, `nrm2`). No cuSOLVER bridge.
-- **FFT.** Only `nn.irfft`: inverse real FFT, last dimension, NVIDIA-only, a
-  thin wrapper over the *private* `_cufft` FFI package. No forward FFT
-  anywhere, no CPU FFT, nothing on AMD or Apple.
+- **`scipy.linalg`, almost all of it.** One decomposition ships:
+  `qr_factorization` (Householder, CPU-only, scalar loops, on the older
+  `LayoutTensor`). No LU, Cholesky, SVD, eig, `solve`, triangular solve,
+  inverse, determinant, matrix norm, or BLAS-1. No cuSOLVER bridge.
+- **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
+  wrapper over the *private* `_cufft` package. No forward FFT anywhere.
 - **Out-of-place tensor arithmetic and explicit broadcast.** `TileTensor` has
-  in-place operators only (`__iadd__`, `__imul__`, …) and no `broadcast_to`;
-  broadcasting exists only implicitly inside binary ops.
+  in-place operators only and no `broadcast_to`.
 - **Statistics and ordering past the basics.** No value-based or n-D sort, no
-  `searchsorted`, no `partition`. `nn.cumsum` is CPU-only; no `cumprod`,
-  `cummax`, `diff`. No `unique`, `bincount`, `histogram`, `median`, `quantile`,
-  `cov`, `corrcoef`.
-- **Distributions.** Uniform, normal and Gumbel. Nothing else.
+  `searchsorted`, no `partition`, no `unique`/`median`/`quantile`/`histogram`.
+  `nn.cumsum` is CPU-only.
+- **Distributions.** Uniform, normal and Gumbel only.
 - **Everything algorithmic.** No quadrature, ODE solvers, optimizers, root
-  finders, sparse matrices, polynomials, or signal-sense
-  `convolve`/`correlate`.
+  finders, sparse matrices, polynomials, or signal-sense convolution.
+
+Scalar `gamma`/`lgamma`/`j0`/`j1`/`y0`/`y1` exist but are **CPU-only libm**:
+compiling one into a GPU kernel fails with "libm operations are only available
+on CPU targets", which is why numax keeps its own GPU-launchable versions.
 
 ## Dispositions
 
-### Absorbed — array creation and manipulation
+| Area | Home | Notes |
+|---|---|---|
+| Array creation and manipulation | `numax/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` |
+| Elementwise math | `numax/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
+| Arithmetic and operators | `numax/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
+| Comparison and logic | `numax/logic.mojo` | Truth is a `Tensor[DType.bool]`, so a comparison composes with `logical_and` |
+| Statistics | `numax/statistics.mojo` | `variance`/`stddev`/`cumsum`/`mean` are `FloatLike`-generic — at `Compensated` they match a float64 reference where `Plain` drifts. `argmin`/`argmax` route into `nn.argmaxmin` |
+| Sorting, searching, masking | `numax/sorting.mojo` | Tier 2. `argsort` routes into `nn.argsort`; the rest walk a host copy, where `std.builtin.sort` is the better route |
+| Small dense linalg | `numax/linalg.mojo` | `FloatLike`-generic over comptime `Array[T, n*n]`. Differentiability is the point; MAX's `matmul` is the call past ~8x8 |
+| Root finding and minimization | `numax/solve.mojo`, `numax/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2) |
+| Quadrature and ODE | `numax/quadrature.mojo`, `numax/ode.mojo`, `numax/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2 |
+| Transforms and signal | `numax/fft.mojo`, `numax/signal.mojo` | Power-of-two by construction. MAX has no forward FFT to route to |
+| Tensor I/O | `numax/io.mojo` | numax's own `NMX1` binary format; MAX ships no array I/O to interchange with |
+| Random sampling | `numax/random.mojo` | Over `std.random` on the host. No `Random[FloatLike]` conformer: RNG is not differentiable, so the trait contract does not fit |
 
-Home: [`numax/array.mojo`](../numax/array.mojo). `Plain`-only; no new
-`FloatLike` conformers.
+Three names differ from NumPy's because Mojo will not allow them: `var` is a
+keyword and `std` is the standard library's package (hence `variance`,
+`stddev`), and `where` introduces constraint clauses (hence `select`).
 
-`zeros`, `ones`, `full`, `empty`, `eye`, `linspace`, `logspace`, `arange`,
-`zeros_like`/`ones_like`/`full_like`/`empty_like`, `reshape`, `ravel`,
-`transpose`, `squeeze`, `stack`, `concatenate`, `split`.
+### Not absorbed
 
-Built over MAX's `layout` package as a thin owner whose `.view()` is a
-`TileTensor`, not a competing array type. Three shapes here are set by the
-language rather than by preference, and each is documented at its definition:
-`arange` takes an element count rather than a `stop` (NumPy derives the count
-from `stop`, which makes the extent depend on runtime values); `reshape` spells
-out rank-2 and rank-3 rather than taking a `*new_dims` pack (a general form
-needs to pair two variadic packs in one signature, and the element-count check
-has to be provable to a `where` clause); `split` takes one index and returns
-two tensors (`numpy.split` returns a variable-length list, making the *number*
-of outputs a runtime value).
+A separate complex array type — `Complex` composes into every kernel already.
+A `Backend` trait — the `gpu: Bool` parameter on `numax.tensor.map` covers the
+same ground with no dispatch. ML primitives — `nn` ships softmax,
+normalization, convolution and pooling, tuned, on both backends.
 
 MAX's `nn` versions of `arange`/`reshape`/`concat`/`split` were checked and are
-not usable as array functions: `nn.arange` returns one SIMD vector for a given
+not usable as array functions: `nn.arange` returns one SIMD vector for an
 index rather than filling a tensor, `nn.concat` wants a pre-sized output plus a
-`DeviceContext`, and `nn.reshape` returns a dynamically-laid-out `TileTensor`.
-They are graph-operator kernels.
-
-### Absorbed — statistics
-
-Home: [`numax/statistics.mojo`](../numax/statistics.mojo). Composed from
-`numax.tensor`'s `reduce`/`reduce_axis`/`reduce_rows` primitives.
-
-`FloatLike`-generic (the axis-1 win): `variance`, `stddev`, `cumsum`, and one
-`mean` overload. Long summations lose precision exactly the way `Compensated`
-was built to recover, so running these at `Compensated` matches a float64
-reference where `Plain` drifts.
-
-`Plain`-only: `mean` (`TileTensor` overload), `median`, `mode`, `argmin`,
-`argmax`, `sum`, `prod`, `cumprod`, `min`, `max`. `argmin`/`argmax` route into
-`nn.argmaxmin` — numax writes no comparison logic of its own there.
-
-Two names differ from NumPy's because Mojo will not allow them: `var` is a
-keyword, and `std` is the standard library's package name. They are `variance`
-and `stddev`.
-
-### Absorbed — tensor I/O
-
-Home: [`numax/io.mojo`](../numax/io.mojo). `Plain`-only. `save`, `load`,
-`print_tensor` (with `precision`, `threshold`, `edge_items`). Binary format is
-numax's own `NMX1`, not `.npy`. `FloatLike` was not built to carry
-serialization, so this stays outside the trait entirely.
-
-### Absorbed — random sampling
-
-Home: [`numax/random.mojo`](../numax/random.mojo). `uniform`, `normal`,
-`exponential`, `seed`. `Plain`-only, and **no `Random[FloatLike]` conformer on
-purpose**: RNG is not mathematically differentiable, so seeding a `Dual`'s
-derivative from a random draw has no well-defined meaning. Same scoping shape
-as units — the trait contract does not fit the mathematics.
-
-Host sampling is `std.random`, not MAX. `nn.rand_uniform`/`nn.rand_normal`
-exist and were tried: both take their fill logic as an `OutputFn` parameter
-bound to `RegisterPassable & ImplicitlyCopyable`, which a closure over a
-caller's buffer does not satisfy. That is graph-op fusion machinery, not an
-eager host API. GPU-consumed values use `std.random.philox.{Random,
-NormalRandom}` directly — per-thread counter-based streams are what a
-`map[gpu=True]` body needs, and wrapping them in a numax name would only
-rename them.
-
-### Absorbed — small dense linear algebra
-
-Home: [`numax/linalg.mojo`](../numax/linalg.mojo). `FloatLike`-generic and
-compile-time-sized. Factorizations: `cholesky`, `lu`, `qr`, `eigh`, `svd`.
-Solves: `solve`, `cholesky_solve`, `forward_substitution`,
-`back_substitution`, `tridiagonal_solve`, `inverse`, `pinv`. Scalars:
-`det`, `log_det_from_cholesky`, `trace`, `cond`, `norm_frobenius`, `norm_1`,
-`norm_inf`. Products: `matmul`, `matvec`, `dot`, `nrm2`, `outer`.
-
-`eigh` and `svd` are cyclic and one-sided Jacobi respectively, at a *fixed*
-sweep count -- which is what keeps them tier 1 and GPU-launchable. The
-rotation angle is computed branchlessly (`guard_nonzero` makes an
-already-converged pair produce the identity rotation rather than needing an
-`if`), so no SIMD lane decides anything for another. Two consequences are
-documented at each function: eigenvalues and singular values come out
-**unordered**, because sorting is data-dependent; and a pathological matrix
-can leave residue, because a fixed sweep count is a bound on work rather than
-a convergence guarantee.
-
-`svd` uses one-sided Jacobi rather than forming `A.T @ A` and calling `eigh`,
-which would square the condition number and lose half the digits of the small
-singular values. `pinv` truncates below `rcond` arithmetically, via a `0`/`1`
-indicator from `ge_indicator` -- so a rank-deficient matrix comes back usable
-instead of poisoning the result the way `inverse`'s unpivoted LU would.
-
-The payoff is differentiability, not speed. A differentiable Cholesky is what
-Gaussian process marginal likelihoods, Kalman updates and multivariate normal
-densities all bottom out in, and calling `cholesky` at `Dual` gives gradients
-with no adjoint rule written anywhere. MAX's `matmul` and `qr_factorization`
-are monomorphic in a raw `dtype`, so a `Dual` cannot pass through them — they
-are exactly as differentiable as a BLAS call.
-
-**Route to MAX past N.** Every function here is register-resident, so both
-compile time and register pressure grow with `n`. Measured crossover for
-`matmul` on an M3 Pro: `n = 8` scalar, `n = 16` against the 4-wide batched
-form, ~130× by `n = 64`. See [`performance.md`](performance.md). For the
-routines MAX has no counterpart to, the honest recommendation is to build the
-large-matrix equivalent from `linalg.qr_factorization`, not to expect a
-drop-in.
-
-### Absorbed — root finding and minimization (tier 2)
-
-Home: [`numax/optimize.mojo`](../numax/optimize.mojo). `newton_tol`,
-`brentq`, `bfgs`. MAX ships no optimizer of any kind, so there is nothing to
-route to.
-
-This is the first tier-2 module: the drivers loop until they converge and
-branch on data, which the fixed-iteration invariant forbids for
-`FloatLike`-generic code. They are `Plain`-only, host-side, and not
-GPU-launchable, and they say so. `numax.solve`'s fixed-iteration `newton`,
-`halley` and `bisection` remain tier 1 and are not superseded — each
-docstring names its counterpart.
-
-The objective stays an ordinary `FloatLike` kernel, which is the point:
-`bfgs` evaluates it at `Gradient[Plain[float64, 1], n_vars]` and gets every
-partial derivative exactly, from one call, by the chain rule. No `jac`
-argument, no step size, and none of the accuracy a finite difference gives
-up — a central difference is capped near `eps**(2/3)` however carefully the
-step is chosen. `examples/advanced/optimize.mojo` measures it: best finite
-difference ~5e-10, AD exactly 0.
-
-The driver is fixed at float64 rather than parameterized on `dtype`.
-Convergence work belongs at the widest precision available, and Mojo will
-not accept a struct instantiated with a *function-level* `DType` parameter
-as a `FloatLike` type argument, so a per-call dtype would not compile at
-all.
-
-### Absorbed — adaptive integration (tier 2)
-
-Home: [`numax/integrate.mojo`](../numax/integrate.mojo). `quad`, `quad_vec`.
-MAX ships no quadrature at all.
-
-Tier 2, and a clean illustration of why the split was needed:
-`numax.quadrature`'s module docstring had ruled adaptive quadrature out
-entirely, because the subdivision pattern is data-dependent. That reasoning
-is right for `FloatLike`-generic code and was over-applied to the library as
-a whole. `quad` composes out of the tier-1 rule -- each panel is integrated
-whole with `gauss_legendre[n]` and again as two halves, and the difference
-is the error estimate -- so there is no second quadrature rule to maintain.
-
-On a smooth integrand the fixed rule is still better, and a test asserts it
-in both directions so the tier-1 version is not quietly deprecated. On a
-Lorentzian spike narrower than the node spacing, the 8-point rule is off by
-a factor of six and `quad` is right to 1e-12.
-
-`solve_ivp` is the adaptive ODE solver, and it shares its step body with the
-tier-1 `numax.ode.dopri5` rather than duplicating the Dormand-Prince tableau:
-`dopri5_step` returns the 5th-order solution and its disagreement with the
-embedded 4th-order one, and the two drivers differ only in what they do with
-that error. The step is tier 1; deciding per step whether to keep it is what
-makes the controller tier 2.
-
-`quad_vec` takes known breakpoints. Bisection can never land exactly on an
-irrational kink location, so a feature at 1/3 keeps every straddling panel
-inaccurate however small it gets: 26 panels blind, 2 when told.
-
-### Absorbed — transforms and signal processing
-
-Home: [`numax/fft.mojo`](../numax/fft.mojo) and
-[`numax/signal.mojo`](../numax/signal.mojo). Both tier 1.
-
-`fft`/`ifft`, `rfft`/`irfft`, `fft2`/`ifft2`, `fftfreq`/`rfftfreq`,
-`fftshift`, `circular_convolve`; `convolve`, `convolve_same`, `correlate`,
-the `hann`/`hamming`/`blackman` window family, `apply_window`.
-
-MAX has almost nothing here, which makes this less of a parity veneer than
-it looks. Its only transform is `nn.irfft` -- inverse real FFT, last
-dimension, NVIDIA-only, over the private `_cufft` FFI package. No forward
-FFT of any kind, no CPU FFT, nothing on Metal or AMD. **Recommendation:
-treat numax's transform as the portable path and `_cufft` as at most an
-optional NVIDIA fast path.** A private, single-vendor, inverse-only kernel
-is not a foundation to route through, and the register-resident small-`n`
-transform -- one that runs *inside* a kernel -- has no MAX counterpart at
-all.
-
-`nn.conv` exists but is the neural-network operator: NHWC layouts, filter
-packing, batching, stride, dilation. `numpy.convolve` over a
-one-dimensional sequence is a different function, and that is what
-`numax.signal` provides. The direct `O(m*k)` sum is deliberate at these
-sizes; `circular_convolve` is there for callers already in the frequency
-domain.
-
-Frequency-axis conventions match NumPy exactly, including `fftfreq`
-reporting the Nyquist bin as *negative* -- for even `n` that bin genuinely
-aliases, and matching NumPy matters more than picking a side.
-
-### Absorbed — sorting, searching, counting, masking (tier 2)
-
-Home: [`numax/sorting.mojo`](../numax/sorting.mojo). `sort`, `argsort`,
-`searchsorted`, `unique`, `count_nonzero`, `any_nonzero`, `all_nonzero`,
-`nonzero`, `extract`, `select`.
-
-This entry used to say "not absorbed", and that was right about the reason
-and wrong about the scope. A comparison sort runs a data-dependent number of
-comparisons and branches per element; `unique` and `extract` produce outputs
-whose *length* depends on the input values. None of that can appear in a
-`FloatLike`-generic kernel — a `Self` may hold a SIMD vector whose lanes
-disagree about which branch they want, and there is no per-lane select on the
-trait. But that is a constraint on what numax writes *inside the trait*, not
-a reason to withhold the names: with the tiers written down, these are
-ordinary tier-2 functions.
-
-`nn.argsort` was checked first. It is rank-1, index-returning, CPU + GPU, and
-right for a caller already holding a device `TileTensor` — but it gives no
-value sort, no `searchsorted`, no `unique`, and returns an int64 tensor rather
-than indices. These routines walk a host copy of the tensor's elements, so
-`std.builtin.sort` is the better route for them.
-
-Two shapes are forced. `unique` and `extract` return a full-length tensor
-with the result packed into the first `count` entries, because a
-comptime-shaped `Tensor` cannot be right-sized when the count depends on the
-values — the docstrings say to read only the first `count`. And `numpy.where`
-is `select` here: `where` is a Mojo keyword introducing constraint clauses,
-and `mojo format` cannot parse it as an identifier at all. Third such rename
-after `variance` and `stddev`.
-
-### Not absorbed — redundant with existing conformers
-
-A separate complex array type (`Complex` composes into every kernel already),
-a `Backend` trait (the `gpu: Bool` compile-time parameter on
-`numax.tensor.map` covers the same ground with no dispatch), and ML
-primitives (`nn` ships softmax, normalization, convolution and pooling,
-tuned, on both backends).
-
-### Deferred
-
-Views over runtime-shaped storage are partly addressed:
-`numax.tensor.map`/`reduce` now have runtime-shape overloads, selected by a
-`where` clause that is the exact negation of the static one, so a
-`row_major(Coord(...))` tensor walks without `coalesce()`. Boolean masking,
-`where`/`nonzero` and `unique` build on that and are not written yet. Sparse
-matrices are out of scope and named here so their absence is a decision.
+`DeviceContext` and one layout type across all inputs, and `nn.reshape`
+returns a dynamically-laid-out `TileTensor`. They are graph-operator kernels.
 
 ## What is still missing
 
-The array object itself is where the remaining gap sits. `Tensor` carries
-its shape at compile time, so anything whose extent depends on a value --
-`reshape` to a computed shape, a boolean mask, a right-sized `unique` --
-has to be expressed as a full-length result plus a count. Strided views,
-general broadcasting, slicing and fancy indexing all wait on the same
-runtime-shape owner, since a view over a slice is not row-major and every
-driver in `numax.tensor` requires that it is.
+The array object itself. `Tensor` carries its shape at compile time, so
+anything whose extent depends on a value — `reshape` to a computed shape, a
+boolean mask, a right-sized `unique` — comes back as a full-length result plus
+a count. Strided views, general broadcasting, slicing and fancy indexing all
+wait on a runtime-shape owner, since a view over a slice is not row-major and
+every driver in `numax.tensor` requires that it is.
 
-What exists instead, and is worth knowing before reaching for a workaround:
-`numax.tensor.map`/`reduce` have runtime-shape overloads selected by a
+What exists instead: `map`/`reduce` have runtime-shape overloads selected by a
 `where` clause that is the exact negation of the static one, so a
-`row_major(Coord(...))` tensor walks without `coalesce()` -- on the CPU
-only, because a GPU launch needs the extent in the type.
+`row_major(Coord(...))` tensor walks without `coalesce()` — CPU-only, because
+a GPU launch needs the extent in the type.
 
-Also absent, and each a decision rather than an oversight: sparse matrices,
-iterative solvers, distributed execution, and dtype promotion. The first
-three are a different library's job; the fourth is a compile error waiting
-to happen in a language that infers parameters, so `astype` is explicit.
+Also absent, each a decision: sparse matrices, iterative solvers, distributed
+execution, and dtype promotion. The first three are a different library's job;
+the fourth is a compile error waiting to happen in a language that infers
+parameters, so `astype` is explicit.
