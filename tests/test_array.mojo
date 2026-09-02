@@ -2,14 +2,17 @@
 
 Every creation routine is checked for shape (`num_elements`) and content;
 `*_like` is checked to match its source's dtype/shape; the manipulation
-functions (`transpose`, `squeeze`, `stack`) are checked against a
-hand-computed expected result, not just "it runs".
+functions (`transpose`, `squeeze`, `stack`, `reshape`, `ravel`,
+`concatenate`, `split`) are checked against a hand-computed expected
+result, not just "it runs".
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from numax.array import (
     Tensor,
+    arange,
+    concatenate,
     empty,
     empty_like,
     eye,
@@ -19,6 +22,9 @@ from numax.array import (
     logspace,
     ones,
     ones_like,
+    ravel,
+    reshape,
+    split,
     squeeze,
     stack,
     transpose,
@@ -195,6 +201,86 @@ def test_tensor_survives_the_call_that_built_it() raises:
         junk.append(List[Scalar[dtype]](length=64, fill=Scalar[dtype](i)))
     for i in range(64):
         assert_equal(t[i], Scalar[dtype](42))
+
+
+def test_arange_starts_at_start_and_steps_by_step() raises:
+    var a = arange[dtype, 5](Scalar[dtype](2), Scalar[dtype](3))
+    assert_equal(a.num_elements, 5)
+    for i in range(5):
+        assert_equal(a[i], Scalar[dtype](2 + 3 * i))
+
+
+def test_arange_defaults_to_zero_start_unit_step() raises:
+    var a = arange[dtype, 4]()
+    for i in range(4):
+        assert_equal(a[i], Scalar[dtype](i))
+
+
+def test_reshape_preserves_row_major_element_order() raises:
+    var a = arange[dtype, 6]()
+    var m = reshape[rows=2, cols=3](a)
+    assert_equal(m.dim[0](), 2)
+    assert_equal(m.dim[1](), 3)
+    # Row-major: flat index i lands at (i // 3, i % 3), so the flat read
+    # back out has to match the source exactly.
+    for i in range(6):
+        assert_equal(m[i], Scalar[dtype](i))
+
+
+def test_ravel_inverts_reshape() raises:
+    var a = arange[dtype, 6]()
+    var m = reshape[rows=3, cols=2](a)
+    var flat = ravel(m)
+    assert_equal(flat.num_elements, 6)
+    for i in range(6):
+        assert_equal(flat[i], a[i])
+
+
+def test_ravel_flattens_a_2d_tensor_row_by_row() raises:
+    var m = zeros[dtype, 2, 2]()
+    var v = m.view()
+    v[0, 0] = 1
+    v[0, 1] = 2
+    v[1, 0] = 3
+    v[1, 1] = 4
+    var flat = ravel(m)
+    assert_equal(flat[0], Scalar[dtype](1))
+    assert_equal(flat[1], Scalar[dtype](2))
+    assert_equal(flat[2], Scalar[dtype](3))
+    assert_equal(flat[3], Scalar[dtype](4))
+
+
+def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
+    var a = arange[dtype, 3]()
+    var b = arange[dtype, 2](Scalar[dtype](100))
+    var c = concatenate(a, b)
+    assert_equal(c.num_elements, 5)
+    for i in range(3):
+        assert_equal(c[i], a[i])
+    for i in range(2):
+        assert_equal(c[3 + i], b[i])
+
+
+def test_split_inverts_concatenate() raises:
+    var a = arange[dtype, 3]()
+    var b = arange[dtype, 4](Scalar[dtype](50))
+    var joined = concatenate(a, b)
+    var parts = split[at=3](joined)
+    assert_equal(parts[0].num_elements, 3)
+    assert_equal(parts[1].num_elements, 4)
+    for i in range(3):
+        assert_equal(parts[0][i], a[i])
+    for i in range(4):
+        assert_equal(parts[1][i], b[i])
+
+
+def test_split_at_an_endpoint_gives_one_empty_side() raises:
+    var a = arange[dtype, 3]()
+    var parts = split[at=0](a)
+    assert_equal(parts[0].num_elements, 0)
+    assert_equal(parts[1].num_elements, 3)
+    for i in range(3):
+        assert_equal(parts[1][i], a[i])
 
 
 def main() raises:

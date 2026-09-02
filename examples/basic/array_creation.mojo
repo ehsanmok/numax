@@ -14,10 +14,15 @@ three manipulation gaps this module fills.
 """
 
 from numax.array import (
+    arange,
+    concatenate,
     eye,
     full,
     linspace,
     ones,
+    ravel,
+    reshape,
+    split,
     squeeze,
     stack,
     transpose,
@@ -107,3 +112,43 @@ def main() raises:
     var sv = st.view()
     print("stack(a, b) row 0:", sv[0, 0], sv[0, 1], sv[0, 2])
     print("stack(a, b) row 1:", sv[1, 0], sv[1, 1], sv[1, 2])
+
+    # Shape manipulation: arange -> reshape -> ravel round-trips, and
+    # concatenate/split are inverses of each other.
+    var r = arange[dtype, 6]()
+    print("arange(6):", r[0], r[1], r[2], r[3], r[4], r[5])
+
+    var grid = reshape[rows=2, cols=3](r)
+    var gv = grid.view()
+    print(
+        "reshape(6 -> 2x3): [",
+        gv[0, 0],
+        gv[0, 1],
+        gv[0, 2],
+        "] [",
+        gv[1, 0],
+        gv[1, 1],
+        gv[1, 2],
+        "]",
+    )
+
+    var back = ravel(grid)
+    print(
+        "ravel(2x3 -> 6):", back[0], back[1], back[2], back[3], back[4], back[5]
+    )
+
+    var left = arange[dtype, 3]()
+    var right = arange[dtype, 2](Scalar[dtype](100))
+    var joined = concatenate(left, right)
+    print(
+        "concatenate([0,1,2], [100,101]):",
+        joined[0],
+        joined[1],
+        joined[2],
+        joined[3],
+        joined[4],
+    )
+
+    var parts = split[at=3](joined)
+    print("split(at=3) head:", parts[0][0], parts[0][1], parts[0][2])
+    print("split(at=3) tail:", parts[1][0], parts[1][1])
