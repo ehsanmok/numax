@@ -143,7 +143,9 @@ def randbool[
     *dims: Int
 ](ctx: DeviceContext, p: Float64 = 0.5) raises -> Tensor[DType.bool, *dims]:
     """A new boolean tensor, true with probability `p`.
-    `numpy.random.binomial(1, p)` in the shape NuMojo's `randbool` has.
+
+    `numpy.random.binomial(1, p)` reshaped as a mask, which is what a
+    caller wants it for.
     """
     comptime n = _product[*dims]()
     var draws = List[Scalar[DType.float64]](length=n, fill=0)

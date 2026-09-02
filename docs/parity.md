@@ -314,21 +314,23 @@ Views over runtime-shaped storage are partly addressed:
 `where`/`nonzero` and `unique` build on that and are not written yet. Sparse
 matrices are out of scope and named here so their absence is a decision.
 
-## Where numax stands against NuMojo
+## What is still missing
 
-[NuMojo](https://github.com/Mojo-Numerics-and-Algorithms-group/NuMojo) is the
-other Mojo numerics library, and Track F was scoped by comparison against it.
+The array object itself is where the remaining gap sits. `Tensor` carries
+its shape at compile time, so anything whose extent depends on a value --
+`reshape` to a computed shape, a boolean mask, a right-sized `unique` --
+has to be expressed as a full-length result plus a count. Strided views,
+general broadcasting, slicing and fancy indexing all wait on the same
+runtime-shape owner, since a view over a slice is not row-major and every
+driver in `numax.tensor` requires that it is.
 
-**numax has, NuMojo does not:** the composable type layer (seven nesting
-conformers), the special-function library (`erf`, the Gamma family, Bessel,
-Lambert W, elliptic integrals, orthogonal polynomials, the Beta family), the
-algorithms layer (`solve`, quadrature, ODE, interpolation, distributions),
-differentiable linear algebra and FFT, GPU execution through `map[gpu=True]`
-with every conformer running inside one thread, and an accuracy harness
-checked against 50-digit mpmath references.
+What exists instead, and is worth knowing before reaching for a workaround:
+`numax.tensor.map`/`reduce` have runtime-shape overloads selected by a
+`where` clause that is the exact negation of the static one, so a
+`row_major(Coord(...))` tensor walks without `coalesce()` -- on the CPU
+only, because a GPU launch needs the extent in the type.
 
-**NuMojo has, numax does not (or has only partly):** a full `NDArray` with
-general broadcasting, slicing and printing; general n-dimensional
-manipulation; sorting and searching; and a `Backend` trait. The
-runtime-shape work above is the first half of closing the array-semantics
-gap.
+Also absent, and each a decision rather than an oversight: sparse matrices,
+iterative solvers, distributed execution, and dtype promotion. The first
+three are a different library's job; the fourth is a compile error waiting
+to happen in a language that infers parameters, so `astype` is explicit.
