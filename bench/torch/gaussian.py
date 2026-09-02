@@ -1,8 +1,10 @@
-"""PyTorch CPU and MPS baseline for the same gaussian(x) = exp(-x^2) sweep
+"""PyTorch CPU and GPU baseline for the same gaussian(x) = exp(-x^2) sweep
 the other benchmarks in ../ run, at the same sizes -- see ../README.md.
 Reports four numbers per size: eager and `torch.compile`'d, each on CPU and
-on MPS (the same Metal GPU `numax`'s own GPU path and `../mlx/gaussian.py`
-target).
+on whichever GPU torch can see -- CUDA where there is one, else MPS (the
+same device `numax`'s own GPU path and `../mlx/gaussian.py` target through
+`DeviceContext`). Both are picked at runtime, so this file is the same
+benchmark on either backend rather than an Apple-only one.
 
 `torch.compile` traces and JIT-compiles the function the first time it sees
 a given input shape, so that cost has to land in the warmup calls, not the
@@ -10,9 +12,10 @@ timed ones -- this reuses one compiled callable per device across every
 size in the sweep, so each new size pays its own one-time compile during
 warmup, the same way a real caller moving between array sizes would.
 
-MPS dispatch is asynchronous like CUDA's, so `torch.mps.synchronize()` is
-required before stopping the clock -- without it, "MPS" timings would just
-measure how fast PyTorch can enqueue work, not how fast the GPU runs it.
+GPU dispatch is asynchronous on both backends, so the matching
+`synchronize()` is required before stopping the clock -- without it, the GPU
+timings would just measure how fast PyTorch can enqueue work, not how fast
+the device runs it.
 
 *Where* that synchronize goes turns out to matter more than whether it is
 there, so this reports both placements rather than picking one:
@@ -31,7 +34,9 @@ amortized number is measuring the methodology, not the libraries. This file
 used to report amortized only, which is what `numax`'s own per-call GPU
 benchmark was being compared against in `bench/README.md`.
 
-Run: pixi run bench-torch (from the repo root; MPS results need Apple Silicon)
+Run: pixi run bench-torch (from the repo root; the GPU half needs a CUDA or
+MPS device -- with neither, the CPU columns still run and the GPU ones are
+skipped with a printed note rather than silently missing)
 """
 
 import time
@@ -52,8 +57,25 @@ def make_input(n: int, device: torch.device) -> torch.Tensor:
     return torch.arange(n, dtype=DTYPE, device=device) * 0.0001 - 50.0
 
 
+def pick_gpu() -> torch.device | None:
+    """The GPU torch can see here, or None on a CPU-only host.
+
+    CUDA first: on a machine with both, CUDA is the real accelerator and MPS
+    would not be present anyway. Returning None (rather than falling back to
+    CPU) keeps "no GPU" distinguishable from "GPU that happens to be slow"
+    in the output.
+    """
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return None
+
+
 def sync(device: torch.device) -> None:
-    if device.type == "mps":
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
         torch.mps.synchronize()
 
 
@@ -68,7 +90,7 @@ def bench_fn(
     """Time `fn(xs)`, synchronizing either once per iteration or once total.
 
     On CPU both placements are the same measurement (the work is synchronous
-    already), so `amortize_sync` only changes anything for MPS.
+    already), so `amortize_sync` only changes anything on a GPU device.
     """
     for _ in range(WARMUP_ITERS):
         fn(xs)
@@ -98,7 +120,7 @@ def check(label: str, xs_ref: torch.Tensor, ys: torch.Tensor) -> None:
         print(f"  WARNING: max |{label} - f64 reference| = {max_err}")
 
 
-def bench_at_size(n: int, compiled_cpu, compiled_mps, has_mps: bool) -> None:
+def bench_at_size(n: int, compiled_cpu, compiled_gpu, gpu: torch.device | None) -> None:
     print(f"n={n:>9} ", end="")
 
     cpu = torch.device("cpu")
@@ -106,21 +128,21 @@ def bench_at_size(n: int, compiled_cpu, compiled_mps, has_mps: bool) -> None:
     ys = bench_fn(gaussian, xs_cpu, cpu, "eager-CPU", n)
     ys = bench_fn(compiled_cpu, xs_cpu, cpu, "compile-CPU", n)
 
-    if has_mps:
-        mps = torch.device("mps")
-        xs_mps = make_input(n, mps)
-        bench_fn(gaussian, xs_mps, mps, "eager-MPS-amort", n)
-        ys = bench_fn(compiled_mps, xs_mps, mps, "compile-MPS-amort", n)
+    if gpu is not None:
+        tag = gpu.type.upper()
+        xs_gpu = make_input(n, gpu)
+        bench_fn(gaussian, xs_gpu, gpu, f"eager-{tag}-amort", n)
+        ys = bench_fn(compiled_gpu, xs_gpu, gpu, f"compile-{tag}-amort", n)
         print()
         print(f"{'':>11}", end="")
         bench_fn(
-            gaussian, xs_mps, mps, "eager-MPS-percall", n, amortize_sync=False
+            gaussian, xs_gpu, gpu, f"eager-{tag}-percall", n, amortize_sync=False
         )
         bench_fn(
-            compiled_mps,
-            xs_mps,
-            mps,
-            "compile-MPS-percall",
+            compiled_gpu,
+            xs_gpu,
+            gpu,
+            f"compile-{tag}-percall",
             n,
             amortize_sync=False,
         )
@@ -130,14 +152,20 @@ def bench_at_size(n: int, compiled_cpu, compiled_mps, has_mps: bool) -> None:
 
 
 def main() -> None:
-    has_mps = torch.backends.mps.is_available()
-    print(f"PyTorch {torch.__version__}  dtype=float32  MPS available={has_mps}")
+    gpu = pick_gpu()
+    if gpu is None:
+        where = "no GPU visible to torch -- CPU columns only"
+    elif gpu.type == "cuda":
+        where = f"GPU={torch.cuda.get_device_name(0)} (cuda)"
+    else:
+        where = "GPU=MPS"
+    print(f"PyTorch {torch.__version__}  dtype=float32  {where}")
 
     compiled_cpu = torch.compile(gaussian)
-    compiled_mps = torch.compile(gaussian) if has_mps else None
+    compiled_gpu = torch.compile(gaussian) if gpu is not None else None
 
     for n in SIZES:
-        bench_at_size(n, compiled_cpu, compiled_mps, has_mps)
+        bench_at_size(n, compiled_cpu, compiled_gpu, gpu)
 
 
 if __name__ == "__main__":
