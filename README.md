@@ -172,6 +172,7 @@ ships no equivalent:
 | `numax.statistics` | `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`/`argmax`/`argmin`; `variance`/`stddev`/`cumsum` also work over any `FloatLike` |
 | `numax.io` | binary `save`/`load`, `print_tensor` |
 | `numax.random` | `uniform`, `normal`, `exponential`, `seed` |
+| `numax.sorting` | `sort`, `argsort`, `searchsorted`, `unique`, `count_nonzero`, `any_nonzero`/`all_nonzero`, `nonzero`, `extract` (boolean masking), `select` |
 
 Calling `variance`/`stddev`/`cumsum` at `Compensated` instead of `Plain`
 recovers precision a long summation would otherwise lose — the one place

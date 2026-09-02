@@ -44,9 +44,11 @@ these two reasons.
 **Explicitly out of scope**, matching this module's own gap-only mandate:
 axis-keyword reductions (`numax.tensor.reduce_axis`/`broadcast_op_axis`
 already provide the primitive directly for a caller that needs one), and
-`sort`/`argsort` as public `numax` names (`docs/parity.md`'s own "not absorbed" entry --
-`List.sort()` is used internally by `median`/`mode` above, but is MAX/
-stdlib machinery being called, not a `numax` API being added).
+sorting, which now lives in `numax.sorting` as a tier-2 module (`sort`,
+`argsort`, `searchsorted`, `unique`, plus the counting and masking family).
+`List.sort()` is still what `median`/`mode` reach for internally; what
+changed is that a NumPy caller now has a `numax` name for it too, on the
+tier-2 terms `docs/architecture.md` sets out.
 """
 
 from layout import Coord, TileTensor

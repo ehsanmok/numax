@@ -260,18 +260,35 @@ Frequency-axis conventions match NumPy exactly, including `fftfreq`
 reporting the Nyquist bin as *negative* -- for even `n` that bin genuinely
 aliases, and matching NumPy matters more than picking a side.
 
-### Not absorbed — sorting and searching as `FloatLike` kernels
+### Absorbed — sorting, searching, counting, masking (tier 2)
 
-`sort`, `argsort` and `searchsorted` are not public numax names operating on
-`FloatLike`. A comparison sort runs a data-dependent number of comparisons and
-branches per element, which the fixed-iteration invariant forbids for
-`FloatLike`-generic code: a `Self` may hold a SIMD vector whose lanes disagree
-about which branch they want, and there is no per-lane `select` on the trait.
+Home: [`numax/sorting.mojo`](../numax/sorting.mojo). `sort`, `argsort`,
+`searchsorted`, `unique`, `count_nonzero`, `any_nonzero`, `all_nonzero`,
+`nonzero`, `extract`, `select`.
 
-This is a constraint on what numax writes *inside the trait*, not a ban on
-sorting. MAX's own `nn.argsort` and `std.builtin.sort` have data-dependent
-control flow and are fair game from `Plain`-only code —
-`numax.statistics.median` and `mode` use exactly that route.
+This entry used to say "not absorbed", and that was right about the reason
+and wrong about the scope. A comparison sort runs a data-dependent number of
+comparisons and branches per element; `unique` and `extract` produce outputs
+whose *length* depends on the input values. None of that can appear in a
+`FloatLike`-generic kernel — a `Self` may hold a SIMD vector whose lanes
+disagree about which branch they want, and there is no per-lane select on the
+trait. But that is a constraint on what numax writes *inside the trait*, not
+a reason to withhold the names: with the tiers written down, these are
+ordinary tier-2 functions.
+
+`nn.argsort` was checked first. It is rank-1, index-returning, CPU + GPU, and
+right for a caller already holding a device `TileTensor` — but it gives no
+value sort, no `searchsorted`, no `unique`, and returns an int64 tensor rather
+than indices. For a host-owned `Tensor`, `std.builtin.sort` is the better
+route.
+
+Two shapes are forced. `unique` and `extract` return a full-length tensor
+with the result packed into the first `count` entries, because a
+comptime-shaped `Tensor` cannot be right-sized when the count depends on the
+values — the docstrings say to read only the first `count`. And `numpy.where`
+is `select` here: `where` is a Mojo keyword introducing constraint clauses,
+and `mojo format` cannot parse it as an identifier at all. Third such rename
+after `variance` and `stddev`.
 
 ### Not absorbed — redundant with existing conformers
 
