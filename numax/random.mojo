@@ -1,6 +1,6 @@
 """Random sampling into `numax.array.Tensor`, `Plain`-only, over the host RNG.
 
-`parity.mdc`'s Track F picks random sampling as a genuine `numax` gap:
+`docs/parity.md` picks random sampling as a genuine `numax` gap:
 without it, `examples/advanced/ode.mojo`'s GPU ensemble (which needs
 initial conditions) and any Gaussian-process-shaped example reach for a
 raw RNG directly and lose the `numax` entry point. **No `Random[FloatLike]`

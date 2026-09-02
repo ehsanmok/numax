@@ -1,6 +1,6 @@
 """NumPy-named statistics, composed from `numax.tensor` and `FloatLike`.
 
-`parity.mdc`'s Track F picks statistics as a genuine `numax` gap with a
+`docs/parity.md` picks statistics as a genuine `numax` gap with a
 selective axis-1 lift: MAX ships no `mean`/`var`/`std`/`median`/`mode` at
 all (verified directly -- `max.algorithm.functional` exports only
 `elementwise`), but it does ship `argmax`/`argmin` (`nn.argmaxmin`), which
@@ -44,7 +44,7 @@ these two reasons.
 **Explicitly out of scope**, matching this module's own gap-only mandate:
 axis-keyword reductions (`numax.tensor.reduce_axis`/`broadcast_op_axis`
 already provide the primitive directly for a caller that needs one), and
-`sort`/`argsort` as public `numax` names (`parity.mdc`'s own NOT PICK --
+`sort`/`argsort` as public `numax` names (`docs/parity.md`'s own "not absorbed" entry --
 `List.sort()` is used internally by `median`/`mode` above, but is MAX/
 stdlib machinery being called, not a `numax` API being added).
 """

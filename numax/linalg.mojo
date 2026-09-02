@@ -50,7 +50,7 @@ Consequences worth knowing:
 For a general non-symmetric solve where you can't vouch for the pivots,
 this module is the wrong tool.
 
-## Use MAX past N (Track F, `parity.mdc`)
+## Use MAX past N (see `docs/parity.md`)
 
 Every function in this module is register-resident and register-bound: an
 `n x n` matrix is `n*n` values of `Array[T, n*n]`, so both compile time and

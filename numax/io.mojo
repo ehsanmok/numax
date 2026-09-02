@@ -1,6 +1,6 @@
 """Binary save/load and configurable printing for `numax.array.Tensor`.
 
-`parity.mdc`'s Track F picks tensor I/O as a genuine `numax` gap: MAX ships
+`docs/parity.md` picks tensor I/O as a genuine `numax` gap: MAX ships
 no binary `TileTensor` I/O at all (verified by direct probe -- there is no
 `layout`-level save/load, and `max.algorithm.functional` exports only
 `elementwise`), and NumPy's own `.npy` format is a Python-ecosystem
