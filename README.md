@@ -135,13 +135,13 @@ inherits autodiff and extra precision with no second implementation:
 |---|---|
 | `numax.solve` | `newton`, `halley`, `bisection` — no derivative to supply; each evaluates `f` at `Dual` internally |
 | `numax.quadrature` | `gauss_legendre`, `simpson`, `trapezoid` — fixed nodes |
-| `numax.integrate` | `quad`, `quad_vec` — adaptive, subdividing to a tolerance |
+| `numax.integrate` | `quad`, `quad_vec` (adaptive quadrature), `solve_ivp` (adaptive ODE) |
 | `numax.linalg` | `cholesky`, `lu`, `qr`, `eigh`, `svd`, `solve`, `inverse`, `pinv`, `det`, `trace`, `cond`, the `norm_*` family, `dot`/`nrm2`/`outer`, `matmul`, `matvec`, `tridiagonal_solve` — small, compile-time-sized, differentiable |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`/`ifft2`, `fftfreq`/`rfftfreq`, `fftshift`, `circular_convolve` |
 | `numax.signal` | `convolve`, `convolve_same`, `correlate`, `hann`/`hamming`/`blackman`, `apply_window` |
 | `numax.interp` | `horner`, natural cubic splines, `chebyshev_fit`/`chebyshev_eval` |
 | `numax.distributions` | pdf/cdf/quantile for normal, exponential, gamma, chi-square, beta, Student-t, F, Poisson, binomial |
-| `numax.ode` | `rk4`, `rk4_system`, Dormand-Prince `dopri5` |
+| `numax.ode` | `rk4`, `rk4_system`, Dormand-Prince `dopri5` — fixed step |
 | `numax.optimize` | `newton_tol`, `brentq`, `bfgs` — iterate to a tolerance; BFGS takes an **exact** gradient from `Gradient`, not a finite difference |
 
 ```mojo

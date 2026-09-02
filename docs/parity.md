@@ -226,6 +226,13 @@ in both directions so the tier-1 version is not quietly deprecated. On a
 Lorentzian spike narrower than the node spacing, the 8-point rule is off by
 a factor of six and `quad` is right to 1e-12.
 
+`solve_ivp` is the adaptive ODE solver, and it shares its step body with the
+tier-1 `numax.ode.dopri5` rather than duplicating the Dormand-Prince tableau:
+`dopri5_step` returns the 5th-order solution and its disagreement with the
+embedded 4th-order one, and the two drivers differ only in what they do with
+that error. The step is tier 1; deciding per step whether to keep it is what
+makes the controller tier 2.
+
 `quad_vec` takes known breakpoints. Bisection can never land exactly on an
 irrational kink location, so a feature at 1/3 keeps every straddling panel
 inaccurate however small it gets: 26 panels blind, 2 when told.
