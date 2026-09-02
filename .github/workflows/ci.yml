@@ -8,12 +8,16 @@ on:
     branches: [main]
     paths-ignore:
       - '**.md'
+      - '**.png'
+      - '**.svg'
       - 'docs/**'
       - 'LICENSE'
   pull_request:
     branches: [main]
     paths-ignore:
       - '**.md'
+      - '**.png'
+      - '**.svg'
       - 'docs/**'
       - 'LICENSE'
 
