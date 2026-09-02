@@ -20,6 +20,13 @@ Metal-unsupported instructions"), which would leave these functions
 CPU-only. Counting in `T` keeps every value `dtype`-native; the same
 applies to `numax.legendre`, `numax.beta`, and `numax.quadrature`.
 
+CUDA has no such restriction, so this reads as unnecessary on an NVIDIA
+box -- it is not. The constraint is what makes these kernels launchable on
+*every* backend `DeviceContext` supports rather than on the permissive
+ones, and counting in `T` costs nothing on the backends that would have
+allowed the conversion. Don't "simplify" it back to
+`T.constant(Float64(i))` after testing on CUDA alone.
+
 Conventions here are the common ones, and they matter because the
 alternatives differ by more than a scale factor:
 

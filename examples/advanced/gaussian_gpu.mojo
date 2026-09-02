@@ -23,7 +23,8 @@ both paths for that to work through `enqueue_function`).
 
 `Compensated.exp()` used to be excluded here because its Taylor-series
 coefficients were built as an `Array[Float64, ...]` at runtime, and Apple's
-Metal backend (the target on this machine) has no float64 support at all.
+Metal backend has no float64 support at all (CUDA does, which is exactly
+why testing only there would have hidden this).
 That's fixed now: the coefficients are split into `dtype`-native hi/lo pairs
 at compile time (see `_split_f64` in `numax/compensated.mojo`), so no
 float64 arithmetic or storage reaches device code, on Metal or anywhere

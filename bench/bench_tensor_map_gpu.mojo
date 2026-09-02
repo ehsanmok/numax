@@ -32,7 +32,8 @@ the GPU streams from, so interleaving has each path timing the other's
 interference. That single change raised the reported 67M GPU figure from
 ~9,400 to ~13,000 M elem/s without touching a line of `numax`.
 
-Needs real Metal hardware; not part of CI. Run with `pixi run bench-gpu`.
+Needs a real GPU -- Metal or CUDA, whichever `DeviceContext` finds. Not
+part of CI, which has no GPU runners. Run with `pixi run bench-gpu`.
 """
 
 from layout import TileTensor

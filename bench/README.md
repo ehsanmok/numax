@@ -66,12 +66,14 @@ general verdict on any of these libraries.
   reference point for anyone doing numerical work in Python. CPU-only;
   there's nothing to compare against `numax`'s GPU path here, which is what
   MLX and PyTorch are for.
-- **Apple MLX** (`mlx/gaussian.py`, `pixi run bench-mlx`) — the closest
-  match to what `numax`'s own GPU path is doing: one array library, one
-  API, a `stream=mx.cpu`/`stream=mx.gpu` switch, running on the same Metal
-  GPU `numax` targets via `DeviceContext`.
+- **MLX** (`mlx/gaussian.py`, `pixi run bench-mlx`) — the closest match to
+  what `numax`'s own GPU path is doing: one array library, one API, a
+  `stream=mx.cpu`/`stream=mx.gpu` switch, running on the same GPU `numax`
+  targets via `DeviceContext`. Metal on macOS; on Linux it needs an
+  explicit CUDA backend wheel, which `pixi.toml` selects per platform.
 - **PyTorch** (`torch/gaussian.py`, `pixi run bench-torch`) — eager and
-  `torch.compile`'d, on CPU and on MPS (the same Metal GPU). `torch.compile`
+  `torch.compile`'d, on CPU and on whichever GPU torch can see (CUDA, else
+  MPS — the same device as above). `torch.compile`
   traces and JIT-compiles the kernel into a fused device program, which is
   worth a lot over *eager* PyTorch on this kernel (roughly 3x on MPS,
   consistent with three elementwise dispatches becoming one) and roughly
@@ -90,11 +92,11 @@ general verdict on any of these libraries.
 
 ```bash
 pixi run bench-gpu       # numax, CPU + GPU sweep (both sync shapes)
-pixi run bench-roofline  # numax, bandwidth diagnosis (Metal hardware)
+pixi run bench-roofline  # numax, bandwidth diagnosis (needs a GPU)
 pixi run bench-numpy     # NumPy, CPU
-pixi run bench-mlx       # MLX, CPU + GPU (Apple Silicon only)
-pixi run bench-torch     # PyTorch, eager + compile, CPU + MPS (Apple Silicon only)
-pixi run bench-thermite  # Rust thermite, CPU (NEON)
+pixi run bench-mlx       # MLX, CPU + GPU (Metal or CUDA)
+pixi run bench-torch     # PyTorch, eager + compile, CPU + CUDA/MPS
+pixi run bench-thermite  # Rust thermite, CPU (NEON or AVX2)
 ```
 
 Each `pixi run bench-*` task above resolves and installs whatever that
@@ -109,6 +111,12 @@ Measured on an Apple M3 Pro (12 CPU cores, 36GB unified memory, ~150 GB/s
 memory bandwidth), macOS 25.5.0, `mojo`/`max` per `pixi.toml`, NumPy 2.5.2,
 MLX (Metal GPU device), PyTorch 2.13.0, `thermite` 0.2.1 (NEON backend). All
 throughput in millions of elements/sec — higher is better.
+
+These are one machine's numbers. Every benchmark here also runs on
+Linux/x86_64 with a CUDA GPU (`thermite` picks its AVX2 backend, MLX and
+PyTorch their CUDA ones); the figures differ, the conclusions below about
+*where the time goes* are the ones worth carrying across hardware, and
+where they have been re-checked on CUDA that is said explicitly.
 
 ### Read the roofline first
 

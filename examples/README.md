@@ -6,7 +6,7 @@ invoked with `mojo -I .`:
 ```bash
 pixi run example-gaussian            # or any single example -- see pixi.toml
 pixi run examples-cpu                # every CPU example, in sequence
-pixi run examples                    # CPU + GPU examples (needs Metal hardware)
+pixi run examples                    # CPU + GPU examples (needs a GPU)
 ```
 
 ## basic/
@@ -46,6 +46,8 @@ GPU + ensembles -- needs the actual hardware.
 ## GPU note
 
 `gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`, and `random_ensemble.mojo`
-launch GPU kernels alongside their CPU paths. They need real Metal
-hardware, so they're a local-only check; `pixi run examples-cpu` skips
-them, `pixi run examples` includes them.
+launch GPU kernels alongside their CPU paths. They need a real GPU --
+Metal or CUDA, whichever `DeviceContext` finds -- and no GitHub-hosted
+runner has either, so they're a local-only check; `pixi run examples-cpu`
+skips them, `pixi run examples` includes them. All four are verified on
+both backends.

@@ -1,11 +1,12 @@
-"""Apple MLX CPU and GPU baseline for the same gaussian(x) = exp(-x^2) sweep
+"""MLX CPU and GPU baseline for the same gaussian(x) = exp(-x^2) sweep
 `../bench_tensor_map_gpu.mojo` runs, at the same sizes -- see ../README.md.
 
 MLX is the closest Python-ecosystem match to what numax's own GPU path is
 doing: one array library, one API, a `stream=mx.cpu`/`stream=mx.gpu` switch
-to pick the backend, running on the same Metal GPU `numax`'s
-`bench_tensor_map_gpu.mojo` targets via `DeviceContext`. Unlike NumPy, this
-gets a real CPU-vs-GPU crossover comparison, not just a CPU number.
+to pick the backend, running on the same GPU `numax`'s
+`bench_tensor_map_gpu.mojo` targets via `DeviceContext` -- Metal on Apple
+Silicon, CUDA on Linux. Unlike NumPy, this gets a real CPU-vs-GPU crossover
+comparison, not just a CPU number.
 
 MLX is lazy and asynchronous by default: an op returns immediately with an
 unevaluated array, and work only happens (on whichever stream it was issued
@@ -13,7 +14,10 @@ to) when a result is actually read. `mx.eval(...)` forces that, and is what
 this benchmark times -- without it, the "GPU" timing would just be
 measuring how fast MLX can build a graph node, not how fast the GPU runs.
 
-Run: pixi run bench-mlx (from the repo root; Apple Silicon only)
+Run: pixi run bench-mlx (from the repo root). Needs a GPU: MLX pulls its
+compute backend from a separate wheel, chosen per platform in pixi.toml --
+mlx-metal on macOS, mlx-cuda-13 on Linux. Without one, `import mlx.core`
+fails outright on "libmlx.so", so there is no CPU-only fallback here.
 """
 
 import time
