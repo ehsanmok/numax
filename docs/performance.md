@@ -40,8 +40,9 @@ tested (see `bench/bench_gpu_roofline.mojo`).
 
 The serial path is what every example uses. The threaded path loses
 below ~250K elements (dispatch costs more than the work) and wins 3-5x
-above ~1M; on an Apple M3 Pro it also beats the machine's own GPU path
-until about 16M elements. One behavioral difference to know: the
+above ~1M; on an Apple M3 Pro it also beats that machine's own GPU path
+until about 16M elements (a crossover that depends on the GPU -- a
+discrete card with far more bandwidth moves it down). One behavioral difference to know: the
 threaded path flushes denormals to zero (MAX's worker-thread FP
 environment, not a `numax` choice). See `bench/bench_elementwise.mojo`.
 
@@ -49,11 +50,15 @@ environment, not a `numax` choice). See `bench/bench_elementwise.mojo`.
 
 `map[gpu=True]` is the body of one GPU thread, launched via
 `DeviceContext.enqueue_function` with one element per thread (the
-default `width=1`, which is what measured fastest on Metal; thread
-coarsening with `width>1` is supported but buys nothing on this
-hardware, see `findings.mdc`). On an Apple M3 Pro at ~150 GB/s peak
-bandwidth, the GPU path reaches **84% of peak** (126 GB/s) at 67M
-elements.
+default `width=1`; thread coarsening with `width>1` is supported but
+buys nothing, see `findings.mdc`). That tuning has now been measured on
+both backends and agrees: sweeping `width` in `{1,2,4,8}` against
+`block_dim` in `{128,256,512,1024}` at 67M elements, `width=1` is
+fastest or tied on Metal *and* on CUDA, with `width=8` a few percent
+behind on both. On an Apple M3 Pro at ~150 GB/s peak bandwidth, the GPU
+path reaches **84% of peak** (126 GB/s) at 67M elements; on an NVIDIA
+A10G at ~600 GB/s it reaches **~83% of peak** (498 GB/s) at the same
+size.
 
 Two measurement shapes matter:
 
@@ -81,7 +86,10 @@ measures the cost of getting it wrong at 1.4-3x.
 
 `bench/{numpy,mlx,torch,thermite}/` run the identical kernel, sizes,
 input values, and warmup/timed-iteration counts as standalone
-scripts, on the same Apple M3 Pro. M elem/s, higher is better.
+scripts, on the same Apple M3 Pro. M elem/s, higher is better. Every
+one of these also runs on Linux/CUDA (`thermite` on AVX2 rather than
+NEON, torch and MLX on CUDA rather than Metal); the tables below are
+one machine's numbers, not a statement about which platforms work.
 
 **CPU-only:**
 
@@ -225,9 +233,9 @@ pixi run bench-elementwise # CPU: serial vs. threaded at six sizes
 pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
 pixi run bench-matmul   # CPU: numax.linalg.matmul vs. max.linalg.matmul
 pixi run bench-numpy    # cross-language: NumPy, CPU
-pixi run bench-mlx      # cross-language: Apple MLX, CPU + GPU
+pixi run bench-mlx      # cross-language: MLX, CPU + GPU (Metal or CUDA)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
-pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON)
+pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON/AVX2)
 pixi run accuracy       # CPU: max error per function vs. checked-in mpmath refs
 ```
 

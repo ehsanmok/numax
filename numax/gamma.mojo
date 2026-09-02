@@ -20,12 +20,13 @@ negative non-integer `x`, same domain as this module now), but it's a
 CPU-only libm call -- compiling it into a GPU kernel fails outright with
 `"constraint failed: libm operations are only available on CPU targets"`.
 `numax.erf` does delegate to `std.math` for `Plain`, but only because
-`std.math.erf` is GPU-compatible (verified by launching it on Metal) *and*
-measurably better conditioned than the approximation it replaced. Neither
-holds here, so this is not a trade worth making: this module's own Lanczos
-approximation runs on both CPU and GPU today, and swapping in `std.math` for
-`Plain` specifically would make `gamma`/`lgamma` CPU-only the moment a
-caller's `T` happens to be `Plain` inside a `map[gpu=True]` kernel.
+`std.math.erf` is GPU-compatible (verified by launching it on Metal and on
+CUDA) *and* measurably better conditioned than the approximation it
+replaced. Neither holds here, so this is not a trade worth making: this
+module's own Lanczos approximation runs on both CPU and GPU today, and
+swapping in `std.math` for `Plain` specifically would make `gamma`/`lgamma`
+CPU-only the moment a caller's `T` happens to be `Plain` inside a
+`map[gpu=True]` kernel.
 """
 
 from std.collections import Array

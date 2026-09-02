@@ -22,7 +22,10 @@ pixi run -e bench-python accuracy-gen
 Everything is measured at `Plain[float64, 1]`, to see the approximation's
 own error rather than the rounding of a narrower `dtype`. Numbers below are
 from an Apple M3 Pro; they are deterministic, so any machine running the
-same Mojo version should reproduce them exactly.
+same Mojo version should reproduce them exactly. Checked: an x86_64 Linux
+run reproduces them to the last digit, ULP counts included (`erf` over
+[-3,3] gives 2.1674617767253324e-08 and 195,227,601 ULP on both), so these
+really are properties of the approximations and not of one machine's libm.
 
 ## Read this first: the primitives are a floor, not context
 

@@ -206,14 +206,18 @@ API details.
 Measured on an Apple M3 Pro (~150 GB/s memory bandwidth) on
 `gaussian(x) = exp(-x^2)` over `float32`, which is memory-bandwidth-bound at
 every size tested (an identity copy runs at the same speed, so the `exp` is
-free). At 67M elements:
+free). The numbers below are that machine's; the library itself is not
+Apple-specific, and the same suites run on Linux/CUDA. At 67M elements:
 
 | | numax CPU (`map_threaded`) | numax GPU (amortized) | NumPy (CPU) | MLX (GPU, per-call) | torch.compile (GPU, amortized) |
 |---|---|---|---|---|---|
 | M elem/s | 9,026 | 15,755 | 493 | 4,866 | 14,380 |
 
 `numax`'s GPU path reaches 84% of the hardware bandwidth ceiling, on par
-with `torch.compile` on the same Metal device. Full sweeps across six sizes,
+with `torch.compile` on the same Metal device. The GPU path is written
+against `DeviceContext` rather than any one backend and is verified on CUDA
+as well; `pixi run bench-roofline` reports percent-of-peak for whichever
+device it finds. Full sweeps across six sizes,
 both CPU walks, and every cross-language baseline (NumPy, MLX, PyTorch,
 Rust `thermite`) are in [`docs/performance.md`](docs/performance.md) and
 [`bench/README.md`](bench/README.md).
@@ -233,7 +237,8 @@ at. Full table and the defect writeup: [`bench/accuracy/README.md`](bench/accura
 Tiered by complexity under `examples/basic/`, `examples/intermediate/`, and
 `examples/advanced/` — see [`examples/README.md`](examples/README.md) for the
 full index. `pixi run examples-cpu` runs everything that doesn't need a GPU;
-`pixi run examples` includes the GPU ones (needs real Metal hardware).
+`pixi run examples` includes the GPU ones (needs a real GPU -- Metal or
+CUDA, whichever `DeviceContext` finds).
 
 ## Testing and benchmarks
 
@@ -242,9 +247,9 @@ pixi run tests           # full suite -- see pixi.toml for individual suites
 pixi run bench           # numax.tensor.map vs. a hand-rolled raw-SIMD loop
 pixi run bench-gpu       # CPU vs. GPU across a size sweep
 pixi run bench-numpy     # cross-language: NumPy
-pixi run bench-mlx       # cross-language: Apple MLX (CPU + GPU)
+pixi run bench-mlx       # cross-language: MLX (CPU + GPU; Metal or CUDA)
 pixi run bench-torch     # cross-language: PyTorch (eager + compile, CPU + GPU)
-pixi run bench-thermite  # cross-language: Rust thermite (NEON)
+pixi run bench-thermite  # cross-language: Rust thermite (NEON or AVX2)
 pixi run accuracy        # max error per function vs. checked-in mpmath refs
 ```
 

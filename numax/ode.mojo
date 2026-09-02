@@ -19,7 +19,8 @@ against closed forms.
 integration is a fixed number of stages over a fixed number of steps with
 no data-dependent control flow, so it compiles into a `map[gpu=True]`
 kernel body directly: each thread integrates its own trajectory to
-completion. `examples/ode.mojo` runs an ensemble that way on Metal.
+completion. `examples/advanced/ode.mojo` runs an ensemble that way, verified
+on Metal and on CUDA.
 
 ## Scope: fixed steps, no adaptive control
 

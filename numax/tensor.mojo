@@ -33,16 +33,18 @@ Two things make the `gpu` parameter possible at all:
   registers (`TileTensor.vectorize()` over `width`-wide groups plus a scalar
   tail) -- so there's no shared loop body to factor out, just a shared
   *signature* and *call site*. `width` means "per thread" on one path and
-  "per SIMD register" on the other; on Metal, raising it above 1 on the GPU
-  path measured neutral-to-slightly-worse, since that kernel is already
-  bandwidth-bound (see `map`'s own docstring).
+  "per SIMD register" on the other; raising it above 1 on the GPU path
+  measured neutral-to-slightly-worse on both Metal and CUDA, since that
+  kernel is already bandwidth-bound (see `map`'s own docstring).
 - `step`/`combine` is a `thin` (non-capturing) function, taken as a
   compile-time parameter, for *both* branches -- not just the `gpu=True`
   one. This is stricter than it needs to be for `gpu=False` alone (an
   earlier version of this module let CPU-only `step`/`combine` be a genuine
   capturing closure, since there's no host/device boundary for a capture to
   cross on that path), but it's what makes one shared signature launchable
-  through `DeviceContext.enqueue_function` when `gpu=True`:
+  through `DeviceContext.enqueue_function` when `gpu=True` (which is
+  backend-agnostic: the same `map[gpu=True]` launches on Metal and CUDA
+  with no per-backend branch anywhere in this module):
   `enqueue_function` needs the *entire* kernel type resolved before it can
   match runtime arguments against it, so `step`/`combine` has to already be
   bound as part of the function's identity (a compile-time parameter, in
@@ -65,9 +67,9 @@ Two things make the `gpu` parameter possible at all:
   `ctx.enqueue_function[map[gpu=True, step=...]](xs, ys, grid_dim=...,
   block_dim=...)`, and every thread applies `step` to `width` consecutive
   elements -- one element with the default `width=1`, which is the setting
-  that measured fastest on Metal. Raise it only after measuring on the
-  target: coarsening changes the required `grid_dim` (see `map`'s
-  docstring) and bought nothing here.
+  that measured fastest on both Metal and CUDA. Raise it only after
+  measuring on the target: coarsening changes the required `grid_dim`
+  (see `map`'s docstring) and bought nothing on either.
 
 `reduce`/`reduce_block_gpu` fold a tensor down to one value (sum, max, ...)
 instead of producing another tensor the same shape. `reduce` is a plain CPU
@@ -92,11 +94,11 @@ coalesces it to a flat walk internally.
 `map` has a second overload taking *two* input tensors and one output,
 with a two-argument `step` -- `out[i] = step(lhs[i], rhs[i])`. Overloading
 on arity rather than introducing a `zip_map` name works on both paths,
-including through `enqueue_function` (confirmed on Metal in
-`examples/gaussian_gpu.mojo`), which has to resolve the overload before it
-sees a single runtime argument. There is deliberately no three-input or
-variadic form: past two tensors the thing to compose is the *kernel*, not
-the walk. A `step` computing `exp(-(a*a))*b + c` in one pass beats three
+including through `enqueue_function` (confirmed on Metal and CUDA in
+`examples/advanced/gaussian_gpu.mojo`), which has to resolve the overload
+before it sees a single runtime argument. There is deliberately no
+three-input or variadic form: past two tensors the thing to compose is the
+*kernel*, not the walk. A `step` computing `exp(-(a*a))*b + c` in one pass beats three
 `map` calls that each re-traverse memory, and composing inside `step` is
 what makes a `FloatLike` kernel a fused kernel by construction. Two inputs
 is simply the point where the operation cannot be expressed inside a
@@ -223,11 +225,14 @@ def map[
     silently leaves the tail of the tensor unwritten, since nothing checks
     that the grid covers `n`.
 
-    Coarsening is worth knowing about and, on this project's Metal hardware,
-    not worth turning on: measured across `width` in `{1, 2, 4, 8}` against
-    `block_dim` in `{128, 256, 512, 1024}` at 67M elements
+    Coarsening is worth knowing about and not worth turning on: measured
+    across `width` in `{1, 2, 4, 8}` against `block_dim` in
+    `{128, 256, 512, 1024}` at 67M elements
     (`bench/bench_gpu_roofline.mojo`), `width=1` was the fastest or tied
-    every time, and `width=8` was consistently a few percent slower. The
+    every time, and `width=8` was consistently a few percent slower. That
+    held on both backends measured -- Metal and CUDA -- which is worth more
+    than either result alone, since it says the conclusion is about the
+    access pattern rather than about one vendor's memory controller. The
     reason is that this kernel is already at ~78-82% of the device's memory
     bandwidth with scalar per-thread accesses: neighbouring threads in a
     warp read neighbouring addresses, which the hardware coalesces into
