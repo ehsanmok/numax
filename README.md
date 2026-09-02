@@ -1,4 +1,6 @@
-<h1 align="center">numax</h1>
+<p align="center">
+  <img src="logo.png" alt="numax" width="480" height="240">
+</p>
 
 <p align="center">
   <a href="https://github.com/ehsanmok/numax/actions/workflows/ci.yml"><img src="https://github.com/ehsanmok/numax/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
