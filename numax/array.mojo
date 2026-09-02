@@ -102,6 +102,14 @@ from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
 from linalg.transpose import transpose as _max_transpose
 
+from .ops import (
+    add as _add,
+    divide as _divide,
+    multiply as _multiply,
+    negative as _negative,
+    subtract as _subtract,
+)
+
 
 def _product[*dims: Int]() -> Int:
     """The element count of a compile-time shape -- the product of `dims`."""
@@ -235,6 +243,42 @@ struct Tensor[dtype: DType, *dims: Int](Movable):
             return
         with self.buffer.map_to_host() as host:
             host[i] = value
+
+    def __add__(self, other: Self) raises -> Self:
+        """`a + b`, elementwise. Forwards to `numax.ops.add`."""
+        return _add(self, other)
+
+    def __add__(self, other: Scalar[Self.dtype]) raises -> Self:
+        """`a + b` with a scalar `b`."""
+        return _add(self, other)
+
+    def __sub__(self, other: Self) raises -> Self:
+        """`a - b`, elementwise. Forwards to `numax.ops.subtract`."""
+        return _subtract(self, other)
+
+    def __sub__(self, other: Scalar[Self.dtype]) raises -> Self:
+        """`a - b` with a scalar `b`."""
+        return _subtract(self, other)
+
+    def __mul__(self, other: Self) raises -> Self:
+        """`a * b`, elementwise. Forwards to `numax.ops.multiply`."""
+        return _multiply(self, other)
+
+    def __mul__(self, other: Scalar[Self.dtype]) raises -> Self:
+        """`a * b` with a scalar `b`."""
+        return _multiply(self, other)
+
+    def __truediv__(self, other: Self) raises -> Self:
+        """`a / b`, elementwise. Forwards to `numax.ops.divide`."""
+        return _divide(self, other)
+
+    def __truediv__(self, other: Scalar[Self.dtype]) raises -> Self:
+        """`a / b` with a scalar `b`."""
+        return _divide(self, other)
+
+    def __neg__(self) raises -> Self:
+        """`-a`, elementwise. Forwards to `numax.ops.negative`."""
+        return _negative(self)
 
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from a host buffer, row-major.

@@ -175,6 +175,17 @@ from .linalg import (
 )
 from .numeric import FloatLike
 from .ode import dopri5, dopri5_step, dopri5_with_error, rk4, rk4_system
+from .ops import (
+    add,
+    astype,
+    divide,
+    floor_divide,
+    mod,
+    multiply,
+    negative,
+    power,
+    subtract,
+)
 from .optimize import (
     MinimizeResult,
     OptimizeResult,
