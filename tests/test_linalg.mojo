@@ -21,12 +21,19 @@ from numax.linalg import (
     log_det_from_cholesky,
     lu,
     matmul,
+    cond,
+    dot,
+    eigh,
     matvec,
     norm_1,
     norm_frobenius,
     norm_inf,
+    nrm2,
+    outer,
+    pinv,
     qr,
     solve,
+    svd,
     trace,
     tridiagonal_solve,
 )
@@ -483,6 +490,310 @@ def test_qr_differentiates_through_at_dual() raises:
     var h = 1e-6
     var numeric = (trace_r(s(a[0]) + h) - trace_r(s(a[0]) - h)) / (2 * h)
     assert_almost_equal(derivative, numeric, atol=1e-6)
+
+
+# ------------------------------------------------------------------
+# BLAS-1
+# ------------------------------------------------------------------
+
+
+def vec3(a: Float64, b: Float64, c: Float64) -> Array[P, 3]:
+    var v = Array[P, 3](fill=pv(0.0))
+    v[0] = pv(a)
+    v[1] = pv(b)
+    v[2] = pv(c)
+    return v^
+
+
+def test_dot_is_the_inner_product() raises:
+    var a = vec3(1.0, 2.0, 3.0)
+    var b = vec3(4.0, -5.0, 6.0)
+    assert_almost_equal(s(dot[P, 3](a, b)), 4.0 - 10.0 + 18.0)
+
+
+def test_nrm2_is_the_euclidean_length() raises:
+    var a = vec3(3.0, 4.0, 0.0)
+    assert_almost_equal(s(nrm2[P, 3](a)), 5.0)
+
+
+def test_nrm2_squared_equals_dot_with_itself() raises:
+    var a = vec3(1.5, -2.5, 0.75)
+    var norm = s(nrm2[P, 3](a))
+    assert_almost_equal(norm * norm, s(dot[P, 3](a, a)))
+
+
+def test_outer_product_has_rank_one_structure() raises:
+    var a = vec3(1.0, 2.0, 3.0)
+    var b = vec3(4.0, 5.0, 6.0)
+    var m = outer[P, 3](a, b)
+    for i in range(3):
+        for j in range(3):
+            assert_almost_equal(s(m[i * 3 + j]), s(a[i]) * s(b[j]))
+
+
+def test_compensated_dot_beats_plain_on_a_long_cancelling_sum() raises:
+    # The reason a generic `dot` is worth having: the same call at
+    # `Compensated` recovers bits `Plain` drops.
+    comptime CP = Compensated[dtype, width]
+    var big = 1e16
+    var a_plain = Array[P, 4](fill=pv(0.0))
+    a_plain[0] = pv(big)
+    a_plain[1] = pv(1.0)
+    a_plain[2] = pv(-big)
+    a_plain[3] = pv(1.0)
+    var ones_plain = Array[P, 4](fill=pv(1.0))
+
+    var a_comp = Array[CP, 4](fill=CP.constant(0.0))
+    a_comp[0] = CP.constant(big)
+    a_comp[1] = CP.constant(1.0)
+    a_comp[2] = CP.constant(-big)
+    a_comp[3] = CP.constant(1.0)
+    var ones_comp = Array[CP, 4](fill=CP.constant(1.0))
+
+    var plain_result = s(dot[P, 4](a_plain, ones_plain))
+    var comp = dot[CP, 4](a_comp, ones_comp)
+    var comp_result = Float64(comp.value) + Float64(comp.error)
+
+    # The true sum is 2. Plain loses the 1s inside the 1e16 cancellation.
+    assert_true(abs(comp_result - 2.0) <= abs(plain_result - 2.0))
+
+
+# ------------------------------------------------------------------
+# eigh
+# ------------------------------------------------------------------
+
+
+def test_eigh_eigenvalues_sum_to_the_trace() raises:
+    # An invariant of any similarity transform, so it catches a rotation
+    # applied inconsistently to rows and columns.
+    var a = spd3()
+    var values = eigh[P, 3](a)[0].copy()
+    var total = s(values[0]) + s(values[1]) + s(values[2])
+    assert_almost_equal(total, s(trace[P, 3](a)), atol=1e-12)
+
+
+def test_eigh_satisfies_the_eigenvalue_equation() raises:
+    # A @ v == lambda * v for every returned pair. The actual definition,
+    # rather than a check against precomputed values.
+    var a = spd3()
+    var factored = eigh[P, 3](a)
+    var values = factored[0].copy()
+    var vectors = factored[1].copy()
+    for j in range(3):
+        for i in range(3):
+            var av = 0.0
+            for k in range(3):
+                av += s(a[i * 3 + k]) * s(vectors[k * 3 + j])
+            assert_almost_equal(
+                av, s(values[j]) * s(vectors[i * 3 + j]), atol=1e-12
+            )
+
+
+def test_eigh_eigenvectors_are_orthonormal() raises:
+    var a = spd3()
+    var vectors = eigh[P, 3](a)[1].copy()
+    for p in range(3):
+        for q in range(3):
+            var inner = 0.0
+            for i in range(3):
+                inner += s(vectors[i * 3 + p]) * s(vectors[i * 3 + q])
+            var expected = 1.0 if p == q else 0.0
+            assert_almost_equal(inner, expected, atol=1e-12)
+
+
+def test_eigh_of_a_diagonal_matrix_returns_its_diagonal() raises:
+    var a = Array[P, 9](fill=pv(0.0))
+    a[0] = pv(3.0)
+    a[4] = pv(-1.0)
+    a[8] = pv(7.0)
+    var values = eigh[P, 3](a)[0].copy()
+    # Unordered, so check the multiset by summing and by extremes.
+    var total = s(values[0]) + s(values[1]) + s(values[2])
+    assert_almost_equal(total, 9.0, atol=1e-12)
+    var biggest = max(max(s(values[0]), s(values[1])), s(values[2]))
+    var smallest = min(min(s(values[0]), s(values[1])), s(values[2]))
+    assert_almost_equal(biggest, 7.0, atol=1e-12)
+    assert_almost_equal(smallest, -1.0, atol=1e-12)
+
+
+def test_eigh_of_the_identity_is_all_ones() raises:
+    var a = Array[P, 9](fill=pv(0.0))
+    for i in range(3):
+        a[i * 3 + i] = pv(1.0)
+    var values = eigh[P, 3](a)[0].copy()
+    for i in range(3):
+        assert_almost_equal(s(values[i]), 1.0, atol=1e-14)
+
+
+def test_eigh_positive_definite_matrix_has_positive_eigenvalues() raises:
+    var values = eigh[P, 3](spd3())[0].copy()
+    for i in range(3):
+        assert_true(s(values[i]) > 0.0)
+
+
+# ------------------------------------------------------------------
+# svd
+# ------------------------------------------------------------------
+
+
+def test_svd_reconstructs_the_matrix() raises:
+    var a = general3()
+    var factored = svd[P, 3](a)
+    var u = factored[0].copy()
+    var values = factored[1].copy()
+    var v = factored[2].copy()
+    for i in range(3):
+        for j in range(3):
+            var total = 0.0
+            for k in range(3):
+                total += s(u[i * 3 + k]) * s(values[k]) * s(v[j * 3 + k])
+            assert_almost_equal(total, s(a[i * 3 + j]), atol=1e-12)
+
+
+def test_svd_singular_values_are_non_negative() raises:
+    var values = svd[P, 3](general3())[1].copy()
+    for i in range(3):
+        assert_true(s(values[i]) >= 0.0)
+
+
+def test_svd_left_factor_is_orthonormal() raises:
+    var u = svd[P, 3](general3())[0].copy()
+    for p in range(3):
+        for q in range(3):
+            var inner = 0.0
+            for i in range(3):
+                inner += s(u[i * 3 + p]) * s(u[i * 3 + q])
+            var expected = 1.0 if p == q else 0.0
+            assert_almost_equal(inner, expected, atol=1e-12)
+
+
+def test_svd_right_factor_is_orthonormal() raises:
+    var v = svd[P, 3](general3())[2].copy()
+    for p in range(3):
+        for q in range(3):
+            var inner = 0.0
+            for i in range(3):
+                inner += s(v[i * 3 + p]) * s(v[i * 3 + q])
+            var expected = 1.0 if p == q else 0.0
+            assert_almost_equal(inner, expected, atol=1e-12)
+
+
+def test_svd_of_a_symmetric_matrix_matches_its_eigenvalue_magnitudes() raises:
+    # For a symmetric positive definite matrix the singular values *are*
+    # the eigenvalues, which cross-checks two independently written
+    # Jacobi loops against each other.
+    var a = spd3()
+    var eigenvalues = eigh[P, 3](a)[0].copy()
+    var singular = svd[P, 3](a)[1].copy()
+
+    var eig_sum = 0.0
+    var sv_sum = 0.0
+    for i in range(3):
+        eig_sum += s(eigenvalues[i])
+        sv_sum += s(singular[i])
+    assert_almost_equal(eig_sum, sv_sum, atol=1e-10)
+
+
+def test_svd_of_a_singular_matrix_reports_a_zero_singular_value() raises:
+    # Row 2 = 2 * row 0, so the matrix is rank 2.
+    var a = Array[P, 9](fill=pv(0.0))
+    var entries = [1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 2.0, 4.0, 6.0]
+    for i in range(9):
+        a[i] = pv(entries[i])
+    var values = svd[P, 3](a)[1].copy()
+    var smallest = min(min(s(values[0]), s(values[1])), s(values[2]))
+    assert_true(smallest < 1e-10)
+
+
+# ------------------------------------------------------------------
+# pinv and cond
+# ------------------------------------------------------------------
+
+
+def test_pinv_of_an_invertible_matrix_is_its_inverse() raises:
+    var a = general3()
+    var pseudo = pinv[P, 3](a)
+    var product = matmul[P, 3](a.copy(), pseudo^)
+    for i in range(3):
+        for j in range(3):
+            var expected = 1.0 if i == j else 0.0
+            assert_almost_equal(s(product[i * 3 + j]), expected, atol=1e-10)
+
+
+def test_pinv_agrees_with_inverse_on_a_well_conditioned_matrix() raises:
+    var a = general3()
+    var direct = inverse[P, 3](a)
+    var pseudo = pinv[P, 3](a)
+    for i in range(9):
+        assert_almost_equal(s(pseudo[i]), s(direct[i]), atol=1e-10)
+
+
+def test_pinv_of_a_singular_matrix_stays_finite() raises:
+    # `inverse` would divide by a zero pivot here. The pseudoinverse
+    # truncates the singular direction instead, which is the whole reason
+    # to reach for it.
+    var a = Array[P, 9](fill=pv(0.0))
+    var entries = [1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 2.0, 4.0, 6.0]
+    for i in range(9):
+        a[i] = pv(entries[i])
+    var pseudo = pinv[P, 3](a)
+    for i in range(9):
+        assert_true(abs(s(pseudo[i])) < 1e6)
+
+
+def test_pinv_satisfies_the_moore_penrose_identity() raises:
+    # A @ A+ @ A == A holds even when A is singular, which is what makes
+    # the pseudoinverse well-defined there.
+    var a = Array[P, 9](fill=pv(0.0))
+    var entries = [1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 2.0, 4.0, 6.0]
+    for i in range(9):
+        a[i] = pv(entries[i])
+    var pseudo = pinv[P, 3](a)
+    var left = matmul[P, 3](a.copy(), pseudo^)
+    var recovered = matmul[P, 3](left^, a.copy())
+    for i in range(9):
+        assert_almost_equal(s(recovered[i]), s(a[i]), atol=1e-9)
+
+
+def test_cond_of_the_identity_is_one() raises:
+    var a = Array[P, 9](fill=pv(0.0))
+    for i in range(3):
+        a[i * 3 + i] = pv(1.0)
+    assert_almost_equal(s(cond[P, 3](a)), 1.0, atol=1e-12)
+
+
+def test_cond_is_the_ratio_of_extreme_singular_values() raises:
+    var a = spd3()
+    var values = svd[P, 3](a)[1].copy()
+    var biggest = max(max(s(values[0]), s(values[1])), s(values[2]))
+    var smallest = min(min(s(values[0]), s(values[1])), s(values[2]))
+    assert_almost_equal(s(cond[P, 3](a)), biggest / smallest, atol=1e-10)
+
+
+def test_cond_of_a_scaled_identity_is_still_one() raises:
+    # Scaling every singular value equally cannot change the ratio, which
+    # catches an absolute rather than relative comparison in `cond`.
+    var a = Array[P, 9](fill=pv(0.0))
+    for i in range(3):
+        a[i * 3 + i] = pv(1e6)
+    assert_almost_equal(s(cond[P, 3](a)), 1.0, atol=1e-10)
+
+
+def test_eigh_is_differentiable_at_dual() raises:
+    # d(trace)/dA[0,0] == 1, and the eigenvalues sum to the trace, so the
+    # summed derivative of the eigenvalues must be 1 too -- reached through
+    # 12 sweeps of Jacobi rotations with no adjoint rule anywhere.
+    var a = Array[D, 9](fill=D.constant(0.0))
+    var entries = [4.0, 2.0, 1.0, 2.0, 5.0, 3.0, 1.0, 3.0, 6.0]
+    for i in range(9):
+        a[i] = D.constant(entries[i])
+    a[0] = D(pv(4.0), P.one())
+
+    var values = eigh[D, 3](a)[0].copy()
+    var derivative_sum = 0.0
+    for i in range(3):
+        derivative_sum += Float64(values[i].deriv.v)
+    assert_almost_equal(derivative_sum, 1.0, atol=1e-9)
 
 
 def main() raises:

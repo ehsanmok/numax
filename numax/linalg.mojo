@@ -79,7 +79,7 @@ at the call site, not only here.
 
 from std.collections import Array
 
-from .numeric import FloatLike, guard_nonzero, max_of
+from .numeric import FloatLike, ge_indicator, guard_nonzero, max_of, min_of
 
 comptime _PIVOT_FLOOR = 1e-30
 
@@ -554,3 +554,297 @@ def qr[
             r[i * n + j] = T.constant(0.0)
 
     return (r^, q^)
+
+
+def dot[T: FloatLike, n: Int](a: Array[T, n], b: Array[T, n]) -> T:
+    """The inner product `sum(a[i] * b[i])` -- BLAS-1 `dot`.
+
+    Summed in order rather than pairwise, so the rounding is the obvious
+    one and a caller who cares can recover the lost bits by calling this at
+    `Compensated` instead of `Plain`. That is the whole reason a `dot` this
+    small is worth writing: MAX ships no BLAS-1 at all, and no BLAS
+    anywhere is generic over its scalar type.
+    """
+    var total = T.constant(0.0)
+    for i in range(n):
+        total = total + a[i] * b[i]
+    return total^
+
+
+def nrm2[T: FloatLike, n: Int](a: Array[T, n]) -> T:
+    """The Euclidean norm `sqrt(sum(a[i]**2))` -- BLAS-1 `nrm2`.
+
+    Not rescaled, so a vector whose entries approach the square root of
+    `dtype`'s overflow threshold will overflow here where LAPACK's `nrm2`
+    would not. Rescaling needs a running maximum and a data-dependent
+    branch, which the fixed-iteration invariant rules out; the same
+    trade-off `norm_frobenius` documents.
+    """
+    return dot[T, n](a, a).sqrt()
+
+
+def outer[
+    T: FloatLike, n: Int
+](a: Array[T, n], b: Array[T, n]) -> Array[T, n * n]:
+    """The outer product `out[i, j] = a[i] * b[j]`, row-major.
+
+    The rank-1 update every quasi-Newton method and every Householder
+    reflector is built from. MAX has `outer_product_acc`, but only on the
+    older `LayoutTensor` and only accumulating into an existing matrix.
+    """
+    var out = _zeros[T, n * n]()
+    for i in range(n):
+        for j in range(n):
+            out[i * n + j] = a[i] * b[j]
+    return out^
+
+
+def _jacobi_rotation[T: FloatLike](numerator: T, denominator: T) -> Tuple[T, T]:
+    """The `(cosine, sine)` of the Jacobi rotation that annihilates an
+    off-diagonal entry, computed without a branch.
+
+    Given the standard `zeta = denominator / (2 * numerator)`, the
+    numerically stable form of the tangent is
+    `t = sign(zeta) / (|zeta| + sqrt(1 + zeta**2))` -- chosen over the
+    algebraically equivalent `t = -zeta + sqrt(1 + zeta**2)` because the
+    latter cancels catastrophically for large `|zeta|`, which is exactly
+    the common case near convergence.
+
+    `numerator` is the off-diagonal entry being annihilated. When it is
+    already zero the rotation should be the identity, and `guard_nonzero`
+    delivers that without an `if`: a floored denominator makes `zeta` huge,
+    which makes `t` about `1/(2*zeta)`, which is about zero, which makes
+    `(c, s) = (1, 0)`. A branch here would be a per-lane branch, since two
+    SIMD lanes can disagree about whether their entry has converged.
+    """
+    var safe = guard_nonzero(numerator, T.constant(_PIVOT_FLOOR))
+    var zeta = denominator / (T.constant(2.0) * safe)
+    var magnitude = zeta.abs()
+    var tangent = T.one().copysign(zeta) / (
+        magnitude + (T.one() + zeta * zeta).sqrt()
+    )
+    var cosine = T.one() / (T.one() + tangent * tangent).sqrt()
+    var sine = tangent * cosine
+    return (cosine^, sine^)
+
+
+def eigh[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Tuple[Array[T, n], Array[T, n * n]]:
+    """Eigenvalues and eigenvectors of a *symmetric* matrix, by cyclic
+    Jacobi rotations. Returns `(eigenvalues, eigenvectors)` with the
+    eigenvectors as the columns of the second matrix.
+
+    Only the symmetric part is meaningful: the algorithm reads the whole
+    matrix but drives it toward diagonal by symmetric similarity
+    transforms, so a non-symmetric input gives the eigen-decomposition of
+    nothing in particular. There is no symmetry check, because checking
+    would be a per-lane branch.
+
+    **Fixed sweeps, so this stays tier 1 and GPU-launchable.** A
+    convergence-tested Jacobi would stop when the off-diagonal norm fell
+    below a tolerance; this does `sweeps` full passes over all `n*(n-1)/2`
+    pairs regardless. Cyclic Jacobi converges quadratically once the
+    off-diagonal entries are small, so 12 sweeps is far more than enough
+    for the sizes this module handles -- but it is a fixed amount of work,
+    not a guarantee, and a pathological matrix can leave residue. Raise
+    `sweeps` if a residual check says so.
+
+    **Eigenvalues come out in no particular order.** NumPy's `eigh` sorts
+    them ascending; sorting is data-dependent, so it cannot happen inside a
+    tier-1 kernel. Sort them yourself afterward if the order matters --
+    `numax.statistics` has the `Plain`-only machinery for it.
+
+    Differentiable, like everything else here: called at `Dual`, the
+    eigenvalues carry their derivatives with respect to whatever the matrix
+    entries were seeded from. That is not true of any LAPACK-backed
+    `eigh`.
+    """
+    # `work` is driven toward diagonal; `vectors` accumulates the rotations.
+    var work = _zeros[T, n * n]()
+    for i in range(n * n):
+        work[i] = a[i].copy()
+    var vectors = _zeros[T, n * n]()
+    for i in range(n):
+        vectors[i * n + i] = T.one()
+
+    for _ in range(sweeps):
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                var apq = work[p * n + q].copy()
+                var app = work[p * n + p].copy()
+                var aqq = work[q * n + q].copy()
+                var rotation = _jacobi_rotation[T](apq, aqq + (-app))
+                var c = rotation[0].copy()
+                var s = rotation[1].copy()
+
+                # Rows p and q.
+                for k in range(n):
+                    var akp = work[p * n + k].copy()
+                    var akq = work[q * n + k].copy()
+                    work[p * n + k] = c * akp + (-(s * akq))
+                    work[q * n + k] = s * akp + c * akq
+                # Columns p and q, completing the similarity transform.
+                for k in range(n):
+                    var apk = work[k * n + p].copy()
+                    var aqk = work[k * n + q].copy()
+                    work[k * n + p] = c * apk + (-(s * aqk))
+                    work[k * n + q] = s * apk + c * aqk
+                # The same rotation applied to the accumulating basis.
+                for k in range(n):
+                    var vkp = vectors[k * n + p].copy()
+                    var vkq = vectors[k * n + q].copy()
+                    vectors[k * n + p] = c * vkp + (-(s * vkq))
+                    vectors[k * n + q] = s * vkp + c * vkq
+
+    var values = _zeros[T, n]()
+    for i in range(n):
+        values[i] = work[i * n + i].copy()
+    return (values^, vectors^)
+
+
+def svd[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Tuple[Array[T, n * n], Array[T, n], Array[T, n * n]]:
+    """The singular value decomposition of a square matrix: returns
+    `(U, singular_values, V)` with `A = U @ diag(s) @ V.T`.
+
+    One-sided Jacobi: rotate pairs of *columns* of `A` until they are
+    mutually orthogonal, accumulating the rotations into `V`. The column
+    norms are then the singular values and the normalized columns are `U`.
+    Chosen over forming `A.T @ A` and calling `eigh`, which squares the
+    condition number and loses half the significant digits of the small
+    singular values -- the classic mistake, and the reason one-sided
+    Jacobi exists.
+
+    **Fixed sweeps, tier 1**, on the same terms as `eigh`: `sweeps` full
+    passes over all column pairs, no convergence test, GPU-launchable.
+
+    **Singular values are unordered**, unlike `numpy.linalg.svd`'s
+    descending convention, for the same reason `eigh`'s eigenvalues are:
+    sorting is data-dependent. They are all non-negative.
+
+    Square only. A rectangular SVD needs two size parameters throughout
+    and a decision about thin-vs-full factors; nothing in `numax` needs one
+    yet, and doing it half-way would be worse than not doing it.
+    """
+    # Columns of `work` get orthogonalized; `v` accumulates the rotations.
+    var work = _zeros[T, n * n]()
+    for i in range(n * n):
+        work[i] = a[i].copy()
+    var v = _zeros[T, n * n]()
+    for i in range(n):
+        v[i * n + i] = T.one()
+
+    for _ in range(sweeps):
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                # Gram matrix of the two columns.
+                var alpha = T.constant(0.0)
+                var beta = T.constant(0.0)
+                var gamma = T.constant(0.0)
+                for i in range(n):
+                    var ip = work[i * n + p].copy()
+                    var iq = work[i * n + q].copy()
+                    alpha = alpha + ip * ip
+                    beta = beta + iq * iq
+                    gamma = gamma + ip * iq
+
+                var rotation = _jacobi_rotation[T](gamma, beta + (-alpha))
+                var c = rotation[0].copy()
+                var s = rotation[1].copy()
+
+                for i in range(n):
+                    var ip = work[i * n + p].copy()
+                    var iq = work[i * n + q].copy()
+                    work[i * n + p] = c * ip + (-(s * iq))
+                    work[i * n + q] = s * ip + c * iq
+                for i in range(n):
+                    var ip = v[i * n + p].copy()
+                    var iq = v[i * n + q].copy()
+                    v[i * n + p] = c * ip + (-(s * iq))
+                    v[i * n + q] = s * ip + c * iq
+
+    var values = _zeros[T, n]()
+    var u = _zeros[T, n * n]()
+    for j in range(n):
+        var norm_sq = T.constant(0.0)
+        for i in range(n):
+            norm_sq = norm_sq + work[i * n + j] * work[i * n + j]
+        var sigma = norm_sq.sqrt()
+        values[j] = sigma.copy()
+        # A zero singular value leaves its column direction undetermined;
+        # the guard makes it come out as zero rather than NaN, which keeps
+        # a rank-deficient input usable instead of poisoning `U`.
+        var safe = guard_nonzero(sigma, T.constant(_PIVOT_FLOOR))
+        for i in range(n):
+            u[i * n + j] = work[i * n + j] / safe
+
+    return (u^, values^, v^)
+
+
+def pinv[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n], rcond: Float64 = 1e-12) -> Array[T, n * n]:
+    """The Moore-Penrose pseudoinverse, `V @ diag(1/s) @ U.T`, with small
+    singular values truncated.
+
+    This is what to reach for instead of `inverse` when the matrix might be
+    singular or nearly so: `inverse` solves against the identity through an
+    unpivoted LU and will happily return enormous garbage for a
+    near-singular input, whereas here a singular direction contributes
+    nothing rather than dominating.
+
+    `rcond` is relative to the largest singular value, matching
+    `numpy.linalg.pinv`. The truncation is arithmetic, not a branch: each
+    reciprocal is multiplied by a `0`/`1` indicator built from
+    `ge_indicator`, so no lane decides anything for another lane.
+    """
+    var factored = svd[T, n, sweeps](a)
+    var u = factored[0].copy()
+    var values = factored[1].copy()
+    var v = factored[2].copy()
+
+    var largest = T.constant(0.0)
+    for i in range(n):
+        largest = max_of(largest, values[i])
+    var threshold = largest * T.constant(rcond)
+
+    # Reciprocal where the value clears the threshold, zero where it does
+    # not -- as a multiply by an indicator rather than a branch.
+    var inverted = _zeros[T, n]()
+    for i in range(n):
+        var keep = ge_indicator(values[i], threshold)
+        var safe = guard_nonzero(values[i], T.constant(_PIVOT_FLOOR))
+        inverted[i] = keep / safe
+    var out = _zeros[T, n * n]()
+    for i in range(n):
+        for j in range(n):
+            var total = T.constant(0.0)
+            for k in range(n):
+                total = total + v[i * n + k] * inverted[k] * u[j * n + k]
+            out[i * n + j] = total^
+    return out^
+
+
+def cond[T: FloatLike, n: Int, sweeps: Int = 12](a: Array[T, n * n]) -> T:
+    """The 2-norm condition number: the ratio of largest to smallest
+    singular value.
+
+    The number that says how much a solve can amplify input error -- a
+    `cond` of `1e12` at float64 means about four significant digits survive.
+    Worth computing before trusting `solve` or `inverse` on a matrix of
+    unknown provenance.
+
+    A singular matrix has a zero smallest singular value and an infinite
+    condition number; the floor in the division reports a very large finite
+    number instead, since returning an infinity from a branchless kernel
+    would need the branch this avoids.
+    """
+    var values = svd[T, n, sweeps](a)[1].copy()
+    var largest = T.constant(0.0)
+    var smallest = values[0].copy()
+    for i in range(n):
+        largest = max_of(largest, values[i])
+        smallest = min_of(smallest, values[i])
+    return largest / guard_nonzero(smallest, T.constant(_PIVOT_FLOOR))

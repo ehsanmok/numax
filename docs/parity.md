@@ -144,10 +144,27 @@ rename them.
 ### Absorbed — small dense linear algebra
 
 Home: [`numax/linalg.mojo`](../numax/linalg.mojo). `FloatLike`-generic and
-compile-time-sized: `matvec`, `matmul`, `cholesky`, `lu`,
-`forward_substitution`, `back_substitution`, `solve`, `cholesky_solve`, `det`,
-`log_det_from_cholesky`, `inverse`, `tridiagonal_solve`, `trace`,
-`norm_frobenius`, `norm_1`, `norm_inf`, `qr`.
+compile-time-sized. Factorizations: `cholesky`, `lu`, `qr`, `eigh`, `svd`.
+Solves: `solve`, `cholesky_solve`, `forward_substitution`,
+`back_substitution`, `tridiagonal_solve`, `inverse`, `pinv`. Scalars:
+`det`, `log_det_from_cholesky`, `trace`, `cond`, `norm_frobenius`, `norm_1`,
+`norm_inf`. Products: `matmul`, `matvec`, `dot`, `nrm2`, `outer`.
+
+`eigh` and `svd` are cyclic and one-sided Jacobi respectively, at a *fixed*
+sweep count -- which is what keeps them tier 1 and GPU-launchable. The
+rotation angle is computed branchlessly (`guard_nonzero` makes an
+already-converged pair produce the identity rotation rather than needing an
+`if`), so no SIMD lane decides anything for another. Two consequences are
+documented at each function: eigenvalues and singular values come out
+**unordered**, because sorting is data-dependent; and a pathological matrix
+can leave residue, because a fixed sweep count is a bound on work rather than
+a convergence guarantee.
+
+`svd` uses one-sided Jacobi rather than forming `A.T @ A` and calling `eigh`,
+which would square the condition number and lose half the digits of the small
+singular values. `pinv` truncates below `rcond` arithmetically, via a `0`/`1`
+indicator from `ge_indicator` -- so a rank-deficient matrix comes back usable
+instead of poisoning the result the way `inverse`'s unpivoted LU would.
 
 The payoff is differentiability, not speed. A differentiable Cholesky is what
 Gaussian process marginal likelihoods, Kalman updates and multivariate normal
