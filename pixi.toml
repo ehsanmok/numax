@@ -191,6 +191,7 @@ test-signal = "mojo -I . tests/test_signal.mojo"
 test-interval = "mojo -I . tests/test_interval.mojo"
 test-array = "mojo -I . tests/test_array.mojo"
 test-statistics = "mojo -I . tests/test_statistics.mojo"
+test-sorting = "mojo -I . tests/test_sorting.mojo"
 test-io = "mojo -I . tests/test_io.mojo"
 test-random = "mojo -I . tests/test_random.mojo"
 test-floor-ceil-trunc = "mojo -I . tests/test_floor_ceil_trunc.mojo"
@@ -229,6 +230,7 @@ tests = { depends-on = [
     "test-interval",
     "test-array",
     "test-statistics",
+    "test-sorting",
     "test-io",
     "test-random",
     "test-floor-ceil-trunc",

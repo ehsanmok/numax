@@ -145,6 +145,18 @@ from .signal import (
     hann,
 )
 from .solve import bisection, halley, newton
+from .sorting import (
+    all_nonzero,
+    any_nonzero,
+    argsort,
+    count_nonzero,
+    extract,
+    nonzero,
+    searchsorted,
+    sort,
+    unique,
+    select,
+)
 from .statistics import (
     argmax,
     argmin,
