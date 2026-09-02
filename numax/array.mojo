@@ -1,6 +1,6 @@
 """Gap-only NumPy-named creation and manipulation surface over `TileTensor`.
 
-`parity.mdc`'s Track F picks array creation/manipulation as a genuine
+`docs/parity.md` picks array creation/manipulation as a genuine
 `numax` gap: MAX's `layout` package ships `TileTensor` itself (slicing,
 tiling, reshaping, coalescing) but no NumPy-named *factory* functions --
 `TileTensor.zeros`/`.ones`/`.full`/`.arange` all fail to resolve (verified

@@ -1,12 +1,9 @@
 # Architecture
 
-> Companion to the top-level [README](../README.md). For the design intent
-> behind the parity surface and the rename from `ember` to `numax`, see
-> [`.cursor/rules/design-v0.1.mdc`](../.cursor/rules/design-v0.1.mdc) and
-> [`.cursor/rules/parity.mdc`](../.cursor/rules/parity.mdc). For the
-> per-library design history (Tracks A-E: special functions, conformers,
-> algorithms, linalg/FFT, performance layer), see
-> [`.cursor/rules/strategy.mdc`](../.cursor/rules/strategy.mdc).
+> Companion to the top-level [README](../README.md). For what numax absorbs
+> from NumPy/SciPy and what it deliberately leaves out -- with the surveyed
+> MAX API surface those decisions rest on -- see
+> [`parity.md`](parity.md).
 
 `numax` is built on two co-equal axes:
 
@@ -53,8 +50,42 @@ trait FloatLike(Copyable, Movable, Deinitable):
 The trait grew only when a kernel genuinely needed a new operation
 (`sqrt` was held out for a long time on the "one call site isn't reason
 enough" rule until the call sites multiplied AND the `exp(0.5*ln(x))`
-workaround turned out to be inaccurate, not merely verbose -- see
-`findings.mdc`).
+workaround turned out to be inaccurate, not merely verbose).
+
+### Two tiers
+
+The invariant above is what makes every kernel here GPU-launchable, and it
+is absolute for `FloatLike`-generic code. It also rules out a large part of
+SciPy: root finding to a tolerance, adaptive quadrature, adaptive ODE step
+control, pivoting, and sorting all need to branch on data or to iterate
+until something converges.
+
+Rather than erode the rule one exception at a time, numax states two tiers
+and declares which one every function is in:
+
+| | types | iteration | guarantee |
+|---|---|---|---|
+| **Tier 1** | `FloatLike`-generic | fixed count, no per-lane branching | launches inside a GPU thread unmodified |
+| **Tier 2** | `Plain`-only, host | may loop to a tolerance, may branch on data | none about GPU |
+
+Everything shipping today is tier 1 -- the special functions, `rk4`,
+`dopri5` (fixed-step), `gauss_legendre`, `lambertw`'s fixed 20 Halley
+iterations, `Compensated.ln()`'s 3 fixed Newton refinements, `gammainc`'s
+fixed 100-term series, `numax.solve`'s fixed-iteration `newton`/`halley`/
+`bisection`. `numax.statistics.median` and `mode` are the nearest thing to
+an exception, and they are not one: they reach MAX's own sort, which has
+data-dependent control flow, from `Plain`-only code. The rule governs what
+numax writes *inside the trait*.
+
+Three rules govern the boundary. The tier is **declared**, in the module
+docstring and in the function's own, so a reader at a call site never has
+to audit a body to learn whether it can be launched. **Tier 1 never calls
+tier 2** -- the dependency runs one way, because a tier-1 kernel that
+reaches a convergence loop silently loses the property that justifies the
+whole spine. And where both make sense, **both ship, cross-referenced**:
+a fixed-iteration `newton` and a converge-to-tolerance one are siblings,
+not replacements.
+
 
 ## The conformers
 
@@ -73,9 +104,8 @@ documented limitations; `tests/` has the numerical margins.
 
 ## The fixed-iteration invariant
 
-Stated once in `strategy.mdc` and inherited everywhere: **no kernel in
-`numax` runs a data-dependent number of iterations, and no kernel
-branches per lane.** A `Self` may hold a SIMD vector whose lanes disagree
+Inherited everywhere: **no `FloatLike`-generic kernel in `numax` runs a
+data-dependent number of iterations, and none branches per lane.** A `Self` may hold a SIMD vector whose lanes disagree
 about which branch they want or whether a series has converged, and there
 is no `select`-like primitive on `FloatLike` to resolve that per lane.
 So a fixed amount of uniform work is done instead, and per-lane selection
@@ -136,37 +166,71 @@ instead of `map[gpu=False]`. **No `FloatLike` kernel needed an edit to
 become GPU-launchable.** That's the benefit the fixed-iteration invariant
 buys.
 
-## The NumPy/SciPy parity surface (Track F)
+## The NumPy/SciPy parity surface
 
-Four modules fill the gaps `parity.mdc`'s Track F identified against
-NuMojo-shaped coverage -- each picked because MAX ships no equivalent,
-verified by direct probe rather than assumed:
+Five modules fill the gaps in NumPy/SciPy-shaped coverage -- each picked
+because MAX ships no usable equivalent, verified by direct probe rather
+than assumed. [`parity.md`](parity.md) has the full disposition table and
+the survey of what MAX does ship.
 
 - **`numax.array`** -- NumPy-named creation (`zeros`/`ones`/`full`/`empty`/
-  `eye`/`linspace`/`logspace`/`*_like`) and manipulation (`transpose`/
-  `squeeze`/`stack`) over a `Tensor` wrapper that owns its storage (a bare
-  `TileTensor` is a view, not memory, and dangles once the function that
-  built it returns). Comptime-shape and `Plain`-only, matching
-  `numax.tensor`'s own contract.
+  `eye`/`linspace`/`logspace`/`arange`/`*_like`) and manipulation
+  (`reshape`/`ravel`/`transpose`/`squeeze`/`stack`/`concatenate`/`split`)
+  over a `Tensor` wrapper that owns its storage (a bare `TileTensor` is a
+  view, not memory, and dangles once the function that built it returns).
+  Comptime-shape and `Plain`-only, matching `numax.tensor`'s own contract.
 - **`numax.statistics`** -- `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`
   `Plain`-only over `TileTensor`, plus `argmax`/`argmin` routed straight to
   `nn.argmaxmin` (MAX-first). `mean`/`variance`/`stddev`/`cumsum` also have
   a `FloatLike`-generic form over `List[T]`, so calling them at
   `Compensated` recovers precision a long summation loses at `Plain` -- the
-  one place in this surface where axis 1 (the composable-type spine) and
-  axis 2 (NumPy parity) meet.
+  one place in this surface where the composable-type spine and NumPy
+  parity meet.
+- **`numax.linalg`** -- small dense linear algebra, `FloatLike`-generic:
+  factorizations (`cholesky`, `lu`, `qr`), solves, `det`, `inverse`,
+  `trace`, and the `norm_frobenius`/`norm_1`/`norm_inf` family. The point
+  is differentiability, not speed: MAX's `matmul` and `qr_factorization`
+  are monomorphic in a raw `dtype`, so no `Dual` passes through them.
 - **`numax.io`** -- a binary save/load format for `Tensor` (own format, not
   NumPy's `.npy`, since MAX ships no array I/O to interchange with) plus a
-  configurable `print_tensor`. `Plain`-only, axis 2.
+  configurable `print_tensor`. `Plain`-only.
 - **`numax.random`** -- `uniform`/`normal`/`exponential` into a `Tensor`,
   over `std.random` on the host (MAX's own `nn.rand_uniform`/`rand_normal`
   turned out to be graph-fusion machinery, not an eager API `numax` can
   call directly -- see the module's own docstring). No `Random[FloatLike]`
-  conformer: RNG isn't mathematically differentiable, the same scoping gap
-  as Kelvin's units in `strategy.mdc` Track B.
+  conformer: RNG isn't mathematically differentiable.
 
-Each module's docstring records the MAX-first probe that justified adding
-it. Full per-piece dispositions -- including the pieces deliberately left
-out (`sort`/`argsort`, the fixed-iteration invariant's cleanest example of
-filtering the parity surface) -- are in
-[`.cursor/rules/parity.mdc`](../.cursor/rules/parity.mdc).
+## Static and runtime shapes
+
+`numax.tensor`'s walks originally required `all_dims_known`, because they
+flatten with `TileTensor.coalesce()` and `coalesce()` is itself constrained
+to statically-shaped storage. That is what a GPU launch needs: a kernel
+reaching `enqueue_function` must have its entire type resolved before the
+launch, and a runtime extent is not part of the type.
+
+It is also why nothing could express a reshape to a computed shape, a
+boolean mask, or any operation whose output extent depends on input
+*values*. `row_major(Coord(3, 4))` builds exactly that tensor --
+`is_row_major=True`, `all_dims_known=False` -- and `coalesce()` rejects it.
+
+`map` (unary and binary) and `reduce` therefore each have two overloads
+under the same name, selected by `where` clauses that are exact negations
+of each other:
+
+| | shape | flattening | GPU |
+|---|---|---|---|
+| static overload | `row_major[n]()`, comptime | `coalesce()` | yes, via `gpu=True` |
+| runtime overload | `row_major(Coord(n))`, runtime | rank-1 layout over the same pointer | no |
+
+The runtime overload flattens by *construction* rather than by
+`coalesce()`: a row-major tensor's elements are already contiguous, so a
+rank-1 `row_major(Coord(n))` layout over the same pointer addresses the
+same memory in the same order. That is all `coalesce()` does for a
+row-major input -- it just insists on proving the shape at compile time
+first.
+
+**There is no second tensor type.** Both overloads take a `TileTensor`,
+which is the type every MAX kernel accepts; a parallel numax array type
+would have to be converted at every boundary into MAX. The
+compile-time/runtime distinction lives in the *layout*, where MAX already
+put it, not in a numax-owned wrapper.

@@ -135,7 +135,7 @@ inherits autodiff and extra precision with no second implementation:
 |---|---|
 | `numax.solve` | `newton`, `halley`, `bisection` — no derivative to supply; each evaluates `f` at `Dual` internally |
 | `numax.quadrature` | `gauss_legendre`, `simpson`, `trapezoid` |
-| `numax.linalg` | `cholesky`, `lu`, `solve`, `inverse`, `det`, `matmul`, `matvec`, `tridiagonal_solve` — small, compile-time-sized, differentiable |
+| `numax.linalg` | `cholesky`, `lu`, `qr`, `solve`, `inverse`, `det`, `trace`, `norm_frobenius`/`norm_1`/`norm_inf`, `matmul`, `matvec`, `tridiagonal_solve` — small, compile-time-sized, differentiable |
 | `numax.fft` | `fft`, `ifft`, `circular_convolve`, over `Complex[Inner]` |
 | `numax.interp` | `horner`, natural cubic splines, `chebyshev_fit`/`chebyshev_eval` |
 | `numax.distributions` | pdf/cdf/quantile for normal, exponential, gamma, chi-square, beta, Student-t, F, Poisson, binomial |
@@ -165,17 +165,22 @@ ships no equivalent:
 
 | Module | Functions |
 |---|---|
-| `numax.array` | `zeros`/`ones`/`full`/`empty`/`eye`/`linspace`/`logspace`/`*_like`, `transpose`/`squeeze`/`stack` |
+| `numax.array` | `zeros`/`ones`/`full`/`empty`/`eye`/`linspace`/`logspace`/`arange`/`*_like`, `reshape`/`ravel`/`transpose`/`squeeze`/`stack`/`concatenate`/`split` |
 | `numax.statistics` | `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`/`argmax`/`argmin`; `variance`/`stddev`/`cumsum` also work over any `FloatLike` |
 | `numax.io` | binary `save`/`load`, `print_tensor` |
 | `numax.random` | `uniform`, `normal`, `exponential`, `seed` |
 
 Calling `variance`/`stddev`/`cumsum` at `Compensated` instead of `Plain`
 recovers precision a long summation would otherwise lose — the one place
-this surface and the composable-type trait meet. See
-[`docs/architecture.md`](docs/architecture.md#the-numpyscipy-parity-surface-track-f)
-for what was deliberately left out (`sort`/`argsort`, for the same
-fixed-iteration reason above) and why.
+this surface and the composable-type trait meet.
+
+[`docs/parity.md`](docs/parity.md) is the full disposition table: what numax
+absorbs, what it routes to MAX, what it leaves out (`sort`/`argsort` as
+`FloatLike` kernels, for the same fixed-iteration reason above) — and the
+surveyed MAX API surface those decisions rest on. Worth knowing up front:
+MAX ships one matrix decomposition and no forward FFT, so numax's own
+kernels carry more of the mathematics than the "layer over MAX" framing
+suggests.
 
 ## Tensors and GPU
 
@@ -194,7 +199,18 @@ ctx.enqueue_function[map[step=gaussian_step, gpu=True]](xs, ys, ...)    # GPU
 
 `map_threaded` distributes the same kernel across CPU cores via
 `max.algorithm.elementwise`; `reduce_axis`/`broadcast_op_axis` fold and
-broadcast along any axis of any rank. Every `FloatLike` conformer here is
+broadcast along any axis of any rank.
+
+Shapes can be known at compile time or at runtime. `map` and `reduce` each
+have two overloads under the same name, picked by `where` clauses that are
+exact negations of each other: a comptime `row_major[n]()` tensor takes the
+static path (and can be launched on GPU), a runtime `row_major(Coord(n))`
+tensor takes the runtime path (CPU only, since a launch needs the extent in
+the type). There is no second tensor type — both are `TileTensor`, which is
+what every MAX kernel accepts, and the distinction lives in the layout where
+MAX already put it.
+
+Every `FloatLike` conformer here is
 built from plain `SIMD` fields with no pointers or allocations of its own, so
 every kernel — including `Dual` and `Compensated` — runs inside a GPU thread
 with no changes. See [`docs/architecture.md`](docs/architecture.md) for the

@@ -6,8 +6,8 @@
 > numbers: what the kernel is doing, what the ceiling is, and what each
 > measurement does and doesn't tell you. For the design intent behind
 > the roofline work and the two benchmark bugs that faked a 40%
-> codegen deficit, see
-> [`.cursor/rules/findings.mdc`](../.cursor/rules/findings.mdc).
+> codegen deficit, see [`bench/README.md`](../bench/README.md), which
+> records both retractions.
 
 ## The kernel
 
@@ -51,7 +51,7 @@ environment, not a `numax` choice). See `bench/bench_elementwise.mojo`.
 `map[gpu=True]` is the body of one GPU thread, launched via
 `DeviceContext.enqueue_function` with one element per thread (the
 default `width=1`; thread coarsening with `width>1` is supported but
-buys nothing, see `findings.mdc`). That tuning has now been measured on
+buys nothing). That tuning has now been measured on
 both backends and agrees: sweeping `width` in `{1,2,4,8}` against
 `block_dim` in `{128,256,512,1024}` at 67M elements, `width=1` is
 fastest or tied on Metal *and* on CUDA, with `width=8` a few percent
