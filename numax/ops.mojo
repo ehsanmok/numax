@@ -209,3 +209,22 @@ def astype[
     for i in range(n):
         out[i] = values[i].cast[target]()
     return Tensor[target, *dims](a.context(), out^)
+
+
+def invert[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Tensor[
+    dtype, *dims
+] where dtype.is_integral():
+    """Bitwise NOT, elementwise. `numpy.invert`.
+
+    Integral dtypes only. The boolean form is
+    `numax.logic.logical_not`, which is a different operation on a
+    different type rather than the same one spelled twice.
+    """
+    comptime n = _product[*dims]()
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](length=n, fill=0)
+    for i in range(n):
+        out[i] = ~values[i]
+    return Tensor[dtype, *dims](a.context(), out^)

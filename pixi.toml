@@ -199,6 +199,7 @@ test-logic = "mojo -I . tests/test_logic.mojo"
 test-elementwise = "mojo -I . tests/test_elementwise.mojo"
 test-ops = "mojo -I . tests/test_ops.mojo"
 test-creation = "mojo -I . tests/test_creation.mojo"
+test-constants = "mojo -I . tests/test_constants.mojo"
 # Listed as dependencies rather than one long `&&` chain so a new suite is
 # one line to add in one place; pixi runs them in the order given.
 tests = { depends-on = [
@@ -242,6 +243,7 @@ tests = { depends-on = [
     "test-elementwise",
     "test-ops",
     "test-creation",
+    "test-constants",
 ] }
 example-gaussian = "mojo -I . examples/basic/gaussian.mojo"
 example-array-creation = "mojo -I . examples/basic/array_creation.mojo"

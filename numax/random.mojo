@@ -117,6 +117,43 @@ def exponential[
     return Tensor[dtype, *dims](ctx, storage^)
 
 
+def randint[
+    dtype: DType, *dims: Int
+](ctx: DeviceContext, low: Int, high: Int) raises -> Tensor[dtype, *dims]:
+    """A new tensor filled with integers drawn uniformly from `[low, high)`.
+    `numpy.random.randint`.
+
+    Drawn as uniform reals and floored, which is the standard construction
+    and keeps this on the same host RNG as everything else here. `dtype`
+    is the tensor's own -- an integer dtype gives exact integers, a
+    floating one gives integral values in floating storage.
+    """
+    comptime n = _product[*dims]()
+    var draws = List[Scalar[DType.float64]](length=n, fill=0)
+    rand(draws.unsafe_ptr(), n)
+    var span = Float64(high - low)
+    var storage = List[Scalar[dtype]](length=n, fill=0)
+    for i in range(n):
+        var value = Float64(low) + span * Float64(draws[i])
+        storage[i] = Scalar[dtype](Int(value))
+    return Tensor[dtype, *dims](ctx, storage^)
+
+
+def randbool[
+    *dims: Int
+](ctx: DeviceContext, p: Float64 = 0.5) raises -> Tensor[DType.bool, *dims]:
+    """A new boolean tensor, true with probability `p`.
+    `numpy.random.binomial(1, p)` in the shape NuMojo's `randbool` has.
+    """
+    comptime n = _product[*dims]()
+    var draws = List[Scalar[DType.float64]](length=n, fill=0)
+    rand(draws.unsafe_ptr(), n)
+    var storage = List[Scalar[DType.bool]](length=n, fill=False)
+    for i in range(n):
+        storage[i] = Float64(draws[i]) < p
+    return Tensor[DType.bool, *dims](ctx, storage^)
+
+
 def seed(value: Int):
     """Seed the host RNG that `uniform`/`normal`/`exponential` draw from.
 
