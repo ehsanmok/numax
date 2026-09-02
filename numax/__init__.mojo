@@ -17,6 +17,8 @@ adds a fifth conformer, a complex number over any of the other four.
 
 from .array import (
     Tensor,
+    arange,
+    concatenate,
     empty,
     empty_like,
     eye,
@@ -26,6 +28,9 @@ from .array import (
     logspace,
     ones,
     ones_like,
+    ravel,
+    reshape,
+    split,
     squeeze,
     stack,
     transpose,

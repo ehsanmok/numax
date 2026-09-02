@@ -32,10 +32,19 @@ clause; the runtime-shape sibling `row_major(Coord)` produces
 takes a compile-time `*dims: Int` shape, matching `numax.tensor`'s existing
 contract exactly. Dynamic-shape creation is out of scope.
 
-**Explicitly NOT wrapped** (use `from nn import ...` directly for these --
-MAX already ships them over `TileTensor`, confirmed by direct probe):
-`arange`, `reshape`, `concat`, `split`, `slice`, `tile`, `broadcast`,
-`cumsum`, `argsort`, `argmax`/`argmin`.
+**What MAX's own `nn` versions are, and why these are written here.**
+`nn` does ship `arange`, `reshape`, `concat`, `split`, `slice`, `tile`,
+`broadcast`, `cumsum`, `argsort` and `argmax`/`argmin` over `TileTensor`,
+but they are graph-operator kernels, not array functions: `nn.arange`
+returns one SIMD vector for a given index rather than filling a tensor,
+`nn.concat` wants a pre-sized output tensor plus a `DeviceContext`, and
+`nn.reshape` returns a *dynamically*-laid-out `TileTensor` that fails
+`numax.tensor`'s `all_dims_known` clause. So the four below are written
+against this module's own comptime-shaped `Tensor` instead. The ones still
+not wrapped -- `slice`, `tile`, `broadcast`, `cumsum`, `argsort` -- are
+either genuinely better reached through `nn`/`numax.statistics` or wait on
+the runtime-shape array; `numax.statistics.argmax`/`argmin` already route
+into `nn.argmaxmin`.
 
 **Manipulation scope, stated plainly.** `TileTensor.transpose()` already
 gives a zero-copy *view* with every axis reversed (not merely the last two);
@@ -281,3 +290,118 @@ def stack[
         result_view[0, i] = a_view[i]
         result_view[1, i] = b_view[i]
     return result^
+
+
+def arange[
+    dtype: DType, num: Int
+](start: Scalar[dtype] = 0, step: Scalar[dtype] = 1) -> Tensor[dtype, num]:
+    """`num` values starting at `start`, spaced by `step`.
+
+    `numpy.arange` takes a `stop` and derives the count from it, which makes
+    the output extent depend on runtime values; this module's shapes are
+    comptime, so the count is the parameter and `stop` is implied
+    (`start + num*step`). `numax.array.linspace` is the one to reach for
+    when the endpoints are what matter.
+    """
+    var storage = List[Scalar[dtype]](capacity=num)
+    for i in range(num):
+        storage.append(start + Scalar[dtype](i) * step)
+    return Tensor[dtype, num](storage^)
+
+
+def reshape[
+    dtype: DType, n: Int, rows: Int, cols: Int
+](mut a: Tensor[dtype, n]) -> Tensor[dtype, rows, cols] where rows * cols == n:
+    """A rank-2 copy of a rank-1 tensor, in row-major order.
+
+    The `where` clause is the element-count check: a shape that does not
+    multiply out to `n` fails to compile rather than producing a tensor
+    whose storage is the wrong length.
+
+    Concrete ranks rather than a general `*new_dims` pack, for two reasons.
+    A general form would need to pair two variadic packs (`*dims` in, and
+    `*new_dims` out) in one signature, which Mojo's pack machinery does not
+    expose; and the element-count constraint has to be *provable* to
+    `where`, which admits builtin arithmetic like `rows * cols` but not a
+    call to an ordinary `def` such as `_product`. `squeeze` above takes the
+    same shape for the same kind of reason. `ravel` is the inverse, and the
+    two compose into any reshape this module can express.
+    """
+    var view = a.view()
+    var storage = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        storage.append(view[i])
+    return Tensor[dtype, rows, cols](storage^)
+
+
+def reshape[
+    dtype: DType, n: Int, d0: Int, d1: Int, d2: Int
+](mut a: Tensor[dtype, n]) -> Tensor[dtype, d0, d1, d2] where d0 * d1 * d2 == n:
+    """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
+    overload above for why the ranks are spelled out."""
+    var view = a.view()
+    var storage = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        storage.append(view[i])
+    return Tensor[dtype, d0, d1, d2](storage^)
+
+
+def ravel[
+    dtype: DType, *dims: Int
+](mut a: Tensor[dtype, *dims]) -> Tensor[dtype, _product[*dims]()]:
+    """A rank-1 copy in row-major order -- the inverse of `reshape`.
+
+    `Tensor` owns its storage and Mojo will not let a field be moved out of
+    a value that still has to be destroyed, so this copies rather than
+    retypes in place. Every manipulation in this module copies for the same
+    reason; `TileTensor.reshape()` is the zero-copy view when the result
+    does not need to outlive its source.
+    """
+    comptime n = _product[*dims]()
+    var storage = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        storage.append(a[i])
+    return Tensor[dtype, n](storage^)
+
+
+def concatenate[
+    dtype: DType, n: Int, m: Int
+](mut a: Tensor[dtype, n], mut b: Tensor[dtype, m]) -> Tensor[dtype, n + m]:
+    """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
+
+    Rank-1 only, for the same reason `stack` takes exactly two rank-1
+    inputs: an axis-`k` concatenation of arbitrary-rank tensors needs a new
+    parameter pack built from an existing one with a single extent changed.
+    A real scope limit, stated rather than hidden.
+    """
+    var a_view = a.view()
+    var b_view = b.view()
+    var storage = List[Scalar[dtype]](capacity=n + m)
+    for i in range(n):
+        storage.append(a_view[i])
+    for i in range(m):
+        storage.append(b_view[i])
+    return Tensor[dtype, n + m](storage^)
+
+
+def split[
+    dtype: DType, n: Int, at: Int
+](mut a: Tensor[dtype, n]) -> Tuple[
+    Tensor[dtype, at], Tensor[dtype, n - at]
+] where (at >= 0 and at <= n):
+    """Cut a rank-1 tensor in two at comptime index `at`: elements
+    `[0, at)` and `[at, n)`. The inverse of `concatenate`.
+
+    `numpy.split` takes a section count or a list of indices and returns a
+    variable-length list; both make the *number* of outputs a runtime value,
+    which a comptime-shaped tensor cannot express. One index, two outputs,
+    is the part that survives that constraint.
+    """
+    var view = a.view()
+    var head = List[Scalar[dtype]](capacity=at)
+    for i in range(at):
+        head.append(view[i])
+    var tail = List[Scalar[dtype]](capacity=n - at)
+    for i in range(at, n):
+        tail.append(view[i])
+    return (Tensor[dtype, at](head^), Tensor[dtype, n - at](tail^))
