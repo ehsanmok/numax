@@ -50,6 +50,29 @@ from .gradient import Gradient
 from .io import load, print_tensor, save
 from .integrate import IVPResult, QuadResult, quad, quad_vec, solve_ivp
 from .lambertw import lambertw, lambertw_m1
+from .logic import (
+    all_true,
+    allclose,
+    any_true,
+    array_equal,
+    equal,
+    greater,
+    greater_equal,
+    isclose,
+    isfinite,
+    isinf,
+    isnan,
+    isneginf,
+    isposinf,
+    less,
+    less_equal,
+    logical_and,
+    logical_not,
+    logical_or,
+    logical_xor,
+    not_equal,
+    to_mask,
+)
 from .legendre import legendre_p
 from .distributions import (
     beta_cdf,
