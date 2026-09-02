@@ -140,6 +140,7 @@ inherits autodiff and extra precision with no second implementation:
 | `numax.interp` | `horner`, natural cubic splines, `chebyshev_fit`/`chebyshev_eval` |
 | `numax.distributions` | pdf/cdf/quantile for normal, exponential, gamma, chi-square, beta, Student-t, F, Poisson, binomial |
 | `numax.ode` | `rk4`, `rk4_system`, Dormand-Prince `dopri5` |
+| `numax.optimize` | `newton_tol`, `brentq`, `bfgs` — iterate to a tolerance; BFGS takes an **exact** gradient from `Gradient`, not a finite difference |
 
 ```mojo
 def cos_minus_x[U: FloatLike](x: U) -> U:
@@ -181,6 +182,37 @@ surveyed MAX API surface those decisions rest on. Worth knowing up front:
 MAX ships one matrix decomposition and no forward FFT, so numax's own
 kernels carry more of the mathematics than the "layer over MAX" framing
 suggests.
+
+### Two tiers
+
+Everything above is **tier 1**: a fixed iteration count, no branching per
+SIMD lane, and therefore launchable inside a GPU thread unmodified. That is
+what the `FloatLike` spine buys.
+
+`numax.optimize` is **tier 2**: `Plain`-only, host-side, and free to loop
+until it converges. Root finding to a tolerance, adaptive quadrature and
+pivoting need that, and pretending otherwise would either exclude them or
+quietly weaken the tier-1 guarantee. The tier is declared in every module
+and function docstring, and tier 1 never calls tier 2.
+
+The objective function is unaffected — it stays an ordinary `FloatLike`
+kernel, which is exactly why `bfgs` can evaluate it at `Gradient` and get
+every partial derivative exactly:
+
+```mojo
+def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
+    var a = U.one() + (-v[0])
+    var b = v[1] + (-(v[0] * v[0]))
+    return a * a + U.constant(100.0) * b * b
+
+var result = bfgs[2, rosenbrock](start)   # exact gradient, no `jac` argument
+```
+
+A central difference cannot beat about `eps**(2/3)` relative accuracy no
+matter how the step is picked — truncation and cancellation error pull in
+opposite directions. Forward-mode AD has neither term.
+`examples/advanced/optimize.mojo` sweeps the step size and prints both
+error curves: the best finite difference lands at ~5e-10, AD at exactly 0.
 
 ## Tensors and GPU
 

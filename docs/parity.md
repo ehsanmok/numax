@@ -164,6 +164,33 @@ routines MAX has no counterpart to, the honest recommendation is to build the
 large-matrix equivalent from `linalg.qr_factorization`, not to expect a
 drop-in.
 
+### Absorbed — root finding and minimization (tier 2)
+
+Home: [`numax/optimize.mojo`](../numax/optimize.mojo). `newton_tol`,
+`brentq`, `bfgs`. MAX ships no optimizer of any kind, so there is nothing to
+route to.
+
+This is the first tier-2 module: the drivers loop until they converge and
+branch on data, which the fixed-iteration invariant forbids for
+`FloatLike`-generic code. They are `Plain`-only, host-side, and not
+GPU-launchable, and they say so. `numax.solve`'s fixed-iteration `newton`,
+`halley` and `bisection` remain tier 1 and are not superseded — each
+docstring names its counterpart.
+
+The objective stays an ordinary `FloatLike` kernel, which is the point:
+`bfgs` evaluates it at `Gradient[Plain[float64, 1], n_vars]` and gets every
+partial derivative exactly, from one call, by the chain rule. No `jac`
+argument, no step size, and none of the accuracy a finite difference gives
+up — a central difference is capped near `eps**(2/3)` however carefully the
+step is chosen. `examples/advanced/optimize.mojo` measures it: best finite
+difference ~5e-10, AD exactly 0.
+
+The driver is fixed at float64 rather than parameterized on `dtype`.
+Convergence work belongs at the widest precision available, and Mojo will
+not accept a struct instantiated with a *function-level* `DType` parameter
+as a `FloatLike` type argument, so a per-call dtype would not compile at
+all.
+
 ### Not absorbed — sorting and searching as `FloatLike` kernels
 
 `sort`, `argsort` and `searchsorted` are not public numax names operating on
