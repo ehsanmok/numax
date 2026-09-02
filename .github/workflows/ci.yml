@@ -8,9 +8,19 @@ on:
 
 jobs:
   test:
-    # numax's only supported platform today is osx-arm64 (see pixi.toml);
-    # macos-14 is GitHub's Apple Silicon runner.
-    runs-on: macos-14
+    # pixi.toml supports osx-arm64, linux-64 and linux-aarch64; these are the
+    # two GitHub hosts a public runner covers (macos-14 is Apple Silicon).
+    # The library was developed on macOS, so Linux is the platform most likely
+    # to drift without a job here -- the CPU library, the examples and the
+    # accuracy harness are all platform-independent code that had never been
+    # exercised off Apple Silicon before this job existed.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't let one platform's failure cancel the other's run: which
+      # platforms broke is the whole question a matrix is here to answer.
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +37,8 @@ jobs:
       - name: Run CPU benchmark
         run: pixi run bench
 
-      # examples/gaussian_gpu.mojo and examples/softmax.mojo's GPU path need
-      # a real GPU (Metal, on this project's target hardware); GitHub-hosted
-      # runners don't have one, so the GPU examples are local/manual-only
-      # checks for now, not part of CI.
+      # The GPU examples (gaussian_gpu, softmax, ode, random_ensemble) and the
+      # GPU benchmarks need a real device -- Metal or CUDA, whichever
+      # `DeviceContext` finds. No GitHub-hosted runner has either, so they stay
+      # local/manual-only checks rather than CI steps. They are verified by
+      # hand on both backends; see docs/performance.md.
