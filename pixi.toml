@@ -257,6 +257,8 @@ example-ode = "mojo -I . examples/advanced/ode.mojo"
 example-unified-tensor-gpu = "mojo -I . examples/advanced/unified_tensor_gpu.mojo"
 example-optimize = "mojo -I . examples/advanced/optimize.mojo"
 example-random-ensemble = "mojo -I . examples/intermediate/random_ensemble.mojo"
+example-wave-packet = "mojo -I . examples/intermediate/wave_packet.mojo"
+example-interference = "mojo -I . examples/intermediate/interference.mojo"
 examples = { depends-on = [
     "examples-cpu",
     "example-softmax",
@@ -278,6 +280,8 @@ examples-cpu = { depends-on = [
     "example-quadrature",
     "example-statistics",
     "example-optimize",
+    "example-wave-packet",
+    "example-interference",
 ] }
 bench = "mojo -I . bench/bench_tensor_map.mojo"
 bench-matmul = "mojo -I . bench/bench_matmul.mojo"
