@@ -596,3 +596,212 @@ def split[
         Tensor[dtype, at](ctx, head^),
         Tensor[dtype, n - at](ctx, tail^),
     )
+
+
+def geomspace[
+    dtype: DType, num: Int
+](
+    ctx: DeviceContext, start: Scalar[dtype], stop: Scalar[dtype]
+) raises -> Tensor[dtype, num] where dtype.is_floating_point():
+    """`num` values spaced evenly on a geometric progression, endpoints
+    included. `numpy.geomspace`.
+
+    `start` and `stop` must share a sign and neither may be zero -- a
+    geometric progression through zero does not exist. Unchecked, like
+    NumPy's own, because the check costs a branch the caller is better
+    placed to make.
+    """
+    var values = List[Scalar[dtype]](capacity=num)
+    comptime if num == 1:
+        values.append(start)
+    else:
+        var ratio = (stop / start) ** (Float64(1) / Float64(num - 1))
+        var current = start
+        for i in range(num):
+            values.append(current)
+            current = current * Scalar[dtype](ratio)
+    return Tensor[dtype, num](ctx, values^)
+
+
+def identity[
+    dtype: DType, n: Int
+](ctx: DeviceContext) raises -> Tensor[dtype, n, n]:
+    """The `n`x`n` identity matrix. `numpy.identity`.
+
+    Same result as `eye`; both names exist in NumPy and a caller reaching
+    for one should not have to discover the other.
+    """
+    return eye[dtype, n](ctx)
+
+
+def diag[
+    dtype: DType, n: Int
+](a: Tensor[dtype, n]) raises -> Tensor[dtype, n, n]:
+    """A square matrix with `a` on its main diagonal. `numpy.diag`.
+
+    The vector-to-matrix direction only; `diagonal` is the inverse.
+    """
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    var source = a.to_host()
+    for i in range(n):
+        values[i * n + i] = source[i]
+    return Tensor[dtype, n, n](a.context(), values^)
+
+
+def diagonal[
+    dtype: DType, n: Int
+](a: Tensor[dtype, n, n]) raises -> Tensor[dtype, n]:
+    """The main diagonal of a square matrix. `numpy.diagonal`."""
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(source[i * n + i])
+    return Tensor[dtype, n](a.context(), values^)
+
+
+def diagflat[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Tensor[
+    dtype, _product[*dims](), _product[*dims]()
+]:
+    """`a` flattened onto the diagonal of a square matrix.
+    `numpy.diagflat`."""
+    comptime n = _product[*dims]()
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        values[i * n + i] = source[i]
+    return Tensor[dtype, n, n](a.context(), values^)
+
+
+def tri[dtype: DType, n: Int](ctx: DeviceContext) raises -> Tensor[dtype, n, n]:
+    """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`."""
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for r in range(n):
+        for c in range(r + 1):
+            values[r * n + c] = 1
+    return Tensor[dtype, n, n](ctx, values^)
+
+
+def tril[
+    dtype: DType, n: Int
+](a: Tensor[dtype, n, n]) raises -> Tensor[dtype, n, n]:
+    """`a` with everything above the diagonal zeroed. `numpy.tril`."""
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for r in range(n):
+        for c in range(r + 1):
+            values[r * n + c] = source[r * n + c]
+    return Tensor[dtype, n, n](a.context(), values^)
+
+
+def triu[
+    dtype: DType, n: Int
+](a: Tensor[dtype, n, n]) raises -> Tensor[dtype, n, n]:
+    """`a` with everything below the diagonal zeroed. `numpy.triu`."""
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for r in range(n):
+        for c in range(r, n):
+            values[r * n + c] = source[r * n + c]
+    return Tensor[dtype, n, n](a.context(), values^)
+
+
+def vander[
+    dtype: DType, n: Int, cols: Int
+](a: Tensor[dtype, n]) raises -> Tensor[
+    dtype, n, cols
+] where dtype.is_floating_point():
+    """The Vandermonde matrix of `a`: `out[i, j] = a[i] ** (cols - 1 - j)`.
+    `numpy.vander` with its default `increasing=False`."""
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=n * cols, fill=0)
+    for r in range(n):
+        var power = Scalar[dtype](1)
+        for j in range(cols):
+            values[r * cols + (cols - 1 - j)] = power
+            power = power * source[r]
+    return Tensor[dtype, n, cols](a.context(), values^)
+
+
+def meshgrid[
+    dtype: DType, n: Int, m: Int
+](x: Tensor[dtype, n], y: Tensor[dtype, m]) raises -> Tuple[
+    Tensor[dtype, m, n], Tensor[dtype, m, n]
+]:
+    """Coordinate matrices from two coordinate vectors. `numpy.meshgrid`
+    with its default `indexing="xy"`, so both outputs are `(m, n)`."""
+    var xs = x.to_host()
+    var ys = y.to_host()
+    var xx = List[Scalar[dtype]](length=m * n, fill=0)
+    var yy = List[Scalar[dtype]](length=m * n, fill=0)
+    for r in range(m):
+        for c in range(n):
+            xx[r * n + c] = xs[c]
+            yy[r * n + c] = ys[r]
+    var ctx = x.context()
+    return (
+        Tensor[dtype, m, n](ctx, xx^),
+        Tensor[dtype, m, n](ctx, yy^),
+    )
+
+
+def flip[dtype: DType, n: Int](a: Tensor[dtype, n]) raises -> Tensor[dtype, n]:
+    """A rank-1 tensor reversed. `numpy.flip` at `axis=0`."""
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(source[n - 1 - i])
+    return Tensor[dtype, n](a.context(), values^)
+
+
+def copy[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    """An independent copy of `a`, on `a`'s device. `numpy.copy`.
+
+    `Tensor` is `Movable` and not `Copyable` on purpose -- a tensor is a
+    buffer, and copying one should be a decision rather than something
+    that happens because a value was passed by value. This is that
+    decision, spelled out.
+    """
+    return Tensor[dtype, *dims](a.context(), a.to_host())
+
+
+def vstack[
+    dtype: DType, rows_a: Int, rows_b: Int, cols: Int
+](
+    a: Tensor[dtype, rows_a, cols], b: Tensor[dtype, rows_b, cols]
+) raises -> Tensor[dtype, rows_a + rows_b, cols]:
+    """Two matrices joined along their rows. `numpy.vstack`.
+
+    Row-major storage makes this the concatenating direction: the two
+    buffers go back to back with no interleaving.
+    """
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var values = List[Scalar[dtype]](capacity=(rows_a + rows_b) * cols)
+    for i in range(rows_a * cols):
+        values.append(a_values[i])
+    for i in range(rows_b * cols):
+        values.append(b_values[i])
+    return Tensor[dtype, rows_a + rows_b, cols](a.context(), values^)
+
+
+def hstack[
+    dtype: DType, rows: Int, cols_a: Int, cols_b: Int
+](
+    a: Tensor[dtype, rows, cols_a], b: Tensor[dtype, rows, cols_b]
+) raises -> Tensor[dtype, rows, cols_a + cols_b]:
+    """Two matrices joined along their columns. `numpy.hstack`."""
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var values = List[Scalar[dtype]](length=rows * (cols_a + cols_b), fill=0)
+    for r in range(rows):
+        for c in range(cols_a):
+            values[r * (cols_a + cols_b) + c] = a_values[r * cols_a + c]
+        for c in range(cols_b):
+            values[r * (cols_a + cols_b) + cols_a + c] = b_values[
+                r * cols_b + c
+            ]
+    return Tensor[dtype, rows, cols_a + cols_b](a.context(), values^)
