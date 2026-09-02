@@ -95,7 +95,12 @@ from .linalg import (
     lu,
     matmul,
     matvec,
+    norm_1,
+    norm_frobenius,
+    norm_inf,
+    qr,
     solve,
+    trace,
     tridiagonal_solve,
 )
 from .numeric import FloatLike
