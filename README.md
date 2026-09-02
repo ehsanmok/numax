@@ -4,12 +4,13 @@
   <a href="https://github.com/ehsanmok/numax/actions/workflows/ci.yml"><img src="https://github.com/ehsanmok/numax/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/ehsanmok/numax/actions/workflows/docs.yaml"><img src="https://github.com/ehsanmok/numax/actions/workflows/docs.yaml/badge.svg" alt="Docs"></a>
   <a href="https://mojolang.org"><img src="https://img.shields.io/badge/Mojo-1.0.0-orange" alt="Mojo 1.0.0"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0%20with%20LLVM%20Exceptions-yellow.svg" alt="License: Apache 2.0 with LLVM Exceptions"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Code-Apache%202.0%20with%20LLVM%20Exceptions-yellow.svg" alt="Code: Apache 2.0 with LLVM Exceptions"></a>
+  <a href="https://www.modular.com/legal/community"><img src="https://img.shields.io/badge/MAX%20binaries-Modular%20Community%20License-blue.svg" alt="MAX binaries: Modular Community License"></a>
 </p>
 
 <p align="center"><em>NumPy and SciPy's ground, in Mojo, on MAX — where one kernel means several things and runs on any device.</em></p>
 
-## What $\nu$MAX is
+## What νMAX is
 
 A numerical computing library for [Mojo](https://mojolang.org): special
 functions, linear algebra, quadrature, ODE solvers, FFTs, distributions, and a
@@ -258,20 +259,33 @@ tier, and tier 1 never calls tier 2.
 
 ## Performance and accuracy
 
-Measured on an Apple M3 Pro on $g(x) = e^{-x^2}$ over `float32`, which is
-memory-bandwidth-bound at every size (an identity copy runs as fast, so the
-`exp` is free). At 67M elements:
+Same kernel everywhere — $g(x) = e^{-x^2}$ over `float32`, 67M elements, wall
+clock around dispatch through completion. M elem/s, higher is better.
 
-| | numax CPU (`map_threaded`) | numax GPU (amortized) | NumPy (CPU) | MLX (GPU, per-call) | torch.compile (GPU, amortized) |
-|---|---|---|---|---|---|
-| M elem/s | 9,026 | 15,755 | 493 | 4,866 | 14,380 |
+**NVIDIA A10G (CUDA 13):**
 
-That is 84% of the hardware's bandwidth ceiling, on par with `torch.compile`
-on the same device. The GPU path is written against `DeviceContext`, not a
-backend: on an NVIDIA A10G the same code measures 500.9 GB/s (62.6 G elem/s,
-amortized) — ~83% of that card's 600 GB/s spec — with fusion worth 1.99x.
-Full sweeps and every cross-language baseline:
-[`docs/performance.md`](docs/performance.md), [`bench/README.md`](bench/README.md).
+| | numax GPU | torch.compile (CUDA) | torch eager (CUDA) | numax CPU (threaded) | Rust `thermite` (AVX2) | NumPy |
+|---|---|---|---|---|---|---|
+| M elem/s | **61,537** | 56,141 | 19,893 | 8,527 | 1,326 | 313 |
+
+**Apple M3 Pro (Metal):**
+
+| | numax GPU | torch.compile (Metal) | MLX (GPU) | numax CPU (threaded) | Rust `thermite` (NEON) | NumPy |
+|---|---|---|---|---|---|---|
+| M elem/s | **15,755** | 14,380 | 4,866 | 9,026 | 1,632 | 493 |
+
+numax leads `torch.compile` by ~10% on the A10G and ties it on Metal, at
+**500.9 GB/s — ~83% of the A10G's 600 GB/s spec**. The work is
+bandwidth-bound, not compute-bound: an identity copy runs at 489.10 GB/s
+against the Gaussian's 489.16, so the `exp` is free. Fusing two passes into
+one composed `step` is worth **1.99x** on the GPU at every size. On the CPU
+the serial walk matches hand-written Rust SIMD (1,394 vs 1,326) and is 4.5x
+NumPy.
+
+The GPU path is written against `DeviceContext`, not a backend — the same
+source produces both rows above. Full sweeps, both sync shapes, and the
+methodology: [`docs/performance.md`](docs/performance.md),
+[`bench/README.md`](bench/README.md).
 
 Every approximation documents an error bound, and `pixi run accuracy` checks it
 against checked-in [mpmath](https://mpmath.org/) references at 50 digits

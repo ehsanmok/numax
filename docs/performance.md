@@ -159,6 +159,61 @@ See `bench/README.md` for the two measurement bugs that inflated an
 earlier version of this comparison (a benchmark artifact, not a
 `numax` change) before drawing further conclusions from these numbers.
 
+## Cross-language baseline, NVIDIA A10G
+
+The same six benchmark scripts, same kernel, same sizes, run on an NVIDIA
+A10G (23 GB, 300 W, CUDA 13, 600 GB/s spec bandwidth) with an AMD EPYC host.
+NumPy 2.5.2, PyTorch 2.13.0+cu130, `thermite` 0.2 on its AVX2 backend. MLX is
+macOS-only and therefore absent. M elem/s, higher is better.
+
+**GPU, amortized sync:**
+
+| n | numax | torch compile | torch eager |
+|---|---|---|---|
+| 65,536 | 17,852 | 1,045 | 2,452 |
+| 262,144 | 68,445 | 4,070 | 10,337 |
+| 1,048,576 | 68,458 | 16,222 | 24,981 |
+| 4,194,304 | 58,586 | 50,981 | 19,176 |
+| 16,777,216 | 61,008 | 55,007 | 19,785 |
+| 67,108,864 | **61,537** | 56,141 | 19,893 |
+
+**GPU, per-call sync** (67M): numax 60,955, torch compile 53,607, torch eager
+19,814.
+
+**CPU:**
+
+| n | numax `map_threaded` | numax `map` | torch compile | thermite (AVX2) | torch eager | NumPy |
+|---|---|---|---|---|---|---|
+| 65,536 | 2,139 | 1,836 | 848 | 1,324 | 547 | 387 |
+| 1,048,576 | 3,325 | 1,790 | 8,259 | 1,365 | 1,013 | 391 |
+| 16,777,216 | 13,569 | 1,729 | 1,702 | 1,325 | 382 | 303 |
+| 67,108,864 | 8,527 | 1,394 | 1,833 | 1,326 | 401 | 313 |
+
+What this machine says, and where it differs from the M3 Pro above:
+
+- **numax's GPU path leads `torch.compile` by ~10% at 67M** (61,537 vs
+  56,141 amortized; 60,955 vs 53,607 per-call) and is ~3x eager PyTorch.
+  On Metal the two were a tie, so the lead is this device's, not a general
+  claim.
+- **It is bandwidth-bound, not compute-bound.** `bench-roofline` puts the
+  best configuration at **500.9 GB/s** — ~83% of the card's 600 GB/s spec —
+  and an identity copy at 489.10 GB/s against the Gaussian's 489.16 GB/s at
+  67M. The `exp` is free; what is left to win is the last ~17% of the memory
+  path.
+- **Kernel fusion is worth 1.99x on the GPU** at every size tested (1.991 /
+  1.981 / 2.000 / 1.997 from 1M to 67M) — two chained `map` calls against one
+  `map` with a composed `step`. On the CPU the same change is worth 1.26-1.58x.
+- **numax's serial CPU walk matches hand-written Rust SIMD** (1,394 vs
+  `thermite`'s 1,326 at 67M) and is 4.5x NumPy. Threaded, it is the fastest
+  CPU number at 16M and 67M.
+- **The threaded CPU path is noisy on this host** — 3,325 M elem/s at 1M
+  against 13,569 at 16M, and repeat runs move by a factor of two at the same
+  size. Read it as a range, not a point.
+- **Launch overhead dominates below ~1M.** At 64K the same kernel measures
+  61.1 GB/s with a sync inside every iteration against 162.8 GB/s amortized;
+  by 67M the two agree (489.6 vs 492.2).
+
+
 ## Accuracy
 
 `bench/accuracy/` (`pixi run accuracy`) measures max absolute, relative,
