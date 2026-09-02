@@ -201,7 +201,9 @@ def astype[
 
     Explicit, because numax has no dtype promotion: a binary operation
     requires both sides to already share a dtype, and this is how a caller
-    makes that true. NuMojo made the same call.
+    makes that true. Implicit promotion in a language that infers
+    parameters turns a dtype mismatch into a surprise rather than an
+    error.
     """
     comptime n = _product[*dims]()
     var values = a.to_host()

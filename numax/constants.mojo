@@ -1,9 +1,8 @@
 """Mathematical constants, at `Float64` and at any `FloatLike`.
 
-`pi` and `e` only. NuMojo also ships the speed of light and the reduced
-Planck constant; a numerics library is not a units library, and a caller
-who needs physical constants needs a whole table with units attached rather
-than two of them without.
+`pi` and `e` only. Physical constants are deliberately absent: a numerics
+library is not a units library, and a caller who needs the speed of light
+needs a whole table with units attached rather than one value without.
 
 The `_at` forms exist because `T.constant(...)` is how a `FloatLike` kernel
 names a literal, and writing `T.constant(3.141592653589793)` inline loses
