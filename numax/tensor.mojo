@@ -286,6 +286,168 @@ def map[
             ys_flat.store[1](Coord(i), step[1](xs_flat.load[1](Coord(i))))
 
 
+def map_to[
+    in_dtype: DType,
+    out_dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[in_dtype, w]) thin -> SIMD[out_dtype, w],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    xs: TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        out_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].all_dims_known
+    and TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+):
+    """`map`, but `step` may return a different dtype than it takes.
+
+    The same walk and the same `gpu` parameter as `map`; the only
+    difference is that input and output tensors carry different `dtype`s
+    over one shared layout. This is what a predicate needs -- `xs > 0`
+    reads `float32` and writes `bool` -- and `map` cannot express it,
+    because its `step` is `SIMD[dtype, w] -> SIMD[dtype, w]`.
+
+    `numax.logic` and `numax.array.astype` are built on this.
+    """
+    var xs_flat = xs.coalesce()
+    var ys_flat = ys.coalesce()
+    comptime if gpu:
+        var n = xs_flat.num_elements()
+        var base = Int(global_idx.x) * width
+        if base + width <= n:
+            ys_flat.store[width](
+                Coord(base), step[width](xs_flat.load[width](Coord(base)))
+            )
+        else:
+            for i in range(base, n):
+                ys_flat.store[1](Coord(i), step[1](xs_flat.load[1](Coord(i))))
+    else:
+        var n = xs_flat.num_elements()
+        var vec_n = (n // width) * width
+        if vec_n > 0:
+            var xs_bulk = xs_flat.slice((0, vec_n)).vectorize[width]()
+            var ys_bulk = ys_flat.slice((0, vec_n)).vectorize[width]()
+            for i in range(xs_bulk.num_elements()):
+                ys_bulk.store[width](
+                    Coord(i), step[width](xs_bulk.load[width](Coord(i)))
+                )
+        for i in range(vec_n, n):
+            ys_flat.store[1](Coord(i), step[1](xs_flat.load[1](Coord(i))))
+
+
+def zip_to[
+    in_dtype: DType,
+    out_dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[in_dtype, w], SIMD[in_dtype, w]) thin -> SIMD[
+        out_dtype, w
+    ],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    lhs: TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    rhs: TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        out_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].all_dims_known
+    and TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+):
+    """The two-input `map_to`: `out[i] = step(lhs[i], rhs[i])`.
+
+    What an elementwise comparison needs -- two `float32` inputs, one
+    `bool` output. Same shape for all three, same reasoning as `map`'s own
+    two-input overload for why there is no three-input form.
+    """
+    var lhs_flat = lhs.coalesce()
+    var rhs_flat = rhs.coalesce()
+    var ys_flat = ys.coalesce()
+    comptime if gpu:
+        var n = lhs_flat.num_elements()
+        var base = Int(global_idx.x) * width
+        if base + width <= n:
+            ys_flat.store[width](
+                Coord(base),
+                step[width](
+                    lhs_flat.load[width](Coord(base)),
+                    rhs_flat.load[width](Coord(base)),
+                ),
+            )
+        else:
+            for i in range(base, n):
+                ys_flat.store[1](
+                    Coord(i),
+                    step[1](
+                        lhs_flat.load[1](Coord(i)), rhs_flat.load[1](Coord(i))
+                    ),
+                )
+    else:
+        var n = lhs_flat.num_elements()
+        var vec_n = (n // width) * width
+        if vec_n > 0:
+            var lhs_bulk = lhs_flat.slice((0, vec_n)).vectorize[width]()
+            var rhs_bulk = rhs_flat.slice((0, vec_n)).vectorize[width]()
+            var ys_bulk = ys_flat.slice((0, vec_n)).vectorize[width]()
+            for i in range(lhs_bulk.num_elements()):
+                ys_bulk.store[width](
+                    Coord(i),
+                    step[width](
+                        lhs_bulk.load[width](Coord(i)),
+                        rhs_bulk.load[width](Coord(i)),
+                    ),
+                )
+        for i in range(vec_n, n):
+            ys_flat.store[1](
+                Coord(i),
+                step[1](lhs_flat.load[1](Coord(i)), rhs_flat.load[1](Coord(i))),
+            )
+
+
 def map_threaded[
     dtype: DType,
     LayoutType: TensorLayout,
