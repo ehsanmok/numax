@@ -1,7 +1,7 @@
 """Where does `map[gpu=True]`'s throughput actually go? A roofline probe.
 
-`bench_tensor_map_gpu.mojo` reports `gaussian` at ~9,700 M elem/s on this
-machine's Metal GPU at 67M elements. On its own that number says nothing
+`bench_tensor_map_gpu.mojo` reported `gaussian` at ~9,700 M elem/s on an
+M3 Pro's Metal GPU at 67M elements. On its own that number says nothing
 about whether it's *good*: an elementwise pass over `n` float32 elements
 moves `8*n` bytes (one read, one write) no matter how the kernel is
 written, so at 9,700 M elem/s it is moving ~78 GB/s -- about half of an
@@ -36,12 +36,14 @@ than a call into it: `map` accepts a `width` parameter but ignores it on the
 GPU path, so there is nothing to sweep yet. Whichever `width` wins here is
 what `map` should be taught to honor.
 
-Every row reports GB/s and percent of `peak_gb_s` alongside M elem/s,
-because the percentage is what says whether there is anything left to win.
-`peak_gb_s` is a hardware constant for *this* machine (Apple M3 Pro,
-150 GB/s) and has to be edited by hand elsewhere -- it is not queryable
-through `DeviceContext`, so a wrong value silently rescales the last two
-columns and nothing else.
+Every row reports GB/s and percent of peak alongside M elem/s, because the
+percentage is what says whether there is anything left to win. Peak
+bandwidth is a hardware constant and is not queryable through
+`DeviceContext`, so `_peak_gb_s` below keeps a small table keyed on
+`DeviceContext.name()`. A device that isn't in it reports "n/a" for that
+column rather than a percentage rescaled by someone else's hardware -- see
+the comment on `_peak_gb_s` for why a wrong percentage is worse here than
+no percentage.
 
 ## What it found on an M3 Pro
 
@@ -77,7 +79,8 @@ So the headline is that `numax`'s GPU elementwise path was already close to
 the roofline and the gap to `torch.compile` was mostly measurement. The
 remaining ~16% to peak is not addressable by anything in this file.
 
-Needs real Metal hardware; not part of CI. Run with `pixi run bench-roofline`.
+Needs a real GPU (any backend `DeviceContext` supports); not part of CI,
+which has no GPU runners. Run with `pixi run bench-roofline`.
 """
 
 from layout import Coord, TileTensor
@@ -102,12 +105,33 @@ comptime timed_iters = 20
 comptime sizes = [1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24, 1 << 26]
 comptime block_sizes = [128, 256, 512, 1024]
 
-# Apple M3 Pro. Not queryable from `DeviceContext`; see the module docstring.
-comptime peak_gb_s = 150.0
 
 # One float32 read plus one float32 write per element. Every elementwise
 # kernel here moves exactly this much regardless of the arithmetic between.
 comptime bytes_per_elem = 8
+
+
+# Peak memory bandwidth is a hardware constant and is not queryable through
+# `DeviceContext`, so it lives in this table, keyed on `DeviceContext.name()`.
+#
+# An unlisted device reports "n/a" for percent-of-peak rather than a number
+# scaled by some other machine's hardware. That distinction is the whole
+# point of this file: with the M3 Pro's 150 GB/s hardcoded, running on an
+# A10G (600 GB/s) printed rows like "394 GB/s, 262 % of peak" -- a figure
+# that is not merely imprecise but impossible, and that inverts the
+# conclusion, since 262 % reads as "nothing left to win" when the real
+# number is ~66 %. No percentage at all is the honest output for hardware
+# whose ceiling this file does not know.
+#
+# Add a device by appending one branch. The match is a substring so that
+# vendor prefixes and suffixes ("NVIDIA A10G", "Apple M3 Pro") do not have
+# to be reproduced exactly.
+def _peak_gb_s(name: String) -> Float64:
+    if "M3 Pro" in name:
+        return 150.0
+    if "A10G" in name:
+        return 600.0
+    return 0.0
 
 
 def gaussian_step[w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -170,10 +194,21 @@ def _coarse_map[
             ys_flat.store[1](Coord(i), step[1](xs_flat.load[1](Coord(i))))
 
 
-def _report(label: String, n: Int, avg_ns: Float64):
+def _report(peak_gb_s: Float64, label: String, n: Int, avg_ns: Float64):
     var secs = avg_ns / 1e9
     var elems_per_sec_m = Float64(n) / secs / 1e6
     var gb_s = Float64(n * bytes_per_elem) / secs / 1e9
+    if peak_gb_s <= 0.0:
+        print(
+            "    ",
+            label,
+            ": ",
+            elems_per_sec_m,
+            " M elem/s  ",
+            gb_s,
+            " GB/s   (% of peak: n/a -- device not in _peak_gb_s)",
+        )
+        return
     print(
         "    ",
         label,
@@ -263,11 +298,13 @@ def gate_at_size[n: Int](mut ctx: DeviceContext) raises:
 
     print("  n =", n)
     _report(
+        _peak_gb_s(ctx.name()),
         "copy    ",
         n,
         _time_launch[n, type_of(layout), copy_step, 1](ctx, xs, ys, 256),
     )
     _report(
+        _peak_gb_s(ctx.name()),
         "gaussian",
         n,
         _time_launch[n, type_of(layout), gaussian_step, 1](ctx, xs, ys, 256),
@@ -290,6 +327,7 @@ def sweep_at_size[
     print("  n =", n, " (gaussian)")
     for b in materialize[block_sizes]():
         _report(
+            _peak_gb_s(ctx.name()),
             "w=1 block=" + String(b),
             n,
             _time_launch[n, type_of(layout), gaussian_step, 1, amortize_sync](
@@ -297,6 +335,7 @@ def sweep_at_size[
             ),
         )
         _report(
+            _peak_gb_s(ctx.name()),
             "w=2 block=" + String(b),
             n,
             _time_launch[n, type_of(layout), gaussian_step, 2, amortize_sync](
@@ -304,6 +343,7 @@ def sweep_at_size[
             ),
         )
         _report(
+            _peak_gb_s(ctx.name()),
             "w=4 block=" + String(b),
             n,
             _time_launch[n, type_of(layout), gaussian_step, 4, amortize_sync](
@@ -311,6 +351,7 @@ def sweep_at_size[
             ),
         )
         _report(
+            _peak_gb_s(ctx.name()),
             "w=8 block=" + String(b),
             n,
             _time_launch[n, type_of(layout), gaussian_step, 8, amortize_sync](
@@ -332,11 +373,13 @@ def sync_accounting_at_size[n: Int](mut ctx: DeviceContext) raises:
 
     print("  n =", n)
     _report(
+        _peak_gb_s(ctx.name()),
         "per-call sync ",
         n,
         _time_launch[n, type_of(layout), gaussian_step, 1](ctx, xs, ys, 256),
     )
     _report(
+        _peak_gb_s(ctx.name()),
         "amortized sync",
         n,
         _time_launch[n, type_of(layout), gaussian_step, 1, amortize_sync=True](
@@ -403,11 +446,13 @@ def interleave_artifact_at_size[n: Int](mut ctx: DeviceContext) raises:
 
     print("  n =", n)
     _report(
+        _peak_gb_s(ctx.name()),
         "GPU alone            ",
         n,
         Float64(alone_total) / Float64(timed_iters),
     )
     _report(
+        _peak_gb_s(ctx.name()),
         "GPU + CPU interleaved",
         n,
         Float64(interleaved_total) / Float64(timed_iters),
@@ -457,14 +502,24 @@ def check_coarse_correct[n: Int, width: Int](mut ctx: DeviceContext) raises:
 
 def main() raises:
     var ctx = DeviceContext()
-    print("GPU API:", ctx.api(), " dtype:", dtype)
-    print(
-        "assumed peak bandwidth:",
-        peak_gb_s,
-        "GB/s ->",
-        peak_gb_s / Float64(bytes_per_elem) * 1000.0,
-        "M elem/s ceiling",
-    )
+    print("GPU API:", ctx.api(), " device:", ctx.name(), " dtype:", dtype)
+    var peak = _peak_gb_s(ctx.name())
+    if peak <= 0.0:
+        print(
+            "assumed peak bandwidth: unknown for this device -- percent-of-peak"
+        )
+        print(
+            "columns will read n/a. Add it to `_peak_gb_s` above to get them"
+            " back."
+        )
+    else:
+        print(
+            "assumed peak bandwidth:",
+            peak,
+            "GB/s ->",
+            peak / Float64(bytes_per_elem) * 1000.0,
+            "M elem/s ceiling",
+        )
 
     print()
     print("== 1. Gate: is the memory path or std.math.exp the ceiling? ==")
