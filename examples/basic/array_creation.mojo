@@ -13,6 +13,8 @@ returned from a factory function); `transpose`/`squeeze`/`stack` show the
 three manipulation gaps this module fills.
 """
 
+
+from max.gpu.host import DeviceContext
 from numax.array import (
     arange,
     concatenate,
@@ -33,17 +35,18 @@ comptime dtype = DType.float32
 
 
 def main() raises:
+    var ctx = DeviceContext(api="cpu")
     print("--- creation ---")
-    var z = zeros[dtype, 2, 3]()
+    var z = zeros[dtype, 2, 3](ctx)
     print("zeros[2, 3]:", z.num_elements, "elements, all", z[0])
 
-    var o = ones[dtype, 4]()
+    var o = ones[dtype, 4](ctx)
     print("ones[4]:", o[0], o[1], o[2], o[3])
 
-    var f = full[dtype, 3](Scalar[dtype](7))
-    print("full[3](7):", f[0], f[1], f[2])
+    var f = full[dtype, 3](ctx, Scalar[dtype](7))
+    print("full[3](ctx, 7):", f[0], f[1], f[2])
 
-    var identity = eye[dtype, 3]()
+    var identity = eye[dtype, 3](ctx)
     var iv = identity.view()
     print(
         "eye[3]: [",
@@ -61,11 +64,11 @@ def main() raises:
         "]",
     )
 
-    var ls = linspace[dtype, 5](Scalar[dtype](0), Scalar[dtype](1))
-    print("linspace[5](0, 1):", ls[0], ls[1], ls[2], ls[3], ls[4])
+    var ls = linspace[dtype, 5](ctx, Scalar[dtype](0), Scalar[dtype](1))
+    print("linspace[5](ctx, 0, 1):", ls[0], ls[1], ls[2], ls[3], ls[4])
 
     print("--- manipulation ---")
-    var m = full[dtype, 2, 3](Scalar[dtype](0))
+    var m = full[dtype, 2, 3](ctx, Scalar[dtype](0))
     var mv = m.view()
     var counter: Scalar[dtype] = 0
     for r in range(2):
@@ -99,15 +102,15 @@ def main() raises:
         "]",
     )
 
-    var row = full[dtype, 1, 4](Scalar[dtype](0))
+    var row = full[dtype, 1, 4](ctx, Scalar[dtype](0))
     var rv = row.view()
     for i in range(4):
         rv[0, i] = Scalar[dtype](i)
     var sq = squeeze(row)
     print("squeeze((1, 4)):", sq[0], sq[1], sq[2], sq[3])
 
-    var a = linspace[dtype, 3](Scalar[dtype](0), Scalar[dtype](2))
-    var b = linspace[dtype, 3](Scalar[dtype](10), Scalar[dtype](12))
+    var a = linspace[dtype, 3](ctx, Scalar[dtype](0), Scalar[dtype](2))
+    var b = linspace[dtype, 3](ctx, Scalar[dtype](10), Scalar[dtype](12))
     var st = stack(a, b)
     var sv = st.view()
     print("stack(a, b) row 0:", sv[0, 0], sv[0, 1], sv[0, 2])
@@ -115,7 +118,7 @@ def main() raises:
 
     # Shape manipulation: arange -> reshape -> ravel round-trips, and
     # concatenate/split are inverses of each other.
-    var r = arange[dtype, 6]()
+    var r = arange[dtype, 6](ctx)
     print("arange(6):", r[0], r[1], r[2], r[3], r[4], r[5])
 
     var grid = reshape[rows=2, cols=3](r)
@@ -137,8 +140,8 @@ def main() raises:
         "ravel(2x3 -> 6):", back[0], back[1], back[2], back[3], back[4], back[5]
     )
 
-    var left = arange[dtype, 3]()
-    var right = arange[dtype, 2](Scalar[dtype](100))
+    var left = arange[dtype, 3](ctx)
+    var right = arange[dtype, 2](ctx, Scalar[dtype](100))
     var joined = concatenate(left, right)
     print(
         "concatenate([0,1,2], [100,101]):",

@@ -24,7 +24,8 @@ right thing for a caller already holding a `TileTensor` on a device. What it
 does not give is a *value* sort, an n-dimensional sort, `searchsorted`, or
 `unique` -- and it returns indices into a tensor rather than a sorted copy.
 `std.builtin.sort` (stable, comparator-driven, over a `Span`) is what the
-functions here are built on, since a `Tensor` owns a `List` and that is
+functions here are built on, since these walks run on a host copy of the
+tensor's elements (`Tensor.to_host`) and that is
 exactly what `sort` wants.
 
 ## Flat, not axis-wise
@@ -37,6 +38,8 @@ not written yet, so the flat behavior is stated rather than implied.
 """
 
 from std.builtin.sort import sort as _std_sort
+
+from nn.argsort import argsort as _nn_argsort
 from std.collections import Array
 
 from .array import Tensor, _product
@@ -44,7 +47,7 @@ from .array import Tensor, _product
 
 def sort[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) -> Tensor[dtype, _product[*dims]()]:
+](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, _product[*dims]()]:
     """A sorted rank-1 copy of `a`, ascending. `numpy.sort(a, axis=None)`.
 
     Stable, because `std.builtin.sort` is; for a plain numeric sort that
@@ -56,53 +59,48 @@ def sort[
     is wanted.
     """
     comptime n = _product[*dims]()
-    var values = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        values.append(a[i])
+    var values = a.to_host()
     _std_sort(values)
-    return Tensor[dtype, n](values^)
+    return Tensor[dtype, n](a.context(), values^)
 
 
-def argsort[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> List[Int]:
+def argsort[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> List[Int]:
     """The flat indices that would sort `a`, ascending.
     `numpy.argsort(a, axis=None)`.
 
-    Returned as a `List[Int]` rather than a `Tensor`, because an index
-    array is not a numeric tensor: nothing downstream wants to run a
-    `FloatLike` kernel over it, and giving it a `Tensor[int64, ...]` would
-    invite exactly that.
+    Routed straight to `nn.argsort`, which is MAX's own sort: rank-1,
+    ascending or descending, with a CPU and a GPU implementation behind one
+    name. numax has no business writing a second one -- an earlier version
+    here open-coded an O(n^2) insertion sort over an index list, which this
+    replaces outright.
 
-    Implemented as a selection over a value/index pair list rather than by
-    calling `nn.argsort`. `nn.argsort` would be the better choice for a
-    caller already holding a device `TileTensor`; here the input is a
-    host-owned `Tensor`, and going through MAX would mean building a
-    tensor, launching, and reading back an int64 buffer to produce a
-    `List[Int]`.
+    Returned as a `List[Int]` rather than a `Tensor`, because an index array
+    is not a numeric tensor: nothing downstream wants to run a `FloatLike`
+    kernel over it, and giving it a `Tensor[int64, ...]` would invite exactly
+    that. The flattening is the `axis=None` contract every other routine in
+    this module follows, and it is also what makes the input rank-1 the way
+    `nn.argsort` requires.
     """
     comptime n = _product[*dims]()
-    var order = List[Int](capacity=n)
-    for i in range(n):
-        order.append(i)
+    var ctx = a.context()
+    var flat = Tensor[dtype, n](ctx, a.to_host())
+    var indices = Tensor[DType.int64, n](ctx)
+    var flat_view = flat.view()
+    var indices_view = indices.view()
+    _nn_argsort(indices_view, flat_view)
 
-    # Insertion sort on the index list, comparing through `a`. O(n^2), and
-    # deliberately so: `Tensor` is comptime-sized and these are small, and
-    # a comparator-driven `std.builtin.sort` over indices would need a
-    # capturing closure over `a`, which is the thing `thin` function
-    # parameters exist to forbid elsewhere in this library.
-    for i in range(1, n):
-        var key = order[i]
-        var key_value = a[key]
-        var j = i - 1
-        while j >= 0 and a[order[j]] > key_value:
-            order[j + 1] = order[j]
-            j -= 1
-        order[j + 1] = key
+    var order = List[Int](capacity=n)
+    var raw = indices.to_host()
+    for i in range(n):
+        order.append(Int(raw[i]))
     return order^
 
 
 def searchsorted[
     dtype: DType, n: Int
-](mut sorted_values: Tensor[dtype, n], value: Scalar[dtype]) -> Int:
+](sorted_values: Tensor[dtype, n], value: Scalar[dtype]) raises -> Int:
     """The index where `value` would be inserted to keep `sorted_values`
     ascending. `numpy.searchsorted(a, v, side="left")`.
 
@@ -119,11 +117,12 @@ def searchsorted[
     number of them, which is what makes this tier 2 rather than something
     that could live in a kernel.
     """
+    var values = sorted_values.to_host()
     var lo = 0
     var hi = n
     while lo < hi:
         var mid = (lo + hi) // 2
-        if sorted_values[mid] < value:
+        if values[mid] < value:
             lo = mid + 1
         else:
             hi = mid
@@ -132,7 +131,9 @@ def searchsorted[
 
 def unique[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) -> Tuple[Tensor[dtype, _product[*dims]()], Int]:
+](a: Tensor[dtype, *dims]) raises -> Tuple[
+    Tensor[dtype, _product[*dims]()], Int
+]:
     """The sorted distinct values of `a`, and how many there are.
 
     `numpy.unique` returns a right-sized array; a comptime-shaped `Tensor`
@@ -147,33 +148,39 @@ def unique[
     in `numax.array` speaks.
     """
     comptime n = _product[*dims]()
-    var sorted_copy = sort[dtype, *dims](a)
+    var values = a.to_host()
+    _std_sort(values)
     if n == 0:
-        return (sorted_copy^, 0)
+        return (Tensor[dtype, n](a.context(), values^), 0)
 
     var count = 1
     for i in range(1, n):
-        if sorted_copy[i] != sorted_copy[count - 1]:
-            sorted_copy[count] = sorted_copy[i]
+        if values[i] != values[count - 1]:
+            values[count] = values[i]
             count += 1
-    return (sorted_copy^, count)
+    return (Tensor[dtype, n](a.context(), values^), count)
 
 
-def count_nonzero[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> Int:
+def count_nonzero[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Int:
     """How many elements of `a` are not zero. `numpy.count_nonzero`.
 
     `-0.0` counts as zero (it compares equal to `0.0`), matching NumPy.
     NaN counts as nonzero, also matching NumPy, since `nan != 0`.
     """
     comptime n = _product[*dims]()
+    var values = a.to_host()
     var total = 0
     for i in range(n):
-        if a[i] != 0:
+        if values[i] != 0:
             total += 1
     return total
 
 
-def any_nonzero[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> Bool:
+def any_nonzero[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Bool:
     """Whether any element is nonzero. `numpy.any`.
 
     Named `any_nonzero` rather than `any` because `any` is a Mojo builtin;
@@ -184,23 +191,29 @@ def any_nonzero[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> Bool:
     `count_nonzero(a) > 0`.
     """
     comptime n = _product[*dims]()
+    var values = a.to_host()
     for i in range(n):
-        if a[i] != 0:
+        if values[i] != 0:
             return True
     return False
 
 
-def all_nonzero[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> Bool:
+def all_nonzero[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Bool:
     """Whether every element is nonzero. `numpy.all`, named for the same
     reason as `any_nonzero`. Short-circuits on the first zero."""
     comptime n = _product[*dims]()
+    var values = a.to_host()
     for i in range(n):
-        if a[i] == 0:
+        if values[i] == 0:
             return False
     return True
 
 
-def nonzero[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> List[Int]:
+def nonzero[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> List[Int]:
     """The flat indices of the nonzero elements, ascending.
     `numpy.flatnonzero`.
 
@@ -210,16 +223,17 @@ def nonzero[dtype: DType, *dims: Int](mut a: Tensor[dtype, *dims]) -> List[Int]:
     have.
     """
     comptime n = _product[*dims]()
+    var values = a.to_host()
     var indices = List[Int](capacity=n)
     for i in range(n):
-        if a[i] != 0:
+        if values[i] != 0:
             indices.append(i)
     return indices^
 
 
 def extract[
     dtype: DType, *dims: Int
-](mut condition: Tensor[dtype, *dims], mut a: Tensor[dtype, *dims]) -> Tuple[
+](condition: Tensor[dtype, *dims], a: Tensor[dtype, *dims]) raises -> Tuple[
     Tensor[dtype, _product[*dims]()], Int
 ]:
     """The elements of `a` where `condition` is nonzero, and how many.
@@ -236,22 +250,24 @@ def extract[
     that no `FloatLike` kernel could consume anyway.
     """
     comptime n = _product[*dims]()
+    var mask = condition.to_host()
+    var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     var count = 0
     for i in range(n):
-        if condition[i] != 0:
-            out[count] = a[i]
+        if mask[i] != 0:
+            out[count] = values[i]
             count += 1
-    return (Tensor[dtype, n](out^), count)
+    return (Tensor[dtype, n](a.context(), out^), count)
 
 
 def select[
     dtype: DType, *dims: Int
 ](
-    mut condition: Tensor[dtype, *dims],
-    mut x: Tensor[dtype, *dims],
-    mut y: Tensor[dtype, *dims],
-) -> Tensor[dtype, *dims]:
+    condition: Tensor[dtype, *dims],
+    x: Tensor[dtype, *dims],
+    y: Tensor[dtype, *dims],
+) raises -> Tensor[dtype, *dims]:
     """Elementwise select: `x` where `condition` is nonzero, `y` elsewhere.
     `numpy.where(cond, x, y)`.
 
@@ -275,7 +291,10 @@ def select[
     `numax.numeric.blend` when the selection has to happen inside a kernel.
     """
     comptime n = _product[*dims]()
+    var mask = condition.to_host()
+    var x_values = x.to_host()
+    var y_values = y.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
-        out[i] = x[i] if condition[i] != 0 else y[i]
-    return Tensor[dtype, *dims](out^)
+        out[i] = x_values[i] if mask[i] != 0 else y_values[i]
+    return Tensor[dtype, *dims](x.context(), out^)

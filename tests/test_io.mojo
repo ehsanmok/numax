@@ -16,6 +16,8 @@ from std.testing import (
     assert_true,
 )
 
+from max.gpu.host import DeviceContext
+
 from numax.array import Tensor, full
 from numax.io import _format_tensor, load, print_tensor, save
 
@@ -23,26 +25,28 @@ comptime dtype = DType.float32
 comptime _TMP_DIR = "/tmp/numax_test_io"
 
 
-def _fixed_1d() -> Tensor[dtype, 4]:
-    var xs = full[dtype, 4](Scalar[dtype](0))
-    var v = xs.view()
+def _fixed_1d() raises -> Tensor[dtype, 4]:
+    var ctx = DeviceContext(api="cpu")
     var vals = [1.5, -2.25, 3.0, 0.125]
+    var values = List[Scalar[dtype]](capacity=4)
     for i in range(4):
-        v[i] = Scalar[dtype](vals[i])
-    return xs^
+        values.append(Scalar[dtype](vals[i]))
+    return Tensor[dtype, 4](ctx, values^)
 
 
 def test_save_load_round_trips_a_rank_1_tensor() raises:
+    var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_rank1.nmx")
     save(xs, path)
-    var loaded = load[dtype, 4](path)
+    var loaded = load[dtype, 4](ctx, path)
     for i in range(4):
         assert_almost_equal(loaded[i], xs[i])
 
 
 def test_save_load_round_trips_a_rank_2_tensor() raises:
-    var xs = full[dtype, 2, 3](Scalar[dtype](0))
+    var ctx = DeviceContext(api="cpu")
+    var xs = full[dtype, 2, 3](ctx, Scalar[dtype](0))
     var v = xs.view()
     var k = 0
     for r in range(2):
@@ -51,13 +55,14 @@ def test_save_load_round_trips_a_rank_2_tensor() raises:
             k += 1
     var path = String(_TMP_DIR, "_rank2.nmx")
     save(xs, path)
-    var loaded = load[dtype, 2, 3](path)
+    var loaded = load[dtype, 2, 3](ctx, path)
     for i in range(6):
         assert_almost_equal(loaded[i], xs[i])
 
 
 def test_save_load_round_trips_a_rank_3_tensor() raises:
-    var xs = full[dtype, 2, 2, 2](Scalar[dtype](0))
+    var ctx = DeviceContext(api="cpu")
+    var xs = full[dtype, 2, 2, 2](ctx, Scalar[dtype](0))
     var v = xs.view()
     var k = 0
     for a in range(2):
@@ -67,48 +72,52 @@ def test_save_load_round_trips_a_rank_3_tensor() raises:
                 k += 1
     var path = String(_TMP_DIR, "_rank3.nmx")
     save(xs, path)
-    var loaded = load[dtype, 2, 2, 2](path)
+    var loaded = load[dtype, 2, 2, 2](ctx, path)
     for i in range(8):
         assert_almost_equal(loaded[i], xs[i])
 
 
 def test_load_raises_on_dtype_mismatch() raises:
+    var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_dtype_mismatch.nmx")
     save(xs, path)
     var raised = False
     try:
-        _ = load[DType.float64, 4](path)
+        _ = load[DType.float64, 4](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on a dtype mismatch")
 
 
 def test_load_raises_on_shape_mismatch() raises:
+    var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_shape_mismatch.nmx")
     save(xs, path)
     var raised = False
     try:
-        _ = load[dtype, 5](path)
+        _ = load[dtype, 5](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on a shape mismatch")
 
 
 def test_load_raises_on_rank_mismatch() raises:
+    var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_rank_mismatch.nmx")
     save(xs, path)
     var raised = False
     try:
-        _ = load[dtype, 2, 2](path)
+        _ = load[dtype, 2, 2](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on a rank mismatch")
 
 
 def test_load_raises_on_bad_magic_bytes() raises:
+    var ctx = DeviceContext(api="cpu")
     var path = String(_TMP_DIR, "_bad_magic.nmx")
     var f = open(path, "w")
     var junk = List[UInt8]()
@@ -118,13 +127,14 @@ def test_load_raises_on_bad_magic_bytes() raises:
     f.close()
     var raised = False
     try:
-        _ = load[dtype, 4](path)
+        _ = load[dtype, 4](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on bad magic bytes")
 
 
 def test_print_tensor_matches_a_frozen_small_array_string() raises:
+    var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var formatted = _format_tensor(xs, 2, 1000, 3)
     # 0.125 rounds half-away-from-zero to 0.13, not banker's-rounding 0.12.
@@ -135,7 +145,8 @@ def test_print_tensor_matches_a_frozen_small_array_string() raises:
 
 
 def test_print_tensor_truncates_arrays_over_threshold() raises:
-    var xs = full[dtype, 20](Scalar[dtype](0))
+    var ctx = DeviceContext(api="cpu")
+    var xs = full[dtype, 20](ctx, Scalar[dtype](0))
     var v = xs.view()
     for i in range(20):
         v[i] = Scalar[dtype](i)

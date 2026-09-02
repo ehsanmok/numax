@@ -300,15 +300,17 @@ def argmin[
     return Int(out[0])
 
 
-def cumprod[dtype: DType, n: Int](mut xs: Tensor[dtype, n]) -> Tensor[dtype, n]:
+def cumprod[
+    dtype: DType, n: Int
+](xs: Tensor[dtype, n]) raises -> Tensor[dtype, n]:
     """The running product of `xs`: `ys[i] = xs[0] * ... * xs[i]`."""
-    var view = xs.view()
+    var values = xs.to_host()
     var storage = List[Scalar[dtype]](capacity=n)
     var acc = Scalar[dtype](1)
     for i in range(n):
-        acc = acc * view[i]
+        acc = acc * values[i]
         storage.append(acc)
-    return Tensor[dtype, n](storage^)
+    return Tensor[dtype, n](xs.context(), storage^)
 
 
 def mean[T: FloatLike](xs: List[T]) -> T:

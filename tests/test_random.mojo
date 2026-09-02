@@ -9,50 +9,57 @@ is exercised implicitly by every other test here.
 
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
+from max.gpu.host import DeviceContext
+
 from numax.random import exponential, normal, seed, uniform
 
 comptime dtype = DType.float32
 
 
 def test_seed_makes_uniform_draws_reproducible() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(7)
-    var a = uniform[dtype, 8](Scalar[dtype](0), Scalar[dtype](1))
+    var a = uniform[dtype, 8](ctx, Scalar[dtype](0), Scalar[dtype](1))
     seed(7)
-    var b = uniform[dtype, 8](Scalar[dtype](0), Scalar[dtype](1))
+    var b = uniform[dtype, 8](ctx, Scalar[dtype](0), Scalar[dtype](1))
     for i in range(8):
         assert_almost_equal(a[i], b[i])
 
 
 def test_seed_makes_normal_draws_reproducible() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(11)
-    var a = normal[dtype, 8](Scalar[dtype](0), Scalar[dtype](1))
+    var a = normal[dtype, 8](ctx, Scalar[dtype](0), Scalar[dtype](1))
     seed(11)
-    var b = normal[dtype, 8](Scalar[dtype](0), Scalar[dtype](1))
+    var b = normal[dtype, 8](ctx, Scalar[dtype](0), Scalar[dtype](1))
     for i in range(8):
         assert_almost_equal(a[i], b[i])
 
 
 def test_seed_makes_exponential_draws_reproducible() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(13)
-    var a = exponential[dtype, 8](Scalar[dtype](2))
+    var a = exponential[dtype, 8](ctx, Scalar[dtype](2))
     seed(13)
-    var b = exponential[dtype, 8](Scalar[dtype](2))
+    var b = exponential[dtype, 8](ctx, Scalar[dtype](2))
     for i in range(8):
         assert_almost_equal(a[i], b[i])
 
 
 def test_uniform_draws_land_within_the_requested_range() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(1)
     comptime n = 5000
-    var xs = uniform[dtype, n](Scalar[dtype](-3), Scalar[dtype](5))
+    var xs = uniform[dtype, n](ctx, Scalar[dtype](-3), Scalar[dtype](5))
     for i in range(n):
         assert_true(xs[i] >= -3.0 and xs[i] < 5.0)
 
 
 def test_uniform_sample_mean_matches_the_midpoint_within_tolerance() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(2)
     comptime n = 30_000
-    var xs = uniform[dtype, n](Scalar[dtype](0), Scalar[dtype](10))
+    var xs = uniform[dtype, n](ctx, Scalar[dtype](0), Scalar[dtype](10))
     var total = Float64(0)
     for i in range(n):
         total += Float64(xs[i])
@@ -67,9 +74,10 @@ def test_uniform_sample_mean_matches_the_midpoint_within_tolerance() raises:
 
 
 def test_normal_sample_mean_and_stddev_match_the_parameters() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(3)
     comptime n = 30_000
-    var xs = normal[dtype, n](Scalar[dtype](2), Scalar[dtype](3))
+    var xs = normal[dtype, n](ctx, Scalar[dtype](2), Scalar[dtype](3))
     var total = Float64(0)
     for i in range(n):
         total += Float64(xs[i])
@@ -90,9 +98,10 @@ def test_normal_sample_mean_and_stddev_match_the_parameters() raises:
 
 
 def test_exponential_sample_mean_matches_its_scale() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(4)
     comptime n = 30_000
-    var xs = exponential[dtype, n](Scalar[dtype](2))
+    var xs = exponential[dtype, n](ctx, Scalar[dtype](2))
     var total = Float64(0)
     for i in range(n):
         total += Float64(xs[i])
@@ -106,9 +115,10 @@ def test_exponential_sample_mean_matches_its_scale() raises:
 
 
 def test_exponential_draws_are_never_negative() raises:
+    var ctx = DeviceContext(api="cpu")
     seed(5)
     comptime n = 5000
-    var xs = exponential[dtype, n](Scalar[dtype](1))
+    var xs = exponential[dtype, n](ctx, Scalar[dtype](1))
     for i in range(n):
         assert_true(xs[i] >= 0.0)
 

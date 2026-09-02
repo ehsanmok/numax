@@ -178,7 +178,15 @@ the survey of what MAX does ship.
   (`reshape`/`ravel`/`transpose`/`squeeze`/`stack`/`concatenate`/`split`)
   over a `Tensor` wrapper that owns its storage (a bare `TileTensor` is a
   view, not memory, and dangles once the function that built it returns).
+  That storage is a MAX `DeviceBuffer`, so one tensor type serves both
+  devices: the `DeviceContext` passed to a factory decides where it lives
+  (`DeviceContext(api="cpu")` for host memory, `DeviceContext()` for the
+  accelerator), and `.view()` hands back the same `TileTensor` either way.
   Comptime-shape and `Plain`-only, matching `numax.tensor`'s own contract.
+  Element access goes through `to_host`/`copy_from_host`, never
+  `DeviceBuffer.unsafe_ptr()` -- on CUDA that returns a device pointer and
+  a host read segfaults, so `Tensor.__getitem__` only takes the pointer
+  path on a CPU context and maps to host otherwise.
 - **`numax.statistics`** -- `sum`/`prod`/`min`/`max`/`mean`/`median`/`mode`
   `Plain`-only over `TileTensor`, plus `argmax`/`argmin` routed straight to
   `nn.argmaxmin` (MAX-first). `mean`/`variance`/`stddev`/`cumsum` also have
@@ -194,7 +202,8 @@ the survey of what MAX does ship.
 - **`numax.io`** -- a binary save/load format for `Tensor` (own format, not
   NumPy's `.npy`, since MAX ships no array I/O to interchange with) plus a
   configurable `print_tensor`. `Plain`-only.
-- **`numax.random`** -- `uniform`/`normal`/`exponential` into a `Tensor`,
+- **`numax.random`** -- `uniform`/`normal`/`exponential` into a `Tensor`
+  on the caller's device,
   over `std.random` on the host (MAX's own `nn.rand_uniform`/`rand_normal`
   turned out to be graph-fusion machinery, not an eager API `numax` can
   call directly -- see the module's own docstring). No `Random[FloatLike]`

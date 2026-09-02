@@ -57,14 +57,22 @@ sees a zero argument -- no epsilon clamp needed, unlike the domain guards
 from std.math import log
 from std.random import rand, randn, seed as _std_seed
 
+from max.gpu.host import DeviceContext
+
 from .array import Tensor, _product
 
 
 def uniform[
     dtype: DType, *dims: Int
-](low: Scalar[dtype] = 0, high: Scalar[dtype] = 1) -> Tensor[dtype, *dims]:
-    """A new tensor of the given compile-time shape, filled with values drawn
-    uniformly from `[low, high)`.
+](
+    ctx: DeviceContext, low: Scalar[dtype] = 0, high: Scalar[dtype] = 1
+) raises -> Tensor[dtype, *dims]:
+    """A new tensor of the given compile-time shape on `ctx`'s device,
+    filled with values drawn uniformly from `[low, high)`.
+
+    The draw itself is `std.random`'s host RNG, so the values are generated
+    on the host and copied to the tensor's device -- see this module's own
+    docstring for why there is no device-side RNG conformer here.
     """
     comptime n = _product[*dims]()
     var storage = List[Scalar[dtype]](length=n, fill=0)
@@ -72,35 +80,41 @@ def uniform[
     var span = high - low
     for i in range(n):
         storage[i] = low + span * storage[i]
-    return Tensor[dtype, *dims](storage^)
+    return Tensor[dtype, *dims](ctx, storage^)
 
 
 def normal[
     dtype: DType, *dims: Int
-](mean: Scalar[dtype] = 0, stddev: Scalar[dtype] = 1) -> Tensor[dtype, *dims]:
-    """A new tensor of the given compile-time shape, filled with values drawn
-    from a normal distribution with the given `mean` and `stddev`.
+](
+    ctx: DeviceContext, mean: Scalar[dtype] = 0, stddev: Scalar[dtype] = 1
+) raises -> Tensor[dtype, *dims]:
+    """A new tensor of the given compile-time shape on `ctx`'s device,
+    filled with values drawn from a normal distribution with the given
+    `mean` and `stddev`.
     """
     comptime n = _product[*dims]()
     var storage = List[Scalar[dtype]](length=n, fill=0)
     randn(storage.unsafe_ptr(), n, Float64(mean), Float64(stddev))
-    return Tensor[dtype, *dims](storage^)
+    return Tensor[dtype, *dims](ctx, storage^)
 
 
 def exponential[
     dtype: DType, *dims: Int
-](scale: Scalar[dtype] = 1) -> Tensor[dtype, *dims]:
+](ctx: DeviceContext, scale: Scalar[dtype] = 1) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape, filled with values drawn
     from an exponential distribution with the given `scale` (`1/rate`).
 
     See this module's own docstring for the inverse-CDF composition from
     `uniform` and why it needs no domain guard.
     """
-    var out = uniform[dtype, *dims]()
     comptime n = _product[*dims]()
+    var storage = List[Scalar[dtype]](length=n, fill=0)
+    rand(storage.unsafe_ptr(), n)
     for i in range(n):
-        out[i] = -scale * Scalar[dtype](log(Float64(1) - Float64(out[i])))
-    return out^
+        storage[i] = -scale * Scalar[dtype](
+            log(Float64(1) - Float64(storage[i]))
+        )
+    return Tensor[dtype, *dims](ctx, storage^)
 
 
 def seed(value: Int):

@@ -86,7 +86,8 @@ def sample_mean(xs: List[Scalar[dtype]]) -> Float64:
 def main() raises:
     # --- CPU: numax.random draws the initial conditions ---
     seed(2026)
-    var y0_cpu = uniform[dtype, n](Scalar[dtype](-2), Scalar[dtype](2))
+    var cpu = DeviceContext(api="cpu")
+    var y0_cpu = uniform[dtype, n](cpu, Scalar[dtype](-2), Scalar[dtype](2))
 
     comptime layout = row_major[n]()
     var yt_storage = List[Scalar[dtype]](length=n, fill=0)
@@ -94,7 +95,7 @@ def main() raises:
     map[step=trajectory_step](y0_cpu.view(), yt_cpu)
 
     print("CPU ensemble:", n, "trajectories, initial conditions ~ U(-2, 2)")
-    print("  sample mean of y0:  ", sample_mean(y0_cpu.storage))
+    print("  sample mean of y0:  ", sample_mean(y0_cpu.to_host()))
     print("  sample mean of y(1):", sample_mean(yt_storage))
     print()
 

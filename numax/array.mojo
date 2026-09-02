@@ -6,31 +6,59 @@ tiling, reshaping, coalescing) but no NumPy-named *factory* functions --
 `TileTensor.zeros`/`.ones`/`.full`/`.arange` all fail to resolve (verified
 directly against `~/workspace/modular/max/kernels/src/layout/tile_tensor.mojo`),
 and `max.algorithm.functional` ships only `elementwise`. This module adds
-**only** those factory/manipulation names, comptime-shape and CPU-only, as
-a thin layer over `TileTensor` -- not a competing array type (the Track E
-rule: "any array/buffer-level work in numax builds as a thin layer over
-TileTensor, not a bespoke array type").
+**only** those factory/manipulation names, comptime-shape, as a thin layer
+over `TileTensor` -- not a competing array type (the Track E rule: "any
+array/buffer-level work in numax builds as a thin layer over TileTensor,
+not a bespoke array type").
 
-**Why a `Tensor` wrapper, not a bare `TileTensor`, is what these functions
-return.** `TileTensor` is a *view*: a pointer plus a layout, not the memory
-itself (confirmed directly -- a function that builds a local
-`List[Scalar[dtype]]`, wraps it in a `TileTensor`, and returns the
+**One tensor type, CPU and GPU.** `Tensor[dtype, *dims]` is the only owning
+tensor in `numax`, and it works on either kind of device because its storage
+is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
+`DeviceContext(api="cpu")` and the buffer is host memory, pass
+`DeviceContext()` and it is device memory. Nothing else about the type
+changes between the two, and `.view()` hands back the same
+`TileTensor[dtype, LayoutType, MutAnyOrigin]` either way -- which is exactly
+what `numax.tensor.map`/`reduce` and every MAX kernel already take, on both
+paths (`map[gpu=False]` walks the host view, `map[gpu=True]` launches on the
+device view through `enqueue_function`).
+
+**Why a `Tensor` wrapper, not a bare `TileTensor`.** `TileTensor` is a
+*view*: a pointer plus a layout, not the memory itself, in every storage
+policy MAX ships (`PointerStorage`, `DevicePointerStorage`,
+`StaticOffsetStorage` -- all non-owning). Confirmed directly: a function
+that builds a local buffer, wraps it in a `TileTensor`, and returns the
 `TileTensor` alone produces a dangling pointer the instant the function
-returns, since the `List`'s backing heap buffer is freed with it; a
-stress test that allocates 2000 more lists between the call and first read
-corrupted 100% of the "returned" tensor's elements). `Tensor[dtype, *dims]`
-owns the backing `List` alongside a compile-time row-major layout, so the
-value `zeros[dtype, 4, 4]()` returns can safely outlive the call that built
-it. Call `.view()` on a live `Tensor` to get the `TileTensor` that
-`numax.tensor.map`/`reduce` and friends expect; the view is only valid as
-long as the owning `Tensor` is.
+returns; a stress test that allocated 2000 more buffers between the call and
+first read corrupted 100% of the "returned" tensor's elements. `Tensor` owns
+the `DeviceBuffer` alongside a compile-time row-major layout, so the value
+`zeros[dtype, 4, 4](ctx)` returns can safely outlive the call that built it.
+The view is valid only as long as the owning `Tensor` is.
+
+**Host access goes through `to_host`/`copy_from_host`, never a raw
+pointer.** `DeviceBuffer.unsafe_ptr()` is not a safe way to read a tensor's
+elements on the host: on CUDA it does not raise, it returns a *device*
+pointer, and the host read segfaults the process (verified on an A10G --
+a crash, not a catchable error). `map_to_host` is the one accessor correct on
+both devices (on a CPU context it maps the same memory; on a GPU it stages a
+transfer and flushes writes back on scope exit), so the two methods below
+wrap it and there is deliberately no `__getitem__`/`__setitem__` on `Tensor`
+to be reached for by accident.
 
 **Comptime shape only.** `row_major[*dims: Int]()` (compile-time variadic)
 is what satisfies `numax.tensor`'s `where all_dims_known and is_row_major`
 clause; the runtime-shape sibling `row_major(Coord)` produces
 `all_dims_known=False` and fails that same clause. So every function here
 takes a compile-time `*dims: Int` shape, matching `numax.tensor`'s existing
-contract exactly. Dynamic-shape creation is out of scope.
+contract exactly. Dynamic-shape creation is out of scope; `numax.tensor`'s
+runtime-shape overloads take a `TileTensor` the caller has laid out.
+
+**Which functions need a `DeviceContext`.** The root factories (`zeros`,
+`ones`, `full`, `empty`, `eye`, `linspace`, `logspace`, `arange`) take one,
+because they allocate with no input tensor to inherit a device from.
+Everything derived from an existing tensor (`*_like`, `transpose`,
+`squeeze`, `stack`, `reshape`, `ravel`, `concatenate`, `split`) allocates on
+the *input's* device via `DeviceBuffer.context()`, so those signatures are
+unchanged and a derived tensor can never silently land on the wrong device.
 
 **What MAX's own `nn` versions are, and why these are written here.**
 `nn` does ship `arange`, `reshape`, `concat`, `split`, `slice`, `tile`,
@@ -58,10 +86,21 @@ existing one, which Mojo's parameter-pack machinery doesn't expose a public
 way to do. `stack` covers exactly two same-shaped tensors along a new
 leading axis (`axis=0`); `axis=1` stacking is not provided -- both are
 real, documented scope limits, not oversights.
+
+Every manipulation here runs its element walk on the host, through
+`to_host`/`copy_from_host`. On a CPU context that is the memory itself and
+costs nothing; on a GPU context it stages a round trip, which is the wrong
+shape for a large device-resident tensor.
+# ponytail: host-staged manipulation walks, correct on both devices but a
+# round trip on GPU -- give `transpose`/`stack`/`concatenate` device kernels
+# (or route them into `nn.concat`/`linalg.transpose`) if a profile ever shows
+# one of them on a hot device path.
 """
 
-from layout import TileTensor
+from max.gpu.host import DeviceBuffer, DeviceContext
+from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
+from linalg.transpose import transpose as _max_transpose
 
 
 def _product[*dims: Int]() -> Int:
@@ -73,11 +112,11 @@ def _product[*dims: Int]() -> Int:
 
 
 struct Tensor[dtype: DType, *dims: Int](Movable):
-    """An owned buffer paired with a compile-time row-major layout.
+    """An owned `DeviceBuffer` paired with a compile-time row-major layout.
 
-    `numax.array`'s creation routines return this, not a bare `TileTensor`
-    -- see this module's own docstring for why a `TileTensor` alone would
-    dangle. `dims` is the shape, exactly as passed to the factory function
+    The one owning tensor type in `numax`, on CPU and GPU alike -- see this
+    module's docstring for why the wrapper exists and how the device is
+    chosen. `dims` is the shape, exactly as passed to the factory function
     that built this (`Tensor[dtype, 4, 4]` for a 4x4 matrix); `rank` and
     `num_elements` are derived from it at compile time.
     """
@@ -87,16 +126,57 @@ struct Tensor[dtype: DType, *dims: Int](Movable):
     comptime rank = Self.dims.__len__()
     comptime num_elements = _product[*Self.dims]()
 
-    var storage: List[Scalar[Self.dtype]]
+    var buffer: DeviceBuffer[Self.dtype]
+    var host_addressable: Bool
+    """Whether this tensor's storage can be read through a plain host
+    pointer -- true on a CPU context, false on a discrete GPU.
 
-    def __init__(out self, var storage: List[Scalar[Self.dtype]]):
-        """Wrap an existing, already-correctly-sized buffer.
+    Recorded once at construction rather than asked per access, because
+    `DeviceContext.api()` builds a `String` every call. A GPU whose memory
+    *is* host-addressable (Apple's unified memory) is treated as if it were
+    not: the mapping path is correct there too, just slower, and this way
+    the fast path is only ever taken where it is unconditionally safe.
+    """
 
-        `storage` must have exactly `Self.num_elements` entries in
-        row-major order; this is the escape hatch every factory function
-        below funnels through.
+    def __init__(out self, ctx: DeviceContext) raises:
+        """A zero-filled tensor on `ctx`'s device.
+
+        Zeroing is `ctx.enqueue_memset`, which runs on the device rather
+        than staging a host write, so this is the cheap constructor on both
+        paths.
+
+        The `synchronize` is not optional: `enqueue_memset` only *queues*
+        the fill, and `__getitem__`'s host-pointer fast path does not order
+        itself against queued work the way a host mapping does. Without it,
+        a read immediately after construction can see unwritten memory
+        (caught by `tests/test_array.mojo`'s zero-content check).
         """
-        self.storage = storage^
+        self.buffer = ctx.enqueue_create_buffer[Self.dtype](Self.num_elements)
+        self.host_addressable = ctx.api() == "cpu"
+        ctx.enqueue_memset(self.buffer, Scalar[Self.dtype](0))
+        ctx.synchronize()
+
+    def __init__(
+        out self, ctx: DeviceContext, var values: List[Scalar[Self.dtype]]
+    ) raises:
+        """A tensor on `ctx`'s device holding `values`, row-major.
+
+        `values` must have exactly `Self.num_elements` entries; this is the
+        escape hatch the host-filled factory functions below funnel through.
+        """
+        self.buffer = ctx.enqueue_create_buffer[Self.dtype](Self.num_elements)
+        self.host_addressable = ctx.api() == "cpu"
+        with self.buffer.map_to_host() as host:
+            for i in range(Self.num_elements):
+                host[i] = values[i]
+
+    def context(self) raises -> DeviceContext:
+        """The device this tensor's storage lives on.
+
+        What the derived manipulations use to allocate their result next to
+        their input rather than on a device the caller has to name again.
+        """
+        return self.buffer.context()
 
     @staticmethod
     def dim[i: Int]() -> Int:
@@ -106,46 +186,102 @@ struct Tensor[dtype: DType, *dims: Int](Movable):
     def view(mut self) -> TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin]:
         """A `TileTensor` view over this tensor's storage.
 
-        Valid only as long as `self` is alive -- pass `self` (or a `mut`
-        reference to it) around, not just the value returned here, if the
-        view needs to outlive this call.
+        The type every `numax.tensor` entry point and every MAX kernel
+        takes, on CPU and GPU alike. Valid only as long as `self` is alive
+        -- pass `self` (or a `mut` reference to it) around, not just the
+        value returned here, if the view needs to outlive this call.
         """
         var v: TileTensor[
             Self.dtype, Self.LayoutType, MutAnyOrigin
-        ] = TileTensor(self.storage, Self.layout)
+        ] = TileTensor(self.buffer, Self.layout)
         return v
 
-    def __getitem__(self, i: Int) -> Scalar[Self.dtype]:
-        """Flat (row-major) element access."""
-        return self.storage[i]
+    def to_host(self) raises -> List[Scalar[Self.dtype]]:
+        """A host copy of every element, row-major.
 
-    def __setitem__(mut self, i: Int, value: Scalar[Self.dtype]):
-        """Flat (row-major) element assignment."""
-        self.storage[i] = value
+        The bulk read path, and the only one that costs a single mapping
+        regardless of device -- see this module's docstring for why
+        `DeviceBuffer.unsafe_ptr()` alone is not a safe substitute.
+        """
+        var out = List[Scalar[Self.dtype]](capacity=Self.num_elements)
+        with self.buffer.map_to_host() as host:
+            for i in range(Self.num_elements):
+                out.append(host[i])
+        return out^
+
+    def __getitem__(self, i: Int) raises -> Scalar[Self.dtype]:
+        """Flat (row-major) element read.
+
+        On a CPU context this is a direct pointer read. On a GPU it stages
+        a host mapping *per access*, which costs about 0.8 ms an element
+        (measured) -- take one `to_host()` copy and index that instead when
+        reading more than a handful of elements off a device tensor.
+        """
+        if self.host_addressable:
+            return self.buffer.unsafe_ptr()[unsafe_offset=i]
+        with self.buffer.map_to_host() as host:
+            return host[i]
+
+    def __setitem__(mut self, i: Int, value: Scalar[Self.dtype]) raises:
+        """Flat (row-major) element assignment.
+
+        Same split as `__getitem__`: a direct pointer write on a CPU
+        context, a per-access host mapping on a GPU (flushed to the device
+        when this call's mapping scope exits). `copy_from_host` is the bulk
+        path.
+        """
+        if self.host_addressable:
+            self.buffer.unsafe_ptr()[unsafe_offset=i] = value
+            return
+        with self.buffer.map_to_host() as host:
+            host[i] = value
+
+    def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
+        """Overwrite every element from a host buffer, row-major.
+
+        `values` must have exactly `Self.num_elements` entries. On a GPU
+        context the write is flushed to the device when the mapping scope
+        exits, which is inside this call.
+        """
+        with self.buffer.map_to_host() as host:
+            for i in range(Self.num_elements):
+                host[i] = values[i]
 
 
-def zeros[dtype: DType, *dims: Int]() -> Tensor[dtype, *dims]:
-    """A new tensor of the given compile-time shape, filled with `0`."""
-    var storage = List[Scalar[dtype]](length=_product[*dims](), fill=0)
-    return Tensor[dtype, *dims](storage^)
+def zeros[
+    dtype: DType, *dims: Int
+](ctx: DeviceContext) raises -> Tensor[dtype, *dims]:
+    """A new tensor of the given compile-time shape on `ctx`'s device,
+    filled with `0`."""
+    return Tensor[dtype, *dims](ctx)
 
 
-def ones[dtype: DType, *dims: Int]() -> Tensor[dtype, *dims]:
-    """A new tensor of the given compile-time shape, filled with `1`."""
-    var storage = List[Scalar[dtype]](length=_product[*dims](), fill=1)
-    return Tensor[dtype, *dims](storage^)
+def ones[
+    dtype: DType, *dims: Int
+](ctx: DeviceContext) raises -> Tensor[dtype, *dims]:
+    """A new tensor of the given compile-time shape on `ctx`'s device,
+    filled with `1`."""
+    return full[dtype, *dims](ctx, 1)
 
 
 def full[
     dtype: DType, *dims: Int
-](fill_value: Scalar[dtype]) -> Tensor[dtype, *dims]:
-    """A new tensor of the given compile-time shape, filled with `fill_value`.
+](ctx: DeviceContext, fill_value: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
+    """A new tensor of the given compile-time shape on `ctx`'s device,
+    filled with `fill_value`.
+
+    The fill is `enqueue_memset`, so it runs on the device rather than
+    staging a host write -- the same reason `zeros` is cheap on both paths.
     """
-    var storage = List[Scalar[dtype]](length=_product[*dims](), fill=fill_value)
-    return Tensor[dtype, *dims](storage^)
+    var result = Tensor[dtype, *dims](ctx)
+    ctx.enqueue_memset(result.buffer, fill_value)
+    ctx.synchronize()
+    return result^
 
 
-def empty[dtype: DType, *dims: Int]() -> Tensor[dtype, *dims]:
+def empty[
+    dtype: DType, *dims: Int
+](ctx: DeviceContext) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape, its contents unspecified.
 
     Unlike NumPy's `empty`, this zero-initializes rather than truly leaving
@@ -154,147 +290,62 @@ def empty[dtype: DType, *dims: Int]() -> Tensor[dtype, *dims]:
     here. Callers that write every element before reading (the usual reason
     to reach for `empty` at all) pay nothing extra in practice.
     """
-    var storage = List[Scalar[dtype]](length=_product[*dims](), fill=0)
-    return Tensor[dtype, *dims](storage^)
+    return Tensor[dtype, *dims](ctx)
 
 
-def eye[dtype: DType, n: Int]() -> Tensor[dtype, n, n]:
+def eye[dtype: DType, n: Int](ctx: DeviceContext) raises -> Tensor[dtype, n, n]:
     """The `n`x`n` identity matrix."""
-    var storage = List[Scalar[dtype]](length=n * n, fill=0)
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
-        storage[i * n + i] = 1
-    return Tensor[dtype, n, n](storage^)
+        values[i * n + i] = 1
+    return Tensor[dtype, n, n](ctx, values^)
 
 
 def linspace[
     dtype: DType, num: Int
-](start: Scalar[dtype], stop: Scalar[dtype]) -> Tensor[dtype, num]:
+](
+    ctx: DeviceContext, start: Scalar[dtype], stop: Scalar[dtype]
+) raises -> Tensor[dtype, num]:
     """`num` evenly spaced values from `start` to `stop`, inclusive of both.
 
     Matches `numpy.linspace`'s default `endpoint=True`. `num == 1` returns
     `[start]`, avoiding a division by zero in the step computation.
     """
-    var storage = List[Scalar[dtype]](capacity=num)
+    var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
-        storage.append(start)
+        values.append(start)
     else:
         var step = (stop - start) / Scalar[dtype](num - 1)
         for i in range(num):
-            storage.append(start + Scalar[dtype](i) * step)
-    return Tensor[dtype, num](storage^)
+            values.append(start + Scalar[dtype](i) * step)
+    return Tensor[dtype, num](ctx, values^)
 
 
 def logspace[
     dtype: DType, num: Int
 ](
-    start: Scalar[dtype], stop: Scalar[dtype], base: Scalar[dtype] = 10
-) -> Tensor[dtype, num]:
+    ctx: DeviceContext,
+    start: Scalar[dtype],
+    stop: Scalar[dtype],
+    base: Scalar[dtype] = 10,
+) raises -> Tensor[dtype, num]:
     """`num` values evenly spaced on a log scale: `base**x` for `x` in
     `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults."""
-    var storage = List[Scalar[dtype]](capacity=num)
+    var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
-        storage.append(base**start)
+        values.append(base**start)
     else:
         var step = (stop - start) / Scalar[dtype](num - 1)
         for i in range(num):
-            storage.append(base ** (start + Scalar[dtype](i) * step))
-    return Tensor[dtype, num](storage^)
-
-
-def zeros_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) -> Tensor[dtype, *dims]:
-    """A new zero-filled tensor with `a`'s dtype and shape."""
-    return zeros[dtype, *dims]()
-
-
-def ones_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) -> Tensor[dtype, *dims]:
-    """A new one-filled tensor with `a`'s dtype and shape."""
-    return ones[dtype, *dims]()
-
-
-def full_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], fill_value: Scalar[dtype]) -> Tensor[dtype, *dims]:
-    """A new `fill_value`-filled tensor with `a`'s dtype and shape."""
-    return full[dtype, *dims](fill_value)
-
-
-def empty_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) -> Tensor[dtype, *dims]:
-    """A new tensor with `a`'s dtype and shape; see `empty`'s own docstring
-    for why this zero-initializes rather than leaving memory uninitialized.
-    """
-    return empty[dtype, *dims]()
-
-
-def transpose[
-    dtype: DType, rows: Int, cols: Int
-](mut a: Tensor[dtype, rows, cols]) -> Tensor[dtype, cols, rows]:
-    """An owned-copy transpose of a 2D tensor.
-
-    Distinct from `TileTensor.transpose()`, which returns a zero-copy view
-    with every axis reversed over the *same* memory -- this allocates a new
-    buffer, for when the result needs its own storage (e.g. to outlive the
-    source, or to feed something that wants a plain `Tensor`).
-    """
-    var view = a.view()
-    var storage = List[Scalar[dtype]](length=rows * cols, fill=0)
-    var result = Tensor[dtype, cols, rows](storage^)
-    var result_view = result.view()
-    for r in range(rows):
-        for c in range(cols):
-            result_view[c, r] = view[r, c]
-    return result^
-
-
-def squeeze[
-    dtype: DType, n: Int
-](mut a: Tensor[dtype, 1, n]) -> Tensor[dtype, n]:
-    """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
-    var view = a.view()
-    var storage = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        storage.append(view[0, i])
-    return Tensor[dtype, n](storage^)
-
-
-def squeeze[
-    dtype: DType, n: Int
-](mut a: Tensor[dtype, n, 1]) -> Tensor[dtype, n]:
-    """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
-    var view = a.view()
-    var storage = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        storage.append(view[i, 0])
-    return Tensor[dtype, n](storage^)
-
-
-def stack[
-    dtype: DType, n: Int
-](mut a: Tensor[dtype, n], mut b: Tensor[dtype, n]) -> Tensor[dtype, 2, n]:
-    """Stack two same-shaped rank-1 tensors along a new leading axis
-    (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
-
-    `axis=1` stacking is not provided -- see this module's own docstring.
-    """
-    var a_view = a.view()
-    var b_view = b.view()
-    var storage = List[Scalar[dtype]](length=2 * n, fill=0)
-    var result = Tensor[dtype, 2, n](storage^)
-    var result_view = result.view()
-    for i in range(n):
-        result_view[0, i] = a_view[i]
-        result_view[1, i] = b_view[i]
-    return result^
+            values.append(base ** (start + Scalar[dtype](i) * step))
+    return Tensor[dtype, num](ctx, values^)
 
 
 def arange[
     dtype: DType, num: Int
-](start: Scalar[dtype] = 0, step: Scalar[dtype] = 1) -> Tensor[dtype, num]:
+](
+    ctx: DeviceContext, start: Scalar[dtype] = 0, step: Scalar[dtype] = 1
+) raises -> Tensor[dtype, num]:
     """`num` values starting at `start`, spaced by `step`.
 
     `numpy.arange` takes a `stop` and derives the count from it, which makes
@@ -303,15 +354,109 @@ def arange[
     (`start + num*step`). `numax.array.linspace` is the one to reach for
     when the endpoints are what matter.
     """
-    var storage = List[Scalar[dtype]](capacity=num)
+    var values = List[Scalar[dtype]](capacity=num)
     for i in range(num):
-        storage.append(start + Scalar[dtype](i) * step)
-    return Tensor[dtype, num](storage^)
+        values.append(start + Scalar[dtype](i) * step)
+    return Tensor[dtype, num](ctx, values^)
+
+
+def zeros_like[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    """A new zero-filled tensor with `a`'s dtype, shape and device."""
+    return zeros[dtype, *dims](a.context())
+
+
+def ones_like[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    """A new one-filled tensor with `a`'s dtype, shape and device."""
+    return ones[dtype, *dims](a.context())
+
+
+def full_like[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims], fill_value: Scalar[dtype]) raises -> Tensor[
+    dtype, *dims
+]:
+    """A new `fill_value`-filled tensor with `a`'s dtype, shape and device."""
+    return full[dtype, *dims](a.context(), fill_value)
+
+
+def empty_like[
+    dtype: DType, *dims: Int
+](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    """A new tensor with `a`'s dtype, shape and device; see `empty`'s own
+    docstring for why this zero-initializes rather than leaving memory
+    uninitialized.
+    """
+    return empty[dtype, *dims](a.context())
+
+
+def transpose[
+    dtype: DType, rows: Int, cols: Int
+](mut a: Tensor[dtype, rows, cols]) raises -> Tensor[dtype, cols, rows]:
+    """An owned-copy transpose of a 2D tensor, on `a`'s own device.
+
+    The permutation itself is `linalg.transpose` -- MAX's own kernel, which
+    dispatches to SIMD-shuffle tile kernels and runs on either device. numax
+    only allocates the destination and names the axis permutation; an
+    earlier version here walked the elements one at a time on the host.
+
+    Distinct from `TileTensor.transpose()`, which returns a zero-copy view
+    with every axis reversed over the *same* memory -- this allocates a new
+    buffer, for when the result needs its own storage (e.g. to outlive the
+    source, or to feed something that wants a plain `Tensor`).
+    """
+    var ctx = a.context()
+    var result = Tensor[dtype, cols, rows](ctx)
+    var src = a.view()
+    var dst = result.view()
+    var perms = List[Int]()
+    perms.append(1)
+    perms.append(0)
+    _max_transpose(dst, src, perms.unsafe_ptr(), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def squeeze[
+    dtype: DType, n: Int
+](a: Tensor[dtype, 1, n]) raises -> Tensor[dtype, n]:
+    """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
+    return Tensor[dtype, n](a.context(), a.to_host())
+
+
+def squeeze[
+    dtype: DType, n: Int
+](a: Tensor[dtype, n, 1]) raises -> Tensor[dtype, n]:
+    """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
+    return Tensor[dtype, n](a.context(), a.to_host())
+
+
+def stack[
+    dtype: DType, n: Int
+](a: Tensor[dtype, n], b: Tensor[dtype, n]) raises -> Tensor[dtype, 2, n]:
+    """Stack two same-shaped rank-1 tensors along a new leading axis
+    (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
+
+    `axis=1` stacking is not provided -- see this module's own docstring.
+    """
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var values = List[Scalar[dtype]](capacity=2 * n)
+    for i in range(n):
+        values.append(a_values[i])
+    for i in range(n):
+        values.append(b_values[i])
+    return Tensor[dtype, 2, n](a.context(), values^)
 
 
 def reshape[
     dtype: DType, n: Int, rows: Int, cols: Int
-](mut a: Tensor[dtype, n]) -> Tensor[dtype, rows, cols] where rows * cols == n:
+](a: Tensor[dtype, n]) raises -> Tensor[dtype, rows, cols] where (
+    rows * cols == n
+):
     """A rank-2 copy of a rank-1 tensor, in row-major order.
 
     The `where` clause is the element-count check: a shape that does not
@@ -327,28 +472,22 @@ def reshape[
     same shape for the same kind of reason. `ravel` is the inverse, and the
     two compose into any reshape this module can express.
     """
-    var view = a.view()
-    var storage = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        storage.append(view[i])
-    return Tensor[dtype, rows, cols](storage^)
+    return Tensor[dtype, rows, cols](a.context(), a.to_host())
 
 
 def reshape[
     dtype: DType, n: Int, d0: Int, d1: Int, d2: Int
-](mut a: Tensor[dtype, n]) -> Tensor[dtype, d0, d1, d2] where d0 * d1 * d2 == n:
+](a: Tensor[dtype, n]) raises -> Tensor[dtype, d0, d1, d2] where (
+    d0 * d1 * d2 == n
+):
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
-    var view = a.view()
-    var storage = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        storage.append(view[i])
-    return Tensor[dtype, d0, d1, d2](storage^)
+    return Tensor[dtype, d0, d1, d2](a.context(), a.to_host())
 
 
 def ravel[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims]) -> Tensor[dtype, _product[*dims]()]:
+](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, _product[*dims]()]:
     """A rank-1 copy in row-major order -- the inverse of `reshape`.
 
     `Tensor` owns its storage and Mojo will not let a field be moved out of
@@ -357,36 +496,40 @@ def ravel[
     reason; `TileTensor.reshape()` is the zero-copy view when the result
     does not need to outlive its source.
     """
-    comptime n = _product[*dims]()
-    var storage = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        storage.append(a[i])
-    return Tensor[dtype, n](storage^)
+    return Tensor[dtype, _product[*dims]()](a.context(), a.to_host())
 
 
 def concatenate[
     dtype: DType, n: Int, m: Int
-](mut a: Tensor[dtype, n], mut b: Tensor[dtype, m]) -> Tensor[dtype, n + m]:
+](a: Tensor[dtype, n], b: Tensor[dtype, m]) raises -> Tensor[dtype, n + m]:
     """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
 
     Rank-1 only, for the same reason `stack` takes exactly two rank-1
     inputs: an axis-`k` concatenation of arbitrary-rank tensors needs a new
     parameter pack built from an existing one with a single extent changed.
     A real scope limit, stated rather than hidden.
+
+    The element copy stays here rather than routing to `nn.concat`, and the
+    reason is specific: `nn.concat` takes its inputs as a `StaticTuple`, so
+    every input must share one layout *type* **and** one origin. `[n]` and
+    `[m]` are different comptime layout types, and runtime-shaped views over
+    the two buffers still carry different origins (`origin_of(a.buffer)` vs
+    `origin_of(b.buffer)`), which only an unsafe origin cast erases. Two
+    buffers, one memcpy each, is not worth that.
     """
-    var a_view = a.view()
-    var b_view = b.view()
-    var storage = List[Scalar[dtype]](capacity=n + m)
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var values = List[Scalar[dtype]](capacity=n + m)
     for i in range(n):
-        storage.append(a_view[i])
+        values.append(a_values[i])
     for i in range(m):
-        storage.append(b_view[i])
-    return Tensor[dtype, n + m](storage^)
+        values.append(b_values[i])
+    return Tensor[dtype, n + m](a.context(), values^)
 
 
 def split[
     dtype: DType, n: Int, at: Int
-](mut a: Tensor[dtype, n]) -> Tuple[
+](a: Tensor[dtype, n]) raises -> Tuple[
     Tensor[dtype, at], Tensor[dtype, n - at]
 ] where (at >= 0 and at <= n):
     """Cut a rank-1 tensor in two at comptime index `at`: elements
@@ -397,11 +540,15 @@ def split[
     which a comptime-shaped tensor cannot express. One index, two outputs,
     is the part that survives that constraint.
     """
-    var view = a.view()
+    var ctx = a.context()
+    var values = a.to_host()
     var head = List[Scalar[dtype]](capacity=at)
     for i in range(at):
-        head.append(view[i])
+        head.append(values[i])
     var tail = List[Scalar[dtype]](capacity=n - at)
     for i in range(at, n):
-        tail.append(view[i])
-    return (Tensor[dtype, at](head^), Tensor[dtype, n - at](tail^))
+        tail.append(values[i])
+    return (
+        Tensor[dtype, at](ctx, head^),
+        Tensor[dtype, n - at](ctx, tail^),
+    )

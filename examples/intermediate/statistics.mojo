@@ -15,6 +15,8 @@ asserting.
 
 from std.math import sin
 
+
+from max.gpu.host import DeviceContext
 from numax import Compensated, Plain
 from numax.array import full
 from numax.statistics import (
@@ -37,8 +39,9 @@ comptime dtype = DType.float32
 
 
 def main() raises:
+    var ctx = DeviceContext(api="cpu")
     print("--- Plain-only, over TileTensor ---")
-    var xs = full[dtype, 6](Scalar[dtype](0))
+    var xs = full[dtype, 6](ctx, Scalar[dtype](0))
     var v = xs.view()
     var vals = [3.0, 1.0, 9.0, 2.0, 7.0, 2.0]
     for i in range(6):
