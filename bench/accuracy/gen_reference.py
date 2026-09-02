@@ -83,7 +83,7 @@ class Case:
 def build() -> list[Case]:
     cases: list[Case] = []
 
-    # --- Track A special functions ------------------------------------
+    # --- special functions ---------------------------------------------
     cases.append(Case("erf_mid", "erf, [-3, 3]", clustered(-3.0, 3.0), mp.erf))
     cases.append(
         Case("erf_small", "erf, [1e-8, 1e-2]", logarithmic(1e-8, 1e-2), mp.erf)

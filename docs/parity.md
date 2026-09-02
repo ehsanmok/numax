@@ -4,11 +4,9 @@ This is the disposition table. For every piece of NumPy/SciPy surface that a
 caller might expect, it records what numax does about it and why — absorb it,
 route it to MAX, or leave it out.
 
-It lives in `docs/` rather than in `.cursor/rules/` deliberately. The rules
-directory is gitignored (`.gitignore`: "local agent config/rules, not shipped
-with the repo"), so a design document there is invisible to anyone who clones
-the repo — and several shipped modules cite these dispositions from their own
-docstrings. What tracked code cites has to be tracked.
+It is tracked, and deliberately so: several shipped modules cite these
+dispositions from their own docstrings, and what tracked code cites has to be
+readable from a fresh clone.
 
 ## The two axes
 
@@ -130,7 +128,7 @@ Home: [`numax/random.mojo`](../numax/random.mojo). `uniform`, `normal`,
 `exponential`, `seed`. `Plain`-only, and **no `Random[FloatLike]` conformer on
 purpose**: RNG is not mathematically differentiable, so seeding a `Dual`'s
 derivative from a random draw has no well-defined meaning. Same scoping shape
-as units in Track B — the trait contract does not fit the mathematics.
+as units — the trait contract does not fit the mathematics.
 
 Host sampling is `std.random`, not MAX. `nn.rand_uniform`/`nn.rand_normal`
 exist and were tried: both take their fill logic as an `OutputFn` parameter
