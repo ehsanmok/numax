@@ -58,12 +58,30 @@ python = ">=3.11,<3.13"
 
 [feature.bench-python.pypi-dependencies]
 numpy = ">=2.0"
-mlx = ">=0.30"
 torch = ">=2.5"
 # Reference values for the accuracy harness. Only needed to *regenerate*
 # bench/accuracy/reference_data.mojo, which is checked in -- `pixi run
 # accuracy` itself runs in the default Mojo environment.
 mpmath = ">=1.3"
+
+# MLX ships its compute backend as a separate wheel and only selects one
+# automatically on macOS (`mlx-metal`, via a `platform_system == "Darwin"`
+# marker in mlx's own metadata). On Linux the backend is an opt-in extra,
+# so a bare `mlx` there resolves and installs but fails at import with
+# "libmlx.so: cannot open shared object file" -- which `bench-mlx` hits
+# immediately, since it benchmarks the `mx.cpu`/`mx.gpu` stream switch and
+# has no backend-less path. Hence one pinned backend per target rather than
+# a single unconditional `mlx` entry.
+[feature.bench-python.target.osx-arm64-mac14.pypi-dependencies]
+mlx = ">=0.30"
+
+# `cuda13` matches the CUDA 13.x driver on this project's Linux box. A CUDA
+# 12 host wants `cuda12` instead, and a Linux host with no NVIDIA GPU wants
+# `cpu` -- though `bench-mlx`'s GPU half needs a real device either way.
+# linux-aarch64 is deliberately absent: MLX publishes no backend wheel for
+# it, so `bench-mlx` is macOS + Linux/CUDA only.
+[feature.bench-python.target.linux-64-glibc235.pypi-dependencies]
+mlx = { version = ">=0.30", extras = ["cuda13"] }
 
 [feature.bench-python.tasks]
 bench-numpy = { cmd = "python3 gaussian.py", cwd = "bench/numpy" }
