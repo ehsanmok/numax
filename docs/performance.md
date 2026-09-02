@@ -81,22 +81,74 @@ measures the cost of getting it wrong at 1.4-3x.
 
 `bench/{numpy,mlx,torch,thermite}/` run the identical kernel, sizes,
 input values, and warmup/timed-iteration counts as standalone
-scripts. The libraries that matter as comparison points:
+scripts, on the same Apple M3 Pro. M elem/s, higher is better.
 
-- **PyTorch** (`torch.compile` on MPS, the same Metal device): at
-  matched methodology, `numax`'s GPU path and `torch.compile`'s are at
-  parity at 67M elements -- both pressed against the same roofline,
-  within a few percent of each other, which given run-to-run spread is
-  a tie rather than a ranking.
-- **MLX** (Apple MLX, CPU and the same Metal GPU): passes `numax`'s GPU
-  path at smaller sizes; `numax` crosses over at the largest tested.
-- **thermite** (Rust NEON): the original Rust crate `numax`'s pattern
-  was ported from. `numax`'s CPU path is ahead at every size, but the
-  two implementations aren't running identical code paths.
-- **NumPy**: the slowest CPU baseline, consistent with not doing the
-  same kind of native SIMD-width dispatch the other three do.
+**CPU-only:**
 
-The honest reading is in `bench/README.md`, not the headlines.
+| n | numax `map` | numax `map_threaded` | thermite (NEON) | NumPy | MLX | torch eager | torch compile |
+|---|---|---|---|---|---|---|---|
+| 65,536 | 2,348 | 3,744 | 1,706 | 680 | 249 | 1,194 | 576 |
+| 262,144 | 2,340 | 2,776 | 1,298 | 660 | 811 | 1,737 | 2,214 |
+| 1,048,576 | 2,355 | 11,560 | 1,311 | 511 | 1,586 | 2,165 | 3,544 |
+| 4,194,304 | 2,349 | 10,099 | 1,508 | 626 | 1,647 | 2,221 | 4,136 |
+| 16,777,216 | 2,343 | 8,736 | 1,627 | 508 | 1,893 | 1,989 | 4,015 |
+| 67,108,864 | 2,347 | 9,026 | 1,632 | 493 | 1,954 | 1,935 | 4,046 |
+
+**GPU (same Metal device), per-call sync:**
+
+| n | numax | MLX | torch eager | torch compile |
+|---|---|---|---|---|
+| 65,536 | 301 | 328 | 200 | 231 |
+| 262,144 | 639 | 864 | 715 | 1,007 |
+| 1,048,576 | 3,230 | 3,242 | 2,810 | 3,320 |
+| 4,194,304 | 7,897 | 3,684 | 3,701 | 9,615 |
+| 16,777,216 | 11,722 | 4,514 | 4,792 | 12,332 |
+| 67,108,864 | 14,465 | 4,866 | 4,807 | 13,831 |
+
+**GPU (same Metal device), amortized sync:**
+
+| n | numax | MLX* | torch eager | torch compile |
+|---|---|---|---|---|
+| 65,536 | 1,280 | 899 | 888 | 799 |
+| 262,144 | 4,064 | 2,772 | 2,580 | 4,800 |
+| 1,048,576 | 13,206 | 2,458 | 4,612 | 9,119 |
+| 4,194,304 | 13,902 | 3,776 | 4,423 | 13,080 |
+| 16,777,216 | 15,086 | 3,896 | 5,082 | 15,695 |
+| 67,108,864 | 15,755 | 3,860 | 4,809 | 14,380 |
+
+\* MLX is lazy, so forcing only the last of ten enqueued ops would time
+one kernel instead of ten -- the benchmark has to hold all ten outputs
+live instead (ten 268MB buffers at 67M elements), and that memory
+pressure makes MLX's amortized number *worse* than its own per-call
+one. Read MLX's per-call column; the amortized one is a benchmark
+artifact of MLX's execution model, not a speed measurement.
+
+Reading this without treating it as a scoreboard:
+
+- **`numax` and `torch.compile` on MPS are at parity on the GPU**, both
+  pressed against the same bandwidth roofline: 15,755 vs. 14,380 M
+  elem/s amortized at 67M (84% vs. 77% of peak), 14,465 vs. 13,831
+  per-call. They trade wins by a few percent in both directions across
+  the sweep, which given run-to-run spread reads as a tie.
+- **`numax`'s threaded CPU walk is the fastest CPU number above ~1M**
+  (8,700-11,600 vs. `torch.compile`'s 3,500-4,100), and it beats this
+  machine's own GPU path until about 16M elements.
+- **MLX's GPU path leads at every size up to 16M**, and `numax`
+  crosses over only at 67M -- not a claim that `numax`'s GPU codegen is
+  categorically ahead of MLX's.
+- **NumPy is the slowest CPU baseline at every size**, consistent with
+  it not doing the same kind of native SIMD-width dispatch the other
+  three do.
+- **thermite (Rust NEON)**, the crate this project's pattern was
+  originally ported from, is behind `numax`'s CPU path at every size,
+  but the two aren't running identical code (different `exp`
+  approximations, a runtime ISA dispatch check on every call,
+  in-place vs. separate-output-buffer) -- so the gap isn't attributed
+  to codegen.
+
+See `bench/README.md` for the two measurement bugs that inflated an
+earlier version of this comparison (a benchmark artifact, not a
+`numax` change) before drawing further conclusions from these numbers.
 
 ## Accuracy
 
