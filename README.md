@@ -201,11 +201,11 @@ skips the GPU ones; `pixi run examples` includes them.
 |---|---|
 | `Plain[dtype, width]` | Ordinary `SIMD`, at hardware speed |
 | `Dual[Inner]` | Forward-mode autodiff; nests for second derivatives |
-| `Compensated[dtype, width]` | A value carried as $a + b$ with $\lvert b \rvert \ll \lvert a \rvert$ — roughly double `dtype`'s precision |
+| `Compensated[dtype, width]` | A value carried as `a + b`, with `b` holding the rounding error `a` lost — roughly double `dtype`'s precision |
 | `Decimal[width, scale]` | Exact base-10 fixed point |
 | `Complex[Inner]` | Complex over any conformer; `Complex[Dual[...]]` differentiates holomorphically |
 | `Gradient[Inner, n_vars]` | Full gradient from one call; nests with `Dual` for Hessians |
-| `Interval[Inner]` | An enclosure of $\\{f(x) : x \in [\ell, u]\\}$ |
+| `Interval[Inner]` | An enclosure of every `f(x)` for `x` in `[lo, hi]` |
 
 They nest (`Complex[Dual[Plain[...]]]`, `Gradient[Dual[...], n]`), so autodiff,
 precision and complex arithmetic compose instead of each needing its own copy
@@ -215,7 +215,7 @@ of every kernel. Design rationale: [`docs/architecture.md`](docs/architecture.md
 
 | Module | Contents |
 |---|---|
-| `special`, `erf`, `gamma`, `beta`, `bessel`, `lambertw`, `elliptic`, `legendre`, `orthopoly` | $\Gamma$, $B$, $\mathrm{erf}$, $J_n$/$Y_n$, $W$, $K$/$E$, orthogonal polynomials, activations |
+| `special`, `erf`, `gamma`, `beta`, `bessel`, `lambertw`, `elliptic`, `legendre`, `orthopoly` | Γ and B, `erf`, Bessel `J`/`Y`, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, activations |
 | `solve`, `quadrature`, `ode` | `newton`/`halley`/`bisection`, Gauss-Legendre/Simpson/trapezoid, `rk4`/`dopri5` — fixed iteration counts |
 | `integrate`, `optimize` | `quad`, `quad_vec`, `solve_ivp`; `newton_tol`, `brentq`, `bfgs` — iterate to a tolerance |
 | `linalg` | `cholesky`, `lu`, `qr`, `eigh`, `svd`, `solve`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
