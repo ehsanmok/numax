@@ -76,7 +76,18 @@ from .distributions import (
     student_t_pdf,
     student_t_quantile,
 )
-from .fft import circular_convolve, fft, ifft
+from .fft import (
+    circular_convolve,
+    fft,
+    fft2,
+    fftfreq,
+    fftshift,
+    ifft,
+    ifft2,
+    irfft,
+    rfft,
+    rfftfreq,
+)
 from .interp import (
     chebyshev_eval,
     chebyshev_fit,
@@ -117,6 +128,15 @@ from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 from .plain import Plain
 from .quadrature import gauss_legendre, simpson, trapezoid
 from .random import exponential, normal, seed, uniform
+from .signal import (
+    apply_window,
+    blackman,
+    convolve,
+    convolve_same,
+    correlate,
+    hamming,
+    hann,
+)
 from .solve import bisection, halley, newton
 from .statistics import (
     argmax,
