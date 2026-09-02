@@ -134,7 +134,8 @@ inherits autodiff and extra precision with no second implementation:
 | Module | Functions |
 |---|---|
 | `numax.solve` | `newton`, `halley`, `bisection` — no derivative to supply; each evaluates `f` at `Dual` internally |
-| `numax.quadrature` | `gauss_legendre`, `simpson`, `trapezoid` |
+| `numax.quadrature` | `gauss_legendre`, `simpson`, `trapezoid` — fixed nodes |
+| `numax.integrate` | `quad`, `quad_vec` — adaptive, subdividing to a tolerance |
 | `numax.linalg` | `cholesky`, `lu`, `qr`, `solve`, `inverse`, `det`, `trace`, `norm_frobenius`/`norm_1`/`norm_inf`, `matmul`, `matvec`, `tridiagonal_solve` — small, compile-time-sized, differentiable |
 | `numax.fft` | `fft`, `ifft`, `circular_convolve`, over `Complex[Inner]` |
 | `numax.interp` | `horner`, natural cubic splines, `chebyshev_fit`/`chebyshev_eval` |
@@ -189,10 +190,11 @@ Everything above is **tier 1**: a fixed iteration count, no branching per
 SIMD lane, and therefore launchable inside a GPU thread unmodified. That is
 what the `FloatLike` spine buys.
 
-`numax.optimize` is **tier 2**: `Plain`-only, host-side, and free to loop
-until it converges. Root finding to a tolerance, adaptive quadrature and
-pivoting need that, and pretending otherwise would either exclude them or
-quietly weaken the tier-1 guarantee. The tier is declared in every module
+`numax.optimize` and `numax.integrate` are **tier 2**: `Plain`-only,
+host-side, and free to loop until they converge. Root finding to a
+tolerance, adaptive quadrature and pivoting need that, and pretending
+otherwise would either exclude them or quietly weaken the tier-1
+guarantee. The tier is declared in every module
 and function docstring, and tier 1 never calls tier 2.
 
 The objective function is unaffected — it stays an ordinary `FloatLike`

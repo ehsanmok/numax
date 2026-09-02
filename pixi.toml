@@ -180,6 +180,7 @@ test-hessian = "mojo -I . tests/test_hessian.mojo"
 test-sqrt = "mojo -I . tests/test_sqrt.mojo"
 test-solve = "mojo -I . tests/test_solve.mojo"
 test-quadrature = "mojo -I . tests/test_quadrature.mojo"
+test-integrate = "mojo -I . tests/test_integrate.mojo"
 test-ode = "mojo -I . tests/test_ode.mojo"
 test-optimize = "mojo -I . tests/test_optimize.mojo"
 test-distributions = "mojo -I . tests/test_distributions.mojo"
@@ -216,6 +217,7 @@ tests = { depends-on = [
     "test-sqrt",
     "test-solve",
     "test-quadrature",
+    "test-integrate",
     "test-ode",
     "test-optimize",
     "test-distributions",

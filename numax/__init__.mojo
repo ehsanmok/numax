@@ -48,6 +48,7 @@ from .erf import erf, erfc
 from .gamma import digamma, gamma, gammainc, gammaincc, lgamma
 from .gradient import Gradient
 from .io import load, print_tensor, save
+from .integrate import QuadResult, quad, quad_vec
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p
 from .distributions import (
