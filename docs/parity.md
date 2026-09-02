@@ -191,6 +191,28 @@ not accept a struct instantiated with a *function-level* `DType` parameter
 as a `FloatLike` type argument, so a per-call dtype would not compile at
 all.
 
+### Absorbed — adaptive integration (tier 2)
+
+Home: [`numax/integrate.mojo`](../numax/integrate.mojo). `quad`, `quad_vec`.
+MAX ships no quadrature at all.
+
+Tier 2, and a clean illustration of why the split was needed:
+`numax.quadrature`'s module docstring had ruled adaptive quadrature out
+entirely, because the subdivision pattern is data-dependent. That reasoning
+is right for `FloatLike`-generic code and was over-applied to the library as
+a whole. `quad` composes out of the tier-1 rule -- each panel is integrated
+whole with `gauss_legendre[n]` and again as two halves, and the difference
+is the error estimate -- so there is no second quadrature rule to maintain.
+
+On a smooth integrand the fixed rule is still better, and a test asserts it
+in both directions so the tier-1 version is not quietly deprecated. On a
+Lorentzian spike narrower than the node spacing, the 8-point rule is off by
+a factor of six and `quad` is right to 1e-12.
+
+`quad_vec` takes known breakpoints. Bisection can never land exactly on an
+irrational kink location, so a feature at 1/3 keeps every straddling panel
+inaccurate however small it gets: 26 panels blind, 2 when told.
+
 ### Not absorbed — sorting and searching as `FloatLike` kernels
 
 `sort`, `argsort` and `searchsorted` are not public numax names operating on

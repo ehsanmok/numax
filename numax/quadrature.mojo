@@ -1,15 +1,20 @@
 """Numerical integration on a fixed grid: Gauss-Legendre, Simpson, and the
 trapezoid rule.
 
-Adaptive quadrature -- subdividing wherever the integrand misbehaves -- is
-out of scope by the same rule as everywhere else here: the subdivision
-pattern is data-dependent, so two SIMD lanes integrating different
-functions would want different grids. Fixed-node quadrature gives that up
-willingly, because it was never really a compromise for this family:
-Gauss-Legendre does a fixed amount of work by construction, and it is
-*exact* for polynomials up to degree `2n-1` with `n` nodes, so the
-"adaptive" question mostly doesn't arise for the smooth integrands it's
-aimed at.
+**This module is tier 1**: fixed nodes, fixed work, launchable inside a GPU
+thread. Adaptive quadrature -- subdividing wherever the integrand
+misbehaves -- cannot be, by the same rule as everywhere else here: the
+subdivision pattern is data-dependent, so two SIMD lanes integrating
+different functions would want different grids and there is no per-lane way
+to give them one.
+
+That is not a compromise for this family. Gauss-Legendre does a fixed amount
+of work by construction and is *exact* for polynomials up to degree `2n-1`
+with `n` nodes, so for the smooth integrands it is aimed at the adaptive
+question mostly does not arise -- and where it does, `numax.integrate.quad`
+is the tier-2 answer: same `FloatLike` integrand, subdivided to a tolerance,
+`Plain`-only and host-side. The two are siblings; on a smooth integrand this
+one is both faster and more accurate.
 
 Two things fall out of writing this against `FloatLike` rather than a
 concrete float:
@@ -107,8 +112,10 @@ def gauss_legendre[
 
     Accuracy depends on the integrand being smooth on `[a, b]`. A
     discontinuity, a kink, or an endpoint singularity is where an adaptive
-    rule would earn its keep and this won't -- integrate up to the trouble
-    spot and past it as two calls instead.
+    rule earns its keep and this will not -- either integrate up to the
+    trouble spot and past it as two calls, or reach for the tier-2
+    `numax.integrate.quad` (or `quad_vec`, if the trouble spot's location
+    is known), which does that subdivision to a tolerance.
     """
     comptime nodes = _gauss_legendre_nodes[n]()
     comptime weights = _gauss_legendre_weights[n]()
