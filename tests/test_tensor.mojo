@@ -6,7 +6,7 @@ actually use, rather than calling the kernel directly on a single `FloatLike`
 value.
 """
 
-from layout import TileTensor
+from layout import Coord, TileTensor
 from max.gpu.host import DeviceContext
 from layout.tile_layout import row_major
 from std.math import exp
@@ -14,7 +14,14 @@ from std.sys.info import simd_width_of
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Compensated, Dual, Plain, gaussian
-from numax.tensor import add_step, map, map_threaded, mul_step
+from numax.tensor import (
+    add_combine,
+    add_step,
+    map,
+    map_threaded,
+    mul_step,
+    reduce,
+)
 
 comptime dtype = DType.float32
 comptime n = 16
@@ -291,6 +298,105 @@ def test_map_threaded_coalesces_a_rank_three_tensor() raises:
     )
     for i in range(m):
         assert_almost_equal(serial[i], threaded[i])
+
+
+# ------------------------------------------------------------------
+# Runtime-shape overloads. Each of these checks the dynamic path against
+# the static one on the same values, rather than against a hand-computed
+# expectation -- the two are supposed to be the same walk, so agreeing with
+# each other is the property worth testing.
+# ------------------------------------------------------------------
+
+
+def test_dynamic_map_agrees_with_the_static_map() raises:
+    var xs_storage = List[Scalar[dtype]](length=n, fill=0)
+    for i in range(n):
+        xs_storage[i] = Scalar[dtype](i) * 0.25 - 2.0
+
+    # Static: comptime row_major[n]().
+    var static_out = List[Scalar[dtype]](length=n, fill=0)
+    var xs_static = TileTensor(xs_storage, row_major[n]())
+    var ys_static = TileTensor(static_out, row_major[n]())
+    map[width=width, step=gaussian_step](xs_static, ys_static)
+
+    # Dynamic: row_major(Coord(...)), and a rank-2 shape at that, so the
+    # internal flattening is exercised rather than trivially satisfied.
+    var dyn_out = List[Scalar[dtype]](length=n, fill=0)
+    var xs_dyn = TileTensor(xs_storage, row_major(Coord(4, 4)))
+    var ys_dyn = TileTensor(dyn_out, row_major(Coord(4, 4)))
+    map[width=width, step=gaussian_step](xs_dyn, ys_dyn)
+
+    for i in range(n):
+        assert_almost_equal(dyn_out[i], static_out[i])
+
+
+def test_dynamic_map_handles_a_width_that_does_not_divide_n() raises:
+    # 11 elements at the native width leaves a tail; dropping it would show
+    # up as an unwritten output element.
+    comptime odd_n = 11
+    var xs_storage = List[Scalar[dtype]](length=odd_n, fill=0)
+    for i in range(odd_n):
+        xs_storage[i] = Scalar[dtype](i) * 0.5 - 1.0
+    var out = List[Scalar[dtype]](length=odd_n, fill=-99)
+    var xs = TileTensor(xs_storage, row_major(Coord(odd_n)))
+    var ys = TileTensor(out, row_major(Coord(odd_n)))
+    map[width=width, step=gaussian_step](xs, ys)
+    for i in range(odd_n):
+        assert_almost_equal(out[i], exp(-(xs_storage[i] * xs_storage[i])))
+
+
+def test_dynamic_binary_map_agrees_with_the_static_one() raises:
+    var lhs = List[Scalar[dtype]](length=n, fill=0)
+    var rhs = List[Scalar[dtype]](length=n, fill=0)
+    for i in range(n):
+        lhs[i] = Scalar[dtype](i)
+        rhs[i] = Scalar[dtype](2 * i + 1)
+
+    var static_out = List[Scalar[dtype]](length=n, fill=0)
+    map[width=width, step=add_step[dtype, _]](
+        TileTensor(lhs, row_major[n]()),
+        TileTensor(rhs, row_major[n]()),
+        TileTensor(static_out, row_major[n]()),
+    )
+
+    var dyn_out = List[Scalar[dtype]](length=n, fill=0)
+    map[width=width, step=add_step[dtype, _]](
+        TileTensor(lhs, row_major(Coord(2, 8))),
+        TileTensor(rhs, row_major(Coord(2, 8))),
+        TileTensor(dyn_out, row_major(Coord(2, 8))),
+    )
+
+    for i in range(n):
+        assert_almost_equal(dyn_out[i], static_out[i])
+
+
+def test_dynamic_reduce_agrees_with_the_static_reduce() raises:
+    var storage = List[Scalar[dtype]](length=n, fill=0)
+    for i in range(n):
+        storage[i] = Scalar[dtype](i) * 0.125
+
+    var static_total = reduce[combine=add_combine[dtype]](
+        TileTensor(storage, row_major[n]()), 0
+    )
+    var dyn_total = reduce[combine=add_combine[dtype]](
+        TileTensor(storage, row_major(Coord(4, 4))), 0
+    )
+    # Both fold left-to-right over the same order, so this is exact, not
+    # approximate.
+    assert_true(dyn_total == static_total)
+
+
+def test_dynamic_map_writes_through_to_the_underlying_storage() raises:
+    # The dynamic path builds its flat view from `ptr_at_offset`, so a
+    # regression that copied instead of aliasing would leave the caller's
+    # buffer untouched and every other assertion here would still pass.
+    var xs_storage = List[Scalar[dtype]](length=4, fill=1)
+    var ys_storage = List[Scalar[dtype]](length=4, fill=0)
+    var xs = TileTensor(xs_storage, row_major(Coord(2, 2)))
+    var ys = TileTensor(ys_storage, row_major(Coord(2, 2)))
+    map[width=1, step=gaussian_step](xs, ys)
+    for i in range(4):
+        assert_almost_equal(ys_storage[i], Scalar[dtype](exp(-1.0)))
 
 
 def main() raises:

@@ -118,7 +118,7 @@ does, so they're unaffected by this.
 """
 
 from layout import Coord, TileTensor
-from layout.tile_layout import TensorLayout
+from layout.tile_layout import TensorLayout, row_major
 from layout.tile_tensor import PointerStorage
 from max.algorithm.functional import elementwise
 from max.gpu import AddressSpace, barrier
@@ -893,3 +893,173 @@ def broadcast_op_rows[
                 ys.store[1](
                     Coord(r, c), combine(xs.load[1](Coord(r, c)), row_val)
                 )
+
+
+# ------------------------------------------------------------------
+# Runtime-shape overloads
+#
+# Everything above requires `all_dims_known`, because it walks a tensor by
+# calling `TileTensor.coalesce()` and `coalesce()` itself is constrained to
+# statically-shaped storage. That is what a GPU launch needs, and it stays
+# exactly as it is.
+#
+# But a NumPy-shaped caller cannot always supply it: `reshape` to a computed
+# shape, a boolean mask, `unique`, or anything whose output extent depends on
+# input *values* produces a tensor whose dims are runtime integers.
+# `row_major(Coord(3, 4))` builds precisely that -- `is_row_major=True`,
+# `all_dims_known=False` -- and `coalesce()` rejects it.
+#
+# The overloads below take that case. They are the *same* functions under the
+# *same* names, selected by a `where` clause that is the exact negation of the
+# static one, so the two can never be ambiguous and no existing call site
+# changes behavior. numax gains no new tensor type from this: the argument is
+# still a `TileTensor`, which is what every MAX kernel takes.
+#
+# The one thing they do differently is flatten by construction rather than by
+# `coalesce()`: a row-major tensor's elements are already contiguous, so a
+# rank-1 `row_major(Coord(n))` layout over the same pointer addresses exactly
+# the same memory in the same order. That is all `coalesce()` does for a
+# row-major input; it just insists on proving the shape at compile time first.
+# ------------------------------------------------------------------
+
+
+def map[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    width: Int = 1,
+](
+    xs: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    not TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+):
+    """`map` for a runtime-shaped tensor -- same contract as the static
+    overload above, minus the GPU path.
+
+    There is no `gpu` parameter here on purpose. A kernel launched through
+    `enqueue_function` needs its entire type resolved before the launch, and
+    a runtime extent is not part of the type; the thread count would also
+    have to come from a value the host reads out of the tensor rather than
+    from the type. Reach for the static overload when the shape is known,
+    which is the case at every GPU call site in this library.
+
+    Same `width` meaning as the static CPU path (elements per SIMD
+    register), same non-overlapping bulk-then-tail walk, so a `width` that
+    does not divide `num_elements()` is handled rather than rounded away.
+    """
+    var n = xs.num_elements()
+    var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var ys_flat = TileTensor(ys.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var vec_n = (n // width) * width
+    var i = 0
+    while i < vec_n:
+        ys_flat.store[width](
+            Coord(i), step[width](xs_flat.load[width](Coord(i)))
+        )
+        i += width
+    for j in range(vec_n, n):
+        ys_flat.store[1](Coord(j), step[1](xs_flat.load[1](Coord(j))))
+
+
+def map[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    width: Int = 1,
+](
+    lhs: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    rhs: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    out_tensor: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    not TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+):
+    """The binary `map` for runtime-shaped tensors: `out[i] = step(lhs[i],
+    rhs[i])`. Same reasoning as the unary runtime-shape overload above, and
+    the same deliberate absence of a three-input form as the static one."""
+    var n = lhs.num_elements()
+    var lhs_flat = TileTensor(lhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var rhs_flat = TileTensor(rhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var out_flat = TileTensor(
+        out_tensor.ptr_at_offset(Coord(0)), row_major(Coord(n))
+    )
+    var vec_n = (n // width) * width
+    var i = 0
+    while i < vec_n:
+        out_flat.store[width](
+            Coord(i),
+            step[width](
+                lhs_flat.load[width](Coord(i)), rhs_flat.load[width](Coord(i))
+            ),
+        )
+        i += width
+    for j in range(vec_n, n):
+        out_flat.store[1](
+            Coord(j),
+            step[1](lhs_flat.load[1](Coord(j)), rhs_flat.load[1](Coord(j))),
+        )
+
+
+def reduce[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    O: Origin,
+    combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
+](
+    xs: TileTensor[
+        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+    ],
+    init: SIMD[dtype, 1],
+) -> SIMD[dtype, 1] where (
+    not TileTensor[
+        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+):
+    """`reduce` for a runtime-shaped tensor. Scalar and left-to-right, like
+    the static overload, so the two agree bit-for-bit on the same values --
+    which is what makes the runtime-shape path testable against the static
+    one rather than only against itself."""
+    var n = xs.num_elements()
+    var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var total = init
+    for i in range(n):
+        total = combine(total, xs_flat.load[1](Coord(i)))
+    return total
