@@ -189,6 +189,8 @@ Hessian-vector products. Neither type contains second-order mathematics.
 | Guaranteed bounds | `Interval[Plain]` | [`numax/interval.mojo`](numax/interval.mojo) |
 | Exact decimals (`0.1 + 0.2 == 0.3`) | `Decimal[width, scale]` | [`numax/decimal.mojo`](numax/decimal.mojo) |
 | Every special function differentiated | `Dual` | `pixi run example-special-functions` |
+| A 2-D wave packet, differentiated by its own width | `Dual` | `pixi run example-wave-packet` |
+| Interference fringes, measured, and how they move with the geometry | `Dual` | `pixi run example-interference` |
 | 1024 ODE trajectories, one GPU thread each | `Dual` for sensitivities | `pixi run example-ode` |
 
 Full index: [`examples/README.md`](examples/README.md). `pixi run examples-cpu`

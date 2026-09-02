@@ -32,6 +32,8 @@ Multi-feature compositions -- more than one concept per file.
 | [quadrature.mojo](intermediate/quadrature.mojo) | Root-finding from `f` alone, 8-point Gauss-Legendre against a 64-point uniform grid, and differentiating through an integral. |
 | [special_functions.mojo](intermediate/special_functions.mojo) | Every special function (erf, gamma, Bessel, Lambert W, elliptic integrals, orthogonal polynomials) differentiated via `Dual`. |
 | [statistics.mojo](intermediate/statistics.mojo) | `numax.statistics`'s `Plain`-only `TileTensor` surface (`sum`/`median`/`argmax`/...), plus `variance`/`stddev` at `Compensated` recovering precision a long summation would lose at `Plain`. |
+| [wave_packet.mojo](intermediate/wave_packet.mojo) | A 2-D Gaussian wave packet on a `meshgrid`: the density along a cut, the carrier recovered by counting sign changes of `Re psi`, and the packet's spread differentiated with respect to its own width -- `d<x^2>/d(sigma)` from the same kernel that computes `<x^2>`. |
+| [interference.mojo](intermediate/interference.mojo) | Two-source interference over a coordinate grid in one `map`, with the fringe maxima and their spacing measured down the far column, plus the far-field phase differentiated with respect to the slit separation. |
 | [random_ensemble.mojo](intermediate/random_ensemble.mojo) | `numax.random.uniform` drawing an ODE ensemble's initial conditions on CPU, versus `std.random.philox.Random` drawing them independently per GPU thread inside a `map[gpu=True]` kernel. Needs a GPU. |
 
 ## advanced/
