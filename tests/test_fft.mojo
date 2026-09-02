@@ -3,7 +3,18 @@ from std.math import cos, sin
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Complex, Dual, FloatLike, Plain
-from numax.fft import circular_convolve, fft, ifft
+from numax.fft import (
+    circular_convolve,
+    fft,
+    fft2,
+    fftfreq,
+    fftshift,
+    ifft,
+    ifft2,
+    irfft,
+    rfft,
+    rfftfreq,
+)
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype, 1]
@@ -253,6 +264,196 @@ def test_two_point_transform_is_sum_and_difference() raises:
     var spectrum = fft[P, 1](xs)
     assert_almost_equal(spectrum[0].re.v[0], 7.0, atol=1e-12)
     assert_almost_equal(spectrum[1].re.v[0], 3.0, atol=1e-12)
+
+
+# ------------------------------------------------------------------
+# Real-input transforms, frequency axes, and the 2-D transform
+# ------------------------------------------------------------------
+
+
+def test_rfft_returns_the_non_redundant_half() raises:
+    comptime log2n = 3
+    comptime n = 1 << log2n
+    var x = Array[P, n](fill=P.constant(0.0))
+    for i in range(n):
+        x[i] = P.constant(Float64(i) * 0.5 - 1.0)
+
+    var half = rfft[P, log2n](x)
+    # n/2 + 1 bins: 0 through Nyquist inclusive.
+    assert_true(half.__len__() == n // 2 + 1)
+
+
+def test_rfft_matches_the_full_transform_on_its_first_half() raises:
+    comptime log2n = 3
+    comptime n = 1 << log2n
+    var real = Array[P, n](fill=P.constant(0.0))
+    var embedded = Array[C, n](fill=C.constant(0.0))
+    for i in range(n):
+        var v = Float64(i) * 0.5 - 1.0
+        real[i] = P.constant(v)
+        embedded[i] = C(P.constant(v), P.constant(0.0))
+
+    var half = rfft[P, log2n](real)
+    var full = fft[P, log2n](embedded)
+    for k in range(n // 2 + 1):
+        assert_almost_equal(Float64(half[k].re.v), Float64(full[k].re.v))
+        assert_almost_equal(Float64(half[k].im.v), Float64(full[k].im.v))
+
+
+def test_rfft_dc_bin_is_the_sum_of_the_samples() raises:
+    comptime log2n = 3
+    comptime n = 1 << log2n
+    var x = Array[P, n](fill=P.constant(0.0))
+    var expected = 0.0
+    for i in range(n):
+        var v = Float64(i) * 0.5 - 1.0
+        x[i] = P.constant(v)
+        expected += v
+
+    var half = rfft[P, log2n](x)
+    assert_almost_equal(Float64(half[0].re.v), expected)
+    # A real input's DC bin has no imaginary part.
+    assert_almost_equal(Float64(half[0].im.v), 0.0)
+
+
+def test_irfft_inverts_rfft() raises:
+    comptime log2n = 4
+    comptime n = 1 << log2n
+    var x = Array[P, n](fill=P.constant(0.0))
+    for i in range(n):
+        x[i] = P.constant(cos(TWO_PI * Float64(i) * 3.0 / Float64(n)))
+
+    var recovered = irfft[P, log2n](rfft[P, log2n](x))
+    for i in range(n):
+        assert_almost_equal(Float64(recovered[i].v), Float64(x[i].v))
+
+
+def test_rfft_of_a_pure_tone_puts_all_energy_in_one_bin() raises:
+    comptime log2n = 4
+    comptime n = 1 << log2n
+    comptime bin = 3
+    var x = Array[P, n](fill=P.constant(0.0))
+    for i in range(n):
+        x[i] = P.constant(cos(TWO_PI * Float64(bin) * Float64(i) / Float64(n)))
+
+    var half = rfft[P, log2n](x)
+    # A cosine at an exact bin frequency: n/2 in that bin, ~0 elsewhere.
+    assert_almost_equal(Float64(half[bin].re.v), Float64(n) / 2.0, atol=1e-10)
+    for k in range(n // 2 + 1):
+        if k != bin:
+            var magnitude = (
+                Float64(half[k].re.v) ** 2 + Float64(half[k].im.v) ** 2
+            ) ** 0.5
+            assert_true(magnitude < 1e-10)
+
+
+def test_fftfreq_matches_numpys_layout() raises:
+    # numpy.fft.fftfreq(8, 0.1) is
+    #   [0, 1.25, 2.5, 3.75, -5, -3.75, -2.5, -1.25]
+    comptime log2n = 3
+    var freqs = fftfreq[P, log2n](P.constant(0.1))
+    var expected = [0.0, 1.25, 2.5, 3.75, -5.0, -3.75, -2.5, -1.25]
+    for k in range(8):
+        assert_almost_equal(Float64(freqs[k].v), expected[k], atol=1e-12)
+
+
+def test_rfftfreq_is_all_non_negative() raises:
+    # numpy.fft.rfftfreq(8, 0.1) is [0, 1.25, 2.5, 3.75, 5]
+    comptime log2n = 3
+    var freqs = rfftfreq[P, log2n](P.constant(0.1))
+    var expected = [0.0, 1.25, 2.5, 3.75, 5.0]
+    for k in range(5):
+        assert_almost_equal(Float64(freqs[k].v), expected[k], atol=1e-12)
+
+
+def test_fftshift_moves_dc_to_the_middle() raises:
+    comptime log2n = 3
+    comptime n = 1 << log2n
+    var spectrum = Array[C, n](fill=C.constant(0.0))
+    for k in range(n):
+        spectrum[k] = C(P.constant(Float64(k)), P.constant(0.0))
+
+    var shifted = fftshift[P, log2n](spectrum)
+    # Bin 0 lands at index n/2.
+    assert_almost_equal(Float64(shifted[n // 2].re.v), 0.0)
+    # And the negative-frequency half comes first.
+    assert_almost_equal(Float64(shifted[0].re.v), Float64(n // 2))
+
+
+def test_fftshift_is_its_own_inverse_for_even_n() raises:
+    comptime log2n = 3
+    comptime n = 1 << log2n
+    var spectrum = Array[C, n](fill=C.constant(0.0))
+    for k in range(n):
+        spectrum[k] = C(P.constant(Float64(k)), P.constant(-Float64(k)))
+
+    var twice = fftshift[P, log2n](fftshift[P, log2n](spectrum))
+    for k in range(n):
+        assert_almost_equal(Float64(twice[k].re.v), Float64(k))
+        assert_almost_equal(Float64(twice[k].im.v), -Float64(k))
+
+
+def test_ifft2_inverts_fft2() raises:
+    comptime log2n = 2
+    comptime n = 1 << log2n
+    var image = Array[C, n * n](fill=C.constant(0.0))
+    for i in range(n * n):
+        image[i] = C(P.constant(Float64(i % 5)), P.constant(Float64(i % 3)))
+
+    var recovered = ifft2[P, log2n](fft2[P, log2n](image))
+    for i in range(n * n):
+        assert_almost_equal(Float64(recovered[i].re.v), Float64(image[i].re.v))
+        assert_almost_equal(Float64(recovered[i].im.v), Float64(image[i].im.v))
+
+
+def test_fft2_of_a_constant_image_is_a_single_spike() raises:
+    # A constant image has all its energy at DC and nothing elsewhere --
+    # the 2-D analogue of fft of a constant sequence.
+    comptime log2n = 2
+    comptime n = 1 << log2n
+    var image = Array[C, n * n](fill=C(P.constant(2.0), P.constant(0.0)))
+
+    var spectrum = fft2[P, log2n](image)
+    assert_almost_equal(
+        Float64(spectrum[0].re.v), 2.0 * Float64(n * n), atol=1e-10
+    )
+    for i in range(1, n * n):
+        var magnitude = (
+            Float64(spectrum[i].re.v) ** 2 + Float64(spectrum[i].im.v) ** 2
+        ) ** 0.5
+        assert_true(magnitude < 1e-10)
+
+
+def test_fft2_separates_into_row_then_column_transforms() raises:
+    # The 2-D DFT separates exactly, so transforming rows with `fft` and
+    # then columns with `fft` by hand must reproduce `fft2`. This is the
+    # property `fft2` is implemented from, checked independently.
+    comptime log2n = 2
+    comptime n = 1 << log2n
+    var image = Array[C, n * n](fill=C.constant(0.0))
+    for i in range(n * n):
+        image[i] = C(P.constant(Float64(i) * 0.25), P.constant(0.0))
+
+    var by_hand = Array[C, n * n](fill=C.constant(0.0))
+    var row = Array[C, n](fill=C.constant(0.0))
+    for i in range(n):
+        for j in range(n):
+            row[j] = image[i * n + j].copy()
+        var transformed = fft[P, log2n](row)
+        for j in range(n):
+            by_hand[i * n + j] = transformed[j].copy()
+    var column = Array[C, n](fill=C.constant(0.0))
+    for j in range(n):
+        for i in range(n):
+            column[i] = by_hand[i * n + j].copy()
+        var transformed = fft[P, log2n](column)
+        for i in range(n):
+            by_hand[i * n + j] = transformed[i].copy()
+
+    var direct = fft2[P, log2n](image)
+    for i in range(n * n):
+        assert_almost_equal(Float64(direct[i].re.v), Float64(by_hand[i].re.v))
+        assert_almost_equal(Float64(direct[i].im.v), Float64(by_hand[i].im.v))
 
 
 def main() raises:

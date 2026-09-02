@@ -172,3 +172,186 @@ def circular_convolve[
     for i in range(n):
         product[i] = fa[i] * fb[i]
     return ifft[T, log2n](product)
+
+
+def rfft[
+    T: FloatLike, log2n: Int
+](x: Array[T, 1 << log2n]) -> Array[Complex[T], (1 << log2n) // 2 + 1]:
+    """The forward transform of a *real* sequence, returning only the
+    non-redundant half of the spectrum.
+
+    A real input's spectrum is conjugate-symmetric -- `X[n-k] ==
+    conj(X[k])` -- so the second half carries no information the first does
+    not. `rfft` returns bins `0 .. n/2` inclusive: `n/2 + 1` values, of
+    which bin 0 (DC) and bin `n/2` (Nyquist) are purely real for a real
+    input.
+
+    Implemented by embedding the real sequence as complex with zero
+    imaginary parts and calling `fft`, then truncating. That does about
+    twice the arithmetic a dedicated real-input algorithm would (the
+    standard trick packs the even and odd samples into one half-length
+    complex transform), and it is the right trade here: at the sizes this
+    module targets -- transforms small enough to live in registers inside a
+    per-element kernel -- correctness and one code path matter more than a
+    factor of two, and the packing trick needs a post-processing pass whose
+    twiddle table would double the compile-time constants.
+    """
+    comptime n = 1 << log2n
+    var embedded = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for i in range(n):
+        embedded[i] = Complex[T](x[i].copy(), T.constant(0.0))
+
+    var full = fft[T, log2n](embedded)
+    var out = Array[Complex[T], n // 2 + 1](fill=Complex[T].constant(0.0))
+    for k in range(n // 2 + 1):
+        out[k] = full[k].copy()
+    return out^
+
+
+def irfft[
+    T: FloatLike, log2n: Int
+](spectrum: Array[Complex[T], (1 << log2n) // 2 + 1]) -> Array[T, 1 << log2n]:
+    """The inverse of `rfft`: rebuild the real sequence from its half
+    spectrum.
+
+    The missing half is reconstructed by conjugate symmetry rather than
+    stored, which is the whole point of the `rfft` layout. Only the real
+    part of the inverse transform is returned; for a spectrum that really
+    is conjugate-symmetric the imaginary part is zero to rounding, and
+    discarding it is what makes `irfft(rfft(x)) == x`.
+
+    A caller who hands this an arbitrary (non-symmetric) half spectrum gets
+    the transform of its symmetrized version, silently -- there is nothing
+    to check against without a branch, and the operation is still
+    well-defined.
+    """
+    comptime n = 1 << log2n
+    var full = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for k in range(n // 2 + 1):
+        full[k] = spectrum[k].copy()
+    for k in range(n // 2 + 1, n):
+        var mirrored = spectrum[n - k].copy()
+        full[k] = Complex[T](mirrored.re.copy(), -mirrored.im)
+
+    var inverted = ifft[T, log2n](full)
+    var out = Array[T, n](fill=T.constant(0.0))
+    for i in range(n):
+        out[i] = inverted[i].re.copy()
+    return out^
+
+
+def fftfreq[T: FloatLike, log2n: Int](spacing: T) -> Array[T, 1 << log2n]:
+    """The frequency of each `fft` output bin, in cycles per unit of
+    `spacing`.
+
+    Matches `numpy.fft.fftfreq`'s layout exactly, including its sign
+    convention: bins `0 .. n/2 - 1` are the non-negative frequencies
+    `k / (n*spacing)`, and bins `n/2 .. n-1` are the negative ones
+    `(k - n) / (n*spacing)`. The Nyquist bin `n/2` is therefore reported as
+    *negative*, which looks wrong and is what NumPy does -- for even `n`
+    that bin is genuinely ambiguous (`+f_nyq` and `-f_nyq` alias), and
+    matching NumPy matters more than picking a side.
+
+    `spacing` is the sample interval, so pass `1/sample_rate`.
+    """
+    comptime n = 1 << log2n
+    var out = Array[T, n](fill=T.constant(0.0))
+    var scale = T.one() / (T.constant(Float64(n)) * spacing)
+    for k in range(n):
+        var index = k if k < n // 2 else k - n
+        out[k] = T.constant(Float64(index)) * scale
+    return out^
+
+
+def rfftfreq[
+    T: FloatLike, log2n: Int
+](spacing: T) -> Array[T, (1 << log2n) // 2 + 1]:
+    """The frequency of each `rfft` output bin. All non-negative, matching
+    `numpy.fft.rfftfreq`: `k / (n*spacing)` for `k` in `0 .. n/2`."""
+    comptime n = 1 << log2n
+    var out = Array[T, n // 2 + 1](fill=T.constant(0.0))
+    var scale = T.one() / (T.constant(Float64(n)) * spacing)
+    for k in range(n // 2 + 1):
+        out[k] = T.constant(Float64(k)) * scale
+    return out^
+
+
+def fftshift[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    """Rotate a spectrum so the zero frequency sits in the middle, which is
+    how a spectrum is usually plotted. The inverse of itself for even `n`,
+    which is the only `n` this module has."""
+    comptime n = 1 << log2n
+    var out = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for k in range(n):
+        out[(k + n // 2) % n] = x[k].copy()
+    return out^
+
+
+def fft2[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[
+    Complex[T], (1 << log2n) * (1 << log2n)
+]:
+    """The two-dimensional transform of a square `n x n` array, row-major.
+
+    Row-column decomposition: transform every row, then every column. The
+    2-D DFT separates exactly, so this is not an approximation -- it is the
+    definition, evaluated in the cheaper order (`2n` transforms of length
+    `n` rather than one of length `n**2`).
+
+    Square only, and `n` a power of two, because `fft` is. A rectangular
+    transform would need two `log2n` parameters and two twiddle tables;
+    nothing in `numax` needs one yet.
+    """
+    comptime n = 1 << log2n
+    var out = Array[Complex[T], n * n](fill=Complex[T].constant(0.0))
+
+    var row = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for i in range(n):
+        for j in range(n):
+            row[j] = x[i * n + j].copy()
+        var transformed = fft[T, log2n](row)
+        for j in range(n):
+            out[i * n + j] = transformed[j].copy()
+
+    var column = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for j in range(n):
+        for i in range(n):
+            column[i] = out[i * n + j].copy()
+        var transformed = fft[T, log2n](column)
+        for i in range(n):
+            out[i * n + j] = transformed[i].copy()
+
+    return out^
+
+
+def ifft2[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[
+    Complex[T], (1 << log2n) * (1 << log2n)
+]:
+    """The inverse of `fft2`, normalized by `1/n**2`. Row-column like the
+    forward transform, using `ifft` on each pass -- so each pass
+    contributes its own `1/n` and the two compose to `1/n**2`."""
+    comptime n = 1 << log2n
+    var out = Array[Complex[T], n * n](fill=Complex[T].constant(0.0))
+
+    var row = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for i in range(n):
+        for j in range(n):
+            row[j] = x[i * n + j].copy()
+        var transformed = ifft[T, log2n](row)
+        for j in range(n):
+            out[i * n + j] = transformed[j].copy()
+
+    var column = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for j in range(n):
+        for i in range(n):
+            column[i] = out[i * n + j].copy()
+        var transformed = ifft[T, log2n](column)
+        for i in range(n):
+            out[i * n + j] = transformed[i].copy()
+
+    return out^

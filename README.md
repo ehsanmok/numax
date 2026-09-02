@@ -137,7 +137,8 @@ inherits autodiff and extra precision with no second implementation:
 | `numax.quadrature` | `gauss_legendre`, `simpson`, `trapezoid` — fixed nodes |
 | `numax.integrate` | `quad`, `quad_vec` — adaptive, subdividing to a tolerance |
 | `numax.linalg` | `cholesky`, `lu`, `qr`, `solve`, `inverse`, `det`, `trace`, `norm_frobenius`/`norm_1`/`norm_inf`, `matmul`, `matvec`, `tridiagonal_solve` — small, compile-time-sized, differentiable |
-| `numax.fft` | `fft`, `ifft`, `circular_convolve`, over `Complex[Inner]` |
+| `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`/`ifft2`, `fftfreq`/`rfftfreq`, `fftshift`, `circular_convolve` |
+| `numax.signal` | `convolve`, `convolve_same`, `correlate`, `hann`/`hamming`/`blackman`, `apply_window` |
 | `numax.interp` | `horner`, natural cubic splines, `chebyshev_fit`/`chebyshev_eval` |
 | `numax.distributions` | pdf/cdf/quantile for normal, exponential, gamma, chi-square, beta, Student-t, F, Poisson, binomial |
 | `numax.ode` | `rk4`, `rk4_system`, Dormand-Prince `dopri5` |

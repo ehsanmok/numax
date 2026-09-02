@@ -213,6 +213,36 @@ a factor of six and `quad` is right to 1e-12.
 irrational kink location, so a feature at 1/3 keeps every straddling panel
 inaccurate however small it gets: 26 panels blind, 2 when told.
 
+### Absorbed — transforms and signal processing
+
+Home: [`numax/fft.mojo`](../numax/fft.mojo) and
+[`numax/signal.mojo`](../numax/signal.mojo). Both tier 1.
+
+`fft`/`ifft`, `rfft`/`irfft`, `fft2`/`ifft2`, `fftfreq`/`rfftfreq`,
+`fftshift`, `circular_convolve`; `convolve`, `convolve_same`, `correlate`,
+the `hann`/`hamming`/`blackman` window family, `apply_window`.
+
+MAX has almost nothing here, which makes this less of a parity veneer than
+it looks. Its only transform is `nn.irfft` -- inverse real FFT, last
+dimension, NVIDIA-only, over the private `_cufft` FFI package. No forward
+FFT of any kind, no CPU FFT, nothing on Metal or AMD. **Recommendation:
+treat numax's transform as the portable path and `_cufft` as at most an
+optional NVIDIA fast path.** A private, single-vendor, inverse-only kernel
+is not a foundation to route through, and the register-resident small-`n`
+transform -- one that runs *inside* a kernel -- has no MAX counterpart at
+all.
+
+`nn.conv` exists but is the neural-network operator: NHWC layouts, filter
+packing, batching, stride, dilation. `numpy.convolve` over a
+one-dimensional sequence is a different function, and that is what
+`numax.signal` provides. The direct `O(m*k)` sum is deliberate at these
+sizes; `circular_convolve` is there for callers already in the frequency
+domain.
+
+Frequency-axis conventions match NumPy exactly, including `fftfreq`
+reporting the Nyquist bin as *negative* -- for even `n` that bin genuinely
+aliases, and matching NumPy matters more than picking a side.
+
 ### Not absorbed — sorting and searching as `FloatLike` kernels
 
 `sort`, `argsort` and `searchsorted` are not public numax names operating on
