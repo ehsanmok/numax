@@ -55,6 +55,7 @@ from .bessel import bessel_j0, bessel_j1, bessel_y0, bessel_y1
 from .beta import beta, betainc, betaincc
 from .compensated import Compensated
 from .complex import Complex
+from .constants import e, e_at, pi, pi_at
 from .decimal import Decimal
 from .dual import Dual
 from .elliptic import elliptic_e, elliptic_k
@@ -191,6 +192,7 @@ from .numeric import FloatLike
 from .ode import dopri5, dopri5_step, dopri5_with_error, rk4, rk4_system
 from .ops import (
     add,
+    invert,
     astype,
     divide,
     floor_divide,
@@ -210,7 +212,7 @@ from .optimize import (
 from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 from .plain import Plain
 from .quadrature import gauss_legendre, simpson, trapezoid
-from .random import exponential, normal, seed, uniform
+from .random import exponential, normal, randbool, randint, seed, uniform
 from .signal import (
     apply_window,
     blackman,
