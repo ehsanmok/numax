@@ -247,6 +247,7 @@ example-hessian = "mojo -I . examples/basic/hessian.mojo"
 example-quadrature = "mojo -I . examples/intermediate/quadrature.mojo"
 example-statistics = "mojo -I . examples/intermediate/statistics.mojo"
 example-ode = "mojo -I . examples/advanced/ode.mojo"
+example-unified-tensor-gpu = "mojo -I . examples/advanced/unified_tensor_gpu.mojo"
 example-optimize = "mojo -I . examples/advanced/optimize.mojo"
 example-random-ensemble = "mojo -I . examples/intermediate/random_ensemble.mojo"
 examples = { depends-on = [
@@ -254,10 +255,11 @@ examples = { depends-on = [
     "example-softmax",
     "example-ode",
     "example-random-ensemble",
+    "example-unified-tensor-gpu",
 ] }
-# Every example except `softmax.mojo`, `ode.mojo`, and `random_ensemble.mojo`,
-# which launch GPU kernels alongside their CPU paths -- this is what CI runs,
-# on GPU-less runners.
+# Every example except `softmax.mojo`, `ode.mojo`, `random_ensemble.mojo` and
+# `unified_tensor_gpu.mojo`, which launch GPU kernels alongside their CPU
+# paths -- this is what CI runs, on GPU-less runners.
 examples-cpu = { depends-on = [
     "example-gaussian",
     "example-array-creation",

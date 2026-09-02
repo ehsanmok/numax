@@ -14,7 +14,8 @@ interchange one -- `Plain`-only, axis 2, the same shape as `numax.array`.
 requested `dtype`, catching a same-width-different-dtype mistake like
 `float32` vs `int32` that a bare byte-size check would miss), a 1-byte
 rank, `rank` little-endian `Int64` dims, then the raw row-major payload
-bytes copied directly out of the backing `List[Scalar[dtype]]`. This is a
+bytes, copied out through `Tensor.to_host()` so the format is the same
+whichever device the tensor lives on. This is a
 *typed* load: `dtype`/`dims` are compile-time parameters the caller
 supplies (matching every other `numax.array` factory function's
 comptime-shape contract), and `load` raises if the file's header doesn't
@@ -31,6 +32,8 @@ imports `numax.io` resolved to this overload or the builtin one.
 """
 
 from std.sys.info import size_of
+
+from max.gpu.host import DeviceContext
 
 from .array import Tensor
 
@@ -53,7 +56,7 @@ def _read_i64_le(data: List[UInt8], offset: Int) -> Int64:
 
 def save[
     dtype: DType, *dims: Int
-](mut a: Tensor[dtype, *dims], path: String) raises:
+](a: Tensor[dtype, *dims], path: String) raises:
     """Write `a` to `path` in `numax`'s own binary tensor format.
 
     See this module's own docstring for the format and for why this isn't
@@ -77,19 +80,24 @@ def save[
     comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
         Scalar[dtype]
     ]()
-    var byte_ptr = a.storage.unsafe_ptr().unsafe_bitcast[UInt8]()
-    var payload = Span[UInt8, origin_of(a.storage)](
+    var values = a.to_host()
+    var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
+    var payload = Span[UInt8, origin_of(values)](
         unsafe_ptr=byte_ptr, length=nbytes
     )
     f.write_bytes(payload)
     f.close()
 
 
-def load[dtype: DType, *dims: Int](path: String) raises -> Tensor[dtype, *dims]:
-    """Read a tensor written by `save`.
+def load[
+    dtype: DType, *dims: Int
+](ctx: DeviceContext, path: String) raises -> Tensor[dtype, *dims]:
+    """Read a tensor written by `save`, onto `ctx`'s device.
 
     Raises if the file's dtype name, rank, or shape doesn't exactly match
-    the `dtype`/`dims` requested here.
+    the `dtype`/`dims` requested here. The `DeviceContext` is what every
+    `numax.array` root factory takes, for the same reason: the bytes have
+    to land on a device, and the file does not name one.
     """
     var f = open(path, "r")
     var data = f.read_bytes()
@@ -141,18 +149,18 @@ def load[dtype: DType, *dims: Int](path: String) raises -> Tensor[dtype, *dims]:
     var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
     for i in range(nbytes):
         dst_ptr[unsafe_offset=i] = data[offset + i]
-    return Tensor[dtype, *dims](out_storage^)
+    return Tensor[dtype, *dims](ctx, out_storage^)
 
 
 def print_tensor[
     dtype: DType, *dims: Int
 ](
-    mut a: Tensor[dtype, *dims],
+    a: Tensor[dtype, *dims],
     *,
     precision: Int = 4,
     threshold: Int = 1000,
     edge_items: Int = 3,
-):
+) raises:
     """Print `a`'s flat contents, NumPy-`arrayprint`-shaped but simplified.
 
     Every element is printed with `precision` digits after the decimal
@@ -170,23 +178,24 @@ def print_tensor[
 def _format_tensor[
     dtype: DType, *dims: Int
 ](
-    mut a: Tensor[dtype, *dims], precision: Int, threshold: Int, edge_items: Int
-) -> String:
+    a: Tensor[dtype, *dims], precision: Int, threshold: Int, edge_items: Int
+) raises -> String:
     comptime n = Tensor[dtype, *dims].num_elements
+    var values = a.to_host()
     var out = String("[")
     if n <= threshold:
         for i in range(n):
-            out += _format_one(a[i], precision)
+            out += _format_one(values[i], precision)
             if i != n - 1:
                 out += ", "
     else:
         for i in range(edge_items):
-            out += _format_one(a[i], precision)
+            out += _format_one(values[i], precision)
             out += ", "
         out += "..."
         for i in range(n - edge_items, n):
             out += ", "
-            out += _format_one(a[i], precision)
+            out += _format_one(values[i], precision)
     out += "]"
     return out^
 

@@ -286,8 +286,8 @@ ordinary tier-2 functions.
 `nn.argsort` was checked first. It is rank-1, index-returning, CPU + GPU, and
 right for a caller already holding a device `TileTensor` — but it gives no
 value sort, no `searchsorted`, no `unique`, and returns an int64 tensor rather
-than indices. For a host-owned `Tensor`, `std.builtin.sort` is the better
-route.
+than indices. These routines walk a host copy of the tensor's elements, so
+`std.builtin.sort` is the better route for them.
 
 Two shapes are forced. `unique` and `extract` return a full-length tensor
 with the result packed into the first `count` entries, because a
