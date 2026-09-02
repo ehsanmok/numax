@@ -19,8 +19,7 @@ two different questions:
   only. `median`/`mode` sort first via the standard library's `List.sort()`
   -- the fixed-iteration invariant restricts what *numax* writes inside a
   `FloatLike`-generic kernel, not what a `Plain`-only orchestration calls
-  out to (the same carve-out `design-v0.1.mdc` already documents for this
-  exact case).
+  out to.
 - **`FloatLike`-generic, `List[T]`-based** (`mean`, `variance`, `stddev`,
   `cumsum`): "does calling this at `Compensated` instead of `Plain` recover
   precision a long summation would otherwise lose". These take a

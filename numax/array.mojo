@@ -7,9 +7,9 @@ tiling, reshaping, coalescing) but no NumPy-named *factory* functions --
 directly against `~/workspace/modular/max/kernels/src/layout/tile_tensor.mojo`),
 and `max.algorithm.functional` ships only `elementwise`. This module adds
 **only** those factory/manipulation names, comptime-shape, as a thin layer
-over `TileTensor` -- not a competing array type (the Track E rule: "any
-array/buffer-level work in numax builds as a thin layer over TileTensor,
-not a bespoke array type").
+over `TileTensor` -- not a competing array type. Any array-level work in
+numax builds as a thin layer over `TileTensor`, because that is what every
+MAX kernel already takes.
 
 **One tensor type, CPU and GPU.** `Tensor[dtype, *dims]` is the only owning
 tensor in `numax`, and it works on either kind of device because its storage

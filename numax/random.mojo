@@ -6,9 +6,8 @@ initial conditions) and any Gaussian-process-shaped example reach for a
 raw RNG directly and lose the `numax` entry point. **No `Random[FloatLike]`
 conformer exists here on purpose** -- RNG is not mathematically
 differentiable (seeding a `Dual`'s derivative from a random draw has no
-well-defined meaning), the same scoping shape as Kelvin's units in
-`strategy.mdc` Track B: the trait contract doesn't fit the mathematics, so
-this stays outside `FloatLike` entirely. Every function below returns
+well-defined meaning), so the trait contract does not fit the mathematics
+and this stays outside `FloatLike` entirely. Every function below returns
 `Plain` values into a `Tensor`.
 
 **MAX-first was checked, and rejected for a structural reason, not a speed
