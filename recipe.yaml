@@ -39,7 +39,7 @@ requirements:
 
 about:
   homepage: https://github.com/ehsanmok/numax
-  license: MIT
+  license: Apache-2.0 WITH LLVM-exception
   summary: A composable numeric-type trait for Mojo -- SIMD, autodiff, and extra precision from one kernel body.
   description: |
     numax lets you write a numeric kernel once, against a trait (FloatLike),
