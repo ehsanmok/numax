@@ -1,4 +1,5 @@
-"""Adaptive integration: subdivide where the integrand misbehaves.
+"""Adaptive integration: quadrature that subdivides, and an ODE solver that
+picks its own step size.
 
 **This module is tier 2.** `quad` decides where to subdivide by looking at
 the integrand's values, so the amount of work depends on the data and the
@@ -48,6 +49,7 @@ from std.collections import Array
 
 from .numeric import FloatLike
 from .plain import Plain
+from .ode import dopri5_step
 from .quadrature import gauss_legendre
 
 # Fixed to float64 for the same two reasons as `numax.optimize`: an error
@@ -227,3 +229,123 @@ def quad_vec[
             converged = False
 
     return QuadResult(total, total_error, panels, converged)
+
+
+@fieldwise_init
+struct IVPResult(Copyable, Movable):
+    """The outcome of an adaptive ODE integration.
+
+    `accepted` and `rejected` are the step counts, and they are the two
+    numbers that tell you whether the controller was working: a healthy run
+    rejects a small fraction of its steps, and a run that rejects most of
+    them is fighting the problem (a stiff system, or a tolerance tighter
+    than the arithmetic can deliver).
+
+    `converged` false means `max_steps` ran out before reaching `t1`, so
+    `t` is where it actually got to -- which is why `t` is returned at all
+    rather than assumed equal to the requested endpoint.
+    """
+
+    var t: Float64
+    var y: Float64
+    var accepted: Int
+    var rejected: Int
+    var converged: Bool
+
+
+def solve_ivp[
+    f: def[U: FloatLike](U, U) thin -> U,
+](
+    t0: Float64,
+    y0: Float64,
+    t1: Float64,
+    rtol: Float64 = 1e-8,
+    atol: Float64 = 1e-10,
+    max_steps: Int = 10000,
+) -> IVPResult:
+    """Integrate `dy/dt = f(t, y)` from `t0` to `t1` with adaptive step
+    control. The tier-2 counterpart of `numax.ode.dopri5`.
+
+    Dormand-Prince 5(4) with the classic proportional controller: each step
+    is taken with `numax.ode.dopri5_step`, which returns the 5th-order
+    solution and its disagreement with the embedded 4th-order one; that
+    error is compared against `atol + rtol*|y|`, and the step is accepted
+    or rejected accordingly. The next step size is scaled by
+    `(1/error_ratio)**(1/5)`, clamped to a factor of 5 in either direction
+    so one anomalous step cannot make the controller wild.
+
+    **Why this is tier 2 and `numax.ode.dopri5` is not.** The step *body*
+    is identical -- the same seven stages from the same tableau, shared
+    rather than duplicated. What differs is that this decides, per step and
+    based on the values, whether to keep the result and how far to go next.
+    That is a data-dependent iteration count, so a SIMD `T` whose lanes
+    disagreed about acceptance could not be served, and the whole thing
+    runs on the host at `Plain` instead.
+
+    The payoff is the usual one for adaptivity: on a solution with a sharp
+    transient followed by a smooth tail, a fixed-step integrator has to use
+    the transient's step size everywhere. `tests/test_integrate.mojo`
+    measures that against `dopri5` on such a problem.
+
+    `f` is still an ordinary `FloatLike` kernel, so the same equation can be
+    integrated by the tier-1 `rk4` or `dopri5` inside a GPU kernel -- see
+    `examples/advanced/ode.mojo`, which runs an ensemble that way.
+    """
+    if t0 == t1:
+        return IVPResult(t0, y0, 0, 0, True)
+
+    var direction = 1.0 if t1 > t0 else -1.0
+    var span = abs(t1 - t0)
+
+    var t = t0
+    var y = y0
+    # Start at a hundredth of the interval: small enough not to overshoot a
+    # transient at the very beginning, large enough not to waste steps
+    # crawling out of the start on a smooth problem. The controller
+    # corrects either way within a step or two.
+    var h = direction * span / 100.0
+
+    var accepted = 0
+    var rejected = 0
+
+    for _ in range(max_steps):
+        if abs(t - t1) <= 0.0:
+            return IVPResult(t, y, accepted, rejected, True)
+
+        # Never step past the endpoint.
+        if abs(h) > abs(t1 - t):
+            h = t1 - t
+
+        var stepped = dopri5_step[_P, f](
+            _P.constant(t), _P.constant(y), _P.constant(h)
+        )
+        var y_next = Float64(stepped[0].v)
+        var error = Float64(stepped[1].v)
+
+        var tolerance = atol + rtol * max(abs(y), abs(y_next))
+        # A step whose error estimate underflows to zero is as good as it
+        # gets; treat the ratio as tiny rather than dividing by zero.
+        var ratio = error / tolerance if tolerance > 0.0 else 0.0
+
+        if ratio <= 1.0:
+            t += h
+            y = y_next
+            accepted += 1
+            if abs(t - t1) <= 0.0:
+                return IVPResult(t, y, accepted, rejected, True)
+        else:
+            rejected += 1
+
+        # The order-5 scaling law, with a safety factor and clamps. 0.9
+        # keeps the next step slightly inside what the estimate allows,
+        # which is what stops the controller oscillating between accept and
+        # reject.
+        var scale: Float64
+        if ratio <= 0.0:
+            scale = 5.0
+        else:
+            scale = 0.9 * (1.0 / ratio) ** 0.2
+            scale = min(5.0, max(0.2, scale))
+        h = h * scale
+
+    return IVPResult(t, y, accepted, rejected, False)

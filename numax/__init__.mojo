@@ -48,7 +48,7 @@ from .erf import erf, erfc
 from .gamma import digamma, gamma, gammainc, gammaincc, lgamma
 from .gradient import Gradient
 from .io import load, print_tensor, save
-from .integrate import QuadResult, quad, quad_vec
+from .integrate import IVPResult, QuadResult, quad, quad_vec, solve_ivp
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p
 from .distributions import (
@@ -123,7 +123,7 @@ from .linalg import (
     tridiagonal_solve,
 )
 from .numeric import FloatLike
-from .ode import dopri5, dopri5_with_error, rk4, rk4_system
+from .ode import dopri5, dopri5_step, dopri5_with_error, rk4, rk4_system
 from .optimize import (
     MinimizeResult,
     OptimizeResult,

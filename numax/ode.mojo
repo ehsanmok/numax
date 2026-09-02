@@ -168,56 +168,76 @@ def dopri5_with_error[
 
     for _ in range(num_steps):
         var t = t0 + step_index * h
-
-        var k1 = f[T](t.copy(), y.copy())
-        var k2 = f[T](t + _c(h, _C2), y + h * (_c(k1, _A21)))
-        var k3 = f[T](t + _c(h, _C3), y + h * (_c(k1, _A31) + _c(k2, _A32)))
-        var k4 = f[T](
-            t + _c(h, _C4),
-            y + h * (_c(k1, _A41) + _c(k2, _A42) + _c(k3, _A43)),
-        )
-        var k5 = f[T](
-            t + _c(h, _C5),
-            y + h * (_c(k1, _A51) + _c(k2, _A52) + _c(k3, _A53) + _c(k4, _A54)),
-        )
-        var k6 = f[T](
-            t + h,
-            y
-            + h
-            * (
-                _c(k1, _A61)
-                + _c(k2, _A62)
-                + _c(k3, _A63)
-                + _c(k4, _A64)
-                + _c(k5, _A65)
-            ),
-        )
-
-        # The 5th-order solution. Its stage weights are also row 7 of the
-        # Butcher tableau, which is what makes `k7` below the next step's
-        # `k1` (the "first same as last" property) -- not exploited here,
-        # since `k7` is only needed for the error estimate.
-        var increment = (
-            _c(k1, _B1) + _c(k3, _B3) + _c(k4, _B4) + _c(k5, _B5) + _c(k6, _B6)
-        )
-        var y5 = y + h * increment
-
-        var k7 = f[T](t + h, y5.copy())
-        var increment_hat = (
-            _c(k1, _BH1)
-            + _c(k3, _BH3)
-            + _c(k4, _BH4)
-            + _c(k5, _BH5)
-            + _c(k6, _BH6)
-            + _c(k7, _BH7)
-        )
-        var y4 = y + h * increment_hat
-
-        error_sum = error_sum + (y5 + (-y4)).abs()
-        y = y5.copy()
+        var stepped = dopri5_step[T, f](t^, y.copy(), h.copy())
+        error_sum = error_sum + stepped[1]
+        y = stepped[0].copy()
         step_index = step_index + T.one()
 
     return (y^, error_sum^)
+
+
+def dopri5_step[
+    T: FloatLike,
+    f: def[U: FloatLike](U, U) thin -> U,
+](t: T, y: T, h: T) -> Tuple[T, T]:
+    """One Dormand-Prince 5(4) step: returns `(y5, |y5 - y4|)`.
+
+    The seven stages, the 5th-order solution, and the magnitude of its
+    disagreement with the embedded 4th-order one -- the standard local
+    truncation error estimate. Public but low-level: `dopri5` and
+    `dopri5_with_error` drive it at a fixed step size, and
+    `numax.integrate.solve_ivp` drives it with adaptive step control.
+    Sharing one step body is what keeps the tableau in exactly one place.
+
+    Tier 1, like everything else in this module: seven evaluations of `f`,
+    no branching, no data-dependent iteration. The adaptive *controller*
+    built on top of it is tier 2, but this is not.
+    """
+    var k1 = f[T](t.copy(), y.copy())
+    var k2 = f[T](t + _c(h, _C2), y + h * (_c(k1, _A21)))
+    var k3 = f[T](t + _c(h, _C3), y + h * (_c(k1, _A31) + _c(k2, _A32)))
+    var k4 = f[T](
+        t + _c(h, _C4),
+        y + h * (_c(k1, _A41) + _c(k2, _A42) + _c(k3, _A43)),
+    )
+    var k5 = f[T](
+        t + _c(h, _C5),
+        y + h * (_c(k1, _A51) + _c(k2, _A52) + _c(k3, _A53) + _c(k4, _A54)),
+    )
+    var k6 = f[T](
+        t + h,
+        y
+        + h
+        * (
+            _c(k1, _A61)
+            + _c(k2, _A62)
+            + _c(k3, _A63)
+            + _c(k4, _A64)
+            + _c(k5, _A65)
+        ),
+    )
+
+    # The 5th-order solution. Its stage weights are also row 7 of the
+    # Butcher tableau, which is what makes `k7` below the next step's
+    # `k1` (the "first same as last" property) -- not exploited here,
+    # since `k7` is only needed for the error estimate.
+    var increment = (
+        _c(k1, _B1) + _c(k3, _B3) + _c(k4, _B4) + _c(k5, _B5) + _c(k6, _B6)
+    )
+    var y5 = y + h * increment
+
+    var k7 = f[T](t + h, y5.copy())
+    var increment_hat = (
+        _c(k1, _BH1)
+        + _c(k3, _BH3)
+        + _c(k4, _BH4)
+        + _c(k5, _BH5)
+        + _c(k6, _BH6)
+        + _c(k7, _BH7)
+    )
+    var y4 = y + h * increment_hat
+
+    return (y5^, (y5 + (-y4)).abs())
 
 
 def _c[T: FloatLike](x: T, coefficient: Float64) -> T:

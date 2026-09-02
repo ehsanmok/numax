@@ -7,11 +7,12 @@ rule cannot see, and `test_a_named_breakpoint_costs_far_fewer_panels` shows
 what naming a kink saves.
 """
 
-from std.math import atan, pi, sqrt
+from std.math import atan, exp, pi, sqrt
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import FloatLike, Plain
-from numax.integrate import quad, quad_vec
+from numax.integrate import quad, quad_vec, solve_ivp
+from numax.ode import dopri5
 from numax.quadrature import gauss_legendre
 
 comptime P = Plain[DType.float64, 1]
@@ -229,6 +230,138 @@ def test_quad_vec_with_no_breakpoints_matches_quad() raises:
     var direct = quad[peaked](0.0, 1.0)
     var routed = quad_vec[peaked](0.0, 1.0, empty)
     assert_almost_equal(routed.value, direct.value, atol=1e-9)
+
+
+# ------------------------------------------------------------------
+# solve_ivp
+# ------------------------------------------------------------------
+
+
+def decay[U: FloatLike](t: U, y: U) -> U:
+    """`dy/dt = -3y`, whose solution is `y0 * exp(-3t)`."""
+    return -U.constant(3.0) * y
+
+
+def growth[U: FloatLike](t: U, y: U) -> U:
+    """`dy/dt = y`, solution `y0 * exp(t)`."""
+    return y.copy()
+
+
+def time_dependent[U: FloatLike](t: U, y: U) -> U:
+    """`dy/dt = 2t`, solution `y0 + t**2` -- exercises the `t` argument,
+    which a solver that only ever passed `y` would still pass the
+    exponential tests with."""
+    return U.constant(2.0) * t
+
+
+def stiff_transient[U: FloatLike](t: U, y: U) -> U:
+    """`dy/dt = -50*(y - cos(t))`: a fast transient onto a slow solution.
+
+    The kind of problem adaptivity is for -- the first fraction of the
+    interval needs tiny steps and the rest does not, so a fixed-step
+    method has to use the transient's step size the whole way.
+    """
+    return -U.constant(50.0) * (y + (-t.cos()))
+
+
+def test_solve_ivp_matches_the_exponential_solution() raises:
+    var result = solve_ivp[decay](0.0, 1.0, 2.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, exp(-6.0), atol=1e-9)
+
+
+def test_solve_ivp_reaches_the_requested_endpoint() raises:
+    var result = solve_ivp[decay](0.0, 1.0, 2.0)
+    assert_almost_equal(result.t, 2.0, atol=1e-14)
+
+
+def test_solve_ivp_integrates_growth() raises:
+    var result = solve_ivp[growth](0.0, 1.0, 1.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, exp(1.0), atol=1e-8)
+
+
+def test_solve_ivp_uses_the_time_argument() raises:
+    # y(0) = 1, dy/dt = 2t, so y(3) = 1 + 9 = 10.
+    var result = solve_ivp[time_dependent](0.0, 1.0, 3.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, 10.0, atol=1e-9)
+
+
+def test_solve_ivp_integrates_backwards_in_time() raises:
+    # From t=2 back to t=0 with y(2) = exp(-6) must recover y(0) = 1.
+    var result = solve_ivp[decay](2.0, exp(-6.0), 0.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, 1.0, atol=1e-8)
+    assert_almost_equal(result.t, 0.0, atol=1e-14)
+
+
+def test_solve_ivp_on_a_zero_length_interval_returns_the_initial_value() raises:
+    var result = solve_ivp[decay](1.0, 5.0, 1.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, 5.0)
+    assert_true(result.accepted == 0)
+
+
+def test_solve_ivp_accepts_most_of_its_steps_on_a_smooth_problem() raises:
+    # A healthy controller rejects few steps. Rejecting most of them would
+    # mean the step-size scaling is fighting itself.
+    var result = solve_ivp[decay](0.0, 1.0, 2.0)
+    assert_true(result.rejected < result.accepted)
+
+
+def test_tighter_tolerance_takes_more_steps() raises:
+    var loose = solve_ivp[decay](0.0, 1.0, 2.0, rtol=1e-4, atol=1e-6)
+    var tight = solve_ivp[decay](0.0, 1.0, 2.0, rtol=1e-10, atol=1e-12)
+    assert_true(tight.accepted > loose.accepted)
+
+
+def test_solve_ivp_reports_non_convergence_when_steps_run_out() raises:
+    var result = solve_ivp[decay](0.0, 1.0, 2.0, max_steps=3)
+    assert_true(not result.converged)
+    # And `t` says how far it actually got, rather than claiming the
+    # endpoint.
+    assert_true(result.t < 2.0)
+
+
+def test_solve_ivp_beats_fixed_steps_on_a_transient() raises:
+    """The reason the adaptive solver exists, measured.
+
+    `stiff_transient` needs small steps only at the start. Given a step
+    budget comparable to what the adaptive solver used, the fixed-step
+    integrator spends it uniformly and is far less accurate.
+    """
+    var adaptive = solve_ivp[stiff_transient](0.0, 0.0, 3.0, rtol=1e-9)
+    assert_true(adaptive.converged)
+
+    # A fixed-step run with a comparable number of stages.
+    var fixed = Float64(
+        dopri5[P, stiff_transient, 40](
+            P.constant(0.0), P.constant(0.0), P.constant(3.0)
+        ).v
+    )
+
+    # Take a very finely resolved adaptive run as the reference.
+    var reference = solve_ivp[stiff_transient](
+        0.0, 0.0, 3.0, rtol=1e-13, atol=1e-15
+    ).y
+
+    var adaptive_error = abs(adaptive.y - reference)
+    var fixed_error = abs(fixed - reference)
+    assert_true(adaptive_error < fixed_error)
+
+
+def test_solve_ivp_agrees_with_a_well_resolved_fixed_step_run() raises:
+    # Where the fixed-step method is given enough steps, the two must
+    # agree -- which pins the shared `dopri5_step` against itself under
+    # two different drivers.
+    var adaptive = solve_ivp[decay](0.0, 1.0, 2.0, rtol=1e-12, atol=1e-14)
+    var fixed = Float64(
+        dopri5[P, decay, 2000](
+            P.constant(0.0), P.constant(1.0), P.constant(2.0)
+        ).v
+    )
+    assert_almost_equal(adaptive.y, fixed, atol=1e-11)
 
 
 def main() raises:
