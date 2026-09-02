@@ -22,7 +22,12 @@ from numax.linalg import (
     lu,
     matmul,
     matvec,
+    norm_1,
+    norm_frobenius,
+    norm_inf,
+    qr,
     solve,
+    trace,
     tridiagonal_solve,
 )
 
@@ -376,6 +381,108 @@ def test_simd_lanes_factor_independent_matrices() raises:
     var lower = cholesky[PW, 2](a)
     assert_almost_equal(Float64(lower[0].v[0]), 1.4142135623730951, atol=1e-14)
     assert_almost_equal(Float64(lower[0].v[1]), 2.8284271247461903, atol=1e-14)
+
+
+def test_trace_sums_the_diagonal() raises:
+    var a = spd3()
+    assert_almost_equal(s(trace[P, 3](a)), 4.0 + 5.0 + 6.0)
+
+
+def test_frobenius_norm_matches_the_entrywise_definition() raises:
+    var a = general3()
+    var expected = 0.0
+    var entries = [2.0, 1.0, -1.0, -3.0, -1.0, 2.0, -2.0, 1.0, 2.0]
+    for i in range(9):
+        expected += entries[i] * entries[i]
+    assert_almost_equal(s(norm_frobenius[P, 3](a)), expected**0.5)
+
+
+def test_norm_1_is_the_largest_absolute_column_sum() raises:
+    # Columns of general3: |2|+|-3|+|-2| = 7, |1|+|-1|+|1| = 3,
+    # |-1|+|2|+|2| = 5. The largest is 7.
+    var a = general3()
+    assert_almost_equal(s(norm_1[P, 3](a)), 7.0)
+
+
+def test_norm_inf_is_the_largest_absolute_row_sum() raises:
+    # Rows of general3: 4, 6, 5. The largest is 6.
+    var a = general3()
+    assert_almost_equal(s(norm_inf[P, 3](a)), 6.0)
+
+
+def test_norm_inf_of_a_symmetric_matrix_equals_its_norm_1() raises:
+    var a = spd3()
+    assert_almost_equal(s(norm_inf[P, 3](a)), s(norm_1[P, 3](a)))
+
+
+def test_qr_reconstructs_the_original_matrix() raises:
+    var a = general3()
+    var factored = qr[P, 3](a)
+    var recon = matmul[P, 3](factored[1].copy(), factored[0].copy())
+    for i in range(9):
+        assert_almost_equal(s(recon[i]), s(a[i]))
+
+
+def test_qr_r_is_upper_triangular() raises:
+    var a = general3()
+    var factored = qr[P, 3](a)
+    var r = factored[0].copy()
+    for i in range(3):
+        for j in range(i):
+            assert_almost_equal(s(r[i * 3 + j]), 0.0)
+
+
+def test_qr_q_is_orthogonal() raises:
+    # Q.T @ Q = I is the property that makes QR useful; checking it catches
+    # a reflector applied with the wrong sign or scale, which reconstructing
+    # A alone would not.
+    var a = general3()
+    var factored = qr[P, 3](a)
+    var q = factored[1].copy()
+    var qt = Array[P, 9](fill=pv(0.0))
+    for i in range(3):
+        for j in range(3):
+            qt[i * 3 + j] = q[j * 3 + i].copy()
+    var product = matmul[P, 3](qt^, q^)
+    for i in range(3):
+        for j in range(3):
+            var expected = 1.0 if i == j else 0.0
+            assert_almost_equal(s(product[i * 3 + j]), expected)
+
+
+def test_qr_of_a_symmetric_positive_definite_matrix_reconstructs_it() raises:
+    var a = spd3()
+    var factored = qr[P, 3](a)
+    var recon = matmul[P, 3](factored[1].copy(), factored[0].copy())
+    for i in range(9):
+        assert_almost_equal(s(recon[i]), s(a[i]))
+
+
+def test_qr_differentiates_through_at_dual() raises:
+    # The axis-1 payoff, and the reason this QR exists next to MAX's
+    # monomorphic `linalg.qr_factorization`: seed one entry of A with a
+    # derivative and it propagates through the factorization with no
+    # adjoint rule written anywhere. d(trace(R))/dA[0,0] is checked against
+    # a central difference of the same function.
+    def trace_r(a00: Float64) -> Float64:
+        var a = general3()
+        a[0] = pv(a00)
+        var factored = qr[P, 3](a)
+        var r = factored[0].copy()
+        return s(trace[P, 3](r^))
+
+    var a = general3()
+    var ad = Array[D, 9](fill=D.constant(0.0))
+    for i in range(9):
+        ad[i] = D.constant(s(a[i]))
+    ad[0] = D(pv(s(a[0])), P.one())
+
+    var factored = qr[D, 3](ad)
+    var derivative = Float64(trace[D, 3](factored[0].copy()).deriv.v)
+
+    var h = 1e-6
+    var numeric = (trace_r(s(a[0]) + h) - trace_r(s(a[0]) - h)) / (2 * h)
+    assert_almost_equal(derivative, numeric, atol=1e-6)
 
 
 def main() raises:
