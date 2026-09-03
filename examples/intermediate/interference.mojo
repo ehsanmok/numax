@@ -5,7 +5,7 @@ a point is the sum of two spherical waves, and the intensity is the square
 of that sum -- so the fringes come from the *path difference* between the
 sources, not from either wave alone.
 
-The whole field is one `numax.tensor.map` over a pair of coordinate fields:
+The whole field is one `numax.core.tensor.map` over a pair of coordinate fields:
 a kernel evaluated at every grid point. The fringes are then *measured* --
 every local maximum down the far column, and their mean spacing -- rather
 than plotted. Then the far-field phase is differentiated with
@@ -19,8 +19,8 @@ from std.math import cos, sqrt
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.array import Tensor, linspace, meshgrid
-from numax.tensor import map
+from numax.core.array import Tensor, linspace, meshgrid
+from numax.core.tensor import map
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype, 1]

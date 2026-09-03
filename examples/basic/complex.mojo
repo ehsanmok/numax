@@ -1,4 +1,4 @@
-"""`numax.complex.Complex[Inner]`: a `FloatLike` conformer that nests over
+"""`numax.core.complex.Complex[Inner]`: a `FloatLike` conformer that nests over
 any other one, the same trick `Dual` uses for higher-order derivatives.
 
 Two things this demonstrates:

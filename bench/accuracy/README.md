@@ -161,7 +161,7 @@ consistent with the documented ~2e-08, so the recovered value is right.
 The fixed 100-term series holds up across two orders of magnitude in `x`
 and a factor of 20 in the shape parameter, degrading gently rather than
 falling off a cliff. This is the function every gamma-family CDF in
-`numax.distributions` routes through, plus `poisson_cdf`.
+`numax.stats` routes through, plus `poisson_cdf`.
 
 ### Incomplete beta
 
@@ -206,7 +206,7 @@ recurrences are numerically stable in the direction they are being run.
   covered by identity-based tests in `tests/` instead.
 - **Only one dimension per function.** The two-argument functions are
   sampled at four fixed parameter values each, not over a 2D grid.
-- **Nothing composed.** `numax.distributions`, `numax.linalg`,
-  `numax.ode`, and `numax.fft` are validated against closed-form identities
+- **Nothing composed.** `numax.stats`, `numax.linalg`,
+  `numax.integrate`, and `numax.fft` are validated against closed-form identities
   in `tests/` rather than against a reference table, since for most of them
   a closed-form identity is the stronger check.

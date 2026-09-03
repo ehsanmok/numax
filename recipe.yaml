@@ -47,5 +47,5 @@ about:
     (Compensated), or exact decimal arithmetic (Decimal) for free by the
     type you call it with. Includes a vectorized special-function library
     (erf, gamma, Bessel, Lambert W, activations, softmax) built on that
-    trait, and numax.tensor to drive any of it across MAX's TileTensor on
+    trait, and numax.core.tensor to drive any of it across MAX's TileTensor on
     CPU or GPU.

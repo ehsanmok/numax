@@ -1,4 +1,4 @@
-"""How much does `numax.tensor.map[gpu=True]` buy over the CPU path, for the
+"""How much does `numax.core.tensor.map[gpu=True]` buy over the CPU path, for the
 same `gaussian(x) = exp(-x^2)` kernel `bench_tensor_map.mojo` benchmarks on
 CPU alone -- across a sweep of sizes, not just one.
 
@@ -43,7 +43,7 @@ from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
 from numax import Plain, gaussian
-from numax.tensor import map
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 comptime cpu_width = simd_width_of[dtype]()

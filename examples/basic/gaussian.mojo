@@ -10,7 +10,7 @@ gets three different things out, with no change to `gaussian` itself:
 plain `float32` SIMD, the value plus its derivative (`Dual`), and the value
 carried to roughly double precision (`Compensated`).
 
-The walk over the 4096 points is `numax.tensor.map`, driving `gaussian`
+The walk over the 4096 points is `numax.core.tensor.map`, driving `gaussian`
 over a `TileTensor` (from MAX's `layout` package) at the CPU's native SIMD
 width, with a scalar tail for whatever doesn't divide evenly -- the same
 `TileTensor`-based approach `examples/gaussian_gpu.mojo` uses on the GPU.
@@ -22,7 +22,7 @@ from std.math import exp
 from std.sys.info import simd_width_of
 
 from numax import Compensated, Dual, Plain, gaussian
-from numax.tensor import map
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 comptime n = 4096

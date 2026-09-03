@@ -19,7 +19,7 @@ def gaussian[T: FloatLike](x: T) -> T:
 ```
 
 Run across an n-element `TileTensor` of `float32` via
-`numax.tensor.map[step=gaussian_step]`. It moves 8 bytes per element
+`numax.core.tensor.map[step=gaussian_step]`. It moves 8 bytes per element
 (float32 read + float32 write) however it's written, so on a 150 GB/s
 machine it's capped at ~18,750 M elem/s. **Most of the surface below is
 competing for that bandwidth, not for arithmetic.** That's measured,
@@ -242,7 +242,7 @@ writeup.
 
 ## Use MAX past N (small-matrix linalg)
 
-`numax/linalg.mojo`'s matrices are `Array[T, n*n]` in registers -- a
+`numax/linalg/linalg.mojo`'s matrices are `Array[T, n*n]` in registers -- a
 compile-time size that keeps them GPU-launchable (one matrix per SIMD
 lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual` or
 `Compensated`, at the cost of both compile time and register pressure
@@ -276,13 +276,13 @@ module -- it's building the large-matrix equivalent from
 (`solve`/`det`/`inverse` all reduce to `R` and `Q^T b` once `A = QR`).
 `cholesky`/`cholesky_solve`/`tridiagonal_solve` have no MAX equivalent to
 route to at any size, since MAX ships neither a Cholesky factorization nor
-a triangular solve. Every function's own docstring in `numax/linalg.mojo`
+a triangular solve. Every function's own docstring in `numax/linalg/linalg.mojo`
 states which of these two cases it falls into.
 
 ## Bench tasks
 
 ```bash
-pixi run bench          # CPU: numax.tensor.map vs. a hand-rolled raw-SIMD loop
+pixi run bench          # CPU: numax.core.tensor.map vs. a hand-rolled raw-SIMD loop
 pixi run bench-gpu     # CPU vs. GPU (map[gpu=True]) across a size sweep
 pixi run bench-roofline # GPU: how much memory bandwidth map[gpu=True] reaches
 pixi run bench-elementwise # CPU: serial vs. threaded at six sizes

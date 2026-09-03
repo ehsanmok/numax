@@ -1,21 +1,21 @@
-"""`numax.array`: NumPy-named creation and manipulation over `TileTensor`.
+"""`numax.core.array`: NumPy-named creation and manipulation over `TileTensor`.
 
 MAX's `layout` package ships `TileTensor` itself but no NumPy-named factory
-functions -- `numax.array` is the thin gap-filling layer over it. Every
+functions -- `numax.core.array` is the thin gap-filling layer over it. Every
 function here is `Plain`-only (no `FloatLike` conformer involvement): this
 is the axis-2 (NumPy/SciPy parity) half of `numax`, not the axis-1
 (composable-type) half `basic/gaussian.mojo` demonstrates.
 
 `zeros`/`ones`/`full`/`eye`/`linspace`/`logspace` build a new `Tensor`
 (an owned buffer plus a compile-time row-major layout -- see
-`numax/array.mojo`'s own docstring for why a bare `TileTensor` can't be
+`numax/core/array.mojo`'s own docstring for why a bare `TileTensor` can't be
 returned from a factory function); `transpose`/`squeeze`/`stack` show the
 three manipulation gaps this module fills.
 """
 
 
 from max.gpu.host import DeviceContext
-from numax.array import (
+from numax.core.array import (
     arange,
     concatenate,
     eye,

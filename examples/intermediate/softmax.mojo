@@ -3,8 +3,8 @@
 Unlike `gaussian`/`sigmoid`/`erf`, `softmax` isn't a single `FloatLike`
 kernel `map`ped elementwise -- each output element needs its whole row (the
 row's max, for numerical stability, and the row's sum of exponentials), so
-it's an orchestration of `numax.tensor`'s reduction and broadcast primitives
-instead: `numax.special.softmax` on CPU (via `reduce_rows`/
+it's an orchestration of `numax.core.tensor`'s reduction and broadcast primitives
+instead: `numax.special.activations.softmax` on CPU (via `reduce_rows`/
 `broadcast_op_rows`, `gpu=False`), and the same four-step recipe
 hand-launched here on GPU (the same `reduce_rows`/`broadcast_op_rows`, with
 `gpu=True`), since a GPU orchestration is a sequence of kernel launches
@@ -17,7 +17,7 @@ from max.gpu.host import DeviceContext
 from std.math import exp
 
 from numax import Plain, softmax
-from numax.tensor import (
+from numax.core.tensor import (
     add_combine,
     broadcast_op_rows,
     max_combine,
@@ -67,7 +67,7 @@ def main() raises:
     comptime layout2d = row_major[rows, cols]()
     comptime layout1d = row_major[rows]()
 
-    # --- CPU, via `numax.special.softmax` ---
+    # --- CPU, via `numax.special.activations.softmax` ---
     var xs_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
     fill_inputs(xs_storage)
     var xs = TileTensor(xs_storage, layout2d)

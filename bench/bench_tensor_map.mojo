@@ -1,4 +1,4 @@
-"""Does `numax.tensor.map`'s abstraction cost anything over raw SIMD?
+"""Does `numax.core.tensor.map`'s abstraction cost anything over raw SIMD?
 
 Two implementations of the same `gaussian(x) = exp(-x^2)` sweep over the same
 `n`-element buffer, at the same native SIMD width:
@@ -6,7 +6,7 @@ Two implementations of the same `gaussian(x) = exp(-x^2)` sweep over the same
 1. `raw_gaussian_loop` -- a hand-rolled `std.algorithm.functional.vectorize`
    loop with `SIMD` arithmetic and `std.math.exp` inline, no `FloatLike`, no
    `TileTensor`.
-2. `numax.tensor.map` -- the same math, but reached through `Plain` (a
+2. `numax.core.tensor.map` -- the same math, but reached through `Plain` (a
    `FloatLike` conformer) and `gaussian` from `numax.special`, walking a
    `TileTensor` instead of a raw pointer.
 
@@ -23,7 +23,7 @@ from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
 from numax import Plain, gaussian
-from numax.tensor import map
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 comptime n = 1 << 20
@@ -111,7 +111,7 @@ def main() raises:
     var numax_avg_ns = Float64(numax_total) / Float64(timed_iters)
 
     print("raw SIMD loop:  ", raw_avg_ns / 1e6, "ms/iter")
-    print("numax.tensor.map:", numax_avg_ns / 1e6, "ms/iter")
+    print("numax.core.tensor.map:", numax_avg_ns / 1e6, "ms/iter")
     print("numax / raw ratio:  ", numax_avg_ns / raw_avg_ns)
 
     # Sanity check: both paths should agree, not just run at the same speed.

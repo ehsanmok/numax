@@ -1,4 +1,4 @@
-"""`numax.gamma`, `numax.bessel`, `numax.lambertw`, and `numax.elliptic`,
+"""`numax.special`'s `gamma`, `bessel`, `lambertw`, and `elliptic`,
 differentiated for free.
 
 Same pattern as `examples/activations.mojo`: each kernel is written once
@@ -6,7 +6,7 @@ against `FloatLike`, so calling it with `Dual` gets the value and its
 derivative together, with no second formula to keep in sync -- here that
 means `Gamma'(x) = Gamma(x) * digamma(x)` and `dW/dx = W(x) / (x*(1+W(x)))`
 fall out for free, without either derivative being spelled out anywhere in
-`numax.gamma` or `numax.lambertw` -- the latter identity holds for
+`numax.special.gamma` or `numax.special.lambertw` -- the latter identity holds for
 `lambertw_m1` too, since it's the same implicit-differentiation result
 regardless of which real branch `W` came from. `elliptic_k`/`elliptic_e`
 get the same treatment via their own standard derivative identities.

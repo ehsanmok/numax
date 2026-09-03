@@ -26,10 +26,10 @@ from std.math import cos, exp, sin, sqrt
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.array import Tensor, linspace, meshgrid
-from numax.ops import add, multiply
-from numax.statistics import sum as tensor_sum
-from numax.tensor import map
+from numax.core.array import Tensor, linspace, meshgrid
+from numax.core.ops import add, multiply
+from numax.stats import sum as tensor_sum
+from numax.core.tensor import map
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype, 1]

@@ -7,7 +7,7 @@ same `gaussian(x) = exp(-x^2)` kernel through both, at the same sizes as
 `bench_tensor_map_gpu.mojo`, so the numbers are directly comparable to the
 existing CPU-vs-GPU table.
 
-Both paths call the *same* `numax.special.gaussian` over `Plain`, so this
+Both paths call the *same* `numax.special.activations.gaussian` over `Plain`, so this
 measures the walk-and-distribute layer only, not two different kernels.
 
 Run with `pixi run bench-elementwise`.
@@ -20,7 +20,7 @@ from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
 from numax import Plain, gaussian
-from numax.tensor import map, map_threaded
+from numax.core.tensor import map, map_threaded
 
 comptime dtype = DType.float32
 comptime width = simd_width_of[dtype]()
