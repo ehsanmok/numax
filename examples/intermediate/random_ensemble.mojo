@@ -5,15 +5,15 @@
 a Monte Carlo ensemble actually wants. This example closes that gap two
 ways:
 
-- **CPU**: `numax.random.uniform` draws the initial conditions directly
+- **CPU**: `numax.stats.uniform` draws the initial conditions directly
   into a `Tensor`, reproducibly under a fixed `seed`, then
-  `numax.ode.rk4` integrates every trajectory via `numax.tensor.map` at
+  `numax.integrate.rk4` integrates every trajectory via `numax.core.tensor.map` at
   native SIMD width -- no different from `ode.mojo`'s own CPU path once the
   initial conditions exist.
 - **GPU**: initial conditions are drawn *on-device*, one value per thread,
   via `std.random.philox.Random` called directly inside a `map[gpu=True]`
-  kernel body -- not through `numax.random.uniform`, which is host-only
-  (see `numax/random.mojo`'s own docstring for why). Each thread seeds its
+  kernel body -- not through `numax.stats.uniform`, which is host-only
+  (see `numax/stats/random.mojo`'s own docstring for why). Each thread seeds its
   stream from a shared seed plus its own flat index, so every thread's
   draw is independent and the whole ensemble is reproducible from one
   scalar seed with no shared mutable state -- exactly the property
@@ -33,10 +33,10 @@ from max.gpu.host import DeviceContext
 from std.random import Random
 
 from numax import Plain
-from numax.numeric import FloatLike
-from numax.ode import rk4
-from numax.random import seed, uniform
-from numax.tensor import map
+from numax.core.numeric import FloatLike
+from numax.integrate import rk4
+from numax.stats import seed, uniform
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 comptime n = 4096
@@ -84,7 +84,7 @@ def sample_mean(xs: List[Scalar[dtype]]) -> Float64:
 
 
 def main() raises:
-    # --- CPU: numax.random draws the initial conditions ---
+    # --- CPU: numax.stats draws the initial conditions ---
     seed(2026)
     var cpu = DeviceContext(api="cpu")
     var y0_cpu = uniform[dtype, n](cpu, Scalar[dtype](-2), Scalar[dtype](2))

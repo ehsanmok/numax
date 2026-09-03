@@ -1,4 +1,4 @@
-"""`numax.gradient.Gradient[Inner, n_vars]`: forward-mode automatic
+"""`numax.core.gradient.Gradient[Inner, n_vars]`: forward-mode automatic
 differentiation across several input variables at once, rather than
 `Dual`'s single derivative.
 

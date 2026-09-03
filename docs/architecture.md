@@ -15,10 +15,41 @@
    `max.random`) is the substrate for array-shaped work; `numax` adds
    the composable-type layer and the NumPy-named entry surface over it.
 
+## Package layout
+
+Subpackages follow NumPy/SciPy naming, so a NumPy or SciPy import has an
+obvious counterpart. Each one re-exports its public surface, and
+`numax/__init__.mojo` re-exports all of them, so `from numax import ...`
+reaches everything flat and `from numax.linalg import ...` reaches one
+subsystem.
+
+```
+numax/
+  core/         FloatLike + conformers (plain, dual, gradient, compensated,
+                decimal, interval, complex), the tensor engine (tensor,
+                array), and the elementwise/ops/logic/sorting surface
+  linalg/       factorizations, solves, norms, eigenvalues
+  optimize/     minimization (optimize) and scalar root finding (solve)
+  integrate/    quadrature, fixed-step and adaptive ODE, quad/solve_ivp
+  interpolate/  polynomial and spline interpolation
+  special/      erf, gamma, beta, bessel, elliptic, lambertw, orthogonal
+                polynomials, activations
+  stats/        descriptive statistics, distributions, random sampling
+  fft/          discrete Fourier transforms over Complex
+  signal/       convolution, correlation, windows
+  io/           the NMX1 binary format and tensor printing
+```
+
+Dependencies run one way: `core` depends on nothing else in `numax`, every
+other subpackage depends on `core`, and the few cross-subpackage edges are
+deliberate (`stats` uses `special`'s incomplete gamma and beta,
+`integrate` uses `special`'s Legendre roots and `optimize`'s Newton solver,
+`interpolate` uses `linalg`'s tridiagonal solve).
+
 ## The trait: `FloatLike`
 
 The trait every kernel in `numax` is written against lives in
-[`numax/numeric.mojo`](../numax/numeric.mojo). It's deliberately small --
+[`numax/core/numeric.mojo`](../numax/core/numeric.mojo). It's deliberately small --
 enough to build a vectorized special-function library on, and no more.
 Every method added is one more thing every future conformer must
 implement.
@@ -71,8 +102,8 @@ and declares which one every function is in:
 Everything shipping today is tier 1 -- the special functions, `rk4`,
 `dopri5` (fixed-step), `gauss_legendre`, `lambertw`'s fixed 20 Halley
 iterations, `Compensated.ln()`'s 3 fixed Newton refinements, `gammainc`'s
-fixed 100-term series, `numax.solve`'s fixed-iteration `newton`/`halley`/
-`bisection`. `numax.statistics.median` and `mode` are the nearest thing to
+fixed 100-term series, `numax.optimize`'s fixed-iteration `newton`/`halley`/
+`bisection`. `numax.stats.median` and `mode` are the nearest thing to
 an exception, and they are not one: they reach MAX's own sort, which has
 data-dependent control flow, from `Plain`-only code. The rule governs what
 numax writes *inside the trait*.
@@ -110,23 +141,23 @@ about which branch they want or whether a series has converged, and there
 is no `select`-like primitive on `FloatLike` to resolve that per lane.
 So a fixed amount of uniform work is done instead, and per-lane selection
 is an arithmetic `0`/`1` blend built from `copysign` (see
-`max_of`/`min_of`/`ge_indicator`/`blend` in `numax/numeric.mojo`).
+`max_of`/`min_of`/`ge_indicator`/`blend` in `numax/core/numeric.mojo`).
 
 The cost is accuracy at the extremes of a domain (documented per
 function); the benefit is that **every kernel here is launchable inside
 a GPU thread unmodified**. Adaptive-tolerance variants are deliberately
 out of scope, not missing.
 
-## The `numax.tensor` layer
+## The `numax.core.tensor` layer
 
-[`numax/tensor.mojo`](../numax/tensor.mojo) drives a `FloatLike` kernel
+[`numax/core/tensor.mojo`](../numax/core/tensor.mojo) drives a `FloatLike` kernel
 across MAX's `TileTensor` -- the same tensor type used for both CPU- and
 GPU-resident data -- instead of a hand-rolled pointer loop. CPU or GPU
 is picked with one `gpu: Bool` compile-time parameter rather than two
 differently-named functions.
 
 ```mojo
-from numax.tensor import map
+from numax.core.tensor import map
 
 def gaussian_step[w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return gaussian(Plain[dtype, w](x)).v
@@ -172,17 +203,17 @@ Modules that fill NumPy/SciPy-shaped gaps, each picked because MAX ships no
 usable equivalent. [`parity.md`](parity.md) has the disposition table and the
 survey of what MAX does ship.
 
-- **`numax.array`** — creation and manipulation over a `Tensor` that owns its
+- **`numax.core.array`** — creation and manipulation over a `Tensor` that owns its
   storage, because a bare `TileTensor` is a view and dangles once the function
   that built it returns. The storage is a MAX `DeviceBuffer`, so the
   `DeviceContext` passed to a factory decides host or device memory and
   `.view()` yields the same `TileTensor` either way. Element access goes
   through `to_host`/`copy_from_host`: on CUDA `unsafe_ptr()` returns a device
   pointer and a host read segfaults.
-- **`numax.ops`, `numax.elementwise`, `numax.logic`** — arithmetic and
+- **`numax.core.ops`, `numax.core.elementwise`, `numax.core.logic`** — arithmetic and
   operators on `Tensor`, the elementwise math surface, and comparisons
   returning `Tensor[DType.bool]`. `Plain`-only, tier 2.
-- **`numax.statistics`** — whole-tensor reductions, with `argmax`/`argmin`
+- **`numax.stats`** — whole-tensor reductions, with `argmax`/`argmin`
   routed to `nn.argmaxmin`. `mean`/`variance`/`stddev`/`cumsum` also have a
   `FloatLike`-generic form over `List[T]`, so calling them at `Compensated`
   recovers precision a long summation loses at `Plain` — the one place this
@@ -190,13 +221,13 @@ survey of what MAX does ship.
 - **`numax.linalg`** — small dense linear algebra, `FloatLike`-generic. The
   point is differentiability, not speed: MAX's `matmul` and `qr_factorization`
   are monomorphic in a raw `dtype`, so no `Dual` passes through them.
-- **`numax.io`, `numax.random`** — a binary format of numax's own, since MAX
+- **`numax.io`, `numax.stats.random`** — a binary format of numax's own, since MAX
   ships no array I/O; and sampling over `std.random` on the host, with no
   `Random[FloatLike]` conformer because RNG is not differentiable.
 
 ## Static and runtime shapes
 
-`numax.tensor`'s walks originally required `all_dims_known`, because they
+`numax.core.tensor`'s walks originally required `all_dims_known`, because they
 flatten with `TileTensor.coalesce()` and `coalesce()` is itself constrained
 to statically-shaped storage. That is what a GPU launch needs: a kernel
 reaching `enqueue_function` must have its entire type resolved before the

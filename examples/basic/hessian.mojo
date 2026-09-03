@@ -8,7 +8,7 @@ e_k` reads off one column of the Hessian, so `n` calls (or one call per
 column, here two) assemble the whole matrix -- while a general `u` gives a
 Hessian-vector product with no matrix formed at all.
 
-Neither `numax/dual.mojo` nor `numax/gradient.mojo` has a line of code
+Neither `numax/core/dual.mojo` nor `numax/core/gradient.mojo` has a line of code
 about second derivatives. This works because both are written against
 `Inner: FloatLike` rather than against `SIMD`, so each one's chain rule
 composes with whatever the other does.

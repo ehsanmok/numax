@@ -1,4 +1,4 @@
-"""`numax.statistics`: NumPy-named statistics, `Plain`-only and `FloatLike`.
+"""`numax.stats`: NumPy-named statistics, `Plain`-only and `FloatLike`.
 
 The `Plain`-only, `TileTensor`-based half (`sum`/`prod`/`min`/`max`/`mean`/
 `median`/`mode`/`argmax`/`argmin`/`cumprod`) is axis-2 parity surface, the
@@ -6,7 +6,7 @@ same shape as `basic/array_creation.mojo`. `argmax`/`argmin` route straight
 to MAX's own `nn.argmaxmin` rather than reimplementing comparison logic.
 
 The `FloatLike`-generic half (`mean`/`variance`/`stddev`/`cumsum`, over a
-`List[T]` rather than a `TileTensor` -- see `numax/statistics.mojo`'s own
+`List[T]` rather than a `TileTensor` -- see `numax/stats/statistics.mojo`'s own
 docstring for why) is where axis 1 shows up: calling `variance` at
 `Compensated` instead of `Plain` keeps a long running sum in extra
 precision, which this example demonstrates directly rather than just
@@ -18,8 +18,8 @@ from std.math import sin
 
 from max.gpu.host import DeviceContext
 from numax import Compensated, Plain
-from numax.array import full
-from numax.statistics import (
+from numax.core.array import full
+from numax.stats import (
     argmax,
     argmin,
     cumprod,

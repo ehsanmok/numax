@@ -7,10 +7,10 @@ itself). `Plain`, `Dual`, and `Compensated` are all built entirely from
 `SIMD` lanes already on the device side, with no pointers or allocations of
 their own, so none of them need any changes to be used inside a kernel body:
 `gaussian` itself, and every `FloatLike` type it's called with here, are
-exactly the same code imported from `numax.special`, `numax.plain`,
-`numax.dual`, and `numax.compensated` as the CPU example uses.
+exactly the same code imported from `numax.special`, `numax.core.plain`,
+`numax.core.dual`, and `numax.core.compensated` as the CPU example uses.
 
-The walk itself is `numax.tensor.map[gpu=True]`, launched once per element
+The walk itself is `numax.core.tensor.map[gpu=True]`, launched once per element
 via `DeviceContext.enqueue_function` -- one GPU thread per element, since
 GPU parallelism comes from thread count rather than per-thread SIMD
 registers (unlike the CPU example's `map[gpu=False]`, which vectorizes
@@ -18,7 +18,7 @@ within a thread). Same function, same `step` shape ("`wrap` -> kernel ->
 `unwrap`" composed inline) as the CPU example, over a `DeviceBuffer`-backed
 `TileTensor` instead of a `List`-backed one -- picked with one `gpu: Bool`
 compile-time parameter rather than a separate name (see
-`numax/tensor.mojo`'s module docstring for why `step` has to stay `thin` on
+`numax/core/tensor.mojo`'s module docstring for why `step` has to stay `thin` on
 both paths for that to work through `enqueue_function`).
 
 `Compensated.exp()` used to be excluded here because its Taylor-series
@@ -26,13 +26,13 @@ coefficients were built as an `Array[Float64, ...]` at runtime, and Apple's
 Metal backend has no float64 support at all (CUDA does, which is exactly
 why testing only there would have hidden this).
 That's fixed now: the coefficients are split into `dtype`-native hi/lo pairs
-at compile time (see `_split_f64` in `numax/compensated.mojo`), so no
+at compile time (see `_split_f64` in `numax/core/compensated.mojo`), so no
 float64 arithmetic or storage reaches device code, on Metal or anywhere
 else.
 
 The last section reruns the plain pass over a rank-3 `TileTensor` (same
 `n` elements, reshaped) to check that `map[gpu=True]`'s internal
-`.coalesce()` (see `numax/tensor.mojo`) produces the same result on the
+`.coalesce()` (see `numax/core/tensor.mojo`) produces the same result on the
 device as it does on the rank-1 layout above -- no manual flattening
 needed at either the CPU or GPU call site.
 """
@@ -43,7 +43,7 @@ from max.gpu.host import DeviceContext
 from std.math import exp
 
 from numax import Compensated, Dual, Plain, gaussian
-from numax.tensor import map
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 comptime n = 4096

@@ -26,8 +26,8 @@ from max.gpu.host import DeviceContext
 from std.math import exp as exp_f64
 
 from numax import Dual, FloatLike, Plain
-from numax.ode import rk4
-from numax.tensor import map
+from numax.integrate import rk4
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 comptime n = 1024
