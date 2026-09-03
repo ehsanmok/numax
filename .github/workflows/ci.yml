@@ -2,29 +2,35 @@ name: CI
 
 # Prose-only changes cannot break the build, so they do not spend a matrix of
 # macOS and Linux runners. Mojo docstrings live in .mojo files and are still
-# covered: `**.md` and `docs/` are markdown and images only.
+# covered: the ignored globs are markdown and images only.
 on:
   push:
     branches: [main]
     paths-ignore:
-      - '**.md'
-      - '**.png'
-      - '**.svg'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
       - 'docs/**'
       - 'LICENSE'
   pull_request:
     branches: [main]
     paths-ignore:
-      - '**.md'
-      - '**.png'
-      - '**.svg'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
       - 'docs/**'
       - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     # pixi.toml supports osx-arm64, linux-64 and linux-aarch64; these are the
-    # two GitHub hosts a public runner covers (macos-14 is Apple Silicon).
+    # two GitHub hosts a public runner covers (the macOS image is Apple
+    # Silicon).
     # The library was developed on macOS, so Linux is the platform most likely
     # to drift without a job here -- the CPU library, the examples and the
     # accuracy harness are all platform-independent code that had never been
@@ -35,16 +41,52 @@ jobs:
       # platforms broke is the whole question a matrix is here to answer.
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest]
+        # macOS is pinned to `macos-15` rather than tracking `macos-14`:
+        # the older image hits a Mojo-runtime segfault inside
+        # `libKGENCompilerRTShared.dylib` that the sibling flare repo
+        # documents, and macos-15 matches the SDK this library is
+        # developed against.
+        os: [macos-15, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: prefix-dev/setup-pixi@v0.8.1
+      - uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          cache: true
+          # Only solve + install the lean runtime env: `dev` (pre-commit),
+          # `bench-python` (NumPy/MLX/PyTorch) and `bench-rust` (a Rust
+          # toolchain) are contributor-only tooling this job never touches.
+          # `pixi-version` is intentionally unpinned -- unlike the sibling
+          # flare repo, numax's manifest declares `requires-pixi = ">=0.76"`,
+          # so the old pixi that repo pins for its 0.3.13 build backend
+          # cannot even parse this one.
+          environments: default
+          # Install straight from the committed pixi.lock; never re-solve
+          # conda-forge in CI (the network solve is flaky). Fails loudly
+          # if the lock has drifted from pixi.toml.
+          locked: true
+          cache: false
+          post-cleanup: false
 
       - name: Run unit tests
-        run: pixi run tests
+        # The Mojo runtime segfaults transiently inside
+        # `libKGENCompilerRTShared` on a fresh process before any user code
+        # runs; the next invocation succeeds. Retry up to three times so the
+        # job only fails when the crash is stable rather than flaky. `set +e`
+        # is deliberate so the loop can observe a non-zero exit.
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            echo "── tests attempt $attempt/3 ──"
+            pixi run tests
+            rc=$?
+            if [ $rc -eq 0 ]; then
+              exit 0
+            fi
+            echo "── attempt $attempt failed (rc=$rc), retrying ──"
+            sleep 5
+          done
+          echo "── all 3 attempts failed (rc=$rc) ──"
+          exit $rc
 
       - name: Run CPU examples
         run: pixi run examples-cpu

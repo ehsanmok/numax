@@ -4,17 +4,17 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**.md'
-      - '**.png'
-      - '**.svg'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
       - 'docs/**'
       - 'LICENSE'
   pull_request:
     branches: [main]
     paths-ignore:
-      - '**.md'
-      - '**.png'
-      - '**.svg'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
       - 'docs/**'
       - 'LICENSE'
   workflow_dispatch:
@@ -35,7 +35,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # mojodoc's pixi-build-backend pin ("pixi-build-rattler-build
       # ==0.3.13") is incompatible with numax's (">=0.4"), and the
@@ -55,7 +55,11 @@ jobs:
           # Install via the system package manager + npm instead.
           sudo apt-get update && sudo apt-get install -y nodejs npm
           sudo npm install -g pnpm
-          pnpm install --frozen-lockfile
+          # `--no-frozen-lockfile` because mojodoc's .gitignore excludes
+          # pnpm-lock.yaml, so a fresh clone has no lockfile and pnpm's
+          # CI default (frozen) fails with ERR_PNPM_NO_LOCKFILE. Commit
+          # the lockfile upstream and this can go back to frozen.
+          pnpm install --no-frozen-lockfile
           pnpm run build
           ls packages/cli/dist/index.js
 
@@ -63,11 +67,20 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.9.4
         with:
           environments: dev
+          # Install straight from the committed pixi.lock; never re-solve
+          # conda-forge in CI (the network solve is flaky). Fails loudly
+          # if the lock has drifted from pixi.toml.
+          locked: true
           cache: false
           post-cleanup: false
 
       - name: Generate docs with mojodoc
-        run: pixi run -e dev docs-build
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: pixi run -e dev docs-build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
