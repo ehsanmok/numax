@@ -79,8 +79,8 @@ from numax import (
     legendre_p,
     lgamma,
 )
-from numax.lambertw import lambertw_m1
-from numax.numeric import default_erf_approx
+from numax.special.lambertw import lambertw_m1
+from numax.core.numeric import default_erf_approx
 
 from reference_data import *
 

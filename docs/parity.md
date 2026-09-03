@@ -64,18 +64,18 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 
 | Area | Home | Notes |
 |---|---|---|
-| Array creation and manipulation | `numax/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` |
-| Elementwise math | `numax/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
-| Arithmetic and operators | `numax/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
-| Comparison and logic | `numax/logic.mojo` | Truth is a `Tensor[DType.bool]`, so a comparison composes with `logical_and` |
-| Statistics | `numax/statistics.mojo` | `variance`/`stddev`/`cumsum`/`mean` are `FloatLike`-generic — at `Compensated` they match a float64 reference where `Plain` drifts. `argmin`/`argmax` route into `nn.argmaxmin` |
-| Sorting, searching, masking | `numax/sorting.mojo` | Tier 2. `argsort` routes into `nn.argsort`; the rest walk a host copy, where `std.builtin.sort` is the better route |
-| Small dense linalg | `numax/linalg.mojo` | `FloatLike`-generic over comptime `Array[T, n*n]`. Differentiability is the point; MAX's `matmul` is the call past ~8x8 |
-| Root finding and minimization | `numax/solve.mojo`, `numax/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2) |
-| Quadrature and ODE | `numax/quadrature.mojo`, `numax/ode.mojo`, `numax/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2 |
-| Transforms and signal | `numax/fft.mojo`, `numax/signal.mojo` | Power-of-two by construction. MAX has no forward FFT to route to |
-| Tensor I/O | `numax/io.mojo` | numax's own `NMX1` binary format; MAX ships no array I/O to interchange with |
-| Random sampling | `numax/random.mojo` | Over `std.random` on the host. No `Random[FloatLike]` conformer: RNG is not differentiable, so the trait contract does not fit |
+| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` |
+| Elementwise math | `numax/core/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
+| Arithmetic and operators | `numax/core/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
+| Comparison and logic | `numax/core/logic.mojo` | Truth is a `Tensor[DType.bool]`, so a comparison composes with `logical_and` |
+| Statistics | `numax/stats/statistics.mojo` | `variance`/`stddev`/`cumsum`/`mean` are `FloatLike`-generic — at `Compensated` they match a float64 reference where `Plain` drifts. `argmin`/`argmax` route into `nn.argmaxmin` |
+| Sorting, searching, masking | `numax/core/sorting.mojo` | Tier 2. `argsort` routes into `nn.argsort`; the rest walk a host copy, where `std.builtin.sort` is the better route |
+| Small dense linalg | `numax/linalg/linalg.mojo` | `FloatLike`-generic over comptime `Array[T, n*n]`. Differentiability is the point; MAX's `matmul` is the call past ~8x8 |
+| Root finding and minimization | `numax/optimize/solve.mojo`, `numax/optimize/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2) |
+| Quadrature and ODE | `numax/integrate/quadrature.mojo`, `numax/integrate/ode.mojo`, `numax/integrate/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2 |
+| Transforms and signal | `numax/fft/fft.mojo`, `numax/signal/signal.mojo` | Power-of-two by construction. MAX has no forward FFT to route to |
+| Tensor I/O | `numax/io/io.mojo` | numax's own `NMX1` binary format; MAX ships no array I/O to interchange with |
+| Random sampling | `numax/stats/random.mojo` | Over `std.random` on the host. No `Random[FloatLike]` conformer: RNG is not differentiable, so the trait contract does not fit |
 
 Three names differ from NumPy's because Mojo will not allow them: `var` is a
 keyword and `std` is the standard library's package (hence `variance`,
@@ -84,7 +84,7 @@ keyword and `std` is the standard library's package (hence `variance`,
 ### Not absorbed
 
 A separate complex array type — `Complex` composes into every kernel already.
-A `Backend` trait — the `gpu: Bool` parameter on `numax.tensor.map` covers the
+A `Backend` trait — the `gpu: Bool` parameter on `numax.core.tensor.map` covers the
 same ground with no dispatch. ML primitives — `nn` ships softmax,
 normalization, convolution and pooling, tuned, on both backends.
 
@@ -101,7 +101,7 @@ anything whose extent depends on a value — `reshape` to a computed shape, a
 boolean mask, a right-sized `unique` — comes back as a full-length result plus
 a count. Strided views, general broadcasting, slicing and fancy indexing all
 wait on a runtime-shape owner, since a view over a slice is not row-major and
-every driver in `numax.tensor` requires that it is.
+every driver in `numax.core.tensor` requires that it is.
 
 What exists instead: `map`/`reduce` have runtime-shape overloads selected by a
 `where` clause that is the exact negation of the static one, so a

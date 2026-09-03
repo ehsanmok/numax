@@ -30,7 +30,7 @@ from std.collections import Array
 
 from numax import Dual, FloatLike, Gradient, Plain
 from numax.optimize import bfgs, brentq, newton_tol
-from numax.solve import newton
+from numax.optimize import newton
 
 comptime P = Plain[DType.float64, 1]
 comptime G = Gradient[P, 2]
@@ -95,7 +95,7 @@ def main() raises:
 
     # Tier 1: fixed 20 Newton steps, GPU-launchable, no convergence test.
     var tier1 = newton[P, cos_minus_x](P.constant(0.5))
-    print("numax.solve.newton  (tier 1, fixed 20 steps) =", Float64(tier1.v))
+    print("numax.optimize.newton  (tier 1, fixed 20 steps) =", Float64(tier1.v))
 
     # Tier 2: the same mathematics, iterating until the step is tiny, and
     # reporting whether it got there.

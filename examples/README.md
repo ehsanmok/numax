@@ -15,8 +15,8 @@ Single-feature entry points -- one concept per file.
 
 | File | What it shows |
 |---|---|
-| [gaussian.mojo](basic/gaussian.mojo) | `Plain` / `Dual` / `Compensated` three ways, via `numax.tensor.map` at native SIMD width, checked against a reference. |
-| [array_creation.mojo](basic/array_creation.mojo) | `numax.array`'s NumPy-named creation (`zeros`/`ones`/`full`/`eye`/`linspace`) and manipulation (`transpose`/`squeeze`/`stack`) surface over `TileTensor`. |
+| [gaussian.mojo](basic/gaussian.mojo) | `Plain` / `Dual` / `Compensated` three ways, via `numax.core.tensor.map` at native SIMD width, checked against a reference. |
+| [array_creation.mojo](basic/array_creation.mojo) | `numax.core.array`'s NumPy-named creation (`zeros`/`ones`/`full`/`eye`/`linspace`) and manipulation (`transpose`/`squeeze`/`stack`) surface over `TileTensor`. |
 | [activations.mojo](basic/activations.mojo) | Activations differentiated via `Dual`, checked against their closed-form derivatives. |
 | [complex.mojo](basic/complex.mojo) | `Complex[Plain]` arithmetic, plus `Complex[Dual[Plain]]` differentiating `z^2` holomorphically. |
 | [gradient.mojo](basic/gradient.mojo) | `Gradient[Plain, 2]` recovering both partial derivatives of a two-variable kernel from one call. |
@@ -31,10 +31,10 @@ Multi-feature compositions -- more than one concept per file.
 | [softmax.mojo](intermediate/softmax.mojo) | Row-wise softmax on CPU and GPU, checked against each other and against each row summing to 1. |
 | [quadrature.mojo](intermediate/quadrature.mojo) | Root-finding from `f` alone, 8-point Gauss-Legendre against a 64-point uniform grid, and differentiating through an integral. |
 | [special_functions.mojo](intermediate/special_functions.mojo) | Every special function (erf, gamma, Bessel, Lambert W, elliptic integrals, orthogonal polynomials) differentiated via `Dual`. |
-| [statistics.mojo](intermediate/statistics.mojo) | `numax.statistics`'s `Plain`-only `TileTensor` surface (`sum`/`median`/`argmax`/...), plus `variance`/`stddev` at `Compensated` recovering precision a long summation would lose at `Plain`. |
+| [statistics.mojo](intermediate/statistics.mojo) | `numax.stats`'s `Plain`-only `TileTensor` surface (`sum`/`median`/`argmax`/...), plus `variance`/`stddev` at `Compensated` recovering precision a long summation would lose at `Plain`. |
 | [wave_packet.mojo](intermediate/wave_packet.mojo) | A 2-D Gaussian wave packet on a `meshgrid`: the density along a cut, the carrier recovered by counting sign changes of `Re psi`, and the packet's spread differentiated with respect to its own width -- `d<x^2>/d(sigma)` from the same kernel that computes `<x^2>`. |
 | [interference.mojo](intermediate/interference.mojo) | Two-source interference over a coordinate grid in one `map`, with the fringe maxima and their spacing measured down the far column, plus the far-field phase differentiated with respect to the slit separation. |
-| [random_ensemble.mojo](intermediate/random_ensemble.mojo) | `numax.random.uniform` drawing an ODE ensemble's initial conditions on CPU, versus `std.random.philox.Random` drawing them independently per GPU thread inside a `map[gpu=True]` kernel. Needs a GPU. |
+| [random_ensemble.mojo](intermediate/random_ensemble.mojo) | `numax.stats.uniform` drawing an ODE ensemble's initial conditions on CPU, versus `std.random.philox.Random` drawing them independently per GPU thread inside a `map[gpu=True]` kernel. Needs a GPU. |
 
 ## advanced/
 
@@ -42,9 +42,9 @@ GPU + ensembles -- needs the actual hardware.
 
 | File | What it shows |
 |---|---|
-| [gaussian_gpu.mojo](advanced/gaussian_gpu.mojo) | The same kernel and types as `basic/gaussian.mojo` run on GPU via `numax.tensor.map[gpu=True]`, no code changes versus the CPU example. |
+| [gaussian_gpu.mojo](advanced/gaussian_gpu.mojo) | The same kernel and types as `basic/gaussian.mojo` run on GPU via `numax.core.tensor.map[gpu=True]`, no code changes versus the CPU example. |
 | [ode.mojo](advanced/ode.mojo) | 1024 ODE trajectories, one GPU thread each, with solution sensitivities from the same integrator. |
-| [unified_tensor_gpu.mojo](advanced/unified_tensor_gpu.mojo) | One `numax.array.Tensor` type on both devices: the `DeviceContext` handed to the factory decides host or accelerator, `.view()` is the same `TileTensor` either way, and the two results agree to within one float32 ulp. |
+| [unified_tensor_gpu.mojo](advanced/unified_tensor_gpu.mojo) | One `numax.core.array.Tensor` type on both devices: the `DeviceContext` handed to the factory decides host or accelerator, `.view()` is the same `TileTensor` either way, and the two results agree to within one float32 ulp. |
 
 ## GPU note
 

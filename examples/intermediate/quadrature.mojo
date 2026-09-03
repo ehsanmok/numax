@@ -8,11 +8,11 @@ Two things this shows that a conventional numerics library can't:
    input.
 2. Running the *integrator* at `Dual` differentiates the integral itself.
    `d/db integral(f, a, b) = f(b)` comes out of the quadrature with no
-   special support for it anywhere in `numax.quadrature`.
+   special support for it anywhere in `numax.integrate`.
 
 The Gauss-Legendre nodes are themselves a small demonstration of the same
-composability: they're roots of a Legendre polynomial (`numax.legendre`)
-found by numax's own Newton solver (`numax.solve`) differentiating through
+composability: they're roots of a Legendre polynomial (`numax.special.legendre`)
+found by numax's own Newton solver (`numax.optimize`) differentiating through
 numax's own `Dual`, evaluated at compile time so none of that costs
 anything at run time.
 

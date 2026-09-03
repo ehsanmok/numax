@@ -17,7 +17,7 @@ is responsible, because the answer picks the fix:
 2. **The width x block sweep.** The current path is one element per
    thread: a scalar 4-byte load and a scalar 4-byte store per thread
    (`ys.store[1](Coord(i), step[1](xs.load[1](Coord(i))))` in
-   `numax/tensor.mojo`). A bandwidth-bound kernel usually can't saturate
+   `numax/core/tensor.mojo`). A bandwidth-bound kernel usually can't saturate
    at that access width, so `_coarse_map` below gives each thread `width`
    *consecutive* elements via one `load[width]`/`store[width]` pair, and
    sweeps that against `block_dim`. `numax` hardcodes `block_dim=256`
@@ -92,7 +92,7 @@ from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
 from numax import Plain, gaussian
-from numax.tensor import map
+from numax.core.tensor import map
 
 comptime dtype = DType.float32
 # Higher than the 3/10 the other benchmarks use: this one compares

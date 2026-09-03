@@ -314,8 +314,8 @@ chained ones.
 ## Threading: `map` vs `map_threaded`
 
 `pixi run bench-elementwise`, same machine and same `gaussian` kernel.
-`numax.tensor.map` walks the tensor on one thread at native SIMD width;
-`numax.tensor.map_threaded` hands the same `step` to
+`numax.core.tensor.map` walks the tensor on one thread at native SIMD width;
+`numax.core.tensor.map_threaded` hands the same `step` to
 `max.algorithm.elementwise[target="cpu"]`, which vectorizes *and*
 distributes across cores. Millions of elements/sec, higher is better.
 
@@ -395,7 +395,7 @@ reason isn't performance:
   `Compensated`, or a `Complex`. Differentiating a matmul is the entire
   reason `numax`'s exists.
 
-The practical guidance, now in `numax/linalg.mojo`'s docstring as well: if
+The practical guidance, now in `numax/linalg/linalg.mojo`'s docstring as well: if
 your entries are plain `dtype` and your matrix is bigger than about 8x8,
 call `max.linalg.matmul` directly — `numax` deliberately does not wrap it,
 since a pass-through adding no capability would just be a second name for
