@@ -53,7 +53,7 @@ from numax.linalg import cholesky          # or by subsystem
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`, `fftfreq`, `fftshift`, circular convolution |
 | `numax.signal` | `convolve`, `correlate`, Hann/Hamming/Blackman windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., and pdf/cdf/quantile for nine families, plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
-| `numax.io` | Binary `save`/`load` in numax's own `NMX1` format, `print_tensor` |
+| `numax.io` | NumPy `.npy` interchange (`npy_load`/`npy_save`, byte-identical to `numpy.save`), numax's own `NMX1` `save`/`load`, and `print_tensor` |
 
 ## The two tiers
 
@@ -346,3 +346,4 @@ from .stats.statistics import (
 
 # Tensor I/O -- `numax.io`.
 from .io.io import load, print_tensor, save
+from .io.npy import npy_load, npy_save

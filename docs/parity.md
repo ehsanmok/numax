@@ -74,7 +74,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 | Root finding and minimization | `numax/optimize/solve.mojo`, `numax/optimize/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2) |
 | Quadrature and ODE | `numax/integrate/quadrature.mojo`, `numax/integrate/ode.mojo`, `numax/integrate/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2 |
 | Transforms and signal | `numax/fft/fft.mojo`, `numax/signal/signal.mojo` | Power-of-two by construction. MAX has no forward FFT to route to |
-| Tensor I/O | `numax/io/io.mojo` | numax's own `NMX1` binary format; MAX ships no array I/O to interchange with |
+| Tensor I/O | `numax/io/io.mojo`, `numax/io/npy.mojo` | Two formats: numax's own `NMX1` for numax-to-numax round trips (MAX ships no array I/O at all), and NumPy's `.npy` for interchange -- `npy_save` output is byte-identical to `numpy.save`, and `npy_load` reads `numpy.save` output, with no Python or NumPy dependency since the format is self-contained. `.npz` is out: it is a zip container |
 | Random sampling | `numax/stats/random.mojo` | Over `std.random` on the host. No `Random[FloatLike]` conformer: RNG is not differentiable, so the trait contract does not fit |
 
 Three names differ from NumPy's because Mojo will not allow them: `var` is a

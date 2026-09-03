@@ -51,7 +51,9 @@ arithmetic. It works on every function in the library.
   changes, and `.view()` yields the `TileTensor` every MAX kernel takes.
 - **NumPy and SciPy's ground.** Special functions, dense linear algebra,
   quadrature, ODE solvers, FFTs, distributions, statistics, interpolation,
-  signal, tensor I/O and a NumPy-named array surface. Full inventory in
+  signal and a NumPy-named array surface — plus `.npy` read/write, so a
+  program ported from NumPy can ingest the files it already has and hand
+  results back the same way. Full inventory in
   [`docs/features.md`](docs/features.md).
 - **Fast, and measured, per processor.** On an A10G's GPU, 60,955 M elem/s
   against `torch.compile`'s 53,607, at ~83% of the card's bandwidth spec. On
@@ -244,7 +246,7 @@ function built on them inherits that floor — invisible at `float32`. Details:
 ## Testing
 
 ```bash
-pixi run tests           # 41 suites, 628 tests
+pixi run tests           # 42 suites, 638 tests
 pixi run examples-cpu    # every example that does not need a GPU
 pixi run bench           # map vs. a hand-rolled raw-SIMD loop
 pixi run accuracy        # max error per function vs. mpmath references

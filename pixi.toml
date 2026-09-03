@@ -190,6 +190,7 @@ test-array = "mojo -I . tests/core/test_array.mojo"
 test-statistics = "mojo -I . tests/stats/test_statistics.mojo"
 test-sorting = "mojo -I . tests/core/test_sorting.mojo"
 test-io = "mojo -I . tests/io/test_io.mojo"
+test-npy = "mojo -I . tests/io/test_npy.mojo"
 test-random = "mojo -I . tests/stats/test_random.mojo"
 test-floor-ceil-trunc = "mojo -I . tests/core/test_floor_ceil_trunc.mojo"
 test-logic = "mojo -I . tests/core/test_logic.mojo"
@@ -234,6 +235,7 @@ tests = { depends-on = [
     "test-statistics",
     "test-sorting",
     "test-io",
+    "test-npy",
     "test-random",
     "test-floor-ceil-trunc",
     "test-logic",
@@ -244,6 +246,7 @@ tests = { depends-on = [
 ] }
 example-gaussian = "mojo -I . examples/basic/gaussian.mojo"
 example-array-creation = "mojo -I . examples/basic/array_creation.mojo"
+example-npy-interop = "mojo -I . examples/basic/npy_interop.mojo"
 example-activations = "mojo -I . examples/basic/activations.mojo"
 example-gaussian-gpu = "mojo -I . examples/advanced/gaussian_gpu.mojo"
 example-softmax = "mojo -I . examples/intermediate/softmax.mojo"
@@ -272,6 +275,7 @@ examples = { depends-on = [
 examples-cpu = { depends-on = [
     "example-gaussian",
     "example-array-creation",
+    "example-npy-interop",
     "example-activations",
     "example-special-functions",
     "example-complex",

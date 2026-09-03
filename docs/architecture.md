@@ -222,8 +222,10 @@ survey of what MAX does ship.
   point is differentiability, not speed: MAX's `matmul` and `qr_factorization`
   are monomorphic in a raw `dtype`, so no `Dual` passes through them.
 - **`numax.io`, `numax.stats.random`** — a binary format of numax's own, since MAX
-  ships no array I/O; and sampling over `std.random` on the host, with no
-  `Random[FloatLike]` conformer because RNG is not differentiable.
+  ships no array I/O, plus NumPy `.npy` read/write for interchange, so a
+  program ported from NumPy can ingest the files it already has; and
+  sampling over `std.random` on the host, with no `Random[FloatLike]`
+  conformer because RNG is not differentiable.
 
 ## Static and runtime shapes
 

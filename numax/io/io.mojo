@@ -3,11 +3,12 @@
 `docs/parity.md` picks tensor I/O as a genuine `numax` gap: MAX ships
 no binary `TileTensor` I/O at all (verified by direct probe -- there is no
 `layout`-level save/load, and `max.algorithm.functional` exports only
-`elementwise`), and NumPy's own `.npy` format is a Python-ecosystem
-interchange format this project has no dependency on in its default
-environment (`pixi.toml`'s default feature is `mojo` + `max` only, no
-Python/NumPy). So this module is `numax`'s own round-trip format, not an
-interchange one -- `Plain`-only, axis 2, the same shape as `numax.core.array`.
+`elementwise`). This module is `numax`'s own round-trip format -- for
+NumPy interchange, `npy.mojo`'s `npy_save`/`npy_load` read and write
+`.npy` directly (no Python and no NumPy: the format is self-contained).
+`NMX1` is the better choice between numax programs, since it carries the
+dtype name in full and has no Python literal to parse. `Plain`-only, axis
+2, the same shape as `numax.core.array`.
 
 **Format.** 4-byte magic (`"NMX1"`), a length-prefixed UTF-8 dtype name
 (e.g. `"float32"` -- this is what `load` checks against the caller's
