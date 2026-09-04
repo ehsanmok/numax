@@ -38,9 +38,14 @@ obvious counterpart. Each one re-exports its own public surface, and this
 root package re-exports all of them, so both spellings work:
 
 ```mojo
+from numax.prelude import *                # the common surface, one line
 from numax import Dual, cholesky, quad     # flat, everything in one place
 from numax.linalg import cholesky          # or by subsystem
 ```
+
+`numax.prelude` leaves out the names that would shadow a Mojo builtin
+(`sum`, `min`, `max`, `abs`, `all`, `any`, `round`) so that a star import
+is safe; its own docstring lists them and where to reach them.
 
 | Subpackage | Contents |
 |---|---|

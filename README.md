@@ -79,7 +79,33 @@ numax = { git = "https://github.com/ehsanmok/numax.git", tag = "<latest-release>
 
 Requires [pixi](https://pixi.sh); `mojo` and `max` come in transitively.
 
+Working inside a clone rather than depending on the package? Every `mojo`
+invocation needs this directory on the import path: `pixi run mojo -I .
+examples/basic/npy_interop.mojo`, or `pixi run run examples/basic/npy_interop.mojo`,
+which supplies the `-I .` for you. The named tasks (`pixi run example-npy-interop`)
+already do.
+
 ## Getting started
+
+### One import
+
+`numax.prelude` is the surface most programs want, in one line:
+
+```mojo
+from numax.prelude import *
+
+def main() raises:
+    var xs = linspace[DType.float64, 5](0.0, 1.0)   # no DeviceContext to name
+    print(sqrt(xs))                                 # [0.0, 0.5, 0.7071, 0.866, 1.0]
+    print(mean(xs), median(xs))                     # 0.5 0.5
+    numpy.save(xs, "grid.npy")                      # numpy.load opens it
+```
+
+It deliberately leaves out the handful of names that would shadow a Mojo
+builtin — `sum`, `min`, `max`, `abs`, `all`, `any`, `round` — so a star
+import cannot break `min(1, 2)` in your own file. Those stay one explicit
+import away (`from numax.stats import sum`). `from numax import ...` is the
+full flat surface, and `from numax.linalg import ...` is one subsystem.
 
 About `Plain`, and whether it costs anything: `Plain[dtype, width]` wraps a `SIMD[dtype, width]`: Mojo declares conformance
 where a type is defined, so a bare `SIMD` cannot conform to `FloatLike` and

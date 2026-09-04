@@ -12,6 +12,7 @@ absorbs from NumPy/SciPy, routes to MAX, or leaves out, see
 [`parity.md`](parity.md). Rendered API docs:
 <https://ehsanmok.github.io/numax/>.
 
+- [One import: `numax.prelude`](#one-import-numaxprelude)
 - [The trait and its conformers](#the-trait-and-its-conformers)
 - [The two tiers](#the-two-tiers)
 - [`numax.core` — the tensor engine](#numaxcore--the-tensor-engine)
@@ -27,6 +28,30 @@ absorbs from NumPy/SciPy, routes to MAX, or leaves out, see
 - [`numax.io`](#numaxio)
 - [Where rank stops](#where-rank-stops)
 - [Accuracy](#accuracy)
+
+## One import: `numax.prelude`
+
+```mojo
+from numax.prelude import *
+```
+
+brings the conformers, `Tensor` with its creation and manipulation surface,
+the elementwise math and comparisons, `pi`/`e`, the `to_array`/`to_tensor`
+seam, and the entry points of `numax.special`, `numax.linalg`,
+`numax.stats`, `numax.integrate`, `numax.fft` and `numax.io` that a program
+reaches for first.
+
+What it leaves out, on purpose:
+
+| Excluded | Why | Reach it as |
+|---|---|---|
+| `sum`, `prod`, `min`, `max` | Shadow Mojo builtins. A module-level definition *replaces* the builtin for the importing file rather than overloading it, so a star import carrying them would break `min(1, 2)` in the caller's own code | `from numax.stats import sum` |
+| `abs`, `all`, `any`, `round`, `copysign` | Same | `from numax import abs` |
+| `norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` | The distribution namespaces: `gamma` and `beta` collide with the special functions of those names | `numax.stats.norm.cdf(...)` |
+
+`from numax import ...` is the full flat surface and `from numax.<sub>
+import ...` is one subsystem; the prelude is the convenience over both, not
+a replacement for either.
 
 ## The trait and its conformers
 

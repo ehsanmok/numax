@@ -156,6 +156,12 @@ bench-python = { features = ["bench-python"], no-default-feature = true }
 bench-rust = { features = ["bench-rust"], no-default-feature = true }
 
 [tasks]
+# `mojo` with this directory on the import path, so a file in a clone can be
+# run straight: `pixi run run examples/basic/npy_interop.mojo`. Every task
+# below spells the same `-I .` out; a bare `pixi run mojo <file>` does not
+# have it and cannot find `numax`.
+run = { cmd = "mojo -I . {{ file }}", args = ["file"] }
+
 test-dual = "mojo -I . tests/core/test_dual.mojo"
 test-compensated = "mojo -I . tests/core/test_compensated.mojo"
 test-special = "mojo -I . tests/special/test_special.mojo"
@@ -186,6 +192,7 @@ test-interp = "mojo -I . tests/interpolate/test_interp.mojo"
 test-fft = "mojo -I . tests/fft/test_fft.mojo"
 test-signal = "mojo -I . tests/signal/test_signal.mojo"
 test-interval = "mojo -I . tests/core/test_interval.mojo"
+test-prelude = "mojo -I . tests/test_prelude.mojo"
 test-array = "mojo -I . tests/core/test_array.mojo"
 test-bridge = "mojo -I . tests/core/test_bridge.mojo"
 test-statistics = "mojo -I . tests/stats/test_statistics.mojo"
@@ -232,6 +239,7 @@ tests = { depends-on = [
     "test-fft",
     "test-signal",
     "test-interval",
+    "test-prelude",
     "test-array",
     "test-bridge",
     "test-statistics",
