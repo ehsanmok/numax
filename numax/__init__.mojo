@@ -172,7 +172,6 @@ from .core.logic import (
     logical_or,
     logical_xor,
     not_equal,
-    to_mask,
 )
 from .core.numeric import FloatLike
 from .core.ops import (

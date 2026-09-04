@@ -157,6 +157,14 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         than staging a host write, so this is the cheap constructor on both
         paths.
 
+        Not available at `DType.bool`: `enqueue_memset` on a `bool` buffer
+        fails to compile under the pinned toolchain ("failed to run the
+        pass manager"), and neither does a `comptime if` around it, since
+        both branches are still type-checked and `Scalar[bool](0)` is
+        rejected on its own. Build a boolean mask from a `List` through the
+        constructor below, or get one from a `numax.core.logic` comparison,
+        which is where masks come from in practice.
+
         The `synchronize` is not optional: `enqueue_memset` only *queues*
         the fill, and `__getitem__`'s host-pointer fast path does not order
         itself against queued work the way a host mapping does. Without it,

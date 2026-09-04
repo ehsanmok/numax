@@ -32,7 +32,6 @@ from numax.core.logic import (
     logical_or,
     logical_xor,
     not_equal,
-    to_mask,
 )
 
 comptime dtype = DType.float32
@@ -137,12 +136,6 @@ def test_all_and_any() raises:
     assert_false(all(some_set))
     assert_true(any(some_set))
     assert_false(any(none_set))
-
-
-def test_to_mask_reads_nonzero_as_true() raises:
-    var a = _tensor[4]([0.0, 1.0, -2.0, 0.0])
-    var mask = to_mask(a).to_host()
-    assert_true(not mask[0] and mask[1] and mask[2] and not mask[3])
 
 
 def test_isclose_respects_both_tolerances() raises:

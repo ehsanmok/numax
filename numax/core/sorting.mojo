@@ -233,9 +233,9 @@ def nonzero[
 
 def extract[
     dtype: DType, *dims: Int
-](condition: Tensor[dtype, *dims], a: Tensor[dtype, *dims]) raises -> Tuple[
-    Tensor[dtype, _product[*dims]()], Int
-]:
+](
+    condition: Tensor[DType.bool, *dims], a: Tensor[dtype, *dims]
+) raises -> Tuple[Tensor[dtype, _product[*dims]()], Int]:
     """The elements of `a` where `condition` is nonzero, and how many.
     `numpy.extract` / `a[mask]`.
 
@@ -244,10 +244,11 @@ def extract[
     Packed into the first `count` entries of a full-length tensor, on the
     same terms as `unique`: **read only the first `count`**.
 
-    `condition` is a tensor of the same dtype rather than a separate
-    boolean type, and nonzero means true. That matches how the rest of
-    this module reads truthiness and avoids introducing a `Tensor[bool]`
-    that no `FloatLike` kernel could consume anyway.
+    `condition` is a `Tensor[DType.bool]` -- the type every comparison in
+    `numax.core.logic` already returns, so `extract(a > 0, a)` composes
+    without a conversion in between. A tensor of values becomes a mask with
+    `numax.core.ops.astype[DType.bool]`, which is nonzero-means-true and is
+    the one place that rule now lives.
     """
     comptime n = _product[*dims]()
     var mask = condition.to_host()
@@ -255,7 +256,7 @@ def extract[
     var out = List[Scalar[dtype]](length=n, fill=0)
     var count = 0
     for i in range(n):
-        if mask[i] != 0:
+        if mask[i]:
             out[count] = values[i]
             count += 1
     return (Tensor[dtype, n](a.context(), out^), count)
@@ -264,11 +265,11 @@ def extract[
 def select[
     dtype: DType, *dims: Int
 ](
-    condition: Tensor[dtype, *dims],
+    condition: Tensor[DType.bool, *dims],
     x: Tensor[dtype, *dims],
     y: Tensor[dtype, *dims],
 ) raises -> Tensor[dtype, *dims]:
-    """Elementwise select: `x` where `condition` is nonzero, `y` elsewhere.
+    """Elementwise select: `x` where `condition` is true, `y` elsewhere.
     `numpy.where(cond, x, y)`.
 
     Named `select` because `where` is a Mojo keyword -- it introduces the
@@ -296,5 +297,5 @@ def select[
     var y_values = y.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
-        out[i] = x_values[i] if mask[i] != 0 else y_values[i]
+        out[i] = x_values[i] if mask[i] else y_values[i]
     return Tensor[dtype, *dims](x.context(), out^)

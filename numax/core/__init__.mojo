@@ -124,7 +124,6 @@ from .logic import (
     logical_or,
     logical_xor,
     not_equal,
-    to_mask,
 )
 from .numeric import (
     FloatLike,

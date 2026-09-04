@@ -16,14 +16,15 @@ on a device.
 for a `Dual` derivative or a `Compensated` error term to carry.
 
 Truth is a `Tensor[DType.bool, *dims]`, not a same-dtype tensor of 0/1. That
-is what makes `greater(a, b)` compose with `logical_and` and read as a mask.
-`numax.core.sorting.extract`/`select` predate this module and take a same-dtype
-condition where nonzero means true; `to_mask` converts between the two.
+is what makes `greater(a, b)` compose with `logical_and`, and it is the type
+`numax.core.sorting.extract`/`select` take, so `select(a > b, x, y)` needs
+nothing in between. A tensor of values becomes a mask with
+`numax.core.ops.astype[DType.bool]`, which is where nonzero-means-true lives.
 
-Names: `all`/`any` are Mojo builtins and `where` is a keyword, so the
-reductions here are `all`/`any` and the selection stays
-`numax.core.sorting.select`. Same collision rule that produced `variance`,
-`stddev` and `any_nonzero`.
+Names: `where` is a Mojo keyword, so the selection stays
+`numax.core.sorting.select`. `all` and `any` shadow the builtins of those
+names in an importing file, which is the price `numpy`'s own spelling
+charges in Python too.
 """
 
 from std.math import (
@@ -291,17 +292,6 @@ def logical_not[
 ](a: Tensor[DType.bool, *dims]) raises -> Tensor[DType.bool, *dims]:
     """`not a`, elementwise. `numpy.logical_not`."""
     return _predicate[DType.bool, *dims, step=_not_step](a)
-
-
-def to_mask[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[DType.bool, *dims]:
-    """Nonzero-means-true, as a boolean tensor.
-
-    The bridge to `numax.core.sorting.extract`/`select`, which take a same-dtype
-    condition rather than a mask because they predate this module.
-    """
-    return _predicate[dtype, *dims, step=_nonzero_step[dtype, _]](a)
 
 
 def all[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:

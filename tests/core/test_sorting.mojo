@@ -40,6 +40,14 @@ def mk[n: Int](values: List[Float64]) raises -> Tensor[dtype, n]:
     return Tensor[dtype, n](ctx, elements^)
 
 
+def mk_mask[n: Int](values: List[Bool]) raises -> Tensor[DType.bool, n]:
+    var ctx = DeviceContext(api="cpu")
+    var elements = List[Scalar[DType.bool]](capacity=n)
+    for i in range(n):
+        elements.append(Scalar[DType.bool](values[i]))
+    return Tensor[DType.bool, n](ctx, elements^)
+
+
 # ------------------------------------------------------------------
 # sort / argsort
 # ------------------------------------------------------------------
@@ -244,7 +252,7 @@ def test_nonzero_length_matches_count_nonzero() raises:
 
 def test_extract_selects_where_the_mask_is_nonzero() raises:
     var ctx = DeviceContext(api="cpu")
-    var mask = mk[5]([0.0, 1.0, 0.0, 1.0, 1.0])
+    var mask = mk_mask[5]([False, True, False, True, True])
     var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
     var result = extract(mask, a)
     assert_equal(result[1], 3)
@@ -255,7 +263,7 @@ def test_extract_selects_where_the_mask_is_nonzero() raises:
 
 def test_extract_with_an_all_true_mask_returns_everything() raises:
     var ctx = DeviceContext(api="cpu")
-    var mask = mk[4]([1.0, 1.0, 1.0, 1.0])
+    var mask = mk_mask[4]([True, True, True, True])
     var a = mk[4]([9.0, 8.0, 7.0, 6.0])
     var result = extract(mask, a)
     assert_equal(result[1], 4)
@@ -265,21 +273,21 @@ def test_extract_with_an_all_true_mask_returns_everything() raises:
 
 def test_extract_with_an_all_false_mask_returns_nothing() raises:
     var ctx = DeviceContext(api="cpu")
-    var mask = mk[4]([0.0, 0.0, 0.0, 0.0])
+    var mask = mk_mask[4]([False, False, False, False])
     var a = mk[4]([9.0, 8.0, 7.0, 6.0])
     assert_equal(extract(mask, a)[1], 0)
 
 
 def test_extract_count_matches_the_masks_nonzero_count() raises:
     var ctx = DeviceContext(api="cpu")
-    var mask = mk[6]([1.0, 0.0, 2.0, 0.0, -1.0, 0.0])
+    var mask = mk_mask[6]([True, False, True, False, True, False])
     var a = mk[6]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     assert_equal(extract(mask, a)[1], count_nonzero(mask))
 
 
 def test_select_selects_elementwise() raises:
     var ctx = DeviceContext(api="cpu")
-    var mask = mk[5]([0.0, 1.0, 0.0, 1.0, 1.0])
+    var mask = mk_mask[5]([False, True, False, True, True])
     var x = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
     var y = mk[5]([9.0, 9.0, 9.0, 9.0, 9.0])
     var out = select(mask, x, y)
@@ -292,11 +300,13 @@ def test_select_preserves_the_input_shape() raises:
     var ctx = DeviceContext(api="cpu")
     # The one function here that is not flattening, because its output
     # length does not depend on the condition's values.
-    var mask = zeros[dtype, 2, 2](ctx)
+    var mask_values = List[Scalar[DType.bool]](capacity=4)
+    for i in range(4):
+        mask_values.append(Scalar[DType.bool](i % 2 == 1))
+    var mask = Tensor[DType.bool, 2, 2](ctx, mask_values^)
     var x = zeros[dtype, 2, 2](ctx)
     var y = zeros[dtype, 2, 2](ctx)
     for i in range(4):
-        mask[i] = Scalar[dtype](Float64(i % 2))
         x[i] = Scalar[dtype](1.0)
         y[i] = Scalar[dtype](2.0)
     var out = select(mask, x, y)
@@ -309,7 +319,7 @@ def test_select_preserves_the_input_shape() raises:
 def test_select_and_extract_agree_on_the_selected_values() raises:
     var ctx = DeviceContext(api="cpu")
     # extract(mask, a) should be the where-selected values, packed.
-    var mask = mk[6]([1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
+    var mask = mk_mask[6]([True, False, True, False, False, True])
     var a = mk[6]([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
     var extracted = extract(mask, a)
     var indices = nonzero(mask)
