@@ -1,5 +1,20 @@
 """Probability densities, cumulative distributions, and quantiles.
 
+Nine namespaces, spelled the way `scipy.stats` spells them -- `norm`,
+`expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` -- each
+carrying `.pdf` (or `.pmf`), `.cdf` and `.ppf`:
+
+```mojo
+from numax.stats import norm, chi2
+var p = norm.cdf(x, mu, sigma)
+var q = chi2.ppf(P(0.95), P(3.0))
+```
+
+`gamma` and `beta` are the *distributions*; `numax.special.gamma` and
+`numax.special.beta` are the functions they are named after. That is why
+these namespaces are reached through `numax.stats` and are not re-exported
+at the root.
+
 Almost none of this is new numerics. A distribution's CDF is nearly always
 a special function already in `numax` under a change of variables -- the
 gamma family is `gammainc`, the beta family (which includes Student-t, F,
@@ -8,15 +23,15 @@ here is composition, and the payoff is that every one of them inherits
 `Dual`-differentiability, `Compensated` precision, and GPU-launchability
 from the function underneath.
 
-`d/dx` of a CDF is the PDF, and evaluating any `*_cdf` here at `Dual`
+`d/dx` of a CDF is the PDF, and evaluating any `.cdf` here at `Dual`
 recovers exactly that, which is how `tests/stats/test_distributions.mojo` checks
 each pair against the other rather than against a table.
 
 ## Conventions
 
 - Shape parameters are `T` values, not `Int`s, so they can vary per SIMD
-  lane. That includes the discrete distributions' counts: `poisson_cdf`'s
-  `k` and `binomial_cdf`'s `n`/`k` are continuous extensions of the usual
+  lane. That includes the discrete distributions' counts: `poisson.cdf`'s
+  `k` and `binom.cdf`'s `n`/`k` are continuous extensions of the usual
   integer-argument definitions, which is what the underlying `gammaincc`
   and `betainc` compute anyway.
 - Densities are `0` outside their support rather than undefined, applied by
@@ -33,7 +48,7 @@ CDF, using the analytic PDF as the derivative. They do *not* go through
 `numax.optimize.newton`, and the reason is a real limitation worth naming:
 `solve`'s `f` is `def[U: FloatLike](U) thin -> U`, a non-capturing function
 required to be `thin` so a solver can be launched on GPU. A distribution's
-parameters have nowhere to live in that signature -- `beta_quantile(p, a,
+parameters have nowhere to live in that signature -- `beta.ppf(p, a,
 b)` would need `a` and `b` inside `f`, which a `thin` function cannot
 close over. Writing the loop locally also happens to be cheaper here, since
 the exact derivative is already in hand and doesn't need a `Dual` pass.
@@ -83,33 +98,39 @@ def _log_beta[T: FloatLike](a: T, b: T) -> T:
 # ---------------------------------------------------------------- normal
 
 
-def normal_pdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
-    """The normal density with mean `mu` and standard deviation `sigma`."""
-    var z = (x + (-mu)) / sigma
-    return (-(z * z) / T.constant(2.0)).exp() / (sigma * T.constant(_SQRT_2PI))
+struct norm:
+    """The normal (Gaussian) distribution. `scipy.stats.norm`."""
 
+    @staticmethod
+    def pdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
+        """The normal density with mean `mu` and standard deviation `sigma`."""
+        var z = (x + (-mu)) / sigma
+        return (-(z * z) / T.constant(2.0)).exp() / (
+            sigma * T.constant(_SQRT_2PI)
+        )
 
-def normal_cdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
-    """The normal CDF, as `0.5*erfc(-z/sqrt(2))`.
+    @staticmethod
+    def cdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
+        """The normal CDF, as `0.5*erfc(-z/sqrt(2))`.
 
-    Written with `erfc` rather than the equivalent `0.5*(1 + erf(z/sqrt2))`
-    on purpose: for `z` around `-6` the `erf` form is `0.5*(1 - 0.999...)`,
-    which cancels away most of its significant digits, while `erfc` returns
-    the small tail probability directly. `Plain.erfc` delegates to
-    `std.math`, so that accuracy is real rather than nominal.
-    """
-    var z = (x + (-mu)) / sigma
-    return T.constant(0.5) * (-(z / T.constant(_SQRT_2))).erfc()
+        Written with `erfc` rather than the equivalent `0.5*(1 + erf(z/sqrt2))`
+        on purpose: for `z` around `-6` the `erf` form is `0.5*(1 - 0.999...)`,
+        which cancels away most of its significant digits, while `erfc` returns
+        the small tail probability directly. `Plain.erfc` delegates to
+        `std.math`, so that accuracy is real rather than nominal.
+        """
+        var z = (x + (-mu)) / sigma
+        return T.constant(0.5) * (-(z / T.constant(_SQRT_2))).erfc()
 
-
-def normal_quantile[T: FloatLike](p: T, mu: T, sigma: T) -> T:
-    """The inverse normal CDF, for `0 < p < 1`."""
-    return mu + sigma * _standard_normal_quantile(p)
+    @staticmethod
+    def ppf[T: FloatLike](p: T, mu: T, sigma: T) -> T:
+        """The inverse normal CDF, for `0 < p < 1`."""
+        return mu + sigma * _standard_normal_quantile(p)
 
 
 def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
     """The standard normal quantile: an Abramowitz & Stegun 26.2.23 seed
-    (max error ~4.5e-4) refined by Newton against `normal_cdf`.
+    (max error ~4.5e-4) refined by Newton against `norm.cdf`.
 
     The seed is defined for the lower half only, so the upper half is
     handled by the symmetry `z(p) = -z(1-p)`, applied branchlessly: `q` is
@@ -138,12 +159,12 @@ def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
     var zero = T.constant(0.0)
     var one = T.one()
     for _ in range(num_iters):
-        var residual = normal_cdf(z.copy(), zero.copy(), one.copy())
+        var residual = norm.cdf(z.copy(), zero.copy(), one.copy())
         z = z + (
             -(
                 (residual + (-p))
                 / max_of(
-                    normal_pdf(z.copy(), zero.copy(), one.copy()),
+                    norm.pdf(z.copy(), zero.copy(), one.copy()),
                     T.constant(_TINY),
                 )
             )
@@ -155,262 +176,289 @@ def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
 # ----------------------------------------------------------- exponential
 
 
-def exponential_pdf[T: FloatLike](x: T, rate: T) -> T:
-    """`rate*exp(-rate*x)` on `x >= 0`, and `0` below it."""
-    var inside = rate * (-(rate * max_of(x, T.constant(0.0)))).exp()
-    return inside * ge_indicator(x, T.constant(0.0))
-
-
-def exponential_cdf[T: FloatLike](x: T, rate: T) -> T:
-    var inside = T.one() + (-(-(rate * max_of(x, T.constant(0.0)))).exp())
-    return inside * ge_indicator(x, T.constant(0.0))
-
-
-# ----------------------------------------------------------------- gamma
-
-
-def gamma_pdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
-    """The gamma density in the shape/scale parameterization.
-
-    Computed in log space, which is what keeps it usable for large `shape`:
-    the direct form needs `x^(shape-1)` and `Gamma(shape)` separately, and
-    both overflow long before their ratio does.
+struct expon:
+    """The exponential distribution, parameterized by `rate` (`1/scale`). `scipy.stats.expon`.
     """
-    var z = max_of(x, T.constant(0.0)) / scale
-    var log_density = (
-        (shape + (-T.one())) * _safe_ln(z)
-        + (-z)
-        + (-lgamma(shape.copy()))
-        + (-_safe_ln(scale))
-    )
-    return log_density.exp() * ge_indicator(x, T.constant(0.0))
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, rate: T) -> T:
+        """`rate*exp(-rate*x)` on `x >= 0`, and `0` below it."""
+        var inside = rate * (-(rate * max_of(x, T.constant(0.0)))).exp()
+        return inside * ge_indicator(x, T.constant(0.0))
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, rate: T) -> T:
+        var inside = T.one() + (-(-(rate * max_of(x, T.constant(0.0)))).exp())
+        return inside * ge_indicator(x, T.constant(0.0))
+
+    # ----------------------------------------------------------------- gamma
 
 
-def gamma_cdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
-    """The gamma CDF -- `gammainc` under the substitution `x/scale`."""
-    var z = max_of(x, T.constant(0.0)) / scale
-    return gammainc(shape.copy(), z^) * ge_indicator(x, T.constant(0.0))
-
-
-def gamma_quantile[
-    T: FloatLike, num_iters: Int = 12
-](p: T, shape: T, scale: T) -> T:
-    """The inverse gamma CDF, from a Wilson-Hilferty seed.
-
-    Wilson-Hilferty approximates the gamma as a cube-rooted normal, which
-    is accurate for `shape` above about 1 and increasingly rough below it.
-    The Newton refinement covers the difference; the seed is floored away
-    from zero because the cube can go negative for small `shape` and large
-    lower-tail `p`, and `ln` of a negative seed would poison the lane.
+struct gamma:
+    """The gamma distribution. `scipy.stats.gamma`. Distinct from `numax.special.gamma`, the function -- this is the distribution named after it.
     """
-    var z = _standard_normal_quantile(p.copy())
-    var a9 = T.constant(9.0) * shape
-    var base = T.one() + (-(T.one() / a9)) + z / a9.sqrt()
-    var seed = max_of(shape * base * base * base, T.constant(1e-6))
 
-    var x = seed * scale
-    for _ in range(num_iters):
-        var residual = gamma_cdf(x.copy(), shape.copy(), scale.copy())
-        var density = max_of(
-            gamma_pdf(x.copy(), shape.copy(), scale.copy()),
-            T.constant(_TINY),
+    @staticmethod
+    def pdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
+        """The gamma density in the shape/scale parameterization.
+
+        Computed in log space, which is what keeps it usable for large `shape`:
+        the direct form needs `x^(shape-1)` and `Gamma(shape)` separately, and
+        both overflow long before their ratio does.
+        """
+        var z = max_of(x, T.constant(0.0)) / scale
+        var log_density = (
+            (shape + (-T.one())) * _safe_ln(z)
+            + (-z)
+            + (-lgamma(shape.copy()))
+            + (-_safe_ln(scale))
         )
-        x = max_of(x + (-((residual + (-p)) / density)), T.constant(_TINY))
+        return log_density.exp() * ge_indicator(x, T.constant(0.0))
 
-    return x^
+    @staticmethod
+    def cdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
+        """The gamma CDF -- `gammainc` under the substitution `x/scale`."""
+        var z = max_of(x, T.constant(0.0)) / scale
+        return gammainc(shape.copy(), z^) * ge_indicator(x, T.constant(0.0))
 
+    @staticmethod
+    def ppf[T: FloatLike, num_iters: Int = 12](p: T, shape: T, scale: T) -> T:
+        """The inverse gamma CDF, from a Wilson-Hilferty seed.
 
-# ------------------------------------------------------------ chi-square
+        Wilson-Hilferty approximates the gamma as a cube-rooted normal, which
+        is accurate for `shape` above about 1 and increasingly rough below it.
+        The Newton refinement covers the difference; the seed is floored away
+        from zero because the cube can go negative for small `shape` and large
+        lower-tail `p`, and `ln` of a negative seed would poison the lane.
+        """
+        var z = _standard_normal_quantile(p.copy())
+        var a9 = T.constant(9.0) * shape
+        var base = T.one() + (-(T.one() / a9)) + z / a9.sqrt()
+        var seed = max_of(shape * base * base * base, T.constant(1e-6))
 
+        var x = seed * scale
+        for _ in range(num_iters):
+            var residual = gamma.cdf(x.copy(), shape.copy(), scale.copy())
+            var density = max_of(
+                gamma.pdf(x.copy(), shape.copy(), scale.copy()),
+                T.constant(_TINY),
+            )
+            x = max_of(x + (-((residual + (-p)) / density)), T.constant(_TINY))
 
-def chi2_pdf[T: FloatLike](x: T, df: T) -> T:
-    """Chi-square with `df` degrees of freedom -- gamma with
-    `shape = df/2`, `scale = 2`."""
-    return gamma_pdf(x, df / T.constant(2.0), T.constant(2.0))
+        return x^
 
-
-def chi2_cdf[T: FloatLike](x: T, df: T) -> T:
-    return gamma_cdf(x, df / T.constant(2.0), T.constant(2.0))
-
-
-def chi2_quantile[T: FloatLike](p: T, df: T) -> T:
-    return gamma_quantile(p, df / T.constant(2.0), T.constant(2.0))
-
-
-# ------------------------------------------------------------------ beta
-
-
-def beta_pdf[T: FloatLike](x: T, a: T, b: T) -> T:
-    """The beta density on `0 < x < 1`, and `0` outside it."""
-    var xc = min_of(max_of(x, T.constant(0.0)), T.one())
-    var log_density = (
-        (a + (-T.one())) * _safe_ln(xc)
-        + (b + (-T.one())) * _safe_ln(T.one() + (-xc))
-        + (-_log_beta(a, b))
-    )
-    var support = ge_indicator(x, T.constant(0.0)) * ge_indicator(
-        T.one(), x.copy()
-    )
-    return log_density.exp() * support
+    # ------------------------------------------------------------ chi-square
 
 
-def beta_cdf[T: FloatLike](x: T, a: T, b: T) -> T:
-    """The beta CDF -- `betainc` directly, clamped to its support."""
-    var xc = min_of(max_of(x, T.constant(0.0)), T.one())
-    return betainc(xc^, a, b)
+struct chi2:
+    """The chi-squared distribution. `scipy.stats.chi2`."""
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, df: T) -> T:
+        """Chi-square with `df` degrees of freedom -- gamma with
+        `shape = df/2`, `scale = 2`."""
+        return gamma.pdf(x, df / T.constant(2.0), T.constant(2.0))
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, df: T) -> T:
+        return gamma.cdf(x, df / T.constant(2.0), T.constant(2.0))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, df: T) -> T:
+        return gamma.ppf(p, df / T.constant(2.0), T.constant(2.0))
+
+    # ------------------------------------------------------------------ beta
 
 
-def beta_quantile[T: FloatLike, num_iters: Int = 20](p: T, a: T, b: T) -> T:
-    """The inverse beta CDF, Newton from the distribution's mean.
-
-    Each step is clamped back inside `(0, 1)`: Newton on a CDF that
-    saturates near both endpoints readily proposes a point outside the
-    support, and a clamped step is a bounded loss where an escaped one is
-    unrecoverable.
+struct beta:
+    """The beta distribution. `scipy.stats.beta`. Distinct from `numax.special.beta`, the function.
     """
-    var lo = T.constant(1e-8)
-    var hi = T.one() + (-lo)
-    var x = min_of(max_of(a / (a + b), lo.copy()), hi.copy())
 
-    for _ in range(num_iters):
-        var residual = beta_cdf(x.copy(), a.copy(), b.copy())
-        var density = max_of(
-            beta_pdf(x.copy(), a.copy(), b.copy()), T.constant(_TINY)
+    @staticmethod
+    def pdf[T: FloatLike](x: T, a: T, b: T) -> T:
+        """The beta density on `0 < x < 1`, and `0` outside it."""
+        var xc = min_of(max_of(x, T.constant(0.0)), T.one())
+        var log_density = (
+            (a + (-T.one())) * _safe_ln(xc)
+            + (b + (-T.one())) * _safe_ln(T.one() + (-xc))
+            + (-_log_beta(a, b))
         )
-        var proposal = x + (-((residual + (-p)) / density))
-        x = min_of(max_of(proposal^, lo.copy()), hi.copy())
-
-    return x^
-
-
-# ------------------------------------------------------------- Student-t
-
-
-def student_t_pdf[T: FloatLike](x: T, df: T) -> T:
-    var half = (df + T.one()) / T.constant(2.0)
-    var log_density = (
-        lgamma(half.copy())
-        + (-lgamma(df / T.constant(2.0)))
-        + (-T.constant(0.5) * (_safe_ln(df) + T.constant(_LN_PI)))
-        + (-half * (T.one() + x * x / df).ln())
-    )
-    return log_density.exp()
-
-
-def student_t_cdf[T: FloatLike](x: T, df: T) -> T:
-    """`P(T <= x)`, via the beta identity
-    `P(T <= x) = 1 - 0.5*I_z(df/2, 1/2)` for `x >= 0`, with
-    `z = df/(df + x^2)`.
-
-    The two halves are combined branchlessly by sign rather than by an
-    `if`, using `0.5 + 0.5*sign(x)*(1 - I_z)`: `z` depends on `x` only
-    through `x^2`, so both halves share one `betainc` call and the sign is
-    all that distinguishes them. At `x = 0` this gives `z = 1`,
-    `I_1 = 1`, and exactly `0.5`.
-    """
-    var z = df / (df + x * x)
-    var tail = betainc(z^, df / T.constant(2.0), T.constant(0.5))
-    var sign = T.one().copysign(x)
-    return T.constant(0.5) + T.constant(0.5) * sign * (T.one() + (-tail))
-
-
-def student_t_quantile[T: FloatLike, num_iters: Int = 12](p: T, df: T) -> T:
-    """The inverse Student-t CDF, Newton from the normal quantile.
-
-    The normal is the `df -> infinity` limit of the t, so it's a good seed
-    for large `df` and a merely-adequate one for small `df`, where the t's
-    heavier tails put the true quantile further out.
-    """
-    var x = _standard_normal_quantile(p.copy())
-
-    for _ in range(num_iters):
-        var residual = student_t_cdf(x.copy(), df.copy())
-        var density = max_of(
-            student_t_pdf(x.copy(), df.copy()), T.constant(_TINY)
+        var support = ge_indicator(x, T.constant(0.0)) * ge_indicator(
+            T.one(), x.copy()
         )
-        x = x + (-((residual + (-p)) / density))
+        return log_density.exp() * support
 
-    return x^
+    @staticmethod
+    def cdf[T: FloatLike](x: T, a: T, b: T) -> T:
+        """The beta CDF -- `betainc` directly, clamped to its support."""
+        var xc = min_of(max_of(x, T.constant(0.0)), T.one())
+        return betainc(xc^, a, b)
+
+    @staticmethod
+    def ppf[T: FloatLike, num_iters: Int = 20](p: T, a: T, b: T) -> T:
+        """The inverse beta CDF, Newton from the distribution's mean.
+
+        Each step is clamped back inside `(0, 1)`: Newton on a CDF that
+        saturates near both endpoints readily proposes a point outside the
+        support, and a clamped step is a bounded loss where an escaped one is
+        unrecoverable.
+        """
+        var lo = T.constant(1e-8)
+        var hi = T.one() + (-lo)
+        var x = min_of(max_of(a / (a + b), lo.copy()), hi.copy())
+
+        for _ in range(num_iters):
+            var residual = beta.cdf(x.copy(), a.copy(), b.copy())
+            var density = max_of(
+                beta.pdf(x.copy(), a.copy(), b.copy()), T.constant(_TINY)
+            )
+            var proposal = x + (-((residual + (-p)) / density))
+            x = min_of(max_of(proposal^, lo.copy()), hi.copy())
+
+        return x^
+
+    # ------------------------------------------------------------- Student-t
 
 
-# --------------------------------------------------------------------- F
+struct t:
+    """Student's t distribution. `scipy.stats.t`."""
 
-
-def f_pdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
-    """The F density with `df1` and `df2` degrees of freedom."""
-    var xc = max_of(x, T.constant(0.0))
-    var d1x = df1 * xc
-    var log_density = (
-        T.constant(0.5)
-        * (
-            df1 * _safe_ln(d1x)
-            + df2 * _safe_ln(df2)
-            + (-((df1 + df2) * _safe_ln(d1x + df2)))
+    @staticmethod
+    def pdf[T: FloatLike](x: T, df: T) -> T:
+        var half = (df + T.one()) / T.constant(2.0)
+        var log_density = (
+            lgamma(half.copy())
+            + (-lgamma(df / T.constant(2.0)))
+            + (-T.constant(0.5) * (_safe_ln(df) + T.constant(_LN_PI)))
+            + (-half * (T.one() + x * x / df).ln())
         )
-        + (-_safe_ln(xc))
-        + (-_log_beta(df1 / T.constant(2.0), df2 / T.constant(2.0)))
-    )
-    return log_density.exp() * ge_indicator(x, T.constant(0.0))
+        return log_density.exp()
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, df: T) -> T:
+        """`P(T <= x)`, via the beta identity
+        `P(T <= x) = 1 - 0.5*I_z(df/2, 1/2)` for `x >= 0`, with
+        `z = df/(df + x^2)`.
+
+        The two halves are combined branchlessly by sign rather than by an
+        `if`, using `0.5 + 0.5*sign(x)*(1 - I_z)`: `z` depends on `x` only
+        through `x^2`, so both halves share one `betainc` call and the sign is
+        all that distinguishes them. At `x = 0` this gives `z = 1`,
+        `I_1 = 1`, and exactly `0.5`.
+        """
+        var z = df / (df + x * x)
+        var tail = betainc(z^, df / T.constant(2.0), T.constant(0.5))
+        var sign = T.one().copysign(x)
+        return T.constant(0.5) + T.constant(0.5) * sign * (T.one() + (-tail))
+
+    @staticmethod
+    def ppf[T: FloatLike, num_iters: Int = 12](p: T, df: T) -> T:
+        """The inverse Student-t CDF, Newton from the normal quantile.
+
+        The normal is the `df -> infinity` limit of the t, so it's a good seed
+        for large `df` and a merely-adequate one for small `df`, where the t's
+        heavier tails put the true quantile further out.
+        """
+        var x = _standard_normal_quantile(p.copy())
+
+        for _ in range(num_iters):
+            var residual = t.cdf(x.copy(), df.copy())
+            var density = max_of(t.pdf(x.copy(), df.copy()), T.constant(_TINY))
+            x = x + (-((residual + (-p)) / density))
+
+        return x^
+
+    # --------------------------------------------------------------------- F
 
 
-def f_cdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
-    """The F CDF -- `betainc` at `z = df1*x/(df1*x + df2)`."""
-    var d1x = df1 * max_of(x, T.constant(0.0))
-    var z = d1x / (d1x + df2)
-    return betainc(
-        z^, df1 / T.constant(2.0), df2 / T.constant(2.0)
-    ) * ge_indicator(x, T.constant(0.0))
+struct f:
+    """The F distribution. `scipy.stats.f`."""
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
+        """The F density with `df1` and `df2` degrees of freedom."""
+        var xc = max_of(x, T.constant(0.0))
+        var d1x = df1 * xc
+        var log_density = (
+            T.constant(0.5)
+            * (
+                df1 * _safe_ln(d1x)
+                + df2 * _safe_ln(df2)
+                + (-((df1 + df2) * _safe_ln(d1x + df2)))
+            )
+            + (-_safe_ln(xc))
+            + (-_log_beta(df1 / T.constant(2.0), df2 / T.constant(2.0)))
+        )
+        return log_density.exp() * ge_indicator(x, T.constant(0.0))
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
+        """The F CDF -- `betainc` at `z = df1*x/(df1*x + df2)`."""
+        var d1x = df1 * max_of(x, T.constant(0.0))
+        var z = d1x / (d1x + df2)
+        return betainc(
+            z^, df1 / T.constant(2.0), df2 / T.constant(2.0)
+        ) * ge_indicator(x, T.constant(0.0))
+
+    # --------------------------------------------------------------- discrete
 
 
-# --------------------------------------------------------------- discrete
+struct poisson:
+    """The Poisson distribution. `scipy.stats.poisson`."""
+
+    @staticmethod
+    def pmf[T: FloatLike](k: T, rate: T) -> T:
+        """`P(X = k)` for a Poisson with mean `rate`.
+
+        `exp(k*ln(rate) - rate - lgamma(k+1))`: `lgamma(k+1)` is `ln(k!)`
+        extended to non-integer `k`, so this is the usual PMF wherever `k` is a
+        whole number and its standard continuous extension elsewhere.
+        """
+        var log_pmf = k * _safe_ln(rate) + (-rate) + (-lgamma(k + T.one()))
+        return log_pmf.exp() * ge_indicator(k, T.constant(0.0))
+
+    @staticmethod
+    def cdf[T: FloatLike](k: T, rate: T) -> T:
+        """`P(X <= k)`, which is exactly `gammaincc(k+1, rate)`.
+
+        Not an approximation of the sum -- the regularized upper incomplete
+        gamma equals that partial sum identically for integer `k`, which is
+        what makes a discrete CDF fall out of a continuous special function.
+        """
+        return gammaincc(
+            max_of(k, T.constant(0.0)) + T.one(), rate.copy()
+        ) * ge_indicator(k, T.constant(0.0))
 
 
-def poisson_pmf[T: FloatLike](k: T, rate: T) -> T:
-    """`P(X = k)` for a Poisson with mean `rate`.
+struct binom:
+    """The binomial distribution. `scipy.stats.binom`."""
 
-    `exp(k*ln(rate) - rate - lgamma(k+1))`: `lgamma(k+1)` is `ln(k!)`
-    extended to non-integer `k`, so this is the usual PMF wherever `k` is a
-    whole number and its standard continuous extension elsewhere.
-    """
-    var log_pmf = k * _safe_ln(rate) + (-rate) + (-lgamma(k + T.one()))
-    return log_pmf.exp() * ge_indicator(k, T.constant(0.0))
+    @staticmethod
+    def pmf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """`P(X = k)` for `n` trials with success probability `p`."""
+        var log_pmf = (
+            lgamma(n + T.one())
+            + (-lgamma(k + T.one()))
+            + (-lgamma(n + (-k) + T.one()))
+            + k * _safe_ln(p)
+            + (n + (-k)) * _safe_ln(T.one() + (-p))
+        )
+        var support = ge_indicator(k, T.constant(0.0)) * ge_indicator(
+            n, k.copy()
+        )
+        return log_pmf.exp() * support
 
-
-def poisson_cdf[T: FloatLike](k: T, rate: T) -> T:
-    """`P(X <= k)`, which is exactly `gammaincc(k+1, rate)`.
-
-    Not an approximation of the sum -- the regularized upper incomplete
-    gamma equals that partial sum identically for integer `k`, which is
-    what makes a discrete CDF fall out of a continuous special function.
-    """
-    return gammaincc(
-        max_of(k, T.constant(0.0)) + T.one(), rate.copy()
-    ) * ge_indicator(k, T.constant(0.0))
-
-
-def binomial_pmf[T: FloatLike](k: T, n: T, p: T) -> T:
-    """`P(X = k)` for `n` trials with success probability `p`."""
-    var log_pmf = (
-        lgamma(n + T.one())
-        + (-lgamma(k + T.one()))
-        + (-lgamma(n + (-k) + T.one()))
-        + k * _safe_ln(p)
-        + (n + (-k)) * _safe_ln(T.one() + (-p))
-    )
-    var support = ge_indicator(k, T.constant(0.0)) * ge_indicator(n, k.copy())
-    return log_pmf.exp() * support
-
-
-def binomial_cdf[T: FloatLike](k: T, n: T, p: T) -> T:
-    """`P(X <= k)`, which is `I_{1-p}(n-k, k+1)` -- the same
-    special-function-in-disguise relationship `poisson_cdf` has with the
-    incomplete gamma."""
-    var kc = min_of(max_of(k, T.constant(0.0)), n.copy())
-    # At `k = n` the first beta parameter is exactly `0`, where `betainc`
-    # is undefined and returns NaN -- and a NaN survives being multiplied
-    # by a `0` indicator, so the blend below can't clean it up afterwards.
-    # Flooring the parameter keeps that lane finite; the blend then
-    # discards it in favour of the exact answer, `P(X <= n) = 1`.
-    var trials_left = max_of(n + (-kc), T.constant(1e-8))
-    var upper = betainc(T.one() + (-p), trials_left^, kc + T.one())
-    return blend(ge_indicator(k, n.copy()), T.one(), upper^)
+    @staticmethod
+    def cdf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """`P(X <= k)`, which is `I_{1-p}(n-k, k+1)` -- the same
+        special-function-in-disguise relationship `poisson.cdf` has with the
+        incomplete gamma."""
+        var kc = min_of(max_of(k, T.constant(0.0)), n.copy())
+        # At `k = n` the first beta parameter is exactly `0`, where `betainc`
+        # is undefined and returns NaN -- and a NaN survives being multiplied
+        # by a `0` indicator, so the blend below can't clean it up afterwards.
+        # Flooring the parameter keeps that lane finite; the blend then
+        # discards it in favour of the exact answer, `P(X <= n) = 1`.
+        var trials_left = max_of(n + (-kc), T.constant(1e-8))
+        var upper = betainc(T.one() + (-p), trials_left^, kc + T.one())
+        return blend(ge_indicator(k, n.copy()), T.one(), upper^)

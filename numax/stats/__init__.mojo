@@ -1,13 +1,13 @@
 """numax.stats: descriptive statistics, distributions, and sampling.
 
 ```mojo
-from numax.stats import mean, variance, normal_cdf, uniform, seed
+from numax.stats import mean, variance, norm, uniform, seed
 ```
 
 | Module | Contents |
 |---|---|
 | `statistics` | `sum`, `mean`, `median`, `mode`, `prod`, `cumsum`, `cumprod`, `variance`, `stddev`, `min`/`max`, `argmin`/`argmax` |
-| `distributions` | pdf/cdf/quantile for normal, gamma, beta, chi-squared, Student t, F, exponential, binomial and Poisson |
+| `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with `.pdf`/`.pmf`, `.cdf` and `.ppf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed` |
 
 `mean`/`variance`/`stddev`/`cumsum` also have a `FloatLike`-generic form
@@ -23,29 +23,15 @@ are tier 1.
 """
 
 from .distributions import (
-    beta_cdf,
-    beta_pdf,
-    beta_quantile,
-    binomial_cdf,
-    binomial_pmf,
-    chi2_cdf,
-    chi2_pdf,
-    chi2_quantile,
-    exponential_cdf,
-    exponential_pdf,
-    f_cdf,
-    f_pdf,
-    gamma_cdf,
-    gamma_pdf,
-    gamma_quantile,
-    normal_cdf,
-    normal_pdf,
-    normal_quantile,
-    poisson_cdf,
-    poisson_pmf,
-    student_t_cdf,
-    student_t_pdf,
-    student_t_quantile,
+    norm,
+    expon,
+    gamma,
+    chi2,
+    beta,
+    t,
+    f,
+    poisson,
+    binom,
 )
 from .random import exponential, normal, randbool, randint, seed, uniform
 from .statistics import (

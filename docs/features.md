@@ -230,7 +230,7 @@ Tier 1; `numax.fft.circular_convolve` is the transform-domain route.
 | Area | Surface | Where |
 |---|---|---|
 | Reductions | `sum`, `prod`, `mean`, `median`, `mode`, `min`, `max`, `argmin`, `argmax`, `cumsum`, `cumprod`, `variance`, `stddev` | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
-| Distributions | pdf/pmf, cdf and (where defined) quantile for normal, gamma, beta, chi-squared, Student t, F, exponential, binomial and Poisson: `normal_pdf`/`normal_cdf`/`normal_quantile`, `gamma_*`, `beta_*`, `chi2_*`, `student_t_*`, `f_pdf`/`f_cdf`, `exponential_pdf`/`exponential_cdf`, `binomial_pmf`/`binomial_cdf`, `poisson_pmf`/`poisson_cdf` | [`stats/distributions.mojo`](../numax/stats/distributions.mojo) |
+| Distributions | Nine `scipy.stats`-shaped namespaces — `norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` — each with `.pdf` (or `.pmf`), `.cdf` and, where defined, `.ppf`. Reached as `numax.stats.norm.cdf(...)`; not re-exported at the root, where `gamma` and `beta` are the special functions | [`stats/distributions.mojo`](../numax/stats/distributions.mojo) |
 | Sampling | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed` | [`stats/random.mojo`](../numax/stats/random.mojo) |
 
 `mean`/`variance`/`stddev`/`cumsum` also have a `FloatLike`-generic form over

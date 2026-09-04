@@ -52,7 +52,7 @@ from numax.linalg import cholesky          # or by subsystem
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`, `fftfreq`, `fftshift`/`ifftshift`, circular convolution |
 | `numax.signal` | `convolve`, `correlate`, Hann/Hamming/Blackman windows |
-| `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., and pdf/cdf/quantile for nine families, plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
+| `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), numax's own `NMX1` `nmx.save`/`nmx.load`, and `print_tensor` |
 
 ## The two tiers
@@ -312,31 +312,11 @@ from .signal.signal import (
 )
 
 # Statistics, distributions, sampling -- `numax.stats`.
-from .stats.distributions import (
-    beta_cdf,
-    beta_pdf,
-    beta_quantile,
-    binomial_cdf,
-    binomial_pmf,
-    chi2_cdf,
-    chi2_pdf,
-    chi2_quantile,
-    exponential_cdf,
-    exponential_pdf,
-    f_cdf,
-    f_pdf,
-    gamma_cdf,
-    gamma_pdf,
-    gamma_quantile,
-    normal_cdf,
-    normal_pdf,
-    normal_quantile,
-    poisson_cdf,
-    poisson_pmf,
-    student_t_cdf,
-    student_t_pdf,
-    student_t_quantile,
-)
+# The nine distribution namespaces (`norm`, `gamma`, `beta`, `chi2`, `t`,
+# `f`, `expon`, `binom`, `poisson`) are reached as `numax.stats.norm` and
+# are deliberately not re-exported here: `gamma` and `beta` would collide
+# with the special functions of those names, and a root `t` or `f` names
+# nothing a reader could guess.
 from .stats.random import exponential, normal, randbool, randint, seed, uniform
 from .stats.statistics import (
     argmax,
