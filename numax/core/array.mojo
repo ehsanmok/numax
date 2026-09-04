@@ -132,9 +132,9 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
     that built this (`Tensor[dtype, 4, 4]` for a 4x4 matrix); `rank` and
     `num_elements` are derived from it at compile time.
 
-    Conforms to `Writable`, so `print(a)` works; `numax.io.print_tensor` is
-    the same output with the precision and truncation under the caller's
-    control.
+    Conforms to `Writable`, so `print(a)` works; `a.format(precision=8)`
+    is the same output with the precision and truncation under the
+    caller's control.
     """
 
     comptime layout = row_major[*Self.dims]()
@@ -260,12 +260,33 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         with self.buffer.map_to_host() as host:
             host[i] = value
 
-    def write_to(self, mut writer: Some[Writer]):
-        """`print(a)`, at `print_tensor`'s default settings.
+    def format(
+        self,
+        *,
+        precision: Int = 4,
+        threshold: Int = 1000,
+        edge_items: Int = 3,
+    ) raises -> String:
+        """`a`'s contents as a string, NumPy-`arrayprint`-shaped.
 
-        `numax.io.print_tensor` is the same output with `precision`,
-        `threshold` and `edge_items` under the caller's control; both go
-        through `_format_tensor` below, so the two cannot disagree.
+        `print(a)` is this at the defaults; call it directly when the
+        defaults are wrong -- `print(a.format(precision=8))`.
+
+        Every element is printed with `precision` digits after the decimal
+        point. Past `threshold` elements only the first and last
+        `edge_items` are shown with a `...` between them, the same
+        truncation NumPy's default printer applies. NumPy's line-wrapping
+        (`linewidth`) is not reproduced: this is one flat, comma-separated
+        line.
+        """
+        return _format_tensor(self, precision, threshold, edge_items)
+
+    def write_to(self, mut writer: Some[Writer]):
+        """`print(a)`, at `format`'s default settings.
+
+        `format` above is the same output with `precision`, `threshold`
+        and `edge_items` under the caller's control; both go through
+        `_format_tensor` below, so the two cannot disagree.
 
         `Writable.write_to` cannot raise, but reading the elements can --
         it is a device mapping. A failed read prints as `<unreadable>`

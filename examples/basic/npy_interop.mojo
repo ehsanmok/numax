@@ -35,7 +35,7 @@ literal to parse.
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Tensor
-from numax.io import numpy, print_tensor
+from numax.io import numpy
 
 comptime N_ROWS = 2
 comptime N_COLS = 3
@@ -73,7 +73,7 @@ def main() raises:
 
     var loaded = numpy.load[DType.float32, N_ROWS, N_COLS](f32_path, ctx=ctx)
     print("  values: ", end="")
-    print_tensor(loaded)
+    print(loaded)
 
     var original = xs.to_host()
     var values = loaded.to_host()
@@ -93,7 +93,7 @@ def main() raises:
     print("  header:", _header_of(f64_path))
     var f64_back = numpy.load[DType.float64, 4](f64_path, ctx=ctx)
     print("  values: ", end="")
-    print_tensor(f64_back, precision=6)
+    print(f64_back.format(precision=6))
 
     var i32_storage = List[Scalar[DType.int32]](capacity=4)
     for i in range(4):

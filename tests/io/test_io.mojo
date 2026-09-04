@@ -2,7 +2,7 @@
 
 `save`/`load` are checked for byte-identical round trips at rank 1, 2, and
 3, plus the header-validation failure modes (`load` raising on a dtype,
-rank, or shape mismatch against what the caller requests). `print_tensor`
+rank, or shape mismatch against what the caller requests). `Tensor.format`
 is checked against frozen expected strings via `_format_tensor` (the
 helper it's built on, which returns the formatted `String` instead of
 printing it directly) for a small array and an array over `threshold`
@@ -18,8 +18,8 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Tensor, _format_tensor, full
-from numax.io import nmx, print_tensor
+from numax.core.array import Tensor, full
+from numax.io import nmx
 
 comptime dtype = DType.float32
 comptime _TMP_DIR = "/tmp/numax_test_io"
@@ -133,31 +133,27 @@ def test_load_raises_on_bad_magic_bytes() raises:
     assert_true(raised, msg="load should raise on bad magic bytes")
 
 
-def test_print_tensor_matches_a_frozen_small_array_string() raises:
+def test_format_matches_a_frozen_small_array_string() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
-    var formatted = _format_tensor(xs, 2, 1000, 3)
     # 0.125 rounds half-away-from-zero to 0.13, not banker's-rounding 0.12.
-    assert_equal(formatted, "[1.5, -2.25, 3.0, 0.13]")
-    # `print_tensor` calls this same helper before printing it, so exercise
-    # the public entry point too, even though its stdout isn't captured.
-    print_tensor(xs, precision=2)
+    assert_equal(xs.format(precision=2), "[1.5, -2.25, 3.0, 0.13]")
 
 
-def test_print_tensor_truncates_arrays_over_threshold() raises:
+def test_format_truncates_arrays_over_threshold() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, 20](Scalar[dtype](0), ctx=ctx)
     var v = xs.view()
     for i in range(20):
         v[i] = Scalar[dtype](i)
-    var formatted = _format_tensor(xs, 4, 10, 2)
-    assert_equal(formatted, "[0.0, 1.0, ..., 18.0, 19.0]")
-    print_tensor(xs, threshold=10, edge_items=2)
+    assert_equal(
+        xs.format(threshold=10, edge_items=2), "[0.0, 1.0, ..., 18.0, 19.0]"
+    )
 
 
-def test_writable_matches_print_tensor_defaults() raises:
+def test_print_matches_format_defaults() raises:
     var xs = _fixed_1d()
-    assert_equal(String(xs), _format_tensor(xs, 4, 1000, 3))
+    assert_equal(String(xs), xs.format())
 
 
 def main() raises:

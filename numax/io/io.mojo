@@ -23,20 +23,17 @@ comptime-shape contract), and `nmx.load` raises if the file's header doesn't
 match them exactly, rather than inferring a shape from the file the way a
 dynamically-shaped reader would.
 
-**`print_tensor`, not `print`.** A function named `print` can be defined
-here without a parser error (unlike `def std(...)`/`def var(...)`
-elsewhere in `numax`, which collide with a keyword and a package name
-respectively) -- `print` is an ordinary overloadable builtin, and adding
-another overload compiles fine. It is named `print_tensor` anyway, to
-avoid a caller ever wondering whether a `print(...)` call in a file that
-imports `numax.io` resolved to this overload or the builtin one.
+**No printing lives here.** `Tensor` conforms to `Writable`, so `print(a)`
+is the builtin doing its ordinary job, and `a.format(precision=8)` is the
+same output with the truncation and precision under the caller's control.
+Neither needs an import from this module.
 """
 
 from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor, _context, _format_tensor
+from ..core.array import Tensor, _context
 
 
 comptime _MAGIC = "NMX1"
@@ -168,26 +165,3 @@ struct nmx:
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
         return Tensor[dtype, *dims](_context(ctx), out_storage^)
-
-
-def print_tensor[
-    dtype: DType, *dims: Int
-](
-    a: Tensor[dtype, *dims],
-    *,
-    precision: Int = 4,
-    threshold: Int = 1000,
-    edge_items: Int = 3,
-) raises:
-    """Print `a`'s flat contents, NumPy-`arrayprint`-shaped but simplified.
-
-    Every element is printed with `precision` digits after the decimal
-    point. If `a` has more than `threshold` elements, only the first and
-    last `edge_items` are printed, with a `...` in between -- the same
-    truncation NumPy's own default printer applies to large arrays, though
-    without NumPy's line-wrapping (`linewidth`): this prints one flat,
-    comma-separated line rather than wrapping to a terminal width. Built on
-    `_format_tensor` below so the exact string this prints is also directly
-    testable (`tests/io/test_io.mojo` checks it against frozen fixtures).
-    """
-    print(_format_tensor(a, precision, threshold, edge_items))

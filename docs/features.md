@@ -100,6 +100,7 @@ segfaults a host read.
 |---|---|---|
 | Creation | `zeros`, `ones`, `full`, `empty`, `eye`, `identity`, `arange`, `linspace`, `logspace`, `geomspace`, `meshgrid`, `copy`, and the `*_like` forms (`zeros_like`, `ones_like`, `full_like`, `empty_like`) — every one takes its `DeviceContext` last and optional, so `zeros[f32, 2, 3]()` allocates on the host and `zeros[f32, 2, 3](gpu)` on a device | [`core/array.mojo`](../numax/core/array.mojo), [`array_creation.mojo`](../examples/basic/array_creation.mojo) |
 | Manipulation | `reshape`, `ravel`, `transpose`, `squeeze`, `flip`, `stack`, `vstack`, `hstack`, `concatenate`, `split` | [`core/array.mojo`](../numax/core/array.mojo) |
+| Printing | `print(a)` — `Tensor` conforms to `Writable`; `a.format(precision=8, threshold=..., edge_items=...)` is the same output with the defaults overridden | [`core/array.mojo`](../numax/core/array.mojo) |
 | Conversion | `to_array`, `to_tensor` — the seam between `Tensor` (shape and device) and `Array[T, n]` (the `FloatLike` conformer layer `numax.linalg`, `numax.signal` and `numax.interpolate` take). Lifting works at any conformer; lowering is `Plain`-only, since `FloatLike` can build a value from a `Float64` but not read one back | [`core/array.mojo`](../numax/core/array.mojo), [`npy_to_cholesky.mojo`](../examples/intermediate/npy_to_cholesky.mojo) |
 | Matrix builders | `diag`, `diagflat`, `diagonal`, `tri`, `tril`, `triu`, `vander` | [`core/array.mojo`](../numax/core/array.mojo) |
 | Arithmetic and operators | `add`, `subtract`, `multiply`, `divide`, `power`, `mod`, `floor_divide`, `negative`, `invert`, `astype` — tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion | [`core/ops.mojo`](../numax/core/ops.mojo) |
@@ -253,7 +254,7 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 | `numpy.load` — read a `.npy` file `numpy.save` wrote, straight into a `Tensor`. No Python and no NumPy involved: `.npy` is a self-contained binary format, so this is a header parse plus a payload copy in the default `mojo` + `max` environment | [`io/npy.mojo`](../numax/io/npy.mojo), [`npy_interop.mojo`](../examples/basic/npy_interop.mojo) |
 | `numpy.save` — write a `.npy` file `numpy.load` opens. Byte-identical to what `numpy.save` would have written for the same array: NumPy's key order, its `, }` terminator, its 64-byte header alignment | [`io/npy.mojo`](../numax/io/npy.mojo), [`test_npy.mojo`](../tests/io/test_npy.mojo) |
 | `nmx.save`, `nmx.load` — numax's own `NMX1` binary format: little-endian, dtype/rank/shape in the header and checked on load. The better choice between numax programs, since it carries the dtype name in full and has no Python literal to parse | [`io/io.mojo`](../numax/io/io.mojo) |
-| `print_tensor` — NumPy-style printing, truncating past a threshold | [`io/io.mojo`](../numax/io/io.mojo) |
+
 
 Both loads are *typed*: `dtype` and `dims` are compile-time parameters the
 caller supplies, matching every other `numax.core.array` factory, and the load
