@@ -74,7 +74,7 @@ channels = ["https://conda.modular.com/max", "conda-forge"]
 preview = ["pixi-build"]
 
 [dependencies]
-numax = { git = "https://github.com/ehsanmok/numax.git", tag = "<latest-release>" }
+numax = { git = "https://github.com/ehsanmok/numax.git", tag = "v0.1.0" }
 ```
 
 Requires [pixi](https://pixi.sh); `mojo` and `max` come in transitively.

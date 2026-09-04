@@ -208,6 +208,42 @@ code comment.
    and `pixi run -e dev format-check` clean. A feature is not done until the
    whole gate passes, not just its own suite.
 
+## Releasing
+
+A release is a tag plus a GitHub release body. There is no `CHANGELOG.md` and
+none is planned: the release body is the record.
+
+**Version lives in three files and they move together.** `pixi.toml`'s
+`[workspace]` and `[package]` blocks and `recipe.yaml`'s `context.version` all
+carry the same string. The tag is that string with a `v` prefix — `0.1.0`
+ships as `v0.1.0`, never `v0.1`, so a consumer's `tag = "v0.1.0"` and the
+package version it resolves to read the same.
+
+**Order matters, because the tag freezes a tree.** The README's install block
+names the tag a consumer should depend on, so it has to already say the new
+tag *before* that tag is cut — otherwise the release points at instructions
+for the previous one. The sequence:
+
+1. Sync the three version strings; update the README install block to the tag
+   about to be created; commit and push.
+2. Wait for CI to pass on that commit. Green CI is the precondition for the
+   tag, not something checked afterwards.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z`. Note that CI triggers on
+   pushes to `main` only, so pushing a tag runs nothing — step 2 is the
+   entire verification and skipping it means shipping unverified.
+4. Prove the documented install resolves before announcing it. `pixi build`
+   succeeding locally is a weaker claim than a consumer's solve: create a
+   throwaway project depending on
+   `numax = { git = "...", tag = "vX.Y.Z" }`, run `pixi install`, and run one
+   program that imports numax against it.
+5. Write the release notes, run them through `/humanizer` before publishing,
+   then `gh release create`.
+
+**If CI fails after the tag exists**, delete the tag locally and on the remote
+(`git tag -d` and `git push --delete origin`), fix forward on `main`, and
+re-cut the tag once CI is green again. Never publish a release pointing at a
+tag whose CI did not pass.
+
 ## Performance and accuracy claims
 
 CPU and GPU numbers are never mixed into one comparison; every row in
