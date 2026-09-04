@@ -141,10 +141,22 @@ segfaults a host read.
 
 `argsort` routes into MAX's `nn.argsort` and `argmin`/`argmax` into
 `nn.argmaxmin`; the rest walk a host copy, where `std.builtin.sort` is the
-better route. Three names differ from NumPy's because Mojo will not allow
-them: `var` is a keyword and `std` is the standard library's package (hence
-`variance`, `stddev`), and `where` introduces constraint clauses (hence
-`select`).
+better route.
+
+Three names differ from NumPy's, and only where Mojo leaves no choice:
+
+| NumPy | numax | Why |
+|---|---|---|
+| `var` | `variance` | `var` is a keyword — it introduces a declaration |
+| `std` | `stddev` | `std` is the standard library's package name, always in scope; the compiler rejects a `def std` outright |
+| `where` | `select` | `where` introduces constraint clauses, and `mojo format` cannot parse it as an identifier at all |
+
+Every other name a builtin would have collided with — `abs`, `all`, `any`,
+`min`, `max`, `sum`, `prod`, `round` — keeps NumPy's spelling. Defining one
+of those *replaces* the builtin for the importing file rather than
+overloading it, which is the same trade `from numpy import abs` makes in
+Python, and it is the caller's to make: `numax.prelude` leaves them out so
+a star import cannot make it silently.
 
 ## `numax.special`
 

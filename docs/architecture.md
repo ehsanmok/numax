@@ -206,26 +206,32 @@ survey of what MAX does ship.
 - **`numax.core.array`** — creation and manipulation over a `Tensor` that owns its
   storage, because a bare `TileTensor` is a view and dangles once the function
   that built it returns. The storage is a MAX `DeviceBuffer`, so the
-  `DeviceContext` passed to a factory decides host or device memory and
-  `.view()` yields the same `TileTensor` either way. Element access goes
-  through `to_host`/`copy_from_host`: on CUDA `unsafe_ptr()` returns a device
-  pointer and a host read segfaults.
+  `DeviceContext` decides host or device memory and `.view()` yields the same
+  `TileTensor` either way; the context is the last argument of every factory
+  and optional, so a host-only program never names one. Element access is
+  `a[i]` flat or `a[r, c]` on a rank-2 tensor, and in bulk goes through
+  `to_host`/`copy_from_host`: on CUDA `unsafe_ptr()` returns a device pointer
+  and a host read segfaults. `Tensor` is `Writable`, so `print(a)` works.
+  `to_array`/`to_tensor` are the seam to the `Array[T, n]` half of the
+  library.
 - **`numax.core.ops`, `numax.core.elementwise`, `numax.core.logic`** — arithmetic and
   operators on `Tensor`, the elementwise math surface, and comparisons
   returning `Tensor[DType.bool]`. `Plain`-only, tier 2.
-- **`numax.stats`** — whole-tensor reductions, with `argmax`/`argmin`
-  routed to `nn.argmaxmin`. `mean`/`variance`/`stddev`/`cumsum` also have a
+- **`numax.stats`** — whole-tensor reductions, every one taking a `Tensor`,
+  with `argmax`/`argmin` routed to `nn.argmaxmin`, and the distributions as
+  nine `scipy.stats`-shaped namespaces (`norm.cdf`, `chi2.ppf`, ...). `mean`/`variance`/`stddev`/`cumsum` also have a
   `FloatLike`-generic form over `List[T]`, so calling them at `Compensated`
   recovers precision a long summation loses at `Plain` — the one place this
   surface and the composable-type spine meet.
 - **`numax.linalg`** — small dense linear algebra, `FloatLike`-generic. The
   point is differentiability, not speed: MAX's `matmul` and `qr_factorization`
   are monomorphic in a raw `dtype`, so no `Dual` passes through them.
-- **`numax.io`, `numax.stats.random`** — a binary format of numax's own, since MAX
-  ships no array I/O, plus NumPy `.npy` read/write for interchange, so a
-  program ported from NumPy can ingest the files it already has; and
-  sampling over `std.random` on the host, with no `Random[FloatLike]`
-  conformer because RNG is not differentiable.
+- **`numax.io`, `numax.stats.random`** — `nmx.save`/`nmx.load`, a binary format
+  of numax's own since MAX ships no array I/O, plus `numpy.save`/`numpy.load`
+  for `.npy` interchange, so a program ported from NumPy can ingest the files
+  it already has; and sampling over `std.random` on the host, with `Generator`
+  for a named stream and no `Random[FloatLike]` conformer, because RNG is not
+  differentiable.
 
 ## Static and runtime shapes
 

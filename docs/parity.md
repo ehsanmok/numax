@@ -64,7 +64,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 
 | Area | Home | Notes |
 |---|---|---|
-| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` |
+| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose`; `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
 | Elementwise math | `numax/core/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
 | Arithmetic and operators | `numax/core/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
 | Comparison and logic | `numax/core/logic.mojo` | Truth is a `Tensor[DType.bool]`, so a comparison composes with `logical_and` |
