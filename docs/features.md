@@ -57,7 +57,9 @@ conformer-generic kernel is built from: `max_of`, `min_of`, `blend`,
 
 ## The two tiers
 
-Every module docstring declares its tier, and tier 1 never calls tier 2.
+Every subpackage's docstring declares its tier, and tier 1 never calls
+tier 2. Labelling each individual module is still in progress: 12 of the 38
+modules carry the line today.
 
 | Tier | Rule | Who |
 |---|---|---|

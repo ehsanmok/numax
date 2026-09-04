@@ -16,6 +16,10 @@ long float32 summation loses. Reductions cover every element -- there is
 no `axis=` yet; `numax.core.tensor.reduce_axis` is the axis-wise route.
 No `Random[FloatLike]` conformer: sampling is not differentiable, so the
 trait contract does not fit.
+
+Tier 2 over tensors (`Plain`-only, host-side, free to branch on data); the
+`FloatLike`-generic `List[T]` reductions and every distribution function
+are tier 1.
 """
 
 from .distributions import (

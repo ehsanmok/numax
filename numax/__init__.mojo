@@ -62,7 +62,7 @@ branching, and therefore launchable inside a GPU thread: the special
 functions, `linalg`, the fixed-step algorithms. **Tier 2** is `optimize`,
 the adaptive half of `integrate`, `sorting`, `logic`, `elementwise` and
 `ops`: `Plain`-only, host-side, free to loop or branch on data. Every
-module docstring declares its tier, and tier 1 never calls tier 2.
+subpackage's docstring declares its tier, and tier 1 never calls tier 2.
 
 Design rationale: `docs/architecture.md`. What numax absorbs from
 NumPy/SciPy, routes to MAX, or leaves out: `docs/parity.md`.
