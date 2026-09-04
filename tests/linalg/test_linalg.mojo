@@ -18,16 +18,15 @@ from numax.linalg import (
     det,
     forward_substitution,
     inverse,
-    log_det_from_cholesky,
+    slogdet_cholesky,
     lu,
     matmul,
     cond,
     dot,
     eigh,
     matvec,
-    norm_1,
-    norm_frobenius,
-    norm_inf,
+    inf,
+    norm,
     nrm2,
     outer,
     pinv,
@@ -193,11 +192,11 @@ def test_unpivoted_lu_fails_on_a_zero_pivot() raises:
     assert_true(s(det[P, 2](a)) == s(det[P, 2](a)))
 
 
-def test_log_det_from_cholesky_matches_the_determinant() raises:
+def test_slogdet_cholesky_matches_the_determinant() raises:
     var a = spd3()
     var lower = cholesky[P, 3](a)
     assert_almost_equal(
-        s(log_det_from_cholesky[P, 3](lower)),
+        s(slogdet_cholesky[P, 3](lower)),
         log_f64(s(det[P, 3](a))),
         atol=1e-13,
     )
@@ -309,7 +308,7 @@ def test_cholesky_log_det_is_differentiable() raises:
     a[3] = D.constant(2.0)
 
     var lower = cholesky[D, 2](a)
-    var log_det = log_det_from_cholesky[D, 2](lower)
+    var log_det = slogdet_cholesky[D, 2](lower)
 
     assert_almost_equal(s(log_det.value), log_f64(2.0 * x - 0.25), atol=1e-13)
     assert_almost_equal(s(log_det.deriv), 2.0 / (2.0 * x - 0.25), atol=1e-12)
@@ -401,25 +400,25 @@ def test_frobenius_norm_matches_the_entrywise_definition() raises:
     var entries = [2.0, 1.0, -1.0, -3.0, -1.0, 2.0, -2.0, 1.0, 2.0]
     for i in range(9):
         expected += entries[i] * entries[i]
-    assert_almost_equal(s(norm_frobenius[P, 3](a)), expected**0.5)
+    assert_almost_equal(s(norm[P, 3](a)), expected**0.5)
 
 
 def test_norm_1_is_the_largest_absolute_column_sum() raises:
     # Columns of general3: |2|+|-3|+|-2| = 7, |1|+|-1|+|1| = 3,
     # |-1|+|2|+|2| = 5. The largest is 7.
     var a = general3()
-    assert_almost_equal(s(norm_1[P, 3](a)), 7.0)
+    assert_almost_equal(s(norm[P, 3, 1](a)), 7.0)
 
 
 def test_norm_inf_is_the_largest_absolute_row_sum() raises:
     # Rows of general3: 4, 6, 5. The largest is 6.
     var a = general3()
-    assert_almost_equal(s(norm_inf[P, 3](a)), 6.0)
+    assert_almost_equal(s(norm[P, 3, inf](a)), 6.0)
 
 
 def test_norm_inf_of_a_symmetric_matrix_equals_its_norm_1() raises:
     var a = spd3()
-    assert_almost_equal(s(norm_inf[P, 3](a)), s(norm_1[P, 3](a)))
+    assert_almost_equal(s(norm[P, 3, inf](a)), s(norm[P, 3, 1](a)))
 
 
 def test_qr_reconstructs_the_original_matrix() raises:

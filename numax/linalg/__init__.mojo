@@ -7,14 +7,14 @@ roughly 8x8, and it is monomorphic in a raw `dtype`, so no conformer
 passes through it.
 
 ```mojo
-from numax.linalg import cholesky, qr, solve, det, norm_frobenius
+from numax.linalg import cholesky, qr, solve, det, norm
 ```
 
 Factorizations (`cholesky`, `lu`, `qr`, `eigh`, `svd`), solves
 (`solve`, `cholesky_solve`, `tridiagonal_solve`, the substitutions),
 inverses (`inverse`, `pinv`), scalars (`det`, `trace`, `cond`,
-`log_det_from_cholesky`), norms (`norm_1`, `norm_inf`,
-`norm_frobenius`, `nrm2`) and products (`dot`, `outer`, `matvec`,
+`slogdet_cholesky`), norms (`norm` at `fro`/`1`/`inf`, `nrm2`)
+and products (`dot`, `outer`, `matvec`,
 `matmul`). Tier 1.
 """
 
@@ -27,14 +27,14 @@ from .linalg import (
     dot,
     eigh,
     forward_substitution,
+    fro,
+    inf,
     inverse,
-    log_det_from_cholesky,
+    slogdet_cholesky,
     lu,
     matmul,
     matvec,
-    norm_1,
-    norm_frobenius,
-    norm_inf,
+    norm,
     nrm2,
     outer,
     pinv,

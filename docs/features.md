@@ -150,8 +150,8 @@ roughly 8x8.
 | Factorizations | `cholesky`, `lu`, `qr`, `eigh`, `svd` |
 | Solves | `solve`, `cholesky_solve`, `tridiagonal_solve`, `forward_substitution`, `back_substitution` |
 | Inverses | `inverse`, `pinv` |
-| Scalars | `det`, `trace`, `cond`, `log_det_from_cholesky` |
-| Norms | `norm_1`, `norm_inf`, `norm_frobenius`, `nrm2` |
+| Scalars | `det`, `trace`, `cond`, `slogdet_cholesky` |
+| Norms | `norm` — `ord=fro` (default), `1` or `inf`, per `numpy.linalg.norm` — and `nrm2` |
 | Products | `dot`, `outer`, `matvec`, `matmul` |
 
 All in [`linalg/linalg.mojo`](../numax/linalg/linalg.mojo); every function's

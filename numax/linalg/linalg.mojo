@@ -310,8 +310,14 @@ def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     return product^
 
 
-def log_det_from_cholesky[T: FloatLike, n: Int](lower: Array[T, n * n]) -> T:
+def slogdet_cholesky[T: FloatLike, n: Int](lower: Array[T, n * n]) -> T:
     """`ln(det(A))` from `A`'s Cholesky factor: `2*sum(ln(diag(L)))`.
+
+    Named for `numpy.linalg.slogdet`, which is the same quantity for a
+    general matrix and returns it as `(sign, logabsdet)`. A Cholesky factor
+    only exists for a positive-definite `A`, so the sign is always `+1` and
+    only the logarithm is returned. The general `slogdet` over any square
+    matrix belongs with the rest of the `scipy.linalg` depth in v0.2.
 
     The quantity a Gaussian process log-likelihood actually needs, and the
     reason to compute it this way rather than as `ln(det(A))`: for even a
@@ -418,57 +424,64 @@ def trace[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     return total^
 
 
-def norm_frobenius[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
-    """`sqrt(sum(A[i,j]**2))` -- the Frobenius (entrywise 2-) norm.
+comptime fro = 0
+"""`ord` for `norm`: the Frobenius (entrywise 2-) norm. The default."""
+comptime inf = -1
+"""`ord` for `norm`: the induced infinity-norm."""
 
-    Summed directly rather than in a scaled/squared form, which means a
-    matrix whose entries are near the square root of `dtype`'s overflow
-    threshold will overflow here. LAPACK's `lange` rescales to avoid that;
-    doing the same would need a data-dependent branch on the running
-    maximum, which the fixed-iteration invariant rules out. Call this at
-    `Compensated` if the summation length is what worries you, or scale `A`
-    yourself if its magnitude is.
+
+def norm[
+    T: FloatLike, n: Int, ord: Int = fro
+](a: Array[T, n * n]) -> T where ord == fro or ord == 1 or ord == inf:
+    """A matrix norm of `A`. `numpy.linalg.norm(A, ord=...)`.
+
+    `ord` picks which one, as a compile-time parameter so the loop is
+    chosen at compile time and nothing branches per call:
+
+    | `ord` | Norm |
+    |---|---|
+    | `fro` (default) | Frobenius: `sqrt(sum(A[i,j]**2))` |
+    | `1` | Induced 1-norm: the largest absolute column sum |
+    | `inf` | Induced infinity-norm: the largest absolute row sum |
+
+    The Frobenius sum is taken directly rather than in a scaled/squared
+    form, which means a matrix whose entries are near the square root of
+    `dtype`'s overflow threshold will overflow. LAPACK's `lange` rescales
+    to avoid that; doing the same would need a data-dependent branch on the
+    running maximum, which the fixed-iteration invariant rules out. Call
+    this at `Compensated` if the summation length is what worries you, or
+    scale `A` yourself if its magnitude is.
+
+    The induced norms take their column or row maximum with `max_of`, not
+    an `if` -- `T` may hold a SIMD vector whose lanes disagree about which
+    column is largest, so the running maximum has to be arithmetic. Same
+    reason every other selection in `numax` is branchless.
 
     No MAX equivalent at any size: MAX ships no norm of any kind.
     """
-    var total = T.constant(0.0)
-    for i in range(n * n):
-        total = total + a[i] * a[i]
-    return total.sqrt()
-
-
-def norm_1[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
-    """The induced 1-norm: the largest absolute column sum.
-
-    The column maximum is taken with `max_of`, not an `if` -- `T` may hold
-    a SIMD vector whose lanes disagree about which column is largest, so
-    the running maximum has to be arithmetic. Same reason every other
-    selection in `numax` is branchless.
-
-    No MAX equivalent at any size.
-    """
-    var best = T.constant(0.0)
-    for j in range(n):
-        var column = T.constant(0.0)
-        for i in range(n):
-            column = column + a[i * n + j].abs()
-        best = max_of(best, column)
-    return best^
-
-
-def norm_inf[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
-    """The induced infinity-norm: the largest absolute row sum. `norm_1` of
-    the transpose, computed without forming it.
-
-    No MAX equivalent at any size.
-    """
-    var best = T.constant(0.0)
-    for i in range(n):
-        var row = T.constant(0.0)
+    comptime if ord == fro:
+        var total = T.constant(0.0)
+        for i in range(n * n):
+            total = total + a[i] * a[i]
+        return total.sqrt()
+    comptime if ord == 1:
+        var best = T.constant(0.0)
         for j in range(n):
-            row = row + a[i * n + j].abs()
-        best = max_of(best, row)
-    return best^
+            var column = T.constant(0.0)
+            for i in range(n):
+                column = column + a[i * n + j].abs()
+            best = max_of(best, column)
+        return best^
+    comptime if ord == inf:
+        var best = T.constant(0.0)
+        for i in range(n):
+            var row = T.constant(0.0)
+            for j in range(n):
+                row = row + a[i * n + j].abs()
+            best = max_of(best, row)
+        return best^
+    # Unreachable: the `where` clause above admits no fourth `ord`.
+    return T.constant(0.0)
 
 
 def qr[
@@ -584,7 +597,7 @@ def nrm2[T: FloatLike, n: Int](a: Array[T, n]) -> T:
     `dtype`'s overflow threshold will overflow here where LAPACK's `nrm2`
     would not. Rescaling needs a running maximum and a data-dependent
     branch, which the fixed-iteration invariant rules out; the same
-    trade-off `norm_frobenius` documents.
+    trade-off `norm` documents.
     """
     return dot[T, n](a, a).sqrt()
 
