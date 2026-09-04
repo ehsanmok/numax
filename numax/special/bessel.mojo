@@ -45,7 +45,7 @@ comptime _TWO_OVER_PI = 0.6366197723675814
 
 def _far_branch_indicator[T: FloatLike](ax: T) -> T:
     """`1` where `ax <= 3`, `0` where `ax > 3` -- branchless."""
-    return ge_indicator(T.constant(3.0) + (-ax), T.constant(0.0))
+    return ge_indicator(T.constant(3.0) - ax, T.constant(0.0))
 
 
 def _clamp_to_far_domain[T: FloatLike](ax: T) -> T:
@@ -221,7 +221,7 @@ def j0[T: FloatLike](x: T) -> T:
     var p = T.constant(3.0) / ax_safe
     var far = _f0(p) * _inv_sqrt(ax_safe) * _theta0(ax_safe, p).cos()
 
-    return near * s + far * (T.one() + (-s))
+    return near * s + far * (T.one() - s)
 
 
 def j1[T: FloatLike](x: T) -> T:
@@ -245,7 +245,7 @@ def j1[T: FloatLike](x: T) -> T:
     # magnitude/sign split, so it's a `*`, not a `copysign`).
     var far = far_at_ax * T.one().copysign(x)
 
-    return near * s + far * (T.one() + (-s))
+    return near * s + far * (T.one() - s)
 
 
 def y0[T: FloatLike](x: T) -> T:
@@ -281,7 +281,7 @@ def y0[T: FloatLike](x: T) -> T:
     var p = T.constant(3.0) / x_safe
     var far = _f0(p) * _inv_sqrt(x_safe) * _theta0(x_safe, p).sin()
 
-    return near * s + far * (T.one() + (-s))
+    return near * s + far * (T.one() - s)
 
 
 def y1[T: FloatLike](x: T) -> T:
@@ -318,7 +318,7 @@ def y1[T: FloatLike](x: T) -> T:
     ) * t + T.constant(0.024578509592272924)
     var near = (
         T.constant(_TWO_OVER_PI)
-        * ((x * T.constant(0.5)).ln() * _j1_near(x) + (-(T.one() / x)))
+        * ((x * T.constant(0.5)).ln() * _j1_near(x) - (T.one() / x))
         + x * near_poly
     )
 
@@ -326,4 +326,4 @@ def y1[T: FloatLike](x: T) -> T:
     var p = T.constant(3.0) / x_safe
     var far = _f1(p) * _inv_sqrt(x_safe) * _theta1(x_safe, p).sin()
 
-    return near * s + far * (T.one() + (-s))
+    return near * s + far * (T.one() - s)

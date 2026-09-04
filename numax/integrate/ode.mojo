@@ -61,7 +61,7 @@ def rk4[
     `t1 < t0` integrates backwards, since the step size is just
     `(t1-t0)/num_steps` and nothing here assumes its sign.
     """
-    var h = (t1 + (-t0)) / T.constant(Float64(num_steps))
+    var h = (t1 - t0) / T.constant(Float64(num_steps))
     var half = h / T.constant(2.0)
     var y = y0.copy()
     # The step index is carried as a running `T` rather than converted from
@@ -100,7 +100,7 @@ def rk4_system[
     seed its `Dual` derivative, and read the sensitivity off the components
     you care about.
     """
-    var h = (t1 + (-t0)) / T.constant(Float64(num_steps))
+    var h = (t1 - t0) / T.constant(Float64(num_steps))
     var half = h / T.constant(2.0)
     var y = _copy_state[T, n](y0)
     var step_index = T.constant(0.0)
@@ -161,7 +161,7 @@ def dopri5_with_error[
     steps it's a rough global error proxy: useful for deciding whether
     `num_steps` was enough, not a rigorous bound.
     """
-    var h = (t1 + (-t0)) / T.constant(Float64(num_steps))
+    var h = (t1 - t0) / T.constant(Float64(num_steps))
     var y = y0.copy()
     var error_sum = T.constant(0.0)
     var step_index = T.constant(0.0)
@@ -237,7 +237,7 @@ def dopri5_step[
     )
     var y4 = y + h * increment_hat
 
-    return (y5^, (y5 + (-y4)).abs())
+    return (y5^, (y5 - y4).abs())
 
 
 def _c[T: FloatLike](x: T, coefficient: Float64) -> T:

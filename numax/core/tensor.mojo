@@ -77,7 +77,7 @@ loop; `reduce_block_gpu` is one thread block's worth of a shared-memory tree
 reduction, writing one partial value per block -- combine the (small)
 partials buffer with `reduce` again, CPU-side, for the final scalar.
 `add_combine`/`max_combine` are the two ready-made `combine` functions most
-callers want, pre-composed for `Plain[dtype, 1]` from `add_op`/`max_op` (both
+callers want, pre-composed for `Plain[dtype]` from `add_op`/`max_op` (both
 `FloatLike`-generic, in case a future caller wants to fold `Dual` or
 `Compensated` values directly instead).
 
@@ -143,7 +143,7 @@ def max_op[T: FloatLike](a: T, b: T) -> T:
     `constant`, `__truediv__`), so this needs no `max` method on the trait
     itself.
     """
-    var diff = a + (-b)
+    var diff = a - b
     return (a + b + diff.abs()) / T.constant(2.0)
 
 
@@ -152,9 +152,9 @@ def add_combine[
 ](a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """`add_op`, pre-composed for `Plain[dtype, 1]` raw `SIMD` in and out --
+    """`add_op`, pre-composed for `Plain[dtype]` raw `SIMD` in and out --
     the `combine` most `reduce`/`reduce_rows` callers want directly."""
-    return add_op(Plain[dtype, 1](a), Plain[dtype, 1](b)).v
+    return add_op(Plain[dtype](a), Plain[dtype](b)).v
 
 
 def max_combine[
@@ -162,8 +162,8 @@ def max_combine[
 ](a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """`max_op`, pre-composed for `Plain[dtype, 1]` raw `SIMD` in and out."""
-    return max_op(Plain[dtype, 1](a), Plain[dtype, 1](b)).v
+    """`max_op`, pre-composed for `Plain[dtype]` raw `SIMD` in and out."""
+    return max_op(Plain[dtype](a), Plain[dtype](b)).v
 
 
 def map[

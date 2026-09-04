@@ -14,6 +14,14 @@ def test_one_is_scaled_by_factor() raises:
     assert_equal(D.one().raw, SIMD[DType.int64, width](factor))
 
 
+def test_to_float64_descales_the_raw_integer() raises:
+    # The read-out is exactly `raw / 10^scale`, and round-trips a value the
+    # type can represent exactly.
+    var a = D.constant(0.1) + D.constant(0.2)
+    assert_equal(a.raw, SIMD[DType.int64, width](300_000))
+    assert_equal(a.to_float64(), SIMD[DType.float64, width](0.3))
+
+
 def test_add_is_exact_for_decimal_literals() raises:
     # 0.1 + 0.2 is exactly 0.3 in base-10 fixed point -- the whole point of
     # this type versus a binary float.

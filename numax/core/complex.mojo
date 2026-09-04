@@ -50,7 +50,7 @@ one call site here isn't reason enough to add them: `cosh(b) =
   fixed terms stop being enough well before `|z|` gets large -- a real
   scoping gap, not an oversight, and not worth a more elaborate algorithm
   until something downstream actually needs `erf` at large complex
-  arguments. `erfc` is `one() + (-erf())` (no complex `erfc`-specific
+  arguments. `erfc` is `one() - erf()` (no complex `erfc`-specific
   identity is used here to dodge cancellation the way `Plain.erfc()`
   does for real arguments).
 """
@@ -111,18 +111,18 @@ def _atan2[T: FloatLike](y: T, x: T) -> T:
     """
     var ax = x.abs()
     var ay = y.abs()
-    var diff = ax + (-ay)
+    var diff = ax - ay
     var big = (ax + ay + diff.abs()) / T.constant(2.0)
-    var small = (ax + ay + (-diff.abs())) / T.constant(2.0)
+    var small = (ax + ay - diff.abs()) / T.constant(2.0)
     var big_safe = max_of(big, T.constant(1e-300))
 
     var r = _atan_poly(small / big_safe)
 
     var ay_gt_ax = ge_indicator(-diff, T.constant(0.0))
-    var r1 = r + ay_gt_ax * (T.constant(_PI / 2.0) + (-(T.constant(2.0) * r)))
+    var r1 = r + ay_gt_ax * (T.constant(_PI / 2.0) - (T.constant(2.0) * r))
 
-    var x_lt_0 = T.one() + (-ge_indicator(x, T.constant(0.0)))
-    var r2 = r1 + x_lt_0 * (T.constant(_PI) + (-(T.constant(2.0) * r1)))
+    var x_lt_0 = T.one() - ge_indicator(x, T.constant(0.0))
+    var r2 = r1 + x_lt_0 * (T.constant(_PI) - (T.constant(2.0) * r1))
 
     return r2.copysign(y)
 
@@ -149,7 +149,7 @@ struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
     def __mul__(self, rhs: Self) -> Self:
         # (a+bi)(c+di) = (ac-bd) + (ad+bc)i.
         return Self(
-            self.re * rhs.re + (-(self.im * rhs.im)),
+            self.re * rhs.re - (self.im * rhs.im),
             self.re * rhs.im + self.im * rhs.re,
         )
 
@@ -160,7 +160,7 @@ struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
         # (a+bi)/(c+di) = (a+bi)(c-di) / (c^2+d^2).
         var denom = rhs.re * rhs.re + rhs.im * rhs.im
         var num_re = self.re * rhs.re + self.im * rhs.im
-        var num_im = self.im * rhs.re + (-(self.re * rhs.im))
+        var num_im = self.im * rhs.re - (self.re * rhs.im)
         return Self(num_re / denom, num_im / denom)
 
     def _modulus(self) -> Self.Inner:
@@ -184,7 +184,7 @@ struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
         var half = Self.Inner.constant(0.5)
         var re_part = (half * (modulus + self.re)).sqrt()
         var im_magnitude = (
-            max_of(half * (modulus + (-self.re)), Self.Inner.constant(0.0))
+            max_of(half * (modulus - self.re), Self.Inner.constant(0.0))
         ).sqrt()
         return Self(re_part^, im_magnitude.copysign(self.im))
 
@@ -225,14 +225,14 @@ struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
         return total * scale
 
     def erfc(self) -> Self:
-        return Self.one() + (-self.erf())
+        return Self.one() - self.erf()
 
     def sin(self) -> Self:
         # sin(a+bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b).
         var eb = self.im.exp()
         var e_neg_b = (-self.im).exp()
         var cosh_b = (eb + e_neg_b) * Self.Inner.constant(0.5)
-        var sinh_b = (eb + (-e_neg_b)) * Self.Inner.constant(0.5)
+        var sinh_b = (eb - e_neg_b) * Self.Inner.constant(0.5)
         return Self(self.re.sin() * cosh_b, self.re.cos() * sinh_b)
 
     def cos(self) -> Self:
@@ -240,7 +240,7 @@ struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
         var eb = self.im.exp()
         var e_neg_b = (-self.im).exp()
         var cosh_b = (eb + e_neg_b) * Self.Inner.constant(0.5)
-        var sinh_b = (eb + (-e_neg_b)) * Self.Inner.constant(0.5)
+        var sinh_b = (eb - e_neg_b) * Self.Inner.constant(0.5)
         return Self(self.re.cos() * cosh_b, -(self.re.sin() * sinh_b))
 
     @staticmethod

@@ -11,8 +11,9 @@
    produces plain SIMD, autodiff, extra precision, or complex arithmetic
    depending on the conformer you instantiate it with.
 2. **NumPy/SciPy parity on Mojo, MAX-first** -- MAX's existing
-   infrastructure (`TileTensor`, `max.linalg`, `max.algorithm`,
-   `max.random`) is the substrate for array-shaped work; `numax` adds
+   infrastructure (`TileTensor`, the top-level `linalg` and `nn` roots,
+   `max.algorithm`, `max.gpu`) is the substrate for array-shaped work;
+   `numax` adds
    the composable-type layer and the NumPy-named entry surface over it.
 
 ## Package layout
@@ -61,6 +62,8 @@ trait FloatLike(Copyable, Movable, Deinitable):
     def __add__(self, rhs: Self) -> Self: ...
     def __mul__(self, rhs: Self) -> Self: ...
     def __neg__(self) -> Self: ...
+    def __sub__(self, rhs: Self) -> Self:     # the one with a body:
+        return self + (-rhs)                  # `self + (-rhs)`
     def __truediv__(self, rhs: Self) -> Self: ...
     def exp(self) -> Self: ...
     def ln(self) -> Self: ...
@@ -82,6 +85,14 @@ The trait grew only when a kernel genuinely needed a new operation
 (`sqrt` was held out for a long time on the "one call site isn't reason
 enough" rule until the call sites multiplied AND the `exp(0.5*ln(x))`
 workaround turned out to be inaccurate, not merely verbose).
+
+`__sub__` is the exception that costs nothing: it ships with a body rather
+than `...`, so it is inherited rather than implemented and no conformer
+grew a method. It replaced the `a + (-b)` spelling at 191 call sites, one of
+them `Interval.width`, whose docstring said `hi - lo` while its body could
+not. `__pow__` and comparisons stay out -- powers genuinely want
+`exp(k*ln(x))` here, and per-lane comparison is what the branchless
+`max_of`/`min_of`/`ge_indicator`/`blend` helpers exist to avoid.
 
 ### Two tiers
 
@@ -212,6 +223,9 @@ survey of what MAX does ship.
   `a[i]` flat or `a[r, c]` on a rank-2 tensor, and in bulk goes through
   `to_host`/`copy_from_host`: on CUDA `unsafe_ptr()` returns a device pointer
   and a host read segfaults. `Tensor` is `Writable`, so `print(a)` works.
+  The view seam is cheap downward and a copy upward: `.view()` hands out a
+  pointer plus a layout, `Tensor.from_view` copies, and no constructor takes
+  a `TileTensor` at all, because a view owns nothing to adopt.
   `to_array`/`to_tensor` are the seam to the `Array[T, n]` half of the
   library.
 - **`numax.core.ops`, `numax.core.elementwise`, `numax.core.logic`** — arithmetic and

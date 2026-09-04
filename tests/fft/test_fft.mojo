@@ -18,7 +18,7 @@ from numax.fft import (
 )
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 comptime C = Complex[P]
 comptime TWO_PI = 6.283185307179586
 

@@ -50,14 +50,14 @@ def peaked[U: FloatLike](x: U) -> U:
     `200 * atan(50)`. An 8-point Gauss rule over the whole interval places
     no node inside the spike at all, so it misses most of the mass.
     """
-    var d = x + (-U.constant(0.5))
+    var d = x - U.constant(0.5)
     return U.one() / (U.constant(1e-4) + d * d)
 
 
 def kinked[U: FloatLike](x: U) -> U:
     """`|x - 1/3|`. Continuous, but its derivative jumps, which is enough
     to defeat a polynomial rule on any panel containing the kink."""
-    return (x + (-U.constant(KINK))).abs()
+    return (x - U.constant(KINK)).abs()
 
 
 # ------------------------------------------------------------------
@@ -261,7 +261,7 @@ def stiff_transient[U: FloatLike](t: U, y: U) -> U:
     interval needs tiny steps and the rest does not, so a fixed-step
     method has to use the transient's step size the whole way.
     """
-    return -U.constant(50.0) * (y + (-t.cos()))
+    return -U.constant(50.0) * (y - t.cos())
 
 
 def test_solve_ivp_matches_the_exponential_solution() raises:

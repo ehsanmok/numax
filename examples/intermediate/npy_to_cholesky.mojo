@@ -28,7 +28,7 @@ from numax.io import numpy
 from numax.linalg import cholesky, det
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 comptime N = 3
 
 

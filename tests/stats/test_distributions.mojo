@@ -39,7 +39,7 @@ comptime BETA_ATOL = 1e-8
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def s(x: P) -> Float64:

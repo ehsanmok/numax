@@ -24,7 +24,7 @@ from .numeric import FloatLike
 
 
 @fieldwise_init
-struct Plain[dtype: DType, width: Int](
+struct Plain[dtype: DType, width: Int = 1](
     Copyable, FloatLike where dtype.is_floating_point(), Movable
 ):
     """A `SIMD[dtype, width]` value, viewed as a `FloatLike`."""
@@ -90,14 +90,15 @@ struct Plain[dtype: DType, width: Int](
         return Self(trunc(self.v))
 
 
-comptime f32 = Plain[DType.float32, 1]
-"""`Plain[DType.float32, 1]` -- the scalar every example opens by aliasing.
+comptime f32 = DType.float32
+"""`DType.float32`, spelled short.
 
-Kernels are written against `FloatLike`, so calling one means naming a
-conformer, and a single-lane `Plain` is what that is nine times out of ten:
-`g(f32(0.5))`. `f64` is its double-precision counterpart. For a vector
-width, or a dtype these two do not cover, name `Plain[dtype, width]`.
+A dtype, not a conformer -- the same name works at every layer, which is the
+point: `linspace[5, f32](...)` and `Tensor[f32, 4, 4](ctx)` on the tensor
+side, `Plain[f32]` and `Dual[Plain[f32]]` on the kernel side. `Plain`'s
+`width` defaults to 1, so `Plain[f32]` is the single-lane scalar; name
+`Plain[f32, 8]` for a vector width.
 """
 
-comptime f64 = Plain[DType.float64, 1]
-"""`Plain[DType.float64, 1]`. See `f32` above."""
+comptime f64 = DType.float64
+"""`DType.float64`. See `f32` above."""

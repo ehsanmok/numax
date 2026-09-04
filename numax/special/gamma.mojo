@@ -56,7 +56,7 @@ def _lgamma_positive[T: FloatLike](x: T) -> T:
     comptime g = 7.0
 
     comptime c0 = coef[0]
-    var z = x + (-T.one())
+    var z = x - T.one()
     var a = T.constant(c0)
 
     comptime for i in range(1, 9):
@@ -68,7 +68,7 @@ def _lgamma_positive[T: FloatLike](x: T) -> T:
     # ln(sqrt(2*pi) * t^(z+0.5) * exp(-t) * a)
     #   = 0.5*ln(2*pi) + (z+0.5)*ln(t) - t + ln(a)
     var half_ln_2pi = T.constant(0.9189385332046727)
-    return half_ln_2pi + (z + T.constant(0.5)) * t.ln() + (-t) + a.ln()
+    return half_ln_2pi + (z + T.constant(0.5)) * t.ln() - t + a.ln()
 
 
 def _ge_half_indicator[T: FloatLike](x: T) -> T:
@@ -99,16 +99,14 @@ def lgamma[T: FloatLike](x: T) -> T:
     """
     var s = _ge_half_indicator(x)
 
-    var one_minus_x = T.one() + (-x)
+    var one_minus_x = T.one() - x
     var y = max_of(x, one_minus_x)
     var lp_y = _lgamma_positive(y)
 
     var sin_pix = (T.constant(3.14159265358979323846) * x).sin()
-    var reflected = (
-        T.constant(1.1447298858494002) + (-(sin_pix.abs().ln())) + (-lp_y)
-    )
+    var reflected = T.constant(1.1447298858494002) - sin_pix.abs().ln() - lp_y
 
-    return lp_y * s + reflected * (T.one() + (-s))
+    return lp_y * s + reflected * (T.one() - s)
 
 
 def _gamma_sign[T: FloatLike](x: T) -> T:
@@ -123,7 +121,7 @@ def _gamma_sign[T: FloatLike](x: T) -> T:
     """
     var s = _ge_half_indicator(x)
     var sin_pix = (T.constant(3.14159265358979323846) * x).sin()
-    return s + (T.one() + (-s)) * T.one().copysign(sin_pix)
+    return s + (T.one() - s) * T.one().copysign(sin_pix)
 
 
 def gamma[T: FloatLike](x: T) -> T:
@@ -160,7 +158,7 @@ def gammainc[T: FloatLike](a: T, x: T) -> T:
     """
     comptime num_terms = 100
 
-    var log_prefactor = a * x.ln() + (-x) + (-lgamma(a))
+    var log_prefactor = a * x.ln() - x - lgamma(a)
     var prefactor = log_prefactor.exp() * _gamma_sign(a)
 
     var term = T.one() / a
@@ -182,7 +180,7 @@ def gammainc[T: FloatLike](a: T, x: T) -> T:
 def gammaincc[T: FloatLike](a: T, x: T) -> T:
     """The regularized upper incomplete gamma function, `Q(a,x) = 1 - P(a,x)`.
     """
-    return T.one() + (-gammainc(a, x))
+    return T.one() - gammainc(a, x)
 
 
 def digamma[T: FloatLike](x: T) -> T:

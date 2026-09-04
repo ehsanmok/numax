@@ -147,32 +147,32 @@ def _fixed_list[T: FloatLike]() -> List[T]:
 
 def test_floatlike_mean_matches_hand_computed_average() raises:
     var ctx = DeviceContext(api="cpu")
-    var lst = _fixed_list[Plain[dtype, 1]]()
+    var lst = _fixed_list[Plain[dtype]]()
     assert_almost_equal(mean(lst).v, Scalar[dtype](4))
 
 
 def test_floatlike_variance_defaults_to_population_variance() raises:
     var ctx = DeviceContext(api="cpu")
     # deviations from mean=4: -1,-3,5,-2,3,-2 -> squares sum to 52, /6
-    var lst = _fixed_list[Plain[dtype, 1]]()
+    var lst = _fixed_list[Plain[dtype]]()
     assert_almost_equal(variance(lst).v, Scalar[dtype](52.0 / 6.0))
 
 
 def test_floatlike_variance_honors_ddof() raises:
     var ctx = DeviceContext(api="cpu")
-    var lst = _fixed_list[Plain[dtype, 1]]()
+    var lst = _fixed_list[Plain[dtype]]()
     assert_almost_equal(variance(lst, ddof=1).v, Scalar[dtype](52.0 / 5.0))
 
 
 def test_floatlike_stddev_is_the_sqrt_of_variance() raises:
     var ctx = DeviceContext(api="cpu")
-    var lst = _fixed_list[Plain[dtype, 1]]()
+    var lst = _fixed_list[Plain[dtype]]()
     assert_almost_equal(stddev(lst).v, Scalar[dtype]((52.0 / 6.0) ** 0.5))
 
 
 def test_floatlike_cumsum_matches_the_running_sum() raises:
     var ctx = DeviceContext(api="cpu")
-    var lst = _fixed_list[Plain[dtype, 1]]()
+    var lst = _fixed_list[Plain[dtype]]()
     var cs = cumsum(lst)
     var expected = [3.0, 4.0, 13.0, 15.0, 22.0, 24.0]
     for i in range(6):
@@ -189,13 +189,13 @@ def test_compensated_variance_beats_plain_on_a_long_summation() raises:
     # `Plain`'s variance should drift measurably from it, `Compensated`'s
     # should not.
     comptime n = 300_000
-    var plain_list = List[Plain[dtype, 1]](capacity=n)
+    var plain_list = List[Plain[dtype]](capacity=n)
     var comp_list = List[Compensated[dtype, 1]](capacity=n)
     var f64_sum = Float64(0)
     var f64_sq_sum = Float64(0)
     for i in range(n):
         var x = Float64(1.0) + Float64(0.01) * Float64(sin(Float64(i)))
-        plain_list.append(Plain[dtype, 1](Scalar[dtype](x)))
+        plain_list.append(Plain[dtype](Scalar[dtype](x)))
         comp_list.append(
             Compensated[dtype, 1](Scalar[dtype](x), Scalar[dtype](0))
         )

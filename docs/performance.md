@@ -272,7 +272,7 @@ otherwise (verified against `~/workspace/modular/max/kernels/src/linalg/`).
 So for a large, plain-`dtype` system past the crossover above, the
 practical move is not a drop-in MAX function call for every name in this
 module -- it's building the large-matrix equivalent from
-`max.linalg.qr_factorization` the way a LAPACK-style solver does
+`linalg.qr_factorization` the way a LAPACK-style solver does
 (`solve`/`det`/`inverse` all reduce to `R` and `Q^T b` once `A = QR`).
 `cholesky`/`cholesky_solve`/`tridiagonal_solve` have no MAX equivalent to
 route to at any size, since MAX ships neither a Cholesky factorization nor
@@ -287,7 +287,7 @@ pixi run bench-gpu     # CPU vs. GPU (map[gpu=True]) across a size sweep
 pixi run bench-roofline # GPU: how much memory bandwidth map[gpu=True] reaches
 pixi run bench-elementwise # CPU: serial vs. threaded at six sizes
 pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
-pixi run bench-matmul   # CPU: numax.linalg.matmul vs. max.linalg.matmul
+pixi run bench-matmul   # CPU: numax.linalg.matmul vs. MAX's linalg.matmul
 pixi run bench-numpy    # cross-language: NumPy, CPU
 pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU

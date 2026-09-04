@@ -47,7 +47,7 @@ def main() raises:
     var cpu = DeviceContext(api="cpu")
     print("cpu context api:", cpu.api())
 
-    var cpu_xs = linspace[dtype, n](cpu, -2.0, 2.0)
+    var cpu_xs = linspace[n, dtype](-2.0, 2.0, ctx=cpu)
     var cpu_ys = TensorType(cpu)
     var cpu_xs_view = cpu_xs.view()
     var cpu_ys_view = cpu_ys.view()
@@ -57,7 +57,7 @@ def main() raises:
     var gpu = DeviceContext()
     print("gpu context api:", gpu.api())
 
-    var gpu_xs = linspace[dtype, n](gpu, -2.0, 2.0)
+    var gpu_xs = linspace[n, dtype](-2.0, 2.0, ctx=gpu)
     var gpu_ys = TensorType(gpu)
     var gpu_xs_view = gpu_xs.view()
     var gpu_ys_view = gpu_ys.view()

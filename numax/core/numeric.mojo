@@ -31,6 +31,22 @@ trait FloatLike(Copyable, Deinitable, Movable):
     def __neg__(self) -> Self:
         ...
 
+    def __sub__(self, rhs: Self) -> Self:
+        """`self - rhs`.
+
+        The one method here with a body rather than `...`: it is exactly
+        `self + (-rhs)`, so no conformer implements it and adding it did not
+        pay the usual "every present and future conformer must implement
+        this" cost. It buys back the 191 call sites that used to spell
+        subtraction the long way -- including `Interval.width`, whose
+        docstring said `hi - lo` while its body could not.
+
+        A conformer that can subtract more accurately than it can negate and
+        add is free to override; none of the ones here can, since negation is
+        exact at every one of them.
+        """
+        return self + (-rhs)
+
     def __truediv__(self, rhs: Self) -> Self:
         ...
 
@@ -64,7 +80,7 @@ trait FloatLike(Copyable, Deinitable, Movable):
     def erfc(self) -> Self:
         """The complementary error function, `1 - erf(self)`.
 
-        A trait method rather than `Self.one() + (-self.erf())` uniformly:
+        A trait method rather than `Self.one() - self.erf()` uniformly:
         that expression cancels catastrophically for large `self` (`erf`
         is already within rounding distance of `1` there), which is
         exactly the case a conformer with a real `erfc` -- `Plain`, via
@@ -160,15 +176,15 @@ def max_of[T: FloatLike](a: T, b: T) -> T:
     rescue an arbitrarily negative one. Clamp to `0` first, or use a floor
     within range of the values actually being clamped.
     """
-    var diff = a + (-b)
+    var diff = a - b
     return (a + b + diff.abs()) / T.constant(2.0)
 
 
 def min_of[T: FloatLike](a: T, b: T) -> T:
     """The smaller of `a` and `b`, lane-wise and branchless -- `max_of`'s
     identity with the `|a - b|` term subtracted instead of added."""
-    var diff = a + (-b)
-    return (a + b + (-diff.abs())) / T.constant(2.0)
+    var diff = a - b
+    return (a + b - diff.abs()) / T.constant(2.0)
 
 
 def ge_indicator[T: FloatLike](x: T, threshold: T) -> T:
@@ -184,7 +200,7 @@ def ge_indicator[T: FloatLike](x: T, threshold: T) -> T:
     which side of `threshold` they're on, and an ordinary `if` would branch
     on the whole vector. Pair it with `blend` below.
     """
-    var sign = T.one().copysign(x + (-threshold))
+    var sign = T.one().copysign(x - threshold)
     return (sign + T.one()) / T.constant(2.0)
 
 
@@ -209,7 +225,7 @@ def blend[T: FloatLike](indicator: T, if_one: T, if_zero: T) -> T:
     into a safe range with `max_of`/`min_of` first is how the kernels here
     guarantee that.
     """
-    return if_one * indicator + if_zero * (T.one() + (-indicator))
+    return if_one * indicator + if_zero * (T.one() - indicator)
 
 
 def default_erf_approx[T: FloatLike](x: T) -> T:
@@ -247,5 +263,5 @@ def default_erf_approx[T: FloatLike](x: T) -> T:
         + T.constant(0.254829592)
     ) * t
 
-    var erf_ax = T.one() + (-(poly * (-(ax * ax)).exp()))
+    var erf_ax = T.one() - (poly * (-(ax * ax)).exp())
     return erf_ax.copysign(x)

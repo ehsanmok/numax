@@ -34,6 +34,12 @@ the `DeviceBuffer` alongside a compile-time row-major layout, so the value
 `zeros[dtype, 4, 4](ctx)` returns can safely outlive the call that built it.
 The view is valid only as long as the owning `Tensor` is.
 
+The seam runs one way cheaply and the other way at a cost, and that
+asymmetry is inherent rather than an omission: `view()` hands out a pointer
+and a layout for free, while `from_view` has to *copy*, because a
+`TileTensor` owns nothing that could be adopted. There is deliberately no
+constructor taking a `TileTensor`, `DeviceBuffer` or raw pointer.
+
 **Host access goes through `to_host`/`copy_from_host`, never a raw
 pointer.** `DeviceBuffer.unsafe_ptr()` is not a safe way to read a tensor's
 elements on the host: on CUDA it does not raise, it returns a *device*
@@ -51,6 +57,16 @@ clause; the runtime-shape sibling `row_major(Coord)` produces
 takes a compile-time `*dims: Int` shape, matching `numax.core.tensor`'s existing
 contract exactly. Dynamic-shape creation is out of scope; `numax.core.tensor`'s
 runtime-shape overloads take a `TileTensor` the caller has laid out.
+
+**Two parameter shapes, and why.** The fixed-arity factories put the count
+first with `dtype` defaulted -- `linspace[5](0, 1)`, `eye[3]()`, and
+`linspace[5, f32](0, 1)` when the dtype is not `float64`. The variadic ones
+cannot: `*dims` has to come last, so `zeros`/`ones`/`full`/`empty` keep
+`zeros[f32, 2, 3]()`. That is the whole of the inconsistency, and it is a
+language constraint rather than a choice. The fixed-arity group also takes
+its endpoints as `Float64` rather than `Scalar[dtype]`: a `Scalar[dtype]`
+argument lets the *literals* infer `dtype`, and inference outranks a
+default, so `linspace[5](0, 1)` would quietly hand back an integer tensor.
 
 **Which functions need a `DeviceContext`.** The root factories (`zeros`,
 `ones`, `full`, `empty`, `eye`, `linspace`, `logspace`, `arange`) take one,
@@ -161,6 +177,14 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         than staging a host write, so this is the cheap constructor on both
         paths.
 
+        Note the `ctx` here comes **first and required**, while every factory
+        below takes it **last and optional** -- the constructor has no other
+        way to learn the device, the factories do. The two spellings sit
+        within a couple of lines of each other in ordinary code
+        (`var xs = linspace[n](0, 1, ctx=cpu)` beside `var ys = T(cpu)`), and
+        writing the factory the constructor's way is a compile error, not a
+        silent one.
+
         Not available at `DType.bool`: `enqueue_memset` on a `bool` buffer
         fails to compile under the pinned toolchain ("failed to run the
         pass manager"), and neither does a `comptime if` around it, since
@@ -219,6 +243,38 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
             Self.dtype, Self.LayoutType, MutAnyOrigin
         ] = TileTensor(self.buffer, Self.layout)
         return v
+
+    @staticmethod
+    def from_view(
+        v: TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin],
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Self:
+        """A new owning tensor holding a **copy** of `v`'s elements.
+
+        The way back up from the view layer, and the name says copy because
+        that is the only thing it can be: a `TileTensor` is a pointer plus a
+        layout in every storage policy MAX ships, so there is no buffer to
+        adopt and no way to take ownership of one. `view()` down is free;
+        this direction costs an allocation and an element walk.
+
+        Reach for it when a kernel wrote into a view over borrowed storage
+        (a `List`, another tensor's slice) and the result has to outlive it.
+
+        **Host-resident views only.** All this has to work with is a pointer
+        and a layout -- there is no `DeviceBuffer` behind a `TileTensor` to
+        `map_to_host`, so the element walk is a plain host read and a view
+        over device memory would segfault it on CUDA, exactly as this
+        module's docstring describes for `unsafe_ptr()`. When the source is
+        already an owning device-resident `Tensor`, `to_host()` plus a
+        factory is the route; `from_view` is for the borrowed-storage case,
+        which is a host case by construction.
+        """
+        var device = _context(ctx)
+        var src = v.ptr_at_offset(Coord(0))
+        var values = List[Scalar[Self.dtype]](capacity=Self.num_elements)
+        for i in range(Self.num_elements):
+            values.append(src[unsafe_offset=i])
+        return Self(device, values^)
 
     def to_host(self) raises -> List[Scalar[Self.dtype]]:
         """A host copy of every element, row-major.
@@ -365,7 +421,8 @@ def _context(ctx: Optional[DeviceContext]) raises -> DeviceContext:
     """The device a factory should allocate on: the caller's, or the host.
 
     Every factory below takes `ctx` last and optional, so `zeros[f32, 2,
-    3]()` lands on the CPU and `zeros[f32, 2, 3](gpu)` lands on `gpu`. It
+    3]()` lands on the CPU and `zeros[f32, 2, 3](gpu)` lands on `gpu` --
+    unlike `Tensor`'s own constructor, which takes it first and required. It
     cannot be an ordinary default argument because `DeviceContext(api="cpu")`
     raises, and a raising expression is not admissible in that position.
     """
@@ -421,7 +478,7 @@ def empty[
 
 
 def eye[
-    dtype: DType, n: Int
+    n: Int, dtype: DType = DType.float64
 ](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
     """The `n`x`n` identity matrix."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
@@ -431,52 +488,67 @@ def eye[
 
 
 def linspace[
-    dtype: DType, num: Int
+    num: Int, dtype: DType = DType.float64
 ](
-    start: Scalar[dtype],
-    stop: Scalar[dtype],
+    start: Float64,
+    stop: Float64,
     ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num]:
     """`num` evenly spaced values from `start` to `stop`, inclusive of both.
 
     Matches `numpy.linspace`'s default `endpoint=True`. `num == 1` returns
     `[start]`, avoiding a division by zero in the step computation.
+
+    The count comes first and `dtype` defaults to `float64`, so the common
+    call is `linspace[5](0, 1)` and the dtype is named only when it is not
+    the default: `linspace[5, f32](0, 1)`. The endpoints are `Float64`
+    rather than `Scalar[dtype]` deliberately -- taking them at the tensor's
+    own dtype would let `linspace[5](0, 1)` *infer* an integer dtype from
+    the literals and hand back an integer tensor, since inference outranks
+    a default. Every factory below is shaped the same way for the same
+    reason.
     """
+    var lo = Scalar[dtype](start)
     var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
-        values.append(start)
+        values.append(lo)
     else:
-        var step = (stop - start) / Scalar[dtype](num - 1)
+        var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
-            values.append(start + Scalar[dtype](i) * step)
+            values.append(lo + Scalar[dtype](i) * step)
     return Tensor[dtype, num](_context(ctx), values^)
 
 
 def logspace[
-    dtype: DType, num: Int
+    num: Int, dtype: DType = DType.float64
 ](
-    start: Scalar[dtype],
-    stop: Scalar[dtype],
-    base: Scalar[dtype] = 10,
+    start: Float64,
+    stop: Float64,
+    base: Float64 = 10,
     ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num]:
     """`num` values evenly spaced on a log scale: `base**x` for `x` in
-    `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults."""
+    `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults.
+
+    Count first, `dtype` defaulted -- see `linspace` for why the arguments
+    are `Float64`."""
+    var lo = Scalar[dtype](start)
+    var b = Scalar[dtype](base)
     var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
-        values.append(base**start)
+        values.append(b**lo)
     else:
-        var step = (stop - start) / Scalar[dtype](num - 1)
+        var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
-            values.append(base ** (start + Scalar[dtype](i) * step))
+            values.append(b ** (lo + Scalar[dtype](i) * step))
     return Tensor[dtype, num](_context(ctx), values^)
 
 
 def arange[
-    dtype: DType, num: Int
+    num: Int, dtype: DType = DType.float64
 ](
-    start: Scalar[dtype] = 0,
-    step: Scalar[dtype] = 1,
+    start: Float64 = 0,
+    step: Float64 = 1,
     ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num]:
     """`num` values starting at `start`, spaced by `step`.
@@ -487,9 +559,11 @@ def arange[
     (`start + num*step`). `numax.core.array.linspace` is the one to reach for
     when the endpoints are what matter.
     """
+    var first = Scalar[dtype](start)
+    var by = Scalar[dtype](step)
     var values = List[Scalar[dtype]](capacity=num)
     for i in range(num):
-        values.append(start + Scalar[dtype](i) * step)
+        values.append(first + Scalar[dtype](i) * by)
     return Tensor[dtype, num](_context(ctx), values^)
 
 
@@ -701,10 +775,10 @@ def split[
 
 
 def geomspace[
-    dtype: DType, num: Int
+    num: Int, dtype: DType = DType.float64
 ](
-    start: Scalar[dtype],
-    stop: Scalar[dtype],
+    start: Float64,
+    stop: Float64,
     ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num] where dtype.is_floating_point():
     """`num` values spaced evenly on a geometric progression, endpoints
@@ -717,25 +791,25 @@ def geomspace[
     """
     var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
-        values.append(start)
+        values.append(Scalar[dtype](start))
     else:
         var ratio = (stop / start) ** (Float64(1) / Float64(num - 1))
-        var current = start
-        for i in range(num):
+        var current = Scalar[dtype](start)
+        for _ in range(num):
             values.append(current)
             current = current * Scalar[dtype](ratio)
     return Tensor[dtype, num](_context(ctx), values^)
 
 
 def identity[
-    dtype: DType, n: Int
+    n: Int, dtype: DType = DType.float64
 ](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
     """The `n`x`n` identity matrix. `numpy.identity`.
 
     Same result as `eye`; both names exist in NumPy and a caller reaching
     for one should not have to discover the other.
     """
-    return eye[dtype, n](ctx)
+    return eye[n, dtype](ctx)
 
 
 def diag[
@@ -955,7 +1029,18 @@ def _round_to[dtype: DType](x: Scalar[dtype], precision: Int) -> Scalar[dtype]:
 
 
 def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
-    return String(_round_to(x, precision))
+    """One element, rounded for display.
+
+    Rounding is only meaningful for a float; an integer or boolean tensor
+    prints its elements as they are. Without the split, `print` on a
+    `Tensor[DType.int32, ...]` was a *compile* error rather than a missing
+    feature, because `_round_to`'s `10.0 ** precision` requires a
+    floating-point SIMD.
+    """
+    comptime if dtype.is_floating_point():
+        return String(_round_to(x, precision))
+    else:
+        return String(x)
 
 
 # --------------------------------------------------------------------------
@@ -1016,7 +1101,7 @@ def to_array[
 def to_tensor[
     dtype: DType, n: Int
 ](
-    a: Array[Plain[dtype, 1], n], ctx: Optional[DeviceContext] = None
+    a: Array[Plain[dtype], n], ctx: Optional[DeviceContext] = None
 ) raises -> Tensor[dtype, n]:
     """A rank-1 `Tensor` holding `a`'s elements.
 
@@ -1035,7 +1120,7 @@ def to_tensor[
 def to_tensor[
     dtype: DType, n: Int
 ](
-    a: Array[Plain[dtype, 1], n * n], ctx: Optional[DeviceContext] = None
+    a: Array[Plain[dtype], n * n], ctx: Optional[DeviceContext] = None
 ) raises -> Tensor[dtype, n, n]:
     """A square `Tensor` holding `a`'s elements, row-major. `Plain`-only,
     for the reason the rank-1 overload above gives."""

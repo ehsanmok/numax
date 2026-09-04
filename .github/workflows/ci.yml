@@ -91,11 +91,18 @@ jobs:
       - name: Run CPU examples
         run: pixi run examples-cpu
 
+      # The GPU examples cannot run here, but `mojo build` type-checks their
+      # bodies without a device -- which is what would have caught the
+      # `linspace(ctx, ...)` calls that sat broken because nothing in CI
+      # compiled these files at all.
+      - name: Compile GPU examples
+        run: pixi run examples-gpu-build
+
       - name: Run CPU benchmark
         run: pixi run bench
 
-      # The GPU examples (gaussian_gpu, softmax, ode, random_ensemble) and the
-      # GPU benchmarks need a real device -- Metal or CUDA, whichever
-      # `DeviceContext` finds. No GitHub-hosted runner has either, so they stay
-      # local/manual-only checks rather than CI steps. They are verified by
+      # *Running* the GPU examples and the GPU benchmarks needs a real device
+      # -- Metal or CUDA, whichever `DeviceContext` finds. No GitHub-hosted
+      # runner has either, so execution stays a local/manual check; the step
+      # above compiles them here so at least their call sites stay honest. They are verified by
       # hand on both backends; see docs/performance.md.

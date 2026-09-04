@@ -19,7 +19,7 @@ from std.testing import (
 from numax.prelude import *
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 
 
 def test_the_builtins_survive_a_star_import() raises:
@@ -36,11 +36,11 @@ def test_the_builtins_survive_a_star_import() raises:
 
 
 def test_creation_and_manipulation_are_reachable() raises:
-    var xs = linspace[dtype, 5](0.0, 1.0)
+    var xs = linspace[5](0.0, 1.0)
     assert_almost_equal(xs[0], Scalar[dtype](0.0))
     assert_almost_equal(xs[4], Scalar[dtype](1.0))
 
-    var grid = reshape[rows=2, cols=3](arange[dtype, 6]())
+    var grid = reshape[rows=2, cols=3](arange[6]())
     assert_equal(grid.dim[0](), 2)
     assert_equal(ravel(grid)[5], Scalar[dtype](5.0))
 
@@ -57,7 +57,7 @@ def test_the_conformers_are_reachable() raises:
 
 
 def test_linalg_and_the_bridge_are_reachable() raises:
-    var i3 = eye[dtype, 3]()
+    var i3 = eye[3]()
     assert_almost_equal(det[P, 3](to_array[P](i3)).v, Scalar[dtype](1.0))
     # Frobenius norm of I3 is sqrt(3).
     assert_almost_equal(
@@ -66,7 +66,7 @@ def test_linalg_and_the_bridge_are_reachable() raises:
 
 
 def test_stats_and_io_are_reachable() raises:
-    var xs = arange[dtype, 4]()
+    var xs = arange[4]()
     assert_almost_equal(mean(xs), Scalar[dtype](1.5))
 
     var path = String("/tmp/numax_prelude_test.npy")

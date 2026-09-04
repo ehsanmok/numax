@@ -18,15 +18,15 @@ Nothing else changes, and `.view()` yields the `TileTensor` every MAX
 kernel takes.
 
 ```mojo
-from numax import Dual, FloatLike, f32
+from numax import Dual, FloatLike, Plain, f32
 
-def g[T: FloatLike](x: T) -> T:          # written once, no `dtype`
+def g[T: FloatLike](x: T) -> T:              # written once, no `dtype`
     return (-(x * x)).exp()
 
 def main():
-    print(g(f32(0.5)).v)                 # 0.7788008  -- just the value
-    var d = g(Dual[f32].seed(0.5))       # derivative seeded to 1
-    print(d.value.v, d.deriv.v)          # 0.7788008 -0.7788008
+    print(g(Plain[f32](0.5)).v)              # 0.7788008  -- just the value
+    var d = g(Dual[Plain[f32]].seed(0.5))    # derivative seeded to 1
+    print(d.value.v, d.deriv.v)              # 0.7788008 -0.7788008
 ```
 
 ## Layout

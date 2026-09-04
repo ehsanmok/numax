@@ -71,10 +71,11 @@ decides what a call returns.
 | `Complex[Inner]` | Complex over any other conformer; `Complex[Dual[...]]` differentiates holomorphically | [`core/complex.mojo`](../numax/core/complex.mojo), [`complex.mojo`](../examples/basic/complex.mojo) |
 | `Interval[Inner]` | An enclosure of every `f(x)` for `x` in `[lo, hi]`, including tight `sin`/`cos` over an interval | [`core/interval.mojo`](../numax/core/interval.mojo) |
 
-`f32` and `f64` are `Plain[DType.float32, 1]` and its double-precision
-counterpart, exported so a program does not open by aliasing them, and
-`Dual[f64].seed(x)` is `x` with its derivative set to 1 — the way nearly
-every single-variable differentiation starts.
+`f32` and `f64` are `DType.float32` and `DType.float64`, exported so one name
+serves both layers: `linspace[5, f64](...)` where a dtype belongs, `Plain[f64]`
+where a conformer does. `Plain`'s `width` defaults to 1, so `Plain[f64]` is the
+scalar and `Dual[Plain[f64]].seed(x)` is `x` with its derivative set to 1 — the
+way nearly every single-variable differentiation starts.
 
 They nest — `Complex[Dual[Plain[...]]]`, `Gradient[Dual[...], n]` — so
 autodiff, precision and complex arithmetic compose instead of each needing its

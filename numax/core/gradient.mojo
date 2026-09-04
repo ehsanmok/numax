@@ -90,7 +90,7 @@ struct Gradient[Inner: FloatLike, n_vars: Int](Copyable, FloatLike, Movable):
         var g = _zero_grad[Self.Inner, Self.n_vars]()
         for i in range(Self.n_vars):
             g[i] = (
-                self.grad[i] * rhs.value + (-(self.value * rhs.grad[i]))
+                self.grad[i] * rhs.value - (self.value * rhs.grad[i])
             ) / denom
         return Self(value^, g^)
 
@@ -131,7 +131,7 @@ struct Gradient[Inner: FloatLike, n_vars: Int](Copyable, FloatLike, Movable):
         return Self(v^, g^)
 
     def erfc(self) -> Self:
-        # Computed via `Inner.erfc()` rather than `one() + (-erf())`, same
+        # Computed via `Inner.erfc()` rather than `one() - erf()`, same
         # cancellation-avoidance reason as `Dual.erfc()`.
         var v = self.value.erfc()
         var scale = (

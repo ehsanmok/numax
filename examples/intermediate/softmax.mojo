@@ -30,11 +30,11 @@ comptime cols = 16
 
 
 def sub_exp_combine(a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[dtype, 1]:
-    return (Plain[dtype, 1](a) + (-Plain[dtype, 1](b))).exp().v
+    return (Plain[dtype](a) - Plain[dtype](b)).exp().v
 
 
 def div_combine(a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[dtype, 1]:
-    return (Plain[dtype, 1](a) / Plain[dtype, 1](b)).v
+    return (Plain[dtype](a) / Plain[dtype](b)).v
 
 
 def fill_inputs(mut storage: List[Scalar[dtype]]):

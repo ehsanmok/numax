@@ -21,8 +21,8 @@ comptime CT = Complex[Plain[dtype, width]]
 
 def c(re: Float64, im: Float64) -> CT:
     return CT(
-        Plain[dtype, width](SIMD[dtype, width](re)),
-        Plain[dtype, width](SIMD[dtype, width](im)),
+        Plain[dtype, width].constant(re),
+        Plain[dtype, width].constant(im),
     )
 
 
@@ -143,12 +143,12 @@ def test_nests_inside_dual_for_holomorphic_derivatives() raises:
     # z = 3+4i, i.e. 6+8i, with no changes to the kernel (just `z*z`).
     comptime DCT = Complex[Dual[Plain[dtype, width]]]
     var re = Dual[Plain[dtype, width]](
-        Plain[dtype, width](SIMD[dtype, width](3.0)),
-        Plain[dtype, width](SIMD[dtype, width](1.0)),
+        Plain[dtype, width].constant(3.0),
+        Plain[dtype, width].constant(1.0),
     )
     var im = Dual[Plain[dtype, width]](
-        Plain[dtype, width](SIMD[dtype, width](4.0)),
-        Plain[dtype, width](SIMD[dtype, width](0.0)),
+        Plain[dtype, width].constant(4.0),
+        Plain[dtype, width].constant(0.0),
     )
     var z = DCT(re^, im^)
     var w = z * z

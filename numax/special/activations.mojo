@@ -58,7 +58,7 @@ def swish[T: FloatLike](x: T) -> T:
 def tanh[T: FloatLike](x: T) -> T:
     """Hyperbolic tangent, via `(exp(2x) - 1) / (exp(2x) + 1)`."""
     var e2x = (x + x).exp()
-    return (e2x + (-T.one())) / (e2x + T.one())
+    return (e2x - T.one()) / (e2x + T.one())
 
 
 def relu[T: FloatLike](x: T) -> T:
@@ -100,13 +100,13 @@ def _sub_exp_combine[
     # exp(a - b), fused into one pass so `softmax` doesn't need a separate,
     # in-place elementwise `exp` step (which `map` can't express anyway --
     # its `xs`/`ys` parameters may not alias the same buffer).
-    return (Plain[dtype, 1](a) + (-Plain[dtype, 1](b))).exp().v
+    return (Plain[dtype](a) - Plain[dtype](b)).exp().v
 
 
 def _div_combine[
     dtype: DType
 ](a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[dtype, 1]:
-    return (Plain[dtype, 1](a) / Plain[dtype, 1](b)).v
+    return (Plain[dtype](a) / Plain[dtype](b)).v
 
 
 def softmax[

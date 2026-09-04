@@ -84,9 +84,7 @@ def cubic_spline_moments[
 
     var six_over_h2 = T.constant(6.0) / (h * h)
     for i in range(interior):
-        var second_difference = (
-            y[i + 2] + (-(T.constant(2.0) * y[i + 1])) + y[i]
-        )
+        var second_difference = y[i + 2] - (T.constant(2.0) * y[i + 1]) + y[i]
         rhs[i] = six_over_h2 * second_difference
 
     var interior_moments = tridiagonal_solve[T, interior](sub, diag, sup, rhs)
@@ -107,16 +105,16 @@ def cubic_spline_eval[
     behaviour outside `[x0, x0 + (n-1)*h]`.
     """
     var last = T.constant(Float64(n - 1))
-    var clamped = min_of(max_of((x + (-x0)) / h, T.constant(0.0)), last)
+    var clamped = min_of(max_of((x - x0) / h, T.constant(0.0)), last)
 
     var result = T.constant(0.0)
     var interval_start = T.constant(0.0)
 
     for i in range(n - 1):
-        var t = (clamped + (-interval_start)) * h
+        var t = (clamped - interval_start) * h
 
         # The cubic on interval `i`, in the standard moment form.
-        var slope = (y[i + 1] + (-y[i])) / h + (
+        var slope = (y[i + 1] - y[i]) / h + (
             -(
                 h
                 * (T.constant(2.0) * moments[i] + moments[i + 1])
@@ -124,7 +122,7 @@ def cubic_spline_eval[
             )
         )
         var curvature = moments[i] / T.constant(2.0)
-        var jerk = (moments[i + 1] + (-moments[i])) / (T.constant(6.0) * h)
+        var jerk = (moments[i + 1] - moments[i]) / (T.constant(6.0) * h)
         var value = y[i] + t * (slope + t * (curvature + t * jerk))
 
         # `1` exactly on the interval containing `clamped`. The last
@@ -137,7 +135,7 @@ def cubic_spline_eval[
             selected = above.copy()
         else:
             selected = above * (
-                T.one() + (-ge_indicator(clamped, interval_start + T.one()))
+                T.one() - ge_indicator(clamped, interval_start + T.one())
             )
 
         result = result + selected * value
@@ -164,7 +162,7 @@ def chebyshev_fit[
     comptime nodes = _chebyshev_nodes[n_terms]()
     comptime table = _chebyshev_cosine_table[n_terms]()
 
-    var half_width = (b + (-a)) / T.constant(2.0)
+    var half_width = (b - a) / T.constant(2.0)
     var midpoint = (a + b) / T.constant(2.0)
 
     var samples = Array[T, n_terms](fill=T.constant(0.0))
@@ -202,7 +200,7 @@ def chebyshev_eval[
     `c[0]` enters at half weight, which is the convention `chebyshev_fit`'s
     `2/N` normalization produces.
     """
-    var y = (T.constant(2.0) * x + (-a) + (-b)) / (b + (-a))
+    var y = (T.constant(2.0) * x - a - b) / (b - a)
     var two_y = T.constant(2.0) * y
 
     var d = T.constant(0.0)
@@ -210,10 +208,10 @@ def chebyshev_eval[
     for step in range(1, n):
         var k = n - step
         var saved = d.copy()
-        d = two_y * d + (-dd) + coefficients[k]
+        d = two_y * d - dd + coefficients[k]
         dd = saved^
 
-    return y * d + (-dd) + T.constant(0.5) * coefficients[0]
+    return y * d - dd + T.constant(0.5) * coefficients[0]
 
 
 def _chebyshev_nodes[n: Int]() -> Array[Float64, n]:
@@ -248,7 +246,7 @@ struct CubicSpline[T: FloatLike, n: Int](Copyable, Movable):
     once and called many times. `scipy.interpolate.CubicSpline`.
 
     ```mojo
-    var spline = CubicSpline[f64, 5](y, x0, h)
+    var spline = CubicSpline[Plain[f64], 5](y, x0, h)
     var value = spline(x)
     ```
 
@@ -284,7 +282,9 @@ struct Chebyshev[T: FloatLike, n: Int](Copyable, Movable):
     `numpy.polynomial.chebyshev.Chebyshev`.
 
     ```mojo
-    var series = Chebyshev[f64, 16](chebyshev_fit[f64, g, 16](a, b), a, b)
+    var series = Chebyshev[Plain[f64], 16](
+        chebyshev_fit[Plain[f64], g, 16](a, b), a, b
+    )
     var value = series(x)
     ```
 
@@ -299,7 +299,7 @@ struct Chebyshev[T: FloatLike, n: Int](Copyable, Movable):
     @staticmethod
     def fit[f: def[U: FloatLike](U) thin -> U](a: Self.T, b: Self.T) -> Self:
         """Fit `f` on `[a, b]` and keep the coefficients.
-        `Chebyshev[f64, 16].fit[g](a, b)`."""
+        `Chebyshev[Plain[f64], 16].fit[g](a, b)`."""
         return Self(chebyshev_fit[Self.T, f, Self.n](a, b), a.copy(), b.copy())
 
     def __call__(self, x: Self.T) -> Self.T:

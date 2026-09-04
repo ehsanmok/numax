@@ -38,7 +38,7 @@ comptime G = Gradient[P, 2]
 
 def cos_minus_x[U: FloatLike](x: U) -> U:
     """`cos(x) - x`. Its root is the Dottie number, 0.739085..."""
-    return x.cos() + (-x)
+    return x.cos() - x
 
 
 def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
@@ -49,8 +49,8 @@ def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
     valley instead of following it, so reaching `(1, 1)` says the curvature
     information is being used.
     """
-    var a = U.one() + (-v[0])
-    var b = v[1] + (-(v[0] * v[0]))
+    var a = U.one() - v[0]
+    var b = v[1] - (v[0] * v[0])
     return a * a + U.constant(100.0) * b * b
 
 

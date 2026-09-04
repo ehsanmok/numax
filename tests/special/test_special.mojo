@@ -9,30 +9,30 @@ comptime width = 1
 comptime D = Dual[Plain[dtype, width]]
 
 
-def v(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+def pv(x: Float64) -> Plain[dtype, width]:
+    return Plain[dtype, width].constant(x)
 
 
 def test_gaussian_value() raises:
     # gaussian(0) = exp(0) = 1.
-    var x = Plain[dtype, width](SIMD[dtype, width](0))
+    var x = Plain[dtype, width].constant(0)
     assert_almost_equal(gaussian(x).v, SIMD[dtype, width](1))
 
 
 def test_gaussian_derivative() raises:
     # d/dx[exp(-x^2)] = -2x*exp(-x^2); at x=1 that's -2/e.
-    var x = D(v(1), v(1))
+    var x = D(pv(1), pv(1))
     var g = gaussian(x)
     assert_almost_equal(g.deriv.v, SIMD[dtype, width](-2.0 / 2.718281828459045))
 
 
 def test_sigmoid_at_zero() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](0))
+    var x = Plain[dtype, width].constant(0)
     assert_almost_equal(sigmoid(x).v, SIMD[dtype, width](0.5))
 
 
 def test_sigmoid_derivative_is_p_times_one_minus_p() raises:
-    var x = D(v(0.5), v(1))
+    var x = D(pv(0.5), pv(1))
     var s = sigmoid(x)
     assert_almost_equal(
         s.deriv.v, s.value.v * (SIMD[dtype, width](1) - s.value.v)
@@ -40,7 +40,7 @@ def test_sigmoid_derivative_is_p_times_one_minus_p() raises:
 
 
 def test_swish_is_x_times_sigmoid() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](1.3))
+    var x = Plain[dtype, width].constant(1.3)
     var s = sigmoid(x)
     var sw = swish(x)
     assert_almost_equal(sw.v, x.v * s.v)

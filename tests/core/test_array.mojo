@@ -72,7 +72,7 @@ def test_empty_is_zero_initialized_for_memory_safety() raises:
 
 def test_eye_is_the_identity_matrix() raises:
     var ctx = DeviceContext(api="cpu")
-    var m = eye[dtype, 3](ctx)
+    var m = eye[3, dtype](ctx)
     var v = m.view()
     for r in range(3):
         for c in range(3):
@@ -82,7 +82,7 @@ def test_eye_is_the_identity_matrix() raises:
 
 def test_linspace_matches_numpy_endpoints_and_spacing() raises:
     var ctx = DeviceContext(api="cpu")
-    var ls = linspace[dtype, 5](0, 1, ctx=ctx)
+    var ls = linspace[5, dtype](0, 1, ctx=ctx)
     var expected = [0.0, 0.25, 0.5, 0.75, 1.0]
     for i in range(5):
         assert_almost_equal(ls[i], Scalar[dtype](expected[i]))
@@ -90,13 +90,13 @@ def test_linspace_matches_numpy_endpoints_and_spacing() raises:
 
 def test_linspace_of_one_point_returns_start() raises:
     var ctx = DeviceContext(api="cpu")
-    var ls = linspace[dtype, 1](3, 9, ctx=ctx)
+    var ls = linspace[1, dtype](3, 9, ctx=ctx)
     assert_equal(ls[0], Scalar[dtype](3))
 
 
 def test_logspace_matches_base_to_the_linspace_power() raises:
     var ctx = DeviceContext(api="cpu")
-    var lg = logspace[dtype, 3](0, 2, ctx=ctx)
+    var lg = logspace[3, dtype](0, 2, ctx=ctx)
     var expected = [1.0, 10.0, 100.0]
     for i in range(3):
         assert_almost_equal(lg[i], Scalar[dtype](expected[i]))
@@ -198,8 +198,8 @@ def test_squeeze_drops_a_trailing_size_one_axis() raises:
 
 def test_stack_along_axis_zero() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = linspace[dtype, 3](0, 2, ctx=ctx)
-    var b = linspace[dtype, 3](10, 12, ctx=ctx)
+    var a = linspace[3, dtype](0, 2, ctx=ctx)
+    var b = linspace[3, dtype](10, 12, ctx=ctx)
     var st = stack(a, b)
     var sv = st.view()
     for i in range(3):
@@ -225,7 +225,7 @@ def test_tensor_survives_the_call_that_built_it() raises:
 
 def test_arange_starts_at_start_and_steps_by_step() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 5](2, 3, ctx=ctx)
+    var a = arange[5, dtype](2, 3, ctx=ctx)
     assert_equal(a.num_elements, 5)
     for i in range(5):
         assert_equal(a[i], Scalar[dtype](2 + 3 * i))
@@ -233,14 +233,14 @@ def test_arange_starts_at_start_and_steps_by_step() raises:
 
 def test_arange_defaults_to_zero_start_unit_step() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 4](ctx=ctx)
+    var a = arange[4, dtype](ctx=ctx)
     for i in range(4):
         assert_equal(a[i], Scalar[dtype](i))
 
 
 def test_reshape_preserves_row_major_element_order() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 6](ctx=ctx)
+    var a = arange[6, dtype](ctx=ctx)
     var m = reshape[rows=2, cols=3](a)
     assert_equal(m.dim[0](), 2)
     assert_equal(m.dim[1](), 3)
@@ -252,7 +252,7 @@ def test_reshape_preserves_row_major_element_order() raises:
 
 def test_ravel_inverts_reshape() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 6](ctx=ctx)
+    var a = arange[6, dtype](ctx=ctx)
     var m = reshape[rows=3, cols=2](a)
     var flat = ravel(m)
     assert_equal(flat.num_elements, 6)
@@ -277,8 +277,8 @@ def test_ravel_flattens_a_2d_tensor_row_by_row() raises:
 
 def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 3](ctx=ctx)
-    var b = arange[dtype, 2](100, ctx=ctx)
+    var a = arange[3, dtype](ctx=ctx)
+    var b = arange[2, dtype](100, ctx=ctx)
     var c = concatenate(a, b)
     assert_equal(c.num_elements, 5)
     for i in range(3):
@@ -289,8 +289,8 @@ def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
 
 def test_split_inverts_concatenate() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 3](ctx=ctx)
-    var b = arange[dtype, 4](50, ctx=ctx)
+    var a = arange[3, dtype](ctx=ctx)
+    var b = arange[4, dtype](50, ctx=ctx)
     var joined = concatenate(a, b)
     var parts = split[at=3](joined)
     assert_equal(parts[0].num_elements, 3)
@@ -303,7 +303,7 @@ def test_split_inverts_concatenate() raises:
 
 def test_split_at_an_endpoint_gives_one_empty_side() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 3](ctx=ctx)
+    var a = arange[3, dtype](ctx=ctx)
     var parts = split[at=0](a)
     assert_equal(parts[0].num_elements, 0)
     assert_equal(parts[1].num_elements, 3)

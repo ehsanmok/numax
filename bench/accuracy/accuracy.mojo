@@ -88,7 +88,7 @@ comptime P = Plain[DType.float64, 1]
 
 
 def p(x: Float64) -> P:
-    return P(SIMD[DType.float64, 1](x))
+    return P.constant(x)
 
 
 def ulps_between(a: Float64, b: Float64) -> Float64:

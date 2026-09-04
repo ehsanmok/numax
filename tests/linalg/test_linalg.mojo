@@ -44,7 +44,7 @@ comptime D = Dual[P]
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def s(x: P) -> Float64:
@@ -336,7 +336,7 @@ def test_compensated_cholesky_beats_plain_at_the_same_dtype() raises:
     # without needing a contrived example.
     comptime n = 4
     comptime narrow = DType.float32
-    comptime PN = Plain[narrow, 1]
+    comptime PN = Plain[narrow]
     comptime CN = Compensated[narrow, 1]
 
     var plain_a = Array[PN, n * n](fill=PN.constant(0.0))

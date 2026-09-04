@@ -7,7 +7,7 @@ competitors at the same job, and the point of this benchmark is to show
 where the line falls rather than to declare a winner:
 
 1. **MAX** -- one `n x n` product per call, `target="cpu"`.
-2. **numax, scalar** -- the same single product through `Plain[dtype, 1]`.
+2. **numax, scalar** -- the same single product through `Plain[dtype]`.
 3. **numax, batched** -- `Plain[dtype, width]` does `width` independent
    products in one call, one per SIMD lane, which is the shape a
    per-element kernel actually needs and the shape MAX's API cannot
@@ -40,9 +40,7 @@ def _entry(i: Int, salt: Int) -> Float64:
 
 
 def _numax_operands[n: Int, w: Int](salt: Int) -> Array[Plain[dtype, w], n * n]:
-    var out = Array[Plain[dtype, w], n * n](
-        fill=Plain[dtype, w](SIMD[dtype, w](0))
-    )
+    var out = Array[Plain[dtype, w], n * n](fill=Plain[dtype, w].constant(0))
     for i in range(n * n):
         out[i] = Plain[dtype, w](SIMD[dtype, w](Scalar[dtype](_entry(i, salt))))
     return out^
@@ -65,10 +63,10 @@ def run[n: Int](timed_iters: Int) raises:
     var ea_wide = _numax_operands[n, width](0)
     var eb_wide = _numax_operands[n, width](1)
 
-    var ec = numax_matmul[Plain[dtype, 1], n](ea, eb)
+    var ec = numax_matmul[Plain[dtype], n](ea, eb)
     for _ in range(warmup_iters):
         max_matmul[target="cpu"](c, a, b)
-        _ = numax_matmul[Plain[dtype, 1], n](ea, eb)
+        _ = numax_matmul[Plain[dtype], n](ea, eb)
         _ = numax_matmul[Plain[dtype, width], n](ea_wide, eb_wide)
 
     var t0 = perf_counter_ns()
@@ -78,7 +76,7 @@ def run[n: Int](timed_iters: Int) raises:
 
     t0 = perf_counter_ns()
     for _ in range(timed_iters):
-        _ = numax_matmul[Plain[dtype, 1], n](ea, eb)
+        _ = numax_matmul[Plain[dtype], n](ea, eb)
     var scalar_ns = Float64(perf_counter_ns() - t0) / Float64(timed_iters)
 
     t0 = perf_counter_ns()

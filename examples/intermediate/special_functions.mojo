@@ -38,8 +38,8 @@ def main():
     print("--- gamma / lgamma (now valid for x <= 0 too, via reflection) ---")
     for x_raw in [0.5, 1.0, 2.0, 5.0, -0.5, -2.5, -4.3, -10.5]:
         var x = Dual[Plain[dtype, width]](
-            Plain[dtype, width](SIMD[dtype, width](x_raw)),
-            Plain[dtype, width](SIMD[dtype, width](1)),
+            Plain[dtype, width].constant(x_raw),
+            Plain[dtype, width].constant(1),
         )
         var g = gamma(x)
         var lg = lgamma(x)
@@ -55,13 +55,13 @@ def main():
         )
 
     print("--- gammainc(a, x): regularized lower incomplete gamma ---")
-    var a = Plain[dtype, width](SIMD[dtype, width](2))
+    var a = Plain[dtype, width].constant(2)
     for x_raw in [0.5, 1.0, 3.0, 10.0]:
-        var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
+        var x = Plain[dtype, width].constant(x_raw)
         print("a=2 x=", x_raw, " P(a,x)=", gammainc(a, x).v)
 
-    var neg_a = Plain[dtype, width](SIMD[dtype, width](-0.5))
-    var x_for_neg_a = Plain[dtype, width](SIMD[dtype, width](2.0))
+    var neg_a = Plain[dtype, width].constant(-0.5)
+    var x_for_neg_a = Plain[dtype, width].constant(2.0)
     print(
         "a=-0.5 (now valid too) x=2.0  P(a,x)=",
         gammainc(neg_a, x_for_neg_a).v,
@@ -72,12 +72,12 @@ def main():
         " asymptotic far branch) ---"
     )
     for x_raw in [0.0, 1.0, 2.0, 2.4048, 3.0, 5.0, 10.0, 20.0]:
-        var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
+        var x = Plain[dtype, width].constant(x_raw)
         print("x=", x_raw, " J0(x)=", j0(x).v, " J1(x)=", j1(x).v)
 
     print("--- bessel Y0/Y1 (x > 0) ---")
     for x_raw in [0.5, 1.0, 2.0, 5.0, 10.0, 20.0]:
-        var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
+        var x = Plain[dtype, width].constant(x_raw)
         print("x=", x_raw, " Y0(x)=", y0(x).v, " Y1(x)=", y1(x).v)
 
     print(
@@ -86,8 +86,8 @@ def main():
     )
     for x_raw in [-0.36787944, -0.3, -0.1, 0.0, 1.0, 2.718281828459045, 10.0]:
         var x = Dual[Plain[dtype, width]](
-            Plain[dtype, width](SIMD[dtype, width](x_raw)),
-            Plain[dtype, width](SIMD[dtype, width](1)),
+            Plain[dtype, width].constant(x_raw),
+            Plain[dtype, width].constant(1),
         )
         var w = lambertw(x)
         print(
@@ -104,8 +104,8 @@ def main():
     print("--- lambertw_m1, the other real branch (-1/e <= x < 0, w <= -1) ---")
     for x_raw in [-0.36787944, -0.3, -0.1, -0.01, -1e-6]:
         var x = Dual[Plain[dtype, width]](
-            Plain[dtype, width](SIMD[dtype, width](x_raw)),
-            Plain[dtype, width](SIMD[dtype, width](1)),
+            Plain[dtype, width].constant(x_raw),
+            Plain[dtype, width].constant(1),
         )
         var w = lambertw_m1(x)
         print(
@@ -120,8 +120,8 @@ def main():
     print("--- elliptic_k / elliptic_e (parameter m = k^2, 0 <= m <= 1) ---")
     for m_raw in [0.0, 0.3, 0.5, 0.9, 0.99, 1.0]:
         var m = Dual[Plain[dtype, width]](
-            Plain[dtype, width](SIMD[dtype, width](m_raw)),
-            Plain[dtype, width](SIMD[dtype, width](1)),
+            Plain[dtype, width].constant(m_raw),
+            Plain[dtype, width].constant(1),
         )
         var k = elliptic_k(m)
         var e = elliptic_e(m)

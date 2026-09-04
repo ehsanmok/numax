@@ -1,9 +1,11 @@
 # macOS
 .DS_Store
 
-# Cursor (local agent config/rules, not shipped with the repo)
+# Local agent config/rules, not shipped with the repo
 .cursor/
 .claude/
+.agents/
+skills-lock.json
 
 # pixi environments
 .pixi/*

@@ -21,7 +21,7 @@ comptime D = Dual[P]
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def decay[U: FloatLike](t: U, y: U) -> U:

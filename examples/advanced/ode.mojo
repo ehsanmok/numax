@@ -42,7 +42,7 @@ def cooling[U: FloatLike](t: U, y: U) -> U:
     Nonlinear enough in `t` that no closed form is worth writing, which is
     the point -- the ensemble is what's being demonstrated, not the answer.
     """
-    return -(U.constant(1.5) * (y + (-t.sin())))
+    return -(U.constant(1.5) * (y - t.sin()))
 
 
 def trajectory_step[w: Int](y0: SIMD[dtype, w]) -> SIMD[dtype, w]:

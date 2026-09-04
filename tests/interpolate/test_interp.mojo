@@ -25,7 +25,7 @@ comptime PI = 3.141592653589793
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def s(x: P) -> Float64:

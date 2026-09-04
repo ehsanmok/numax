@@ -61,7 +61,7 @@ struct Dual[Inner: FloatLike](Copyable, FloatLike, Movable):
     def __truediv__(self, rhs: Self) -> Self:
         # Quotient rule: (f/g)' = (f'g - fg') / g^2.
         var value = self.value / rhs.value
-        var deriv = (self.deriv * rhs.value + (-(self.value * rhs.deriv))) / (
+        var deriv = (self.deriv * rhs.value - (self.value * rhs.deriv)) / (
             rhs.value * rhs.value
         )
         return Self(value^, deriv^)
@@ -97,7 +97,7 @@ struct Dual[Inner: FloatLike](Copyable, FloatLike, Movable):
 
     def erfc(self) -> Self:
         # d/dx[erfc(f)] = -(2/sqrt(pi)) * exp(-f^2) * f' -- computed via
-        # `Inner.erfc()` rather than `one() + (-erf())`, so a large `f`
+        # `Inner.erfc()` rather than `one() - erf()`, so a large `f`
         # doesn't force a cancelling subtraction here either.
         var v = self.value.erfc()
         var scale = (

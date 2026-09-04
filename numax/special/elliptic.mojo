@@ -45,7 +45,7 @@ def elliptic_k[T: FloatLike](m: T) -> T:
     Valid for `0 <= m < 1`; diverges (to a large-but-finite value, per this
     module's docstring) as `m` approaches `1`.
     """
-    var m1 = T.one() + (-m)
+    var m1 = T.one() - m
     var log_m1 = max_of(m1, T.constant(1e-15)).ln()
 
     var p = (
@@ -65,7 +65,7 @@ def elliptic_k[T: FloatLike](m: T) -> T:
         + T.constant(0.12498593597)
     ) * m1 + T.constant(0.5)
 
-    return p + (-(q * log_m1))
+    return p - (q * log_m1)
 
 
 def elliptic_e[T: FloatLike](m: T) -> T:
@@ -76,7 +76,7 @@ def elliptic_e[T: FloatLike](m: T) -> T:
     module's docstring for the `0 * (-infinity)` indeterminate form that
     needs guarding against right there).
     """
-    var m1 = T.one() + (-m)
+    var m1 = T.one() - m
     var log_m1 = max_of(m1, T.constant(1e-15)).ln()
 
     var p = (
@@ -96,4 +96,4 @@ def elliptic_e[T: FloatLike](m: T) -> T:
         + T.constant(0.24998368310)
     ) * m1
 
-    return p + (-(q * log_m1))
+    return p - (q * log_m1)

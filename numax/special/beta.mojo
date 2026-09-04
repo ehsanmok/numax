@@ -48,7 +48,7 @@ def beta[T: FloatLike](a: T, b: T) -> T:
     does -- via `_gamma_sign` -- but negative-parameter Beta has no
     standard use here to justify carrying it.)
     """
-    return (lgamma(a) + lgamma(b) + (-lgamma(a + b))).exp()
+    return (lgamma(a) + lgamma(b) - lgamma(a + b)).exp()
 
 
 def _guard_away_from_zero[T: FloatLike](d: T) -> T:
@@ -72,10 +72,10 @@ def _betacf[T: FloatLike](a: T, b: T, x: T) -> T:
 
     var qab = a + b
     var qap = a + T.one()
-    var qam = a + (-T.one())
+    var qam = a - T.one()
 
     var c = T.one()
-    var d = T.one() / _guard_away_from_zero(T.one() + (-(qab * x / qap)))
+    var d = T.one() / _guard_away_from_zero(T.one() - (qab * x / qap))
     var h = d.copy()
 
     # Counters carried as `T` values rather than converted from the `Int`
@@ -86,7 +86,7 @@ def _betacf[T: FloatLike](a: T, b: T, x: T) -> T:
 
     for _ in range(1, num_iters + 1):
         # Even step: the d_{2m} coefficient.
-        var aa = mf * (b + (-mf)) * x / ((qam + m2) * (a + m2))
+        var aa = mf * (b - mf) * x / ((qam + m2) * (a + m2))
         d = T.one() / _guard_away_from_zero(T.one() + aa * d)
         c = _guard_away_from_zero(T.one() + aa / c)
         h = h * d * c
@@ -132,26 +132,18 @@ def betainc[T: FloatLike](x: T, a: T, b: T) -> T:
     """
     comptime edge = 1e-30
 
-    var xs = min_of(max_of(x, T.constant(edge)), T.one() + (-T.constant(edge)))
-    var one_minus = T.one() + (-xs)
+    var xs = min_of(max_of(x, T.constant(edge)), T.one() - T.constant(edge))
+    var one_minus = T.one() - xs
 
     var log_prefactor = (
-        lgamma(a + b)
-        + (-lgamma(a))
-        + (-lgamma(b))
-        + a * xs.ln()
-        + b * one_minus.ln()
+        lgamma(a + b) - lgamma(a) - lgamma(b) + a * xs.ln() + b * one_minus.ln()
     )
     var prefactor = log_prefactor.exp()
 
     var threshold = (a + T.one()) / (a + b + T.constant(2.0))
     var direct = prefactor * _betacf(a, b, min_of(xs, threshold)) / a
     var mirrored = T.one() + (
-        -(
-            prefactor
-            * _betacf(b, a, min_of(one_minus, T.one() + (-threshold)))
-            / b
-        )
+        -(prefactor * _betacf(b, a, min_of(one_minus, T.one() - threshold)) / b)
     )
 
     return blend(ge_indicator(xs, threshold), mirrored, direct)
@@ -164,4 +156,4 @@ def betaincc[T: FloatLike](x: T, a: T, b: T) -> T:
     internally; written as the subtraction here to match `gammaincc`'s
     shape next door.
     """
-    return T.one() + (-betainc(x, a, b))
+    return T.one() - betainc(x, a, b)

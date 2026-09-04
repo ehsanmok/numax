@@ -15,12 +15,12 @@ adjoint rule and no finite-difference step size to tune:
 
 ```mojo
 def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
-    var a = U.one() + (-v[0])
-    var b = v[1] + (-(v[0] * v[0]))
+    var a = U.one() - v[0]
+    var b = v[1] - (v[0] * v[0])
     return a * a + U.constant(100.0) * b * b
 
 # BFGS gets the exact gradient by calling that same function at
-# `Gradient[Plain[float64, 1], 2]` -- one call, both partials.
+# `Gradient[Plain[float64], 2]` -- one call, both partials.
 var result = bfgs[2, rosenbrock](start)
 ```
 
@@ -68,12 +68,12 @@ from ..core.plain import Plain
 # the widest available precision -- a tolerance of 1e-12 is meaningless at
 # float32 -- and Mojo will not accept a struct instantiated with a
 # *function-level* `DType` parameter as a `FloatLike` type argument
-# (`f[Plain[dtype, 1]]` inside a `def foo[dtype: DType]` fails with
+# (`f[Plain[dtype]]` inside a `def foo[dtype: DType]` fails with
 # "parameter 'U' has 'FloatLike' type, but value has type
 # 'AnyStruct[Plain[dtype, Int(1)]]'"), so a per-call dtype would not compile
 # at all. Anything needing another dtype is doing kernel work, which is
 # tier 1 and lives in `numax.optimize`.
-comptime _P = Plain[DType.float64, 1]
+comptime _P = Plain[DType.float64]
 
 
 @fieldwise_init

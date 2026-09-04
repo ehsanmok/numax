@@ -12,8 +12,8 @@ comptime width = 1
 comptime D = Dual[Plain[dtype, width]]
 
 
-def v(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+def pv(x: Float64) -> Plain[dtype, width]:
+    return Plain[dtype, width].constant(x)
 
 
 def agm_reference(m: Float64) -> Tuple[Float64, Float64]:
@@ -58,10 +58,10 @@ def agm_reference(m: Float64) -> Tuple[Float64, Float64]:
 
 def test_elliptic_k_e_at_zero_are_pi_over_two() raises:
     assert_almost_equal(
-        elliptic_k(v(0.0)).v, SIMD[dtype, width](Float64(pi) / 2.0), atol=1e-9
+        elliptic_k(pv(0.0)).v, SIMD[dtype, width](Float64(pi) / 2.0), atol=1e-9
     )
     assert_almost_equal(
-        elliptic_e(v(0.0)).v, SIMD[dtype, width](Float64(pi) / 2.0), atol=1e-9
+        elliptic_e(pv(0.0)).v, SIMD[dtype, width](Float64(pi) / 2.0), atol=1e-9
     )
 
 
@@ -69,7 +69,7 @@ def test_elliptic_e_at_one_is_one() raises:
     # E(1) = 1 exactly, despite the 0*(-infinity) indeterminate form in the
     # formula right there -- see `numax/special/elliptic.mojo`'s module docstring.
     assert_almost_equal(
-        elliptic_e(v(1.0)).v, SIMD[dtype, width](1.0), atol=1e-9
+        elliptic_e(pv(1.0)).v, SIMD[dtype, width](1.0), atol=1e-9
     )
 
 
@@ -77,7 +77,7 @@ def test_elliptic_k_diverges_but_stays_finite_at_one() raises:
     # K(1) is a true mathematical singularity; `numax.special.elliptic` caps it at
     # a large-but-finite value (via the log-argument floor) rather than
     # producing an actual infinity or NaN.
-    var k_at_one = elliptic_k(v(1.0)).v[0]
+    var k_at_one = elliptic_k(pv(1.0)).v[0]
     assert_true(k_at_one > 15.0)
     assert_true(k_at_one < 1e6)
 
@@ -86,7 +86,7 @@ def test_elliptic_k_matches_agm_reference() raises:
     for m64 in [0.1, 0.3, 0.5, 0.7, 0.9, 0.99, 0.9999]:
         var expected = agm_reference(m64)[0]
         assert_almost_equal(
-            elliptic_k(v(m64)).v, SIMD[dtype, width](expected), atol=1e-7
+            elliptic_k(pv(m64)).v, SIMD[dtype, width](expected), atol=1e-7
         )
 
 
@@ -94,14 +94,14 @@ def test_elliptic_e_matches_agm_reference() raises:
     for m64 in [0.1, 0.3, 0.5, 0.7, 0.9, 0.99, 0.9999]:
         var expected = agm_reference(m64)[1]
         assert_almost_equal(
-            elliptic_e(v(m64)).v, SIMD[dtype, width](expected), atol=1e-7
+            elliptic_e(pv(m64)).v, SIMD[dtype, width](expected), atol=1e-7
         )
 
 
 def test_elliptic_k_derivative_matches_closed_form() raises:
     # dK/dm = E(m)/(2*m*(1-m)) - K(m)/(2*m), for m != 0.
     var m64 = 0.5
-    var x = D(v(m64), v(1))
+    var x = D(pv(m64), pv(1))
     var k = elliptic_k(x)
     var e_ref = agm_reference(m64)[1]
     var k_ref = agm_reference(m64)[0]
@@ -112,7 +112,7 @@ def test_elliptic_k_derivative_matches_closed_form() raises:
 def test_elliptic_e_derivative_matches_closed_form() raises:
     # dE/dm = (E(m) - K(m)) / (2*m), for m != 0.
     var m64 = 0.5
-    var x = D(v(m64), v(1))
+    var x = D(pv(m64), pv(1))
     var e = elliptic_e(x)
     var e_ref = agm_reference(m64)[1]
     var k_ref = agm_reference(m64)[0]

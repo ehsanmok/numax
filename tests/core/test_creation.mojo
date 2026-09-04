@@ -52,7 +52,7 @@ def _m[
 
 def test_geomspace_is_a_geometric_progression() raises:
     var ctx = DeviceContext(api="cpu")
-    var g = geomspace[dtype, 4](1.0, 1000.0, ctx=ctx).to_host()
+    var g = geomspace[4](1.0, 1000.0, ctx=ctx).to_host()
     assert_almost_equal(g[0], 1.0)
     assert_almost_equal(g[1], 10.0)
     assert_almost_equal(g[2], 100.0)
@@ -61,13 +61,13 @@ def test_geomspace_is_a_geometric_progression() raises:
 
 def test_geomspace_of_one_point_returns_start() raises:
     var ctx = DeviceContext(api="cpu")
-    var g = geomspace[dtype, 1](7.0, 9.0, ctx=ctx).to_host()
+    var g = geomspace[1](7.0, 9.0, ctx=ctx).to_host()
     assert_almost_equal(g[0], 7.0)
 
 
 def test_identity_matches_eye() raises:
     var ctx = DeviceContext(api="cpu")
-    var i3 = identity[dtype, 3](ctx).to_host()
+    var i3 = identity[3](ctx).to_host()
     for r in range(3):
         for c in range(3):
             var expected = 1.0 if r == c else 0.0

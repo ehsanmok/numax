@@ -18,22 +18,22 @@ comptime D = Dual[P]
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def cubic_minus_two[U: FloatLike](x: U) -> U:
     """`x^3 - 2`, whose positive root is the cube root of 2."""
-    return x * x * x + (-U.constant(2.0))
+    return x * x * x - U.constant(2.0)
 
 
 def cos_minus_x[U: FloatLike](x: U) -> U:
     """`cos(x) - x`, the Dottie-number equation."""
-    return x.cos() + (-x)
+    return x.cos() - x
 
 
 def exp_minus_three[U: FloatLike](x: U) -> U:
     """`exp(x) - 3`, whose root is `ln(3)`."""
-    return x.exp() + (-U.constant(3.0))
+    return x.exp() - U.constant(3.0)
 
 
 def sin_kernel[U: FloatLike](x: U) -> U:

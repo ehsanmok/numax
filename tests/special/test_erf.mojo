@@ -10,29 +10,29 @@ comptime D = Dual[Plain[dtype, width]]
 
 
 def pv(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+    return Plain[dtype, width].constant(x)
 
 
 def test_erf_at_zero_is_zero() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](0))
+    var x = Plain[dtype, width].constant(0)
     assert_almost_equal(erf(x).v, SIMD[dtype, width](0))
 
 
 def test_erf_matches_known_values() raises:
     # Reference values from Python's math.erf.
-    var x1 = Plain[dtype, width](SIMD[dtype, width](0.5))
+    var x1 = Plain[dtype, width].constant(0.5)
     assert_almost_equal(erf(x1).v, SIMD[dtype, width](0.5204998778130465))
 
-    var x2 = Plain[dtype, width](SIMD[dtype, width](1.0))
+    var x2 = Plain[dtype, width].constant(1.0)
     assert_almost_equal(erf(x2).v, SIMD[dtype, width](0.8427007929497149))
 
-    var x3 = Plain[dtype, width](SIMD[dtype, width](2.0))
+    var x3 = Plain[dtype, width].constant(2.0)
     assert_almost_equal(erf(x3).v, SIMD[dtype, width](0.9953222650189527))
 
 
 def test_erf_is_odd() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](1.3))
-    var neg_x = Plain[dtype, width](SIMD[dtype, width](-1.3))
+    var x = Plain[dtype, width].constant(1.3)
+    var neg_x = Plain[dtype, width].constant(-1.3)
     assert_almost_equal(erf(neg_x).v, -erf(x).v)
 
 
@@ -44,7 +44,7 @@ def test_erf_derivative_matches_closed_form() raises:
 
 
 def test_erfc_is_one_minus_erf() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](0.75))
+    var x = Plain[dtype, width].constant(0.75)
     assert_almost_equal(erfc(x).v, SIMD[dtype, width](1) - erf(x).v)
 
 

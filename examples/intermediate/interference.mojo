@@ -23,7 +23,7 @@ from numax.core.array import Tensor, linspace, meshgrid
 from numax.core.tensor import map
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 
 comptime rows = 40
 comptime cols = 76
@@ -65,18 +65,18 @@ def fringe_phase[T: FloatLike](gap: T) -> T:
     var x = T.constant(9.0)
     var y = T.constant(1.5)
     var half = gap / T.constant(2.0)
-    var dy1 = y + (-half)
+    var dy1 = y - half
     var dy2 = y + half
     var r1 = (x * x + dy1 * dy1).sqrt()
     var r2 = (x * x + dy2 * dy2).sqrt()
-    return T.constant(k) * (r1 + (-r2))
+    return T.constant(k) * (r1 - r2)
 
 
 def main() raises:
     var ctx = DeviceContext(api="cpu")
 
-    var axis_x = linspace[dtype, cols](0.15, 10.0, ctx=ctx)
-    var axis_y = linspace[dtype, rows](-4.0, 4.0, ctx=ctx)
+    var axis_x = linspace[cols](0.15, 10.0, ctx=ctx)
+    var axis_y = linspace[rows](-4.0, 4.0, ctx=ctx)
     var grid = meshgrid(axis_x, axis_y)
 
     var field = Tensor[dtype, rows, cols](ctx)

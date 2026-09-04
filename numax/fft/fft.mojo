@@ -113,7 +113,7 @@ def _butterflies[
                 var top = values[base + j].copy()
                 var bottom = values[base + j + half] * tw[j * stride]
                 values[base + j] = top + bottom
-                values[base + j + half] = top + (-bottom)
+                values[base + j + half] = top - bottom
 
 
 def fft[

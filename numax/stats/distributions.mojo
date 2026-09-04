@@ -92,7 +92,7 @@ def _safe_ln[T: FloatLike](x: T) -> T:
 
 
 def _log_beta[T: FloatLike](a: T, b: T) -> T:
-    return lgamma(a.copy()) + lgamma(b.copy()) + (-lgamma(a + b))
+    return lgamma(a.copy()) + lgamma(b.copy()) - lgamma(a + b)
 
 
 # ---------------------------------------------------------------- normal
@@ -104,7 +104,7 @@ struct norm:
     @staticmethod
     def pdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
         """The normal density with mean `mu` and standard deviation `sigma`."""
-        var z = (x + (-mu)) / sigma
+        var z = (x - mu) / sigma
         return (-(z * z) / T.constant(2.0)).exp() / (
             sigma * T.constant(_SQRT_2PI)
         )
@@ -119,7 +119,7 @@ struct norm:
         the small tail probability directly. `Plain.erfc` delegates to
         `std.math`, so that accuracy is real rather than nominal.
         """
-        var z = (x + (-mu)) / sigma
+        var z = (x - mu) / sigma
         return T.constant(0.5) * (-(z / T.constant(_SQRT_2))).erfc()
 
     @staticmethod
@@ -137,7 +137,7 @@ def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
     the smaller of `p` and `1-p` either way, and the sign comes from an
     indicator on `p >= 0.5`.
     """
-    var q = min_of(p, T.one() + (-p))
+    var q = min_of(p, T.one() - p)
     var t = (-(T.constant(2.0) * _safe_ln(q))).sqrt()
 
     var numerator = (
@@ -153,7 +153,7 @@ def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
     )
     # A&S 26.2.23 gives the *upper*-tail value, hence the negation for the
     # lower tail `q` names.
-    var lower = -(t + (-(numerator / denominator)))
+    var lower = -(t - (numerator / denominator))
     var z = blend(ge_indicator(p, T.constant(0.5)), -lower, lower.copy())
 
     var zero = T.constant(0.0)
@@ -162,7 +162,7 @@ def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
         var residual = norm.cdf(z.copy(), zero.copy(), one.copy())
         z = z + (
             -(
-                (residual + (-p))
+                (residual - p)
                 / max_of(
                     norm.pdf(z.copy(), zero.copy(), one.copy()),
                     T.constant(_TINY),
@@ -188,7 +188,7 @@ struct expon:
 
     @staticmethod
     def cdf[T: FloatLike](x: T, rate: T) -> T:
-        var inside = T.one() + (-(-(rate * max_of(x, T.constant(0.0)))).exp())
+        var inside = T.one() - (-(rate * max_of(x, T.constant(0.0)))).exp()
         return inside * ge_indicator(x, T.constant(0.0))
 
     # ----------------------------------------------------------------- gamma
@@ -208,10 +208,10 @@ struct gamma:
         """
         var z = max_of(x, T.constant(0.0)) / scale
         var log_density = (
-            (shape + (-T.one())) * _safe_ln(z)
-            + (-z)
-            + (-lgamma(shape.copy()))
-            + (-_safe_ln(scale))
+            (shape - T.one()) * _safe_ln(z)
+            - z
+            - lgamma(shape.copy())
+            - _safe_ln(scale)
         )
         return log_density.exp() * ge_indicator(x, T.constant(0.0))
 
@@ -233,7 +233,7 @@ struct gamma:
         """
         var z = _standard_normal_quantile(p.copy())
         var a9 = T.constant(9.0) * shape
-        var base = T.one() + (-(T.one() / a9)) + z / a9.sqrt()
+        var base = T.one() - (T.one() / a9) + z / a9.sqrt()
         var seed = max_of(shape * base * base * base, T.constant(1e-6))
 
         var x = seed * scale
@@ -243,7 +243,7 @@ struct gamma:
                 gamma.pdf(x.copy(), shape.copy(), scale.copy()),
                 T.constant(_TINY),
             )
-            x = max_of(x + (-((residual + (-p)) / density)), T.constant(_TINY))
+            x = max_of(x - ((residual - p) / density), T.constant(_TINY))
 
         return x^
 
@@ -279,9 +279,9 @@ struct beta:
         """The beta density on `0 < x < 1`, and `0` outside it."""
         var xc = min_of(max_of(x, T.constant(0.0)), T.one())
         var log_density = (
-            (a + (-T.one())) * _safe_ln(xc)
-            + (b + (-T.one())) * _safe_ln(T.one() + (-xc))
-            + (-_log_beta(a, b))
+            (a - T.one()) * _safe_ln(xc)
+            + (b - T.one()) * _safe_ln(T.one() - xc)
+            - _log_beta(a, b)
         )
         var support = ge_indicator(x, T.constant(0.0)) * ge_indicator(
             T.one(), x.copy()
@@ -304,7 +304,7 @@ struct beta:
         unrecoverable.
         """
         var lo = T.constant(1e-8)
-        var hi = T.one() + (-lo)
+        var hi = T.one() - lo
         var x = min_of(max_of(a / (a + b), lo.copy()), hi.copy())
 
         for _ in range(num_iters):
@@ -312,7 +312,7 @@ struct beta:
             var density = max_of(
                 beta.pdf(x.copy(), a.copy(), b.copy()), T.constant(_TINY)
             )
-            var proposal = x + (-((residual + (-p)) / density))
+            var proposal = x - ((residual - p) / density)
             x = min_of(max_of(proposal^, lo.copy()), hi.copy())
 
         return x^
@@ -328,9 +328,9 @@ struct t:
         var half = (df + T.one()) / T.constant(2.0)
         var log_density = (
             lgamma(half.copy())
-            + (-lgamma(df / T.constant(2.0)))
-            + (-T.constant(0.5) * (_safe_ln(df) + T.constant(_LN_PI)))
-            + (-half * (T.one() + x * x / df).ln())
+            - lgamma(df / T.constant(2.0))
+            - (T.constant(0.5) * (_safe_ln(df) + T.constant(_LN_PI)))
+            - (half * (T.one() + x * x / df).ln())
         )
         return log_density.exp()
 
@@ -349,7 +349,7 @@ struct t:
         var z = df / (df + x * x)
         var tail = betainc(z^, df / T.constant(2.0), T.constant(0.5))
         var sign = T.one().copysign(x)
-        return T.constant(0.5) + T.constant(0.5) * sign * (T.one() + (-tail))
+        return T.constant(0.5) + T.constant(0.5) * sign * (T.one() - tail)
 
     @staticmethod
     def ppf[T: FloatLike, num_iters: Int = 12](p: T, df: T) -> T:
@@ -364,7 +364,7 @@ struct t:
         for _ in range(num_iters):
             var residual = t.cdf(x.copy(), df.copy())
             var density = max_of(t.pdf(x.copy(), df.copy()), T.constant(_TINY))
-            x = x + (-((residual + (-p)) / density))
+            x = x - ((residual - p) / density)
 
         return x^
 
@@ -384,10 +384,10 @@ struct f:
             * (
                 df1 * _safe_ln(d1x)
                 + df2 * _safe_ln(df2)
-                + (-((df1 + df2) * _safe_ln(d1x + df2)))
+                - ((df1 + df2) * _safe_ln(d1x + df2))
             )
-            + (-_safe_ln(xc))
-            + (-_log_beta(df1 / T.constant(2.0), df2 / T.constant(2.0)))
+            - _safe_ln(xc)
+            - _log_beta(df1 / T.constant(2.0), df2 / T.constant(2.0))
         )
         return log_density.exp() * ge_indicator(x, T.constant(0.0))
 
@@ -414,7 +414,7 @@ struct poisson:
         extended to non-integer `k`, so this is the usual PMF wherever `k` is a
         whole number and its standard continuous extension elsewhere.
         """
-        var log_pmf = k * _safe_ln(rate) + (-rate) + (-lgamma(k + T.one()))
+        var log_pmf = k * _safe_ln(rate) - rate - lgamma(k + T.one())
         return log_pmf.exp() * ge_indicator(k, T.constant(0.0))
 
     @staticmethod
@@ -438,10 +438,10 @@ struct binom:
         """`P(X = k)` for `n` trials with success probability `p`."""
         var log_pmf = (
             lgamma(n + T.one())
-            + (-lgamma(k + T.one()))
-            + (-lgamma(n + (-k) + T.one()))
+            - lgamma(k + T.one())
+            - lgamma(n - k + T.one())
             + k * _safe_ln(p)
-            + (n + (-k)) * _safe_ln(T.one() + (-p))
+            + (n - k) * _safe_ln(T.one() - p)
         )
         var support = ge_indicator(k, T.constant(0.0)) * ge_indicator(
             n, k.copy()
@@ -459,6 +459,6 @@ struct binom:
         # by a `0` indicator, so the blend below can't clean it up afterwards.
         # Flooring the parameter keeps that lane finite; the blend then
         # discards it in favour of the exact answer, `P(X <= n) = 1`.
-        var trials_left = max_of(n + (-kc), T.constant(1e-8))
-        var upper = betainc(T.one() + (-p), trials_left^, kc + T.one())
+        var trials_left = max_of(n - kc, T.constant(1e-8))
+        var upper = betainc(T.one() - p, trials_left^, kc + T.one())
         return blend(ge_indicator(k, n.copy()), T.one(), upper^)

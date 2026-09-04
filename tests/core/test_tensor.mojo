@@ -63,7 +63,7 @@ def test_map_at_native_width_matches_direct_call() raises:
     map[width=width, step=gaussian_step](xs, ys)
 
     for i in range(n):
-        var expected = gaussian(Plain[dtype, 1](xs[i])).v
+        var expected = gaussian(Plain[dtype](xs[i])).v
         assert_almost_equal(ys[i], expected)
 
 
@@ -82,7 +82,7 @@ def test_map_with_remainder_covers_tail_loop() raises:
     map[width=width, step=gaussian_step](xs, ys)
 
     for i in range(odd_n):
-        var expected = gaussian(Plain[dtype, 1](xs[i])).v
+        var expected = gaussian(Plain[dtype](xs[i])).v
         assert_almost_equal(ys[i], expected)
 
 
@@ -124,7 +124,7 @@ def test_map_walks_a_multidimensional_tensor_via_coalesce() raises:
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
     for i in range(n):
-        var expected = gaussian(Plain[dtype, 1](xs_flat[i])).v
+        var expected = gaussian(Plain[dtype](xs_flat[i])).v
         assert_almost_equal(ys_flat[i], expected)
 
 
@@ -227,7 +227,7 @@ def test_binary_map_runs_a_floatlike_kernel_over_both_inputs() raises:
     map[width=width, step=gaussian_weighted_step](xs, ws, out)
 
     for i in range(n):
-        var expected = gaussian(Plain[dtype, 1](xs[i])).v * ws[i]
+        var expected = gaussian(Plain[dtype](xs[i])).v * ws[i]
         assert_almost_equal(out[i], expected, atol=1e-6)
 
 

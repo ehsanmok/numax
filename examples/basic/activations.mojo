@@ -16,8 +16,8 @@ def main():
     comptime alpha = 0.1
 
     for x_raw in [-2.0, -0.5, 0.0, 0.5, 2.0]:
-        var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
-        var seed = Plain[dtype, width](SIMD[dtype, width](1))
+        var x = Plain[dtype, width].constant(x_raw)
+        var seed = Plain[dtype, width].constant(1)
 
         var s = sigmoid(Dual[Plain[dtype, width]](x.copy(), seed.copy()))
         var sw = swish(Dual[Plain[dtype, width]](x.copy(), seed.copy()))

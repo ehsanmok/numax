@@ -49,7 +49,7 @@ def cooling[U: FloatLike](t: U, y: U) -> U:
     """The same Newton-cooling-toward-a-drifting-ambient equation
     `examples/advanced/ode.mojo` uses -- the point here is the initial
     conditions, not the equation."""
-    return -(U.constant(1.5) * (y + (-t.sin())))
+    return -(U.constant(1.5) * (y - t.sin()))
 
 
 def trajectory_step[w: Int](y0: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -87,7 +87,7 @@ def main() raises:
     # --- CPU: numax.stats draws the initial conditions ---
     seed(2026)
     var cpu = DeviceContext(api="cpu")
-    var y0_cpu = uniform[dtype, n](cpu, -2, 2)
+    var y0_cpu = uniform[dtype, n](-2, 2, ctx=cpu)
 
     comptime layout = row_major[n]()
     var yt_storage = List[Scalar[dtype]](length=n, fill=0)

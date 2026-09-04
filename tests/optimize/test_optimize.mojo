@@ -19,12 +19,12 @@ comptime P = Plain[DType.float64, 1]
 
 def cos_minus_x[U: FloatLike](x: U) -> U:
     """`cos(x) - x`, whose root is the Dottie number."""
-    return x.cos() + (-x)
+    return x.cos() - x
 
 
 def cubic[U: FloatLike](x: U) -> U:
     """`x**3 - 2x - 5`, Wallis's cubic. Single real root near 2.0946."""
-    return x * x * x + (-(U.constant(2.0) * x)) + (-U.constant(5.0))
+    return x * x * x - (U.constant(2.0) * x) - U.constant(5.0)
 
 
 def sin_shifted[U: FloatLike](x: U) -> U:
@@ -36,17 +36,17 @@ def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
     """The standard test: `(1-x)**2 + 100*(y - x*x)**2`, minimum 0 at
     (1, 1), reached along a curved narrow valley that defeats naive
     steepest descent."""
-    var a = U.one() + (-v[0])
-    var b = v[1] + (-(v[0] * v[0]))
+    var a = U.one() - v[0]
+    var b = v[1] - (v[0] * v[0])
     return a * a + U.constant(100.0) * b * b
 
 
 def quadratic_bowl[U: FloatLike](v: Array[U, 3]) -> U:
     """`(x-1)**2 + 2*(y+2)**2 + 3*(z-3)**2`: minimum 0 at (1, -2, 3), and
     exactly quadratic, so BFGS should reach it in very few steps."""
-    var dx = v[0] + (-U.one())
+    var dx = v[0] - U.one()
     var dy = v[1] + U.constant(2.0)
-    var dz = v[2] + (-U.constant(3.0))
+    var dz = v[2] - U.constant(3.0)
     return dx * dx + U.constant(2.0) * dy * dy + U.constant(3.0) * dz * dz
 
 
@@ -54,7 +54,7 @@ def steep_exponential[U: FloatLike](v: Array[U, 1]) -> U:
     """`exp(3x) - 3x`. Its derivative `3*exp(3x) - 3` is zero at `x = 0`,
     which is therefore the minimum. Chosen because the derivative grows
     fast enough away from it that a badly scaled step would show up."""
-    return (U.constant(3.0) * v[0]).exp() + (-(U.constant(3.0) * v[0]))
+    return (U.constant(3.0) * v[0]).exp() - (U.constant(3.0) * v[0])
 
 
 # ------------------------------------------------------------------

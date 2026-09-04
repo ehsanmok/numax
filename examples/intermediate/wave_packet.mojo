@@ -32,7 +32,7 @@ from numax.stats import sum
 from numax.core.tensor import map
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 
 comptime n = 48
 """Grid points per axis. Even, so the cut at y = 0 sits between rows."""
@@ -91,8 +91,8 @@ def main() raises:
     var ctx = DeviceContext(api="cpu")
 
     # --- the grid: two coordinate vectors, one pair of coordinate fields ---
-    var axis_x = linspace[dtype, n](-extent, extent, ctx=ctx)
-    var axis_y = linspace[dtype, n](-extent, extent, ctx=ctx)
+    var axis_x = linspace[n](-extent, extent, ctx=ctx)
+    var axis_y = linspace[n](-extent, extent, ctx=ctx)
     var grid = meshgrid(axis_x, axis_y)
 
     # --- the wavefunction, as two real fields ---

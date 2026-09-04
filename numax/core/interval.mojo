@@ -89,11 +89,11 @@ def _period_contains[T: FloatLike](lo: T, hi: T, phase: T) -> T:
     `numax.special.bessel`'s near/far blend each lean on a single primitive twice).
     """
     var two_pi = T.constant(_TWO_PI)
-    var a = (lo + (-phase)) / two_pi
-    var b = (hi + (-phase)) / two_pi
+    var a = (lo - phase) / two_pi
+    var b = (hi - phase) / two_pi
     var ceil_a = -((-a).floor())
     var floor_b = b.floor()
-    return ge_indicator(floor_b + (-ceil_a), T.constant(0.0))
+    return ge_indicator(floor_b - ceil_a, T.constant(0.0))
 
 
 @fieldwise_init
@@ -123,7 +123,7 @@ struct Interval[Inner: FloatLike](Copyable, FloatLike, Movable):
     def width(self) -> Self.Inner:
         """`hi - lo`, the size of the interval -- an `Inner`, not an
         `Interval`, since the width of a range is a single number."""
-        return self.hi + (-self.lo)
+        return self.hi - self.lo
 
     def midpoint(self) -> Self.Inner:
         return (self.lo + self.hi) / Self.Inner.constant(2.0)
@@ -144,7 +144,7 @@ struct Interval[Inner: FloatLike](Copyable, FloatLike, Movable):
         var pad_hi = pad_from_width + self.hi.abs() * Self.Inner.constant(
             relative
         )
-        return Self(self.lo + (-pad_lo), self.hi + pad_hi)
+        return Self(self.lo - pad_lo, self.hi + pad_hi)
 
     def __add__(self, rhs: Self) -> Self:
         return Self(self.lo + rhs.lo, self.hi + rhs.hi)
@@ -267,9 +267,9 @@ struct Interval[Inner: FloatLike](Copyable, FloatLike, Movable):
         var magnitudes = self.abs()
         var all_positive = ge_indicator(sign_source.lo.copy(), zero)
         var all_negative = ge_indicator(-sign_source.hi, zero) * (
-            Self.Inner.one() + (-all_positive)
+            Self.Inner.one() - all_positive
         )
-        var straddles = Self.Inner.one() + (-all_positive) + (-all_negative)
+        var straddles = Self.Inner.one() - all_positive - all_negative
 
         var lo = (
             all_positive * magnitudes.lo

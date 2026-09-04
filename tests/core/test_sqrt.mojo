@@ -14,7 +14,7 @@ from std.testing import (
     assert_true,
 )
 
-from numax import Compensated, Complex, Decimal, Dual, Gradient, Plain
+from numax import Compensated, Complex, Decimal, Dual, Gradient, Plain, f32
 
 comptime dtype = DType.float64
 comptime width = 1
@@ -25,7 +25,7 @@ comptime G2 = Gradient[P, 2]
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def test_plain_matches_std_math() raises:
@@ -95,12 +95,11 @@ def test_compensated_beats_plain_float32() raises:
     # rather than a widened call: at float32, the double-double result
     # should reconstruct sqrt(2) far more accurately than a single float32
     # can hold.
-    comptime f32 = DType.float32
     var c = Compensated[f32, 1](SIMD[f32, 1](2.0), SIMD[f32, 1](0)).sqrt()
     var reference = 1.4142135623730951
     var comp_err = abs((Float64(c.value) + Float64(c.error)) - reference)
     var plain_err = abs(
-        Float64(Plain[f32, 1](SIMD[f32, 1](2.0)).sqrt().v) - reference
+        Float64(Plain[f32, 1].constant(2.0).sqrt().v) - reference
     )
     assert_true(comp_err < plain_err)
     assert_true(comp_err < 1e-14)

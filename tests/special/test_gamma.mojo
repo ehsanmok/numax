@@ -15,31 +15,31 @@ comptime D = Dual[Plain[dtype, width]]
 
 
 def pv(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+    return Plain[dtype, width].constant(x)
 
 
 def test_gamma_at_positive_integers_matches_factorial() raises:
     # Gamma(n) = (n-1)!.
     assert_almost_equal(
-        gamma(Plain[dtype, width](SIMD[dtype, width](1))).v,
+        gamma(Plain[dtype, width].constant(1)).v,
         SIMD[dtype, width](1),
     )
     assert_almost_equal(
-        gamma(Plain[dtype, width](SIMD[dtype, width](5))).v,
+        gamma(Plain[dtype, width].constant(5)).v,
         SIMD[dtype, width](24),
         atol=1e-9,
     )
 
 
 def test_gamma_at_one_half_is_sqrt_pi() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](0.5))
+    var x = Plain[dtype, width].constant(0.5)
     assert_almost_equal(
         gamma(x).v, SIMD[dtype, width](1.7724538509055159), atol=1e-9
     )
 
 
 def test_lgamma_matches_ln_of_gamma() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](5))
+    var x = Plain[dtype, width].constant(5)
     assert_almost_equal(
         lgamma(x).v, SIMD[dtype, width](3.1780538303479458), atol=1e-9
     )
@@ -68,8 +68,8 @@ def test_gamma_derivative_matches_gamma_times_digamma() raises:
 def test_gammainc_matches_closed_form_for_integer_a() raises:
     # P(2, x) = 1 - (1+x)*exp(-x) for integer a=2 -- a closed form to check
     # the series against independently of `gammainc`'s own implementation.
-    var a = Plain[dtype, width](SIMD[dtype, width](2))
-    var x = Plain[dtype, width](SIMD[dtype, width](3))
+    var a = Plain[dtype, width].constant(2)
+    var x = Plain[dtype, width].constant(3)
     assert_almost_equal(
         gammainc(a, x).v, SIMD[dtype, width](0.8008517265285442), atol=1e-9
     )
@@ -77,16 +77,16 @@ def test_gammainc_matches_closed_form_for_integer_a() raises:
 
 def test_gammainc_at_a_equals_one_is_exponential_cdf() raises:
     # P(1, x) = 1 - exp(-x).
-    var a = Plain[dtype, width](SIMD[dtype, width](1))
-    var x = Plain[dtype, width](SIMD[dtype, width](1))
+    var a = Plain[dtype, width].constant(1)
+    var x = Plain[dtype, width].constant(1)
     assert_almost_equal(
         gammainc(a, x).v, SIMD[dtype, width](0.6321205588285577), atol=1e-9
     )
 
 
 def test_gammaincc_is_one_minus_gammainc() raises:
-    var a = Plain[dtype, width](SIMD[dtype, width](1))
-    var x = Plain[dtype, width](SIMD[dtype, width](1))
+    var a = Plain[dtype, width].constant(1)
+    var x = Plain[dtype, width].constant(1)
     assert_almost_equal(
         gammaincc(a, x).v,
         SIMD[dtype, width](1) - gammainc(a, x).v,
@@ -95,8 +95,8 @@ def test_gammaincc_is_one_minus_gammainc() raises:
 
 
 def test_gammainc_approaches_one_for_large_x() raises:
-    var a = Plain[dtype, width](SIMD[dtype, width](2))
-    var x = Plain[dtype, width](SIMD[dtype, width](50))
+    var a = Plain[dtype, width].constant(2)
+    var x = Plain[dtype, width].constant(50)
     assert_true(Float64(gammainc(a, x).v) > 0.9999)
 
 

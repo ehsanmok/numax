@@ -100,7 +100,7 @@ def matvec[
     """`A @ x` for a row-major `n x n` matrix.
 
     For a large, plain-`dtype` `A` (past the crossover `matmul`'s own
-    docstring documents), `max.linalg.matmul` still applies -- a
+    docstring documents), MAX's `linalg.matmul` still applies -- a
     matrix-vector product is a matrix-matrix product against an `n x 1`
     `TileTensor`, and MAX has no separate matvec-specific fast path to
     prefer over that.
@@ -120,10 +120,10 @@ def matmul[
     """`A @ B` for two row-major `n x n` matrices.
 
     The naive triple loop, which is the right algorithm at these sizes and
-    the wrong one past them. Measured against `max.linalg.matmul` on an M3
+    the wrong one past them. Measured against MAX's `linalg.matmul` on an M3
     Pro (`bench/bench_matmul.mojo`), the crossover is at `n = 8` for a
     single matrix and `n = 16` for the 4-wide batched form; by `n = 64` MAX
-    is ~130x faster. So call `max.linalg.matmul` directly for anything
+    is ~130x faster. So call `linalg.matmul` directly for anything
     larger than about 8x8 whose entries are plain `dtype` values.
 
     What this version has instead: it is generic in `T`, so calling it at
@@ -166,14 +166,14 @@ def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
         var diagonal = a[j * n + j].copy()
         for k in range(j):
             var ljk = out[j * n + k].copy()
-            diagonal = diagonal + (-(ljk * ljk))
+            diagonal = diagonal - (ljk * ljk)
         var ljj = guard_nonzero(diagonal, T.constant(_PIVOT_FLOOR)).sqrt()
         out[j * n + j] = ljj.copy()
 
         for i in range(j + 1, n):
             var total = a[i * n + j].copy()
             for k in range(j):
-                total = total + (-(out[i * n + k] * out[j * n + k]))
+                total = total - (out[i * n + k] * out[j * n + k])
             out[i * n + j] = total / ljj
 
     return out^
@@ -189,7 +189,7 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     See this module's docstring for what "without pivoting" costs.
 
     No MAX equivalent exists to route to for a large, plain-`dtype` `A`
-    (verified: MAX ships no `lu` at any size). `max.linalg.qr_factorization`
+    (verified: MAX ships no `lu` at any size). `linalg.qr_factorization`
     is the large-matrix building block LAPACK-style solvers use in `lu`'s
     place; see this module's own "Use MAX past N" section.
     """
@@ -203,7 +203,7 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
             var factor = out[i * n + k] / pivot
             out[i * n + k] = factor.copy()
             for j in range(k + 1, n):
-                out[i * n + j] = out[i * n + j] + (-(factor * out[k * n + j]))
+                out[i * n + j] = out[i * n + j] - (factor * out[k * n + j])
 
     return out^
 
@@ -223,7 +223,7 @@ def forward_substitution[
     for i in range(n):
         var total = b[i].copy()
         for j in range(i):
-            total = total + (-(lower[i * n + j] * x[j]))
+            total = total - (lower[i * n + j] * x[j])
         comptime if unit_diagonal:
             x[i] = total^
         else:
@@ -245,7 +245,7 @@ def back_substitution[
         var i = n - 1 - step
         var total = b[i].copy()
         for j in range(i + 1, n):
-            total = total + (-(upper[i * n + j] * x[j]))
+            total = total - (upper[i * n + j] * x[j])
         x[i] = total / guard_nonzero(upper[i * n + i], T.constant(_PIVOT_FLOOR))
     return x^
 
@@ -396,17 +396,17 @@ def tridiagonal_solve[
 
     for i in range(1, n):
         var denominator = guard_nonzero(
-            diag[i] + (-(sub[i] * c_prime[i - 1])),
+            diag[i] - (sub[i] * c_prime[i - 1]),
             T.constant(_PIVOT_FLOOR),
         )
         c_prime[i] = sup[i] / denominator
-        d_prime[i] = (rhs[i] + (-(sub[i] * d_prime[i - 1]))) / denominator
+        d_prime[i] = (rhs[i] - (sub[i] * d_prime[i - 1])) / denominator
 
     var x = _zeros[T, n]()
     x[n - 1] = d_prime[n - 1].copy()
     for step in range(1, n):
         var i = n - 1 - step
-        x[i] = d_prime[i] + (-(c_prime[i] * x[i + 1]))
+        x[i] = d_prime[i] - (c_prime[i] * x[i + 1])
 
     return x^
 
@@ -539,7 +539,7 @@ def qr[
         var v = _zeros[T, n]()
         for i in range(k, n):
             v[i] = r[i * n + k].copy()
-        v[k] = v[k] + (-alpha)
+        v[k] = v[k] - alpha
 
         var vv = T.constant(0.0)
         for i in range(k, n):
@@ -556,7 +556,7 @@ def qr[
                 vr = vr + v[i] * r[i * n + j]
             var factor = vr * scale
             for i in range(k, n):
-                r[i * n + j] = r[i * n + j] + (-(factor * v[i]))
+                r[i * n + j] = r[i * n + j] - (factor * v[i])
 
         # Q <- Q (I - scale*v v^T), accumulating the reflectors' product.
         for i in range(n):
@@ -565,7 +565,7 @@ def qr[
                 qv = qv + q[i * n + j] * v[j]
             var factor = qv * scale
             for j in range(k, n):
-                q[i * n + j] = q[i * n + j] + (-(factor * v[j]))
+                q[i * n + j] = q[i * n + j] - (factor * v[j])
 
     # The strict lower triangle holds the reflector residue, not part of R.
     for i in range(n):
@@ -693,7 +693,7 @@ def eigh[
                 var apq = work[p * n + q].copy()
                 var app = work[p * n + p].copy()
                 var aqq = work[q * n + q].copy()
-                var rotation = _jacobi_rotation[T](apq, aqq + (-app))
+                var rotation = _jacobi_rotation[T](apq, aqq - app)
                 var c = rotation[0].copy()
                 var s = rotation[1].copy()
 
@@ -701,19 +701,19 @@ def eigh[
                 for k in range(n):
                     var akp = work[p * n + k].copy()
                     var akq = work[q * n + k].copy()
-                    work[p * n + k] = c * akp + (-(s * akq))
+                    work[p * n + k] = c * akp - (s * akq)
                     work[q * n + k] = s * akp + c * akq
                 # Columns p and q, completing the similarity transform.
                 for k in range(n):
                     var apk = work[k * n + p].copy()
                     var aqk = work[k * n + q].copy()
-                    work[k * n + p] = c * apk + (-(s * aqk))
+                    work[k * n + p] = c * apk - (s * aqk)
                     work[k * n + q] = s * apk + c * aqk
                 # The same rotation applied to the accumulating basis.
                 for k in range(n):
                     var vkp = vectors[k * n + p].copy()
                     var vkq = vectors[k * n + q].copy()
-                    vectors[k * n + p] = c * vkp + (-(s * vkq))
+                    vectors[k * n + p] = c * vkp - (s * vkq)
                     vectors[k * n + q] = s * vkp + c * vkq
 
     var values = _zeros[T, n]()
@@ -769,19 +769,19 @@ def svd[
                     beta = beta + iq * iq
                     gamma = gamma + ip * iq
 
-                var rotation = _jacobi_rotation[T](gamma, beta + (-alpha))
+                var rotation = _jacobi_rotation[T](gamma, beta - alpha)
                 var c = rotation[0].copy()
                 var s = rotation[1].copy()
 
                 for i in range(n):
                     var ip = work[i * n + p].copy()
                     var iq = work[i * n + q].copy()
-                    work[i * n + p] = c * ip + (-(s * iq))
+                    work[i * n + p] = c * ip - (s * iq)
                     work[i * n + q] = s * ip + c * iq
                 for i in range(n):
                     var ip = v[i * n + p].copy()
                     var iq = v[i * n + q].copy()
-                    v[i * n + p] = c * ip + (-(s * iq))
+                    v[i * n + p] = c * ip - (s * iq)
                     v[i * n + q] = s * ip + c * iq
 
     var values = _zeros[T, n]()

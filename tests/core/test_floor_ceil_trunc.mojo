@@ -21,7 +21,7 @@ comptime I = Interval[P]
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def test_plain_floor_ceil_trunc_on_positive_and_negative() raises:

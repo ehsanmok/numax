@@ -46,7 +46,7 @@ def main() raises:
     var f = full[dtype, 3](7, ctx=ctx)
     print("full[3](7, ctx=ctx):", f[0], f[1], f[2])
 
-    var identity = eye[dtype, 3](ctx)
+    var identity = eye[3, dtype](ctx)
     var iv = identity.view()
     print(
         "eye[3]: [",
@@ -64,7 +64,7 @@ def main() raises:
         "]",
     )
 
-    var ls = linspace[dtype, 5](0, 1, ctx=ctx)
+    var ls = linspace[5, dtype](0, 1, ctx=ctx)
     print("linspace[5](0, 1, ctx=ctx):", ls[0], ls[1], ls[2], ls[3], ls[4])
 
     print("--- manipulation ---")
@@ -109,8 +109,8 @@ def main() raises:
     var sq = squeeze(row)
     print("squeeze((1, 4)):", sq[0], sq[1], sq[2], sq[3])
 
-    var a = linspace[dtype, 3](0, 2, ctx=ctx)
-    var b = linspace[dtype, 3](10, 12, ctx=ctx)
+    var a = linspace[3, dtype](0, 2, ctx=ctx)
+    var b = linspace[3, dtype](10, 12, ctx=ctx)
     var st = stack(a, b)
     var sv = st.view()
     print("stack(a, b) row 0:", sv[0, 0], sv[0, 1], sv[0, 2])
@@ -118,7 +118,7 @@ def main() raises:
 
     # Shape manipulation: arange -> reshape -> ravel round-trips, and
     # concatenate/split are inverses of each other.
-    var r = arange[dtype, 6](ctx=ctx)
+    var r = arange[6, dtype](ctx=ctx)
     print("arange(6):", r[0], r[1], r[2], r[3], r[4], r[5])
 
     var grid = reshape[rows=2, cols=3](r)
@@ -140,8 +140,8 @@ def main() raises:
         "ravel(2x3 -> 6):", back[0], back[1], back[2], back[3], back[4], back[5]
     )
 
-    var left = arange[dtype, 3](ctx=ctx)
-    var right = arange[dtype, 2](100, ctx=ctx)
+    var left = arange[3, dtype](ctx=ctx)
+    var right = arange[2, dtype](100, ctx=ctx)
     var joined = concatenate(left, right)
     print(
         "concatenate([0,1,2], [100,101]):",

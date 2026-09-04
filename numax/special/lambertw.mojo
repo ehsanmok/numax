@@ -59,12 +59,12 @@ def lambertw[T: FloatLike](x: T) -> T:
 
     for _ in range(num_iters):
         var ew = w.exp()
-        var f = w * ew + (-x)
+        var f = w * ew - x
         var fprime = ew * (w + T.one())
         var fprime2 = ew * (w + T.constant(2.0))
         var numerator = T.constant(2.0) * f * fprime
-        var denominator = T.constant(2.0) * (fprime * fprime) + (-(f * fprime2))
-        w = w + (-(numerator / denominator))
+        var denominator = T.constant(2.0) * (fprime * fprime) - (f * fprime2)
+        w = w - (numerator / denominator)
 
     return w^
 
@@ -96,9 +96,9 @@ def _branch_point_seed[T: FloatLike](x: T, negate_odd_terms: T) -> T:
     return (
         -T.one()
         + negate_odd_terms * p
-        + (-(p2 / T.constant(3.0)))
+        - (p2 / T.constant(3.0))
         + negate_odd_terms * (T.constant(11.0) / T.constant(72.0)) * p3
-        + (-(T.constant(43.0) / T.constant(540.0)) * p4)
+        - ((T.constant(43.0) / T.constant(540.0)) * p4)
     )
 
 
@@ -121,22 +121,22 @@ def lambertw_m1[T: FloatLike](x: T) -> T:
     comptime num_iters = 30
 
     var arg = _branch_point_arg(x)
-    var near_branch_point = T.one().copysign(T.constant(0.5) + (-arg))
+    var near_branch_point = T.one().copysign(T.constant(0.5) - arg)
     var s = (near_branch_point + T.one()) / T.constant(2.0)
 
     var series_seed = _branch_point_seed(x, T.constant(-1.0))
     var neg_x = -x
-    var loglog_seed = neg_x.ln() + (-((-(neg_x.ln())).ln()))
+    var loglog_seed = neg_x.ln() - (-(neg_x.ln())).ln()
 
-    var w = series_seed * s + loglog_seed * (T.one() + (-s))
+    var w = series_seed * s + loglog_seed * (T.one() - s)
 
     for _ in range(num_iters):
         var ew = w.exp()
-        var f = w * ew + (-x)
+        var f = w * ew - x
         var fprime = ew * (w + T.one())
         var fprime2 = ew * (w + T.constant(2.0))
         var numerator = T.constant(2.0) * f * fprime
-        var denominator = T.constant(2.0) * (fprime * fprime) + (-(f * fprime2))
-        w = w + (-(numerator / denominator))
+        var denominator = T.constant(2.0) * (fprime * fprime) - (f * fprime2)
+        w = w - (numerator / denominator)
 
     return w^

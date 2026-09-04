@@ -120,7 +120,7 @@ def gauss_legendre[
     comptime nodes = _gauss_legendre_nodes[n]()
     comptime weights = _gauss_legendre_weights[n]()
 
-    var half_width = (b + (-a)) / T.constant(2.0)
+    var half_width = (b - a) / T.constant(2.0)
     var midpoint = (a + b) / T.constant(2.0)
 
     var total = T.constant(0.0)
@@ -147,7 +147,7 @@ def trapezoid[
     the way Gauss nodes do, which matters when the integrand is only
     piecewise smooth.
     """
-    var h = (b + (-a)) / T.constant(Float64(num_intervals))
+    var h = (b - a) / T.constant(Float64(num_intervals))
     var total = (f[T](a.copy()) + f[T](b.copy())) / T.constant(2.0)
 
     # `a + k*h` rather than a running `x += h`: the multiply reintroduces
@@ -189,7 +189,7 @@ def simpson[
     so it doesn't run into the invariant the rest of this library observes.
     """
     comptime num_intervals = 2 * num_panels
-    var h = (b + (-a)) / T.constant(Float64(num_intervals))
+    var h = (b - a) / T.constant(Float64(num_intervals))
     var total = f[T](a.copy()) + f[T](b.copy())
     var kf = T.one()
 

@@ -30,14 +30,14 @@ comptime D = Dual[P]
 
 
 def pv(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+    return P.constant(x)
 
 
 def quintic[U: FloatLike](x: U) -> U:
     """`x^5 - 3x^2 + 2`; a degree-5 polynomial, so 3-point Gauss-Legendre
     (exact through degree 5) should already nail it."""
     var x2 = x * x
-    return x2 * x2 * x + (-(U.constant(3.0) * x2)) + U.constant(2.0)
+    return x2 * x2 * x - (U.constant(3.0) * x2) + U.constant(2.0)
 
 
 def gaussian_bump[U: FloatLike](x: U) -> U:

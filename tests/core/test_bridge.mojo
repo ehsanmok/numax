@@ -1,4 +1,6 @@
-"""Tests for `to_array`/`to_tensor`, the seam between numax's two arrays.
+"""Tests for the two seams out of `Tensor`: `to_array`/`to_tensor` between
+numax's two arrays, and `view`/`from_view` between owned storage and a
+borrowed one.
 
 `Tensor` carries shape and device; `Array[T, n]` carries the `FloatLike`
 conformer. Nothing composed across them before these two existed, so what
@@ -17,7 +19,7 @@ from numax.core.array import Tensor, eye, to_array, to_tensor
 from numax.linalg import cholesky, det
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 
 
 def _matrix() raises -> Tensor[dtype, 2, 2]:
@@ -70,7 +72,7 @@ def test_a_tensor_can_be_factored_and_lowered_back() raises:
 
 def test_the_identity_lifts_to_a_determinant_of_one() raises:
     var ctx = DeviceContext(api="cpu")
-    var i3 = eye[dtype, 3](ctx)
+    var i3 = eye[3](ctx)
     assert_almost_equal(det[P, 3](to_array[P](i3)).v, Scalar[dtype](1.0))
 
 
@@ -89,6 +91,22 @@ def test_lifted_values_match_the_source_elements() raises:
     var lifted = to_array[P](a)
     for i in range(4):
         assert_almost_equal(lifted[i].v, a[i])
+
+
+def test_from_view_round_trips_the_elements() raises:
+    var a = _matrix()
+    var back = Tensor[dtype, 2, 2].from_view(a.view(), a.context())
+    for i in range(4):
+        assert_almost_equal(back[i], a[i])
+
+
+def test_from_view_copies_rather_than_aliases() raises:
+    var a = _matrix()
+    var back = Tensor[dtype, 2, 2].from_view(a.view(), a.context())
+    var v = a.view()
+    v[0, 0] = 99.0
+    assert_almost_equal(a[0], Scalar[dtype](99.0))
+    assert_almost_equal(back[0], Scalar[dtype](4.0))
 
 
 def main() raises:

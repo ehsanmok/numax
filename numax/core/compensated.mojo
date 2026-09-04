@@ -181,7 +181,7 @@ struct Compensated[dtype: DType, width: Int](
 
         comptime num_iters = 3
         comptime for _ in range(num_iters):
-            y = y + (-Self.one()) + self * (-y).exp()
+            y = y - Self.one() + self * (-y).exp()
 
         return y
 
@@ -227,7 +227,7 @@ struct Compensated[dtype: DType, width: Int](
         return default_erf_approx(self)
 
     def erfc(self) -> Self where Self.dtype.is_floating_point():
-        return Self.one() + (-self.erf())
+        return Self.one() - self.erf()
 
     def _range_reduce_2pi(self) -> Self where Self.dtype.is_floating_point():
         """Shared range reduction for `sin`/`cos`: `self = m*2*pi + r`.

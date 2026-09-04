@@ -48,6 +48,18 @@ struct Decimal[width: Int, scale: Int](
     def one() -> Self:
         return Self(SIMD[DType.int64, Self.width](_pow10[Self.scale]()))
 
+    def to_float64(self) -> SIMD[DType.float64, Self.width]:
+        """The value as an ordinary float -- `raw / 10^scale`.
+
+        The read-out every other conformer has and this one did not, which
+        left callers doing the descaling by hand. Lossy on purpose and named
+        for it: the whole point of `Decimal` is that `raw` is exact, so
+        `raw` stays the field to assert against when exactness is what is
+        under test. This is for printing, plotting, and handing a value to
+        something that only speaks binary floating point.
+        """
+        return self.raw.cast[DType.float64]() / Float64(_pow10[Self.scale]())
+
     def __add__(self, rhs: Self) -> Self:
         # Same scale on both sides, so this is exact -- no rounding at all.
         return Self(self.raw + rhs.raw)
@@ -101,7 +113,7 @@ struct Decimal[width: Int, scale: Int](
 
         comptime num_iters = 8
         comptime for _ in range(num_iters):
-            y = y + (-Self.one()) + self * (-y).exp()
+            y = y - Self.one() + self * (-y).exp()
 
         return y^
 
@@ -143,7 +155,7 @@ struct Decimal[width: Int, scale: Int](
         return default_erf_approx(self)
 
     def erfc(self) -> Self:
-        return Self.one() + (-self.erf())
+        return Self.one() - self.erf()
 
     def sin(self) -> Self:
         # sin(x) = sum_{k=0}^{29} term_k, term_0 = x, term_k = term_{k-1} *

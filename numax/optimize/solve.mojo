@@ -10,7 +10,7 @@ derivatives exactly:
 
 ```mojo
 def cubic[U: FloatLike](x: U) -> U:
-    return x * x * x + (-U.constant(2.0))
+    return x * x * x - U.constant(2.0)
 
 var root = newton[f=cubic](Plain[DType.float64, 1].constant(1.0))
 ```
@@ -70,7 +70,7 @@ def newton[
     for _ in range(num_iters):
         var fx = f[Dual[T]](Dual[T](x.copy(), T.one()))
         var denom = guard_nonzero(fx.deriv, T.constant(_DERIVATIVE_FLOOR))
-        x = x + (-(fx.value / denom))
+        x = x - (fx.value / denom)
 
     return x^
 
@@ -110,7 +110,7 @@ def halley[
         var d2 = r.deriv.deriv.copy()
 
         var numerator = T.constant(2.0) * fx * d1
-        var denominator = T.constant(2.0) * (d1 * d1) + (-(fx * d2))
+        var denominator = T.constant(2.0) * (d1 * d1) - (fx * d2)
         x = x + (
             -(
                 numerator

@@ -102,7 +102,7 @@ def quad[
     ```mojo
     def peaked[U: FloatLike](x: U) -> U:
         # A spike at x = 0.5 that a fixed 8-point rule cannot see.
-        var d = x + (-U.constant(0.5))
+        var d = x - U.constant(0.5)
         return U.one() / (U.constant(1e-4) + d * d)
 
     var result = quad[peaked](0.0, 1.0)

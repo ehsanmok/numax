@@ -79,12 +79,12 @@ def laguerre_l[T: FloatLike](n: Int, x: T) -> T:
         return T.one()
 
     var l_prev = T.one()
-    var l_curr = T.one() + (-x)
+    var l_curr = T.one() - x
     var kf = T.one()
 
     for _ in range(1, n):
         var l_next = (
-            (T.constant(2.0) * kf + T.one() + (-x)) * l_curr + (-(kf * l_prev))
+            (T.constant(2.0) * kf + T.one() - x) * l_curr - (kf * l_prev)
         ) / (kf + T.one())
         l_prev = l_curr.copy()
         l_curr = l_next.copy()
@@ -109,7 +109,7 @@ def chebyshev_t[T: FloatLike](n: Int, x: T) -> T:
     var t_curr = x.copy()
 
     for _ in range(1, n):
-        var t_next = T.constant(2.0) * x * t_curr + (-t_prev)
+        var t_next = T.constant(2.0) * x * t_curr - t_prev
         t_prev = t_curr.copy()
         t_curr = t_next.copy()
 
@@ -127,7 +127,7 @@ def chebyshev_u[T: FloatLike](n: Int, x: T) -> T:
     var u_curr = T.constant(2.0) * x
 
     for _ in range(1, n):
-        var u_next = T.constant(2.0) * x * u_curr + (-u_prev)
+        var u_next = T.constant(2.0) * x * u_curr - u_prev
         u_prev = u_curr.copy()
         u_curr = u_next.copy()
 

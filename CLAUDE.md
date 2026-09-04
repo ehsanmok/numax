@@ -70,8 +70,9 @@ Two co-equal axes:
    `Decimal` (exact base-10 fixed point), `Complex`, `Interval`. They nest —
    `Gradient[Dual[Plain]]` is a Hessian, `Complex[Dual[Plain]]` differentiates
    holomorphically — so no kernel needs a per-type copy.
-2. **NumPy/SciPy parity, MAX-first.** MAX's `TileTensor`, `max.linalg`,
-   `max.algorithm` and `max.random` are the substrate. Prefer calling MAX over
+2. **NumPy/SciPy parity, MAX-first.** MAX's `TileTensor`, the top-level
+   `linalg`/`nn` roots and `max.algorithm` are the substrate (there is no
+   `max.linalg` and no `max.random`; RNG is `std.random`). Prefer calling MAX over
    writing a replacement; `docs/parity.md` has the survey the dispositions rest
    on.
 

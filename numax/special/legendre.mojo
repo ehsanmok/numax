@@ -49,7 +49,7 @@ def legendre_p[T: FloatLike](n: Int, x: T) -> T:
 
     for _ in range(1, n):
         var p_next = (
-            (T.constant(2.0) * kf + T.one()) * x * p_curr + (-(kf * p_prev))
+            (T.constant(2.0) * kf + T.one()) * x * p_curr - (kf * p_prev)
         ) / (kf + T.one())
         p_prev = p_curr.copy()
         p_curr = p_next.copy()

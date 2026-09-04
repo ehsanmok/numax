@@ -15,7 +15,7 @@ from numax import Compensated, Dual, FloatLike, Plain
 from numax.core.interval import Interval
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 comptime I = Interval[P]
 
 

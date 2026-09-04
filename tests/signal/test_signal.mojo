@@ -24,7 +24,7 @@ from numax.signal import (
 )
 
 comptime dtype = DType.float64
-comptime P = Plain[dtype, 1]
+comptime P = Plain[dtype]
 comptime D = Dual[P]
 comptime C = Complex[P]
 

@@ -6,7 +6,7 @@ all (verified directly -- `max.algorithm.functional` exports only
 `elementwise`), but it does ship `argmax`/`argmin` (`nn.argmaxmin`), which
 this module routes to directly rather than re-implementing (the MAX-first
 check firing first, same shape as `numax.linalg.matmul`'s recommendation to
-call `max.linalg.matmul` past ~8x8).
+call MAX's `linalg.matmul` past ~8x8).
 
 Two genuinely different shapes live in this one file, because they answer
 two different questions:
@@ -301,7 +301,7 @@ def variance[T: FloatLike](xs: List[T], ddof: Int = 0) -> T:
     var m = mean(xs)
     var acc = T.constant(0.0)
     for x in xs:
-        var d = x + (-m)
+        var d = x - m
         acc = acc + d * d
     return acc / T.constant(Float64(len(xs) - ddof))
 

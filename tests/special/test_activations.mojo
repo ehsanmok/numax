@@ -13,12 +13,12 @@ comptime D = Dual[Plain[dtype, width]]
 
 
 def pv(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+    return Plain[dtype, width].constant(x)
 
 
 def test_relu_matches_max_with_zero() raises:
     for x_raw in [-2.0, -0.5, 0.0, 0.5, 2.0]:
-        var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
+        var x = Plain[dtype, width].constant(x_raw)
         assert_almost_equal(relu(x).v, SIMD[dtype, width](max(x_raw, 0.0)))
 
 
@@ -33,7 +33,7 @@ def test_relu_derivative_is_zero_or_one() raises:
 def test_leaky_relu_matches_closed_form() raises:
     comptime alpha = 0.1
     for x_raw in [-2.0, -0.5, 0.5, 2.0]:
-        var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
+        var x = Plain[dtype, width].constant(x_raw)
         var expected = x_raw if x_raw >= 0 else alpha * x_raw
         assert_almost_equal(
             leaky_relu(x, alpha).v, SIMD[dtype, width](expected)
@@ -52,13 +52,13 @@ def test_leaky_relu_derivative_is_one_or_alpha() raises:
 
 
 def test_gelu_at_zero_is_zero() raises:
-    var x = Plain[dtype, width](SIMD[dtype, width](0))
+    var x = Plain[dtype, width].constant(0)
     assert_almost_equal(gelu(x).v, SIMD[dtype, width](0))
 
 
 def test_gelu_matches_known_value() raises:
     # Reference from PyTorch's tanh-approximation GELU at x=1.
-    var x = Plain[dtype, width](SIMD[dtype, width](1.0))
+    var x = Plain[dtype, width].constant(1.0)
     assert_almost_equal(
         gelu(x).v, SIMD[dtype, width](0.8411919906082768), atol=1e-6
     )

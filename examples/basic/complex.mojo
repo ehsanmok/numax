@@ -23,8 +23,8 @@ comptime DCT = Complex[Dual[Plain[dtype, width]]]
 
 def c(re: Float64, im: Float64) -> CT:
     return CT(
-        Plain[dtype, width](SIMD[dtype, width](re)),
-        Plain[dtype, width](SIMD[dtype, width](im)),
+        Plain[dtype, width].constant(re),
+        Plain[dtype, width].constant(im),
     )
 
 
@@ -56,12 +56,12 @@ def main():
     print("--- Complex[Dual[Plain]]: holomorphic derivatives for free ---")
     print("d/dz[z^2] at z = 3+4i should be 2z = 6+8i")
     var re = Dual[Plain[dtype, width]](
-        Plain[dtype, width](SIMD[dtype, width](3.0)),
-        Plain[dtype, width](SIMD[dtype, width](1.0)),
+        Plain[dtype, width].constant(3.0),
+        Plain[dtype, width].constant(1.0),
     )
     var im = Dual[Plain[dtype, width]](
-        Plain[dtype, width](SIMD[dtype, width](4.0)),
-        Plain[dtype, width](SIMD[dtype, width](0.0)),
+        Plain[dtype, width].constant(4.0),
+        Plain[dtype, width].constant(0.0),
     )
     var z = DCT(re^, im^)
     var w = z * z

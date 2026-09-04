@@ -67,11 +67,11 @@ def main() raises:
     print("summation would otherwise lose, with the exact same kernel.")
 
     comptime n = 200_000
-    var plain_list = List[Plain[dtype, 1]](capacity=n)
+    var plain_list = List[Plain[dtype]](capacity=n)
     var comp_list = List[Compensated[dtype, 1]](capacity=n)
     for i in range(n):
         var x = Float64(1.0) + Float64(0.01) * Float64(sin(Float64(i)))
-        plain_list.append(Plain[dtype, 1](Scalar[dtype](x)))
+        plain_list.append(Plain[dtype](Scalar[dtype](x)))
         comp_list.append(
             Compensated[dtype, 1](Scalar[dtype](x), Scalar[dtype](0))
         )

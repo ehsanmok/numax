@@ -43,8 +43,8 @@ comptime P = Plain[dtype, width]
 comptime D = Dual[P]
 
 
-def scalar(x: Float64) -> P:
-    return P(SIMD[dtype, width](x))
+def pv(x: Float64) -> P:
+    return P.constant(x)
 
 
 def show(x: P) -> Float64:
@@ -53,7 +53,7 @@ def show(x: P) -> Float64:
 
 def cos_minus_x[U: FloatLike](x: U) -> U:
     """`cos(x) - x`, whose root is the Dottie number."""
-    return x.cos() + (-x)
+    return x.cos() - x
 
 
 def bell[U: FloatLike](x: U) -> U:
@@ -67,7 +67,7 @@ def sine[U: FloatLike](x: U) -> U:
 
 def main() raises:
     print("=== Root-finding: only f is supplied ===")
-    var dottie = newton[f=cos_minus_x](scalar(1.0))
+    var dottie = newton[f=cos_minus_x](pv(1.0))
     print("root of cos(x) - x  =", show(dottie))
     print("residual            =", show(cos_minus_x(dottie)))
     print()
@@ -75,9 +75,9 @@ def main() raises:
     print("=== Gauss-Legendre against a uniform grid ===")
     var pi = 3.141592653589793
     var exact = 2.0
-    var g8 = show(gauss_legendre[f=sine, n=8](scalar(0.0), scalar(pi)))
-    var s64 = show(simpson[f=sine, num_panels=32](scalar(0.0), scalar(pi)))
-    var t64 = show(trapezoid[f=sine, num_intervals=64](scalar(0.0), scalar(pi)))
+    var g8 = show(gauss_legendre[f=sine, n=8](pv(0.0), pv(pi)))
+    var s64 = show(simpson[f=sine, num_panels=32](pv(0.0), pv(pi)))
+    var t64 = show(trapezoid[f=sine, num_intervals=64](pv(0.0), pv(pi)))
     print("integral of sin over [0, pi], exact =", exact)
     print("  gauss-legendre,  8 points :", g8, " error", abs(g8 - exact))
     print("  simpson,        64 points :", s64, " error", abs(s64 - exact))
@@ -89,7 +89,7 @@ def main() raises:
     # calculus says F'(b) = exp(-b^2); nothing in the quadrature knows that.
     var b = 1.25
     var seeded = gauss_legendre[f=bell, n=16](
-        D.constant(0.0), D(scalar(b), scalar(1.0))
+        D.constant(0.0), D(pv(b), pv(1.0))
     )
     print("F(b)          =", show(seeded.value), " at b =", b)
     print("F'(b)         =", show(seeded.deriv))
@@ -97,7 +97,7 @@ def main() raises:
     print()
 
     print("=== Orthogonal polynomials at x = 0.6 ===")
-    var x = scalar(0.6)
+    var x = pv(0.6)
     print("P_5(x) =", show(legendre_p(5, x)))
     print("H_5(x) =", show(hermite_h(5, x)))
     print("L_5(x) =", show(laguerre_l(5, x)))
@@ -106,7 +106,7 @@ def main() raises:
     var theta = 0.9
     print(
         "T_5(cos(0.9)) =",
-        show(chebyshev_t(5, scalar(cos_f64(theta)))),
+        show(chebyshev_t(5, pv(cos_f64(theta)))),
         " vs cos(4.5) =",
         cos_f64(5.0 * theta),
     )

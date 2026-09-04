@@ -16,36 +16,36 @@ comptime width = 1
 comptime D = Dual[Plain[dtype, width]]
 
 
-def v(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+def pv(x: Float64) -> Plain[dtype, width]:
+    return Plain[dtype, width].constant(x)
 
 
 def test_plain_sin_cos_match_known_values() raises:
     assert_almost_equal(Plain[dtype, width](0).sin().v, SIMD[dtype, width](0))
     assert_almost_equal(Plain[dtype, width](0).cos().v, SIMD[dtype, width](1))
     assert_almost_equal(
-        v(Float64(pi) / 2.0).sin().v, SIMD[dtype, width](1), atol=1e-6
+        pv(Float64(pi) / 2.0).sin().v, SIMD[dtype, width](1), atol=1e-6
     )
-    assert_almost_equal(v(Float64(pi)).cos().v, SIMD[dtype, width](-1))
+    assert_almost_equal(pv(Float64(pi)).cos().v, SIMD[dtype, width](-1))
 
 
 def test_plain_sin_squared_plus_cos_squared_is_one() raises:
-    var x = v(1.3)
+    var x = pv(1.3)
     var s = x.sin()
     var c = x.cos()
     assert_almost_equal(s.v * s.v + c.v * c.v, SIMD[dtype, width](1))
 
 
 def test_dual_derivative_of_sin_is_cos() raises:
-    var x = D(v(0.6), v(1))
+    var x = D(pv(0.6), pv(1))
     var s = x.sin()
-    assert_almost_equal(s.deriv.v, v(0.6).cos().v)
+    assert_almost_equal(s.deriv.v, pv(0.6).cos().v)
 
 
 def test_dual_derivative_of_cos_is_negative_sin() raises:
-    var x = D(v(0.6), v(1))
+    var x = D(pv(0.6), pv(1))
     var c = x.cos()
-    assert_almost_equal(c.deriv.v, -v(0.6).sin().v)
+    assert_almost_equal(c.deriv.v, -pv(0.6).sin().v)
 
 
 def test_compensated_sin_beats_plain_for_large_x() raises:

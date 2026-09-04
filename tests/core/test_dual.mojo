@@ -17,8 +17,8 @@ comptime InnerT = Plain[dtype, width]
 comptime D = Dual[InnerT]
 
 
-def v(x: Float64) -> InnerT:
-    return InnerT(SIMD[dtype, width](x))
+def pv(x: Float64) -> InnerT:
+    return InnerT.constant(x)
 
 
 def test_one() raises:
@@ -29,8 +29,8 @@ def test_one() raises:
 
 def test_add_sums_derivatives() raises:
     # f(x) = x, g(x) = 2x -> (f+g)'(x) = 3
-    var f = D(v(5), v(1))
-    var g = D(v(10), v(2))
+    var f = D(pv(5), pv(1))
+    var g = D(pv(10), pv(2))
     var h = f + g
     assert_almost_equal(h.value.v, SIMD[dtype, width](15))
     assert_almost_equal(h.deriv.v, SIMD[dtype, width](3))
@@ -38,14 +38,14 @@ def test_add_sums_derivatives() raises:
 
 def test_mul_is_product_rule() raises:
     # f(x) = x^2 at x=3: value 9, derivative 2x=6.
-    var x = D(v(3), v(1))
+    var x = D(pv(3), pv(1))
     var f = x * x
     assert_almost_equal(f.value.v, SIMD[dtype, width](9))
     assert_almost_equal(f.deriv.v, SIMD[dtype, width](6))
 
 
 def test_neg() raises:
-    var x = D(v(3), v(1))
+    var x = D(pv(3), pv(1))
     var f = -x
     assert_almost_equal(f.value.v, SIMD[dtype, width](-3))
     assert_almost_equal(f.deriv.v, SIMD[dtype, width](-1))
@@ -54,7 +54,7 @@ def test_neg() raises:
 def test_div_is_quotient_rule() raises:
     # f(x) = 1/x at x=2: value 0.5, derivative -1/x^2 = -0.25.
     var one = D.one()
-    var x = D(v(2), v(1))
+    var x = D(pv(2), pv(1))
     var f = one / x
     assert_almost_equal(f.value.v, SIMD[dtype, width](0.5))
     assert_almost_equal(f.deriv.v, SIMD[dtype, width](-0.25))
@@ -62,20 +62,20 @@ def test_div_is_quotient_rule() raises:
 
 def test_exp_derivative_is_itself() raises:
     # d/dx[exp(x)] = exp(x).
-    var x = D(v(1.5), v(1))
+    var x = D(pv(1.5), pv(1))
     var f = x.exp()
     assert_almost_equal(f.value.v, f.deriv.v)
 
 
 def test_ln_derivative_is_reciprocal() raises:
     # d/dx[ln(x)] = 1/x.
-    var x = D(v(4), v(1))
+    var x = D(pv(4), pv(1))
     var f = x.ln()
     assert_almost_equal(f.deriv.v, SIMD[dtype, width](0.25))
 
 
 def test_ln_undoes_exp() raises:
-    var x = D(v(0.75), v(1))
+    var x = D(pv(0.75), pv(1))
     var f = x.exp().ln()
     assert_almost_equal(f.value.v, x.value.v)
     assert_almost_equal(f.deriv.v, x.deriv.v)
@@ -95,7 +95,7 @@ def seed2(x: Float64) -> D2:
     # (deriv=1); deriv = a dual seeded at (1, 0), i.e. d/dx of "the first
     # derivative" starts at 1 with its own derivative (the second
     # derivative) starting at 0.
-    return D2(D(v(x), v(1)), D(v(1), v(0)))
+    return D2(D(pv(x), pv(1)), D(pv(1), pv(0)))
 
 
 def test_nested_dual_square_gives_value_first_and_second_derivative() raises:
@@ -115,7 +115,7 @@ def test_nested_dual_exp_second_derivative_is_itself() raises:
 
 
 def test_seed_carries_a_unit_derivative() raises:
-    var x = Dual[f64].seed(0.5)
+    var x = Dual[Plain[f64]].seed(0.5)
     assert_almost_equal(x.value.v, 0.5)
     assert_almost_equal(x.deriv.v, 1.0)
 

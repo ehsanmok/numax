@@ -11,7 +11,7 @@ comptime D = Dual[Plain[dtype, width]]
 
 
 def pv(x: Float64) -> Plain[dtype, width]:
-    return Plain[dtype, width](SIMD[dtype, width](x))
+    return Plain[dtype, width].constant(x)
 
 
 def test_low_degrees_match_closed_forms() raises:
