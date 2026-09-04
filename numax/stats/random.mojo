@@ -180,3 +180,97 @@ def seed(value: Int):
     constructor argument instead of consulting global state.
     """
     _std_seed(value)
+
+
+struct Generator(Copyable, Movable):
+    """A named, reproducible source of draws. `numpy.random.Generator`.
+
+    ```mojo
+    var rng = Generator(seed=0)
+    var xs = rng.uniform[DType.float64, 8]()
+    var ys = rng.normal[DType.float64, 8]()
+    ```
+
+    Two generators built from the same seed produce the same sequence, and
+    a generator's own sequence does not depend on what other code did to
+    the global RNG in between -- which is the property the module-level
+    `seed`/`uniform`/`normal` pair cannot offer, since they all share one
+    process-wide state.
+
+    The module-level functions stay, and are what a program that never
+    needs a second stream should keep using; they draw from the global
+    state the way they always did.
+
+    ponytail: this reseeds the global `std.random` generator before each
+    draw and advances its own counter afterwards, because `std.random`
+    exposes no instantiable generator to own. That makes it reproducible
+    and independent between `Generator`s, but not thread-safe and not
+    independent of concurrent use of the global. A counter-based
+    generator -- `std.random.philox.Random`, which the GPU path in this
+    module's docstring already uses per thread -- is the upgrade if either
+    matters.
+    """
+
+    var _seed: Int
+    """The seed the next draw will use; advanced by one after each."""
+
+    def __init__(out self, seed: Int = 0):
+        """A generator whose first draw uses `seed`."""
+        self._seed = seed
+
+    def _advance(mut self):
+        _std_seed(self._seed)
+        self._seed += 1
+
+    def uniform[
+        dtype: DType, *dims: Int
+    ](
+        mut self,
+        low: Scalar[dtype] = 0,
+        high: Scalar[dtype] = 1,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Tensor[dtype, *dims]:
+        """`uniform`, from this generator's stream."""
+        self._advance()
+        return uniform[dtype, *dims](low, high, ctx=ctx)
+
+    def normal[
+        dtype: DType, *dims: Int
+    ](
+        mut self,
+        mean: Scalar[dtype] = 0,
+        stddev: Scalar[dtype] = 1,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Tensor[dtype, *dims]:
+        """`normal`, from this generator's stream."""
+        self._advance()
+        return normal[dtype, *dims](mean, stddev, ctx=ctx)
+
+    def exponential[
+        dtype: DType, *dims: Int
+    ](
+        mut self,
+        scale: Scalar[dtype] = 1,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Tensor[dtype, *dims]:
+        """`exponential`, from this generator's stream."""
+        self._advance()
+        return exponential[dtype, *dims](scale, ctx=ctx)
+
+    def randint[
+        dtype: DType, *dims: Int
+    ](
+        mut self, low: Int, high: Int, ctx: Optional[DeviceContext] = None
+    ) raises -> Tensor[dtype, *dims]:
+        """`randint`, from this generator's stream."""
+        self._advance()
+        return randint[dtype, *dims](low, high, ctx=ctx)
+
+    def randbool[
+        dtype: DType, *dims: Int
+    ](
+        mut self, p: Float64 = 0.5, ctx: Optional[DeviceContext] = None
+    ) raises -> Tensor[DType.bool, *dims] where (dtype == DType.bool):
+        """`randbool`, from this generator's stream."""
+        self._advance()
+        return randbool[dtype, *dims](p, ctx=ctx)

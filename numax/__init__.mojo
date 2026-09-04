@@ -321,7 +321,15 @@ from .signal.signal import (
 # are deliberately not re-exported here: `gamma` and `beta` would collide
 # with the special functions of those names, and a root `t` or `f` names
 # nothing a reader could guess.
-from .stats.random import exponential, normal, randbool, randint, seed, uniform
+from .stats.random import (
+    Generator,
+    exponential,
+    normal,
+    randbool,
+    randint,
+    seed,
+    uniform,
+)
 from .stats.statistics import (
     argmax,
     argmin,

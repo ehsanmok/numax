@@ -7,11 +7,16 @@ within tolerance of the distribution's theoretical moments. `seed` itself
 is exercised implicitly by every other test here.
 """
 
-from std.testing import TestSuite, assert_almost_equal, assert_true
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_true,
+)
 
 from max.gpu.host import DeviceContext
 
-from numax.stats import exponential, normal, seed, uniform
+from numax.stats import Generator, exponential, normal, seed, uniform
 
 comptime dtype = DType.float32
 
@@ -121,6 +126,39 @@ def test_exponential_draws_are_never_negative() raises:
     var xs = exponential[dtype, n](1, ctx=ctx)
     for i in range(n):
         assert_true(xs[i] >= 0.0)
+
+
+def test_two_generators_with_one_seed_agree() raises:
+    var a = Generator(seed=7)
+    var b = Generator(seed=7)
+    var xs = a.uniform[dtype, 16]().to_host()
+    var ys = b.uniform[dtype, 16]().to_host()
+    for i in range(16):
+        assert_equal(xs[i], ys[i])
+
+
+def test_a_generator_advances_between_draws() raises:
+    var g = Generator(seed=7)
+    var first = g.uniform[dtype, 16]().to_host()
+    var second = g.uniform[dtype, 16]().to_host()
+    var identical = True
+    for i in range(16):
+        if first[i] != second[i]:
+            identical = False
+    assert_true(not identical, msg="two draws should not repeat one stream")
+
+
+def test_a_generator_is_unaffected_by_the_global_seed() raises:
+    # The property the module-level functions cannot offer.
+    var g = Generator(seed=7)
+    var expected = g.uniform[dtype, 8]().to_host()
+
+    var h = Generator(seed=7)
+    seed(999)
+    _ = uniform[dtype, 8]()
+    var actual = h.uniform[dtype, 8]().to_host()
+    for i in range(8):
+        assert_equal(actual[i], expected[i])
 
 
 def main() raises:

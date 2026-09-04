@@ -8,7 +8,7 @@ from numax.stats import mean, variance, norm, uniform, seed
 |---|---|
 | `statistics` | `sum`, `mean`, `median`, `mode`, `prod`, `cumsum`, `cumprod`, `variance`, `stddev`, `min`/`max`, `argmin`/`argmax` |
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with `.pdf`/`.pmf`, `.cdf` and `.ppf`, spelled the way `scipy.stats` spells them |
-| `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed` |
+| `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` for a named reproducible stream |
 
 Every reduction takes a `Tensor` and covers every element.
 `mean`/`variance`/`stddev`/`cumsum` also have a `FloatLike`-generic form
@@ -34,7 +34,15 @@ from .distributions import (
     poisson,
     binom,
 )
-from .random import exponential, normal, randbool, randint, seed, uniform
+from .random import (
+    Generator,
+    exponential,
+    normal,
+    randbool,
+    randint,
+    seed,
+    uniform,
+)
 from .statistics import (
     argmax,
     argmin,

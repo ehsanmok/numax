@@ -203,7 +203,15 @@ from .stats.statistics import (
     stddev,
     variance,
 )
-from .stats.random import exponential, normal, randbool, randint, seed, uniform
+from .stats.random import (
+    Generator,
+    exponential,
+    normal,
+    randbool,
+    randint,
+    seed,
+    uniform,
+)
 
 # Algorithms.
 from .optimize.solve import bisection, halley, newton
