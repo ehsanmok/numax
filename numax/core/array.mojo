@@ -246,6 +246,21 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         with self.buffer.map_to_host() as host:
             return host[i]
 
+    def __getitem__(self, r: Int, c: Int) raises -> Scalar[Self.dtype]:
+        """`a[r, c]` on a rank-2 tensor, row-major.
+
+        The same read as the flat `a[r * cols + c]`, spelled the way the
+        shape is. Rank-2 only -- `Self.dims[1]` is a compile-time error on
+        a rank-1 tensor, so a wrong-rank call fails where it is written.
+        `.view()[i, j, k]` is the general form, and the same per-access
+        mapping cost applies on a GPU.
+        """
+        return self[r * Self.dims[1] + c]
+
+    def __setitem__(mut self, r: Int, c: Int, value: Scalar[Self.dtype]) raises:
+        """`a[r, c] = v` on a rank-2 tensor. See `__getitem__` above."""
+        self[r * Self.dims[1] + c] = value
+
     def __setitem__(mut self, i: Int, value: Scalar[Self.dtype]) raises:
         """Flat (row-major) element assignment.
 
@@ -521,6 +536,13 @@ def transpose[
     only allocates the destination and names the axis permutation; an
     earlier version here walked the elements one at a time on the host.
 
+    Takes `a` mutably even though it only reads it: `view()` hands back a
+    `TileTensor` that can write, and a mutable view cannot be built from an
+    immutable binding -- the compiler enforces that, so an immutable
+    `transpose` would have to copy the source first. Callers hold their
+    tensors in `var` bindings anyway, so `transpose(m)` reads the same
+    either way.
+
     Distinct from `TileTensor.transpose()`, which returns a zero-copy view
     with every axis reversed over the *same* memory -- this allocates a new
     buffer, for when the result needs its own storage (e.g. to outlive the
@@ -558,7 +580,13 @@ def stack[
     """Stack two same-shaped rank-1 tensors along a new leading axis
     (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
 
-    `axis=1` stacking is not provided -- see this module's own docstring.
+    `axis=1` stacking is not provided -- see this module's own docstring --
+    and neither is a variadic `stack(a, b, c)`. A variadic pack's length is
+    a runtime property, but the result's leading extent is part of its
+    type, so the count would have to be passed a second time as a
+    parameter (`stack[dtype, n, 3](a, b, c)`) and checked against the pack
+    at runtime. Two spellings of the same number is worse than two
+    arguments.
     """
     var a_values = a.to_host()
     var b_values = b.to_host()

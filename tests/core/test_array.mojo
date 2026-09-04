@@ -311,5 +311,26 @@ def test_split_at_an_endpoint_gives_one_empty_side() raises:
         assert_equal(parts[1][i], a[i])
 
 
+def test_rank_2_indexing_matches_the_flat_index() raises:
+    var m = zeros[dtype, 2, 3]()
+    m[1, 2] = Scalar[dtype](7)
+    # (1, 2) is flat index 1*3 + 2 = 5.
+    assert_almost_equal(m[5], Scalar[dtype](7))
+    assert_almost_equal(m[1, 2], Scalar[dtype](7))
+
+
+def test_rank_2_indexing_agrees_with_the_view() raises:
+    var m = zeros[dtype, 3, 2]()
+    var counter = 0
+    for r in range(3):
+        for c in range(2):
+            m[r, c] = Scalar[dtype](counter)
+            counter += 1
+    var v = m.view()
+    for r in range(3):
+        for c in range(2):
+            assert_almost_equal(m[r, c], v[r, c])
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
