@@ -143,6 +143,18 @@ re-exports all of them, so `from numax import ...` is flat and
 three places: its module, its subpackage `__init__.mojo`, and (if it belongs to
 the common surface) `numax/prelude.mojo`.
 
+**The root docstring and the README say the same thing.** `numax/__init__.mojo`
+opens with the library's pitch — what numax is, the two axes, the subpackage
+table — and the README says it again for a reader who never opens the source.
+They are one claim in two places, so a change to either is incomplete until the
+other matches: same framing, same emphasis, same list of subsystems. Reword the
+README's positioning and the package docstring moves in the same commit. The
+prose need not be identical (the README carries badges and install steps the
+docstring has no use for), but a reader must not be able to find a capability,
+a limit, or a headline claim in one and not the other. `recipe.yaml`'s `summary`
+and `description` are the third copy, shipped as conda metadata — check them
+whenever the pitch shifts.
+
 **Name-collision policy.** `numax.prelude` deliberately omits every name that
 shadows a Mojo builtin — `sum`, `prod`, `min`, `max`, `abs`, `all`, `any`,
 `round`, `copysign` — because a module-level definition *replaces* the builtin

@@ -1,8 +1,9 @@
 """numax: one kernel, several meanings.
 
-NumPy and SciPy's ground, in Mojo, on MAX. Special functions, linear
+A numerical computing library built on MAX: special functions, linear
 algebra, quadrature, ODE solvers, FFTs, distributions, and a NumPy-named
-array surface, built on MAX's `TileTensor` and kernels.
+array surface, written in Mojo against MAX's `TileTensor` and kernel
+infrastructure.
 
 **One kernel, several meanings.** Every function is written once against
 the `FloatLike` trait. The type you call it with decides what comes back:
@@ -13,9 +14,9 @@ a value (`Plain`), a derivative (`Dual`), extra precision
 compose instead of each needing its own copy of every kernel.
 
 **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
-`DeviceContext` passed to a factory decides host or device memory.
-Nothing else changes, and `.view()` yields the `TileTensor` every MAX
-kernel takes.
+`DeviceContext` passed to a factory decides host or device memory: the
+same kernel, any accelerator, unmodified. Nothing else changes, and
+`.view()` yields the `TileTensor` every MAX kernel takes.
 
 ```mojo
 from numax import Dual, FloatLike, Plain, f32
