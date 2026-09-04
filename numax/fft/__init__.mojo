@@ -6,7 +6,7 @@ from numax.fft import fft, ifft, rfft, fftfreq, fftshift
 
 Radix-2 Cooley-Tukey, power-of-two by construction: `fft`/`ifft`,
 `rfft`/`irfft` for real input, `fft2`/`ifft2` for square transforms,
-`fftfreq`/`rfftfreq` for the frequency grids, `fftshift`, and
+`fftfreq`/`rfftfreq` for the frequency grids, `fftshift`/`ifftshift`, and
 `circular_convolve`. MAX ships no forward FFT to route to. Tier 1, over
 `Complex[Plain]` or any other conformer.
 """
@@ -18,6 +18,7 @@ from .fft import (
     fftfreq,
     fftshift,
     ifft,
+    ifftshift,
     ifft2,
     irfft,
     rfft,

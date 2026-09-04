@@ -50,7 +50,7 @@ from numax.linalg import cholesky          # or by subsystem
 | `numax.optimize` | `newton`/`halley`/`bisection` at a fixed iteration count; `newton_tol`, `brentq`, `bfgs` to a tolerance |
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
-| `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`, `fftfreq`, `fftshift`, circular convolution |
+| `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`, `fftfreq`, `fftshift`/`ifftshift`, circular convolution |
 | `numax.signal` | `convolve`, `correlate`, Hann/Hamming/Blackman windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., and pdf/cdf/quantile for nine families, plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
 | `numax.io` | NumPy `.npy` interchange (`npy_load`/`npy_save`, byte-identical to `numpy.save`), numax's own `NMX1` `save`/`load`, and `print_tensor` |
@@ -294,6 +294,7 @@ from .fft.fft import (
     fftshift,
     ifft,
     ifft2,
+    ifftshift,
     irfft,
     rfft,
     rfftfreq,

@@ -289,6 +289,26 @@ def fftshift[
     return out^
 
 
+def ifftshift[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    """Undo `fftshift`: move the zero frequency from the middle back to
+    index 0.
+
+    For the even `n` this module is limited to, this is the same rotation
+    `fftshift` applies, so the two agree elementwise. It exists under its
+    own name because `numpy.fft` has both and a caller undoing a shift
+    should not have to know that the two coincide here -- the day a
+    rectangular or odd-length transform arrives, they stop coinciding and
+    this is the one that stays correct.
+    """
+    comptime n = 1 << log2n
+    var out = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    for k in range(n):
+        out[k] = x[(k + n // 2) % n].copy()
+    return out^
+
+
 def fft2[
     T: FloatLike, log2n: Int
 ](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[

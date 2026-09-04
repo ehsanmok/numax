@@ -11,6 +11,7 @@ from numax.fft import (
     fftshift,
     ifft,
     ifft2,
+    ifftshift,
     irfft,
     rfft,
     rfftfreq,
@@ -391,6 +392,19 @@ def test_fftshift_is_its_own_inverse_for_even_n() raises:
     for k in range(n):
         assert_almost_equal(Float64(twice[k].re.v), Float64(k))
         assert_almost_equal(Float64(twice[k].im.v), -Float64(k))
+
+
+def test_ifftshift_undoes_fftshift() raises:
+    comptime log2n = 3
+    comptime n = 1 << log2n
+    var spectrum = Array[C, n](fill=C.constant(0.0))
+    for k in range(n):
+        spectrum[k] = C(P.constant(Float64(k)), P.constant(-Float64(k)))
+
+    var restored = ifftshift[P, log2n](fftshift[P, log2n](spectrum))
+    for k in range(n):
+        assert_almost_equal(Float64(restored[k].re.v), Float64(k))
+        assert_almost_equal(Float64(restored[k].im.v), -Float64(k))
 
 
 def test_ifft2_inverts_fft2() raises:
