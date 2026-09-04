@@ -87,7 +87,7 @@ def main() raises:
     # --- CPU: numax.stats draws the initial conditions ---
     seed(2026)
     var cpu = DeviceContext(api="cpu")
-    var y0_cpu = uniform[dtype, n](cpu, Scalar[dtype](-2), Scalar[dtype](2))
+    var y0_cpu = uniform[dtype, n](cpu, -2, 2)
 
     comptime layout = row_major[n]()
     var yt_storage = List[Scalar[dtype]](length=n, fill=0)

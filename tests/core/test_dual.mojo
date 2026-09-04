@@ -9,7 +9,7 @@ second `comptime` alias, `Dual[D]`, on top of that.
 
 from std.testing import TestSuite, assert_almost_equal
 
-from numax import Dual, Plain
+from numax import Dual, Plain, f64
 
 comptime dtype = DType.float64
 comptime width = 1
@@ -112,6 +112,20 @@ def test_nested_dual_exp_second_derivative_is_itself() raises:
     var x = seed2(1.2)
     var f = x.exp()
     assert_almost_equal(f.value.value.v, f.deriv.deriv.v)
+
+
+def test_seed_carries_a_unit_derivative() raises:
+    var x = Dual[f64].seed(0.5)
+    assert_almost_equal(x.value.v, 0.5)
+    assert_almost_equal(x.deriv.v, 1.0)
+
+
+def test_seed_matches_the_two_argument_constructor() raises:
+    comptime P = Plain[DType.float64, 1]
+    var seeded = Dual[P].seed(2.0)
+    var spelled = Dual[P](P(2.0), P.one())
+    assert_almost_equal(seeded.value.v, spelled.value.v)
+    assert_almost_equal(seeded.deriv.v, spelled.deriv.v)
 
 
 def main() raises:

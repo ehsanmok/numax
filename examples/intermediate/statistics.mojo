@@ -41,7 +41,7 @@ comptime dtype = DType.float32
 def main() raises:
     var ctx = DeviceContext(api="cpu")
     print("--- Plain-only, over Tensor ---")
-    var xs = full[dtype, 6](Scalar[dtype](0), ctx=ctx)
+    var xs = full[dtype, 6](0, ctx=ctx)
     var v = xs.view()
     var vals = [3.0, 1.0, 9.0, 2.0, 7.0, 2.0]
     for i in range(6):

@@ -88,3 +88,16 @@ struct Plain[dtype: DType, width: Int](
 
     def trunc(self) -> Self where Self.dtype.is_floating_point():
         return Self(trunc(self.v))
+
+
+comptime f32 = Plain[DType.float32, 1]
+"""`Plain[DType.float32, 1]` -- the scalar every example opens by aliasing.
+
+Kernels are written against `FloatLike`, so calling one means naming a
+conformer, and a single-lane `Plain` is what that is nine times out of ten:
+`g(f32(0.5))`. `f64` is its double-precision counterpart. For a vector
+width, or a dtype these two do not cover, name `Plain[dtype, width]`.
+"""
+
+comptime f64 = Plain[DType.float64, 1]
+"""`Plain[DType.float64, 1]`. See `f32` above."""

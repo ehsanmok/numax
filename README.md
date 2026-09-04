@@ -20,16 +20,14 @@ NumPy-named array surface, built on [MAX](https://max.modular.com/docs/)'s
 `TileTensor` and kernels.
 
 ```mojo
-from numax import Dual, FloatLike, Plain
+from numax import Dual, FloatLike, f32
 
 def g[T: FloatLike](x: T) -> T:              # written once, no `dtype`
     return (-(x * x)).exp()
 
 def main():
-    comptime P = Plain[DType.float32, 1]
-
-    print(g(P(0.5)).v)                       # 0.7788008  -- just the value
-    var d = g(Dual[P](P(0.5), P(1.0)))       # seed the derivative with 1
+    print(g(f32(0.5)).v)                     # 0.7788008  -- just the value
+    var d = g(Dual[f32].seed(0.5))           # derivative seeded to 1
     print(d.value.v, d.deriv.v)              # 0.7788008 -0.7788008
 ```
 

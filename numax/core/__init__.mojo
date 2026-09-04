@@ -148,7 +148,7 @@ from .ops import (
     power,
     subtract,
 )
-from .plain import Plain
+from .plain import Plain, f32, f64
 from .tensor import (
     add_combine,
     broadcast_op_axis,

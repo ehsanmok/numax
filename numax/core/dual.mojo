@@ -31,6 +31,20 @@ struct Dual[Inner: FloatLike](Copyable, FloatLike, Movable):
         # The derivative of a constant is zero.
         return Self(Self.Inner.one(), Self.Inner.constant(0.0))
 
+    @staticmethod
+    def seed(x: Float64) -> Self:
+        """`x`, with its derivative seeded to 1 -- the variable being
+        differentiated with respect to.
+
+        `Dual.seed(0.5)` is `Dual[P](P(0.5), P.one())`, which is what
+        nearly every call differentiating a single-variable function
+        starts with. Use the two-argument constructor directly for the
+        cases that are not that: a constant carries a zero derivative
+        (`Dual[P](P(c), P.constant(0.0))`), and a nested `Dual` for a
+        second derivative seeds an inner one instead.
+        """
+        return Self(Self.Inner.constant(x), Self.Inner.one())
+
     def __add__(self, rhs: Self) -> Self:
         return Self(self.value + rhs.value, self.deriv + rhs.deriv)
 

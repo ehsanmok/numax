@@ -19,9 +19,9 @@ comptime dtype = DType.float32
 def test_seed_makes_uniform_draws_reproducible() raises:
     var ctx = DeviceContext(api="cpu")
     seed(7)
-    var a = uniform[dtype, 8](Scalar[dtype](0), Scalar[dtype](1), ctx=ctx)
+    var a = uniform[dtype, 8](0, 1, ctx=ctx)
     seed(7)
-    var b = uniform[dtype, 8](Scalar[dtype](0), Scalar[dtype](1), ctx=ctx)
+    var b = uniform[dtype, 8](0, 1, ctx=ctx)
     for i in range(8):
         assert_almost_equal(a[i], b[i])
 
@@ -29,9 +29,9 @@ def test_seed_makes_uniform_draws_reproducible() raises:
 def test_seed_makes_normal_draws_reproducible() raises:
     var ctx = DeviceContext(api="cpu")
     seed(11)
-    var a = normal[dtype, 8](Scalar[dtype](0), Scalar[dtype](1), ctx=ctx)
+    var a = normal[dtype, 8](0, 1, ctx=ctx)
     seed(11)
-    var b = normal[dtype, 8](Scalar[dtype](0), Scalar[dtype](1), ctx=ctx)
+    var b = normal[dtype, 8](0, 1, ctx=ctx)
     for i in range(8):
         assert_almost_equal(a[i], b[i])
 
@@ -39,9 +39,9 @@ def test_seed_makes_normal_draws_reproducible() raises:
 def test_seed_makes_exponential_draws_reproducible() raises:
     var ctx = DeviceContext(api="cpu")
     seed(13)
-    var a = exponential[dtype, 8](Scalar[dtype](2), ctx=ctx)
+    var a = exponential[dtype, 8](2, ctx=ctx)
     seed(13)
-    var b = exponential[dtype, 8](Scalar[dtype](2), ctx=ctx)
+    var b = exponential[dtype, 8](2, ctx=ctx)
     for i in range(8):
         assert_almost_equal(a[i], b[i])
 
@@ -50,7 +50,7 @@ def test_uniform_draws_land_within_the_requested_range() raises:
     var ctx = DeviceContext(api="cpu")
     seed(1)
     comptime n = 5000
-    var xs = uniform[dtype, n](Scalar[dtype](-3), Scalar[dtype](5), ctx=ctx)
+    var xs = uniform[dtype, n](-3, 5, ctx=ctx)
     for i in range(n):
         assert_true(xs[i] >= -3.0 and xs[i] < 5.0)
 
@@ -59,7 +59,7 @@ def test_uniform_sample_mean_matches_the_midpoint_within_tolerance() raises:
     var ctx = DeviceContext(api="cpu")
     seed(2)
     comptime n = 30_000
-    var xs = uniform[dtype, n](Scalar[dtype](0), Scalar[dtype](10), ctx=ctx)
+    var xs = uniform[dtype, n](0, 10, ctx=ctx)
     var total = Float64(0)
     for i in range(n):
         total += Float64(xs[i])
@@ -77,7 +77,7 @@ def test_normal_sample_mean_and_stddev_match_the_parameters() raises:
     var ctx = DeviceContext(api="cpu")
     seed(3)
     comptime n = 30_000
-    var xs = normal[dtype, n](Scalar[dtype](2), Scalar[dtype](3), ctx=ctx)
+    var xs = normal[dtype, n](2, 3, ctx=ctx)
     var total = Float64(0)
     for i in range(n):
         total += Float64(xs[i])
@@ -101,7 +101,7 @@ def test_exponential_sample_mean_matches_its_scale() raises:
     var ctx = DeviceContext(api="cpu")
     seed(4)
     comptime n = 30_000
-    var xs = exponential[dtype, n](Scalar[dtype](2), ctx=ctx)
+    var xs = exponential[dtype, n](2, ctx=ctx)
     var total = Float64(0)
     for i in range(n):
         total += Float64(xs[i])
@@ -118,7 +118,7 @@ def test_exponential_draws_are_never_negative() raises:
     var ctx = DeviceContext(api="cpu")
     seed(5)
     comptime n = 5000
-    var xs = exponential[dtype, n](Scalar[dtype](1), ctx=ctx)
+    var xs = exponential[dtype, n](1, ctx=ctx)
     for i in range(n):
         assert_true(xs[i] >= 0.0)
 
