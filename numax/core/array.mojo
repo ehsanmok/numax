@@ -325,40 +325,54 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
                 host[i] = values[i]
 
 
+def _context(ctx: Optional[DeviceContext]) raises -> DeviceContext:
+    """The device a factory should allocate on: the caller's, or the host.
+
+    Every factory below takes `ctx` last and optional, so `zeros[f32, 2,
+    3]()` lands on the CPU and `zeros[f32, 2, 3](gpu)` lands on `gpu`. It
+    cannot be an ordinary default argument because `DeviceContext(api="cpu")`
+    raises, and a raising expression is not admissible in that position.
+    """
+    return ctx.value() if ctx else DeviceContext(api="cpu")
+
+
 def zeros[
     dtype: DType, *dims: Int
-](ctx: DeviceContext) raises -> Tensor[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `0`."""
-    return Tensor[dtype, *dims](ctx)
+    return Tensor[dtype, *dims](_context(ctx))
 
 
 def ones[
     dtype: DType, *dims: Int
-](ctx: DeviceContext) raises -> Tensor[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `1`."""
-    return full[dtype, *dims](ctx, 1)
+    return full[dtype, *dims](1, ctx=ctx)
 
 
 def full[
     dtype: DType, *dims: Int
-](ctx: DeviceContext, fill_value: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
+](
+    fill_value: Scalar[dtype], ctx: Optional[DeviceContext] = None
+) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `fill_value`.
 
     The fill is `enqueue_memset`, so it runs on the device rather than
     staging a host write -- the same reason `zeros` is cheap on both paths.
     """
-    var result = Tensor[dtype, *dims](ctx)
-    ctx.enqueue_memset(result.buffer, fill_value)
-    ctx.synchronize()
+    var device = _context(ctx)
+    var result = Tensor[dtype, *dims](device)
+    device.enqueue_memset(result.buffer, fill_value)
+    device.synchronize()
     return result^
 
 
 def empty[
     dtype: DType, *dims: Int
-](ctx: DeviceContext) raises -> Tensor[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape, its contents unspecified.
 
     Unlike NumPy's `empty`, this zero-initializes rather than truly leaving
@@ -367,21 +381,25 @@ def empty[
     here. Callers that write every element before reading (the usual reason
     to reach for `empty` at all) pay nothing extra in practice.
     """
-    return Tensor[dtype, *dims](ctx)
+    return Tensor[dtype, *dims](_context(ctx))
 
 
-def eye[dtype: DType, n: Int](ctx: DeviceContext) raises -> Tensor[dtype, n, n]:
+def eye[
+    dtype: DType, n: Int
+](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
     """The `n`x`n` identity matrix."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = 1
-    return Tensor[dtype, n, n](ctx, values^)
+    return Tensor[dtype, n, n](_context(ctx), values^)
 
 
 def linspace[
     dtype: DType, num: Int
 ](
-    ctx: DeviceContext, start: Scalar[dtype], stop: Scalar[dtype]
+    start: Scalar[dtype],
+    stop: Scalar[dtype],
+    ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num]:
     """`num` evenly spaced values from `start` to `stop`, inclusive of both.
 
@@ -395,16 +413,16 @@ def linspace[
         var step = (stop - start) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(start + Scalar[dtype](i) * step)
-    return Tensor[dtype, num](ctx, values^)
+    return Tensor[dtype, num](_context(ctx), values^)
 
 
 def logspace[
     dtype: DType, num: Int
 ](
-    ctx: DeviceContext,
     start: Scalar[dtype],
     stop: Scalar[dtype],
     base: Scalar[dtype] = 10,
+    ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num]:
     """`num` values evenly spaced on a log scale: `base**x` for `x` in
     `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults."""
@@ -415,13 +433,15 @@ def logspace[
         var step = (stop - start) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(base ** (start + Scalar[dtype](i) * step))
-    return Tensor[dtype, num](ctx, values^)
+    return Tensor[dtype, num](_context(ctx), values^)
 
 
 def arange[
     dtype: DType, num: Int
 ](
-    ctx: DeviceContext, start: Scalar[dtype] = 0, step: Scalar[dtype] = 1
+    start: Scalar[dtype] = 0,
+    step: Scalar[dtype] = 1,
+    ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num]:
     """`num` values starting at `start`, spaced by `step`.
 
@@ -434,7 +454,7 @@ def arange[
     var values = List[Scalar[dtype]](capacity=num)
     for i in range(num):
         values.append(start + Scalar[dtype](i) * step)
-    return Tensor[dtype, num](ctx, values^)
+    return Tensor[dtype, num](_context(ctx), values^)
 
 
 def zeros_like[
@@ -457,7 +477,7 @@ def full_like[
     dtype, *dims
 ]:
     """A new `fill_value`-filled tensor with `a`'s dtype, shape and device."""
-    return full[dtype, *dims](a.context(), fill_value)
+    return full[dtype, *dims](fill_value, ctx=a.context())
 
 
 def empty_like[
@@ -634,7 +654,9 @@ def split[
 def geomspace[
     dtype: DType, num: Int
 ](
-    ctx: DeviceContext, start: Scalar[dtype], stop: Scalar[dtype]
+    start: Scalar[dtype],
+    stop: Scalar[dtype],
+    ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, num] where dtype.is_floating_point():
     """`num` values spaced evenly on a geometric progression, endpoints
     included. `numpy.geomspace`.
@@ -653,12 +675,12 @@ def geomspace[
         for i in range(num):
             values.append(current)
             current = current * Scalar[dtype](ratio)
-    return Tensor[dtype, num](ctx, values^)
+    return Tensor[dtype, num](_context(ctx), values^)
 
 
 def identity[
     dtype: DType, n: Int
-](ctx: DeviceContext) raises -> Tensor[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
     """The `n`x`n` identity matrix. `numpy.identity`.
 
     Same result as `eye`; both names exist in NumPy and a caller reaching
@@ -707,13 +729,15 @@ def diagflat[
     return Tensor[dtype, n, n](a.context(), values^)
 
 
-def tri[dtype: DType, n: Int](ctx: DeviceContext) raises -> Tensor[dtype, n, n]:
+def tri[
+    dtype: DType, n: Int
+](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
     """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for r in range(n):
         for c in range(r + 1):
             values[r * n + c] = 1
-    return Tensor[dtype, n, n](ctx, values^)
+    return Tensor[dtype, n, n](_context(ctx), values^)
 
 
 def tril[
@@ -942,7 +966,9 @@ def to_array[
 
 def to_tensor[
     dtype: DType, n: Int
-](a: Array[Plain[dtype, 1], n], ctx: DeviceContext) raises -> Tensor[dtype, n]:
+](
+    a: Array[Plain[dtype, 1], n], ctx: Optional[DeviceContext] = None
+) raises -> Tensor[dtype, n]:
     """A rank-1 `Tensor` holding `a`'s elements.
 
     The way back down from the conformer layer, and `Plain`-only on
@@ -954,17 +980,17 @@ def to_tensor[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(a[i].v)
-    return Tensor[dtype, n](ctx, values^)
+    return Tensor[dtype, n](_context(ctx), values^)
 
 
 def to_tensor[
     dtype: DType, n: Int
-](a: Array[Plain[dtype, 1], n * n], ctx: DeviceContext) raises -> Tensor[
-    dtype, n, n
-]:
+](
+    a: Array[Plain[dtype, 1], n * n], ctx: Optional[DeviceContext] = None
+) raises -> Tensor[dtype, n, n]:
     """A square `Tensor` holding `a`'s elements, row-major. `Plain`-only,
     for the reason the rank-1 overload above gives."""
     var values = List[Scalar[dtype]](capacity=n * n)
     for i in range(n * n):
         values.append(a[i].v)
-    return Tensor[dtype, n, n](ctx, values^)
+    return Tensor[dtype, n, n](_context(ctx), values^)

@@ -124,7 +124,7 @@ def test_numpy_load_reads_a_numpy_written_rank_1_float32_file() raises:
     var path = String(_TMP, "_read_f32.npy")
     _write_numpy_bytes(path, _NUMPY_F32_HEADER, _f32_payload())
 
-    var loaded = numpy.load[DType.float32, 4](ctx, path)
+    var loaded = numpy.load[DType.float32, 4](path, ctx=ctx)
     var values = loaded.to_host()
     var expected = [1.5, -2.25, 3.0, 0.125]
     for i in range(4):
@@ -136,7 +136,7 @@ def test_numpy_load_reads_a_numpy_written_rank_2_int32_file() raises:
     var path = String(_TMP, "_read_i32.npy")
     _write_numpy_bytes(path, _NUMPY_I32_HEADER, _i32_payload())
 
-    var loaded = numpy.load[DType.int32, 2, 2](ctx, path)
+    var loaded = numpy.load[DType.int32, 2, 2](path, ctx=ctx)
     var values = loaded.to_host()
     var expected = [1, 2, 3, 4]
     for i in range(4):
@@ -192,7 +192,7 @@ def test_npy_round_trips_through_numax() raises:
 
     var path = String(_TMP, "_round_trip.npy")
     numpy.save(xs, path)
-    var loaded = numpy.load[DType.float32, 2, 3](ctx, path)
+    var loaded = numpy.load[DType.float32, 2, 3](path, ctx=ctx)
 
     var original = xs.to_host()
     var values = loaded.to_host()
@@ -210,7 +210,7 @@ def test_numpy_load_raises_on_fortran_order() raises:
 
     var raised = False
     try:
-        _ = numpy.load[DType.float32, 2, 3](ctx, path)
+        _ = numpy.load[DType.float32, 2, 3](path, ctx=ctx)
     except:
         raised = True
     assert_true(raised, "expected a Fortran-order .npy to raise")
@@ -223,7 +223,7 @@ def test_numpy_load_raises_on_big_endian_descr() raises:
 
     var raised = False
     try:
-        _ = numpy.load[DType.float32, 4](ctx, path)
+        _ = numpy.load[DType.float32, 4](path, ctx=ctx)
     except:
         raised = True
     assert_true(raised, "expected a big-endian .npy to raise")
@@ -236,7 +236,7 @@ def test_numpy_load_raises_on_dtype_mismatch() raises:
 
     var raised = False
     try:
-        _ = numpy.load[DType.int32, 4](ctx, path)
+        _ = numpy.load[DType.int32, 4](path, ctx=ctx)
     except:
         raised = True
     assert_true(raised, "expected a float32 file loaded as int32 to raise")
@@ -249,7 +249,7 @@ def test_numpy_load_raises_on_shape_mismatch() raises:
 
     var raised = False
     try:
-        _ = numpy.load[DType.float32, 2, 2](ctx, path)
+        _ = numpy.load[DType.float32, 2, 2](path, ctx=ctx)
     except:
         raised = True
     assert_true(raised, "expected a rank-1 file loaded as rank 2 to raise")
@@ -264,7 +264,7 @@ def test_numpy_load_raises_on_a_non_npy_file() raises:
 
     var raised = False
     try:
-        _ = numpy.load[DType.float32, 4](ctx, path)
+        _ = numpy.load[DType.float32, 4](path, ctx=ctx)
     except:
         raised = True
     assert_true(raised, "expected a non-.npy file to raise")

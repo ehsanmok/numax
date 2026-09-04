@@ -55,7 +55,7 @@ def test_ones_is_filled_with_one() raises:
 
 def test_full_is_filled_with_the_given_value() raises:
     var ctx = DeviceContext(api="cpu")
-    var f = full[dtype, 3](ctx, Scalar[dtype](7))
+    var f = full[dtype, 3](Scalar[dtype](7), ctx=ctx)
     for i in range(3):
         assert_equal(f[i], Scalar[dtype](7))
 
@@ -82,7 +82,7 @@ def test_eye_is_the_identity_matrix() raises:
 
 def test_linspace_matches_numpy_endpoints_and_spacing() raises:
     var ctx = DeviceContext(api="cpu")
-    var ls = linspace[dtype, 5](ctx, Scalar[dtype](0), Scalar[dtype](1))
+    var ls = linspace[dtype, 5](Scalar[dtype](0), Scalar[dtype](1), ctx=ctx)
     var expected = [0.0, 0.25, 0.5, 0.75, 1.0]
     for i in range(5):
         assert_almost_equal(ls[i], Scalar[dtype](expected[i]))
@@ -90,13 +90,13 @@ def test_linspace_matches_numpy_endpoints_and_spacing() raises:
 
 def test_linspace_of_one_point_returns_start() raises:
     var ctx = DeviceContext(api="cpu")
-    var ls = linspace[dtype, 1](ctx, Scalar[dtype](3), Scalar[dtype](9))
+    var ls = linspace[dtype, 1](Scalar[dtype](3), Scalar[dtype](9), ctx=ctx)
     assert_equal(ls[0], Scalar[dtype](3))
 
 
 def test_logspace_matches_base_to_the_linspace_power() raises:
     var ctx = DeviceContext(api="cpu")
-    var lg = logspace[dtype, 3](ctx, Scalar[dtype](0), Scalar[dtype](2))
+    var lg = logspace[dtype, 3](Scalar[dtype](0), Scalar[dtype](2), ctx=ctx)
     var expected = [1.0, 10.0, 100.0]
     for i in range(3):
         assert_almost_equal(lg[i], Scalar[dtype](expected[i]))
@@ -136,7 +136,7 @@ def test_empty_like_matches_source_shape() raises:
 
 def test_transpose_swaps_rows_and_columns() raises:
     var ctx = DeviceContext(api="cpu")
-    var m = full[dtype, 2, 3](ctx, Scalar[dtype](0))
+    var m = full[dtype, 2, 3](Scalar[dtype](0), ctx=ctx)
     var v = m.view()
     v[0, 0] = 1
     v[0, 1] = 2
@@ -154,7 +154,7 @@ def test_transpose_swaps_rows_and_columns() raises:
 
 def test_transpose_is_its_own_inverse() raises:
     var ctx = DeviceContext(api="cpu")
-    var m = full[dtype, 3, 2](ctx, Scalar[dtype](0))
+    var m = full[dtype, 3, 2](Scalar[dtype](0), ctx=ctx)
     var v = m.view()
     var counter = 0
     for r in range(3):
@@ -172,7 +172,7 @@ def test_transpose_is_its_own_inverse() raises:
 
 def test_squeeze_drops_a_leading_size_one_axis() raises:
     var ctx = DeviceContext(api="cpu")
-    var row = full[dtype, 1, 4](ctx, Scalar[dtype](0))
+    var row = full[dtype, 1, 4](Scalar[dtype](0), ctx=ctx)
     var rv = row.view()
     for i in range(4):
         rv[0, i] = Scalar[dtype](i)
@@ -185,7 +185,7 @@ def test_squeeze_drops_a_leading_size_one_axis() raises:
 
 def test_squeeze_drops_a_trailing_size_one_axis() raises:
     var ctx = DeviceContext(api="cpu")
-    var col = full[dtype, 4, 1](ctx, Scalar[dtype](0))
+    var col = full[dtype, 4, 1](Scalar[dtype](0), ctx=ctx)
     var cv = col.view()
     for i in range(4):
         cv[i, 0] = Scalar[dtype](i * 2)
@@ -198,8 +198,8 @@ def test_squeeze_drops_a_trailing_size_one_axis() raises:
 
 def test_stack_along_axis_zero() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = linspace[dtype, 3](ctx, Scalar[dtype](0), Scalar[dtype](2))
-    var b = linspace[dtype, 3](ctx, Scalar[dtype](10), Scalar[dtype](12))
+    var a = linspace[dtype, 3](Scalar[dtype](0), Scalar[dtype](2), ctx=ctx)
+    var b = linspace[dtype, 3](Scalar[dtype](10), Scalar[dtype](12), ctx=ctx)
     var st = stack(a, b)
     var sv = st.view()
     for i in range(3):
@@ -215,7 +215,7 @@ def test_tensor_survives_the_call_that_built_it() raises:
     # have been destroyed. Allocate a bunch of unrelated memory afterward
     # to make a use-after-free regression likely to show up as corruption
     # rather than silently passing.
-    var t = full[dtype, 64](ctx, Scalar[dtype](42))
+    var t = full[dtype, 64](Scalar[dtype](42), ctx=ctx)
     var junk = List[List[Scalar[dtype]]]()
     for i in range(256):
         junk.append(List[Scalar[dtype]](length=64, fill=Scalar[dtype](i)))
@@ -225,7 +225,7 @@ def test_tensor_survives_the_call_that_built_it() raises:
 
 def test_arange_starts_at_start_and_steps_by_step() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 5](ctx, Scalar[dtype](2), Scalar[dtype](3))
+    var a = arange[dtype, 5](Scalar[dtype](2), Scalar[dtype](3), ctx=ctx)
     assert_equal(a.num_elements, 5)
     for i in range(5):
         assert_equal(a[i], Scalar[dtype](2 + 3 * i))
@@ -233,14 +233,14 @@ def test_arange_starts_at_start_and_steps_by_step() raises:
 
 def test_arange_defaults_to_zero_start_unit_step() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 4](ctx)
+    var a = arange[dtype, 4](ctx=ctx)
     for i in range(4):
         assert_equal(a[i], Scalar[dtype](i))
 
 
 def test_reshape_preserves_row_major_element_order() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 6](ctx)
+    var a = arange[dtype, 6](ctx=ctx)
     var m = reshape[rows=2, cols=3](a)
     assert_equal(m.dim[0](), 2)
     assert_equal(m.dim[1](), 3)
@@ -252,7 +252,7 @@ def test_reshape_preserves_row_major_element_order() raises:
 
 def test_ravel_inverts_reshape() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 6](ctx)
+    var a = arange[dtype, 6](ctx=ctx)
     var m = reshape[rows=3, cols=2](a)
     var flat = ravel(m)
     assert_equal(flat.num_elements, 6)
@@ -277,8 +277,8 @@ def test_ravel_flattens_a_2d_tensor_row_by_row() raises:
 
 def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 3](ctx)
-    var b = arange[dtype, 2](ctx, Scalar[dtype](100))
+    var a = arange[dtype, 3](ctx=ctx)
+    var b = arange[dtype, 2](Scalar[dtype](100), ctx=ctx)
     var c = concatenate(a, b)
     assert_equal(c.num_elements, 5)
     for i in range(3):
@@ -289,8 +289,8 @@ def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
 
 def test_split_inverts_concatenate() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 3](ctx)
-    var b = arange[dtype, 4](ctx, Scalar[dtype](50))
+    var a = arange[dtype, 3](ctx=ctx)
+    var b = arange[dtype, 4](Scalar[dtype](50), ctx=ctx)
     var joined = concatenate(a, b)
     var parts = split[at=3](joined)
     assert_equal(parts[0].num_elements, 3)
@@ -303,7 +303,7 @@ def test_split_inverts_concatenate() raises:
 
 def test_split_at_an_endpoint_gives_one_empty_side() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[dtype, 3](ctx)
+    var a = arange[dtype, 3](ctx=ctx)
     var parts = split[at=0](a)
     assert_equal(parts[0].num_elements, 0)
     assert_equal(parts[1].num_elements, 3)

@@ -98,7 +98,7 @@ segfaults a host read.
 
 | Area | Surface | Where |
 |---|---|---|
-| Creation | `zeros`, `ones`, `full`, `empty`, `eye`, `identity`, `arange`, `linspace`, `logspace`, `geomspace`, `meshgrid`, `copy`, and the `*_like` forms (`zeros_like`, `ones_like`, `full_like`, `empty_like`) | [`core/array.mojo`](../numax/core/array.mojo), [`array_creation.mojo`](../examples/basic/array_creation.mojo) |
+| Creation | `zeros`, `ones`, `full`, `empty`, `eye`, `identity`, `arange`, `linspace`, `logspace`, `geomspace`, `meshgrid`, `copy`, and the `*_like` forms (`zeros_like`, `ones_like`, `full_like`, `empty_like`) — every one takes its `DeviceContext` last and optional, so `zeros[f32, 2, 3]()` allocates on the host and `zeros[f32, 2, 3](gpu)` on a device | [`core/array.mojo`](../numax/core/array.mojo), [`array_creation.mojo`](../examples/basic/array_creation.mojo) |
 | Manipulation | `reshape`, `ravel`, `transpose`, `squeeze`, `flip`, `stack`, `vstack`, `hstack`, `concatenate`, `split` | [`core/array.mojo`](../numax/core/array.mojo) |
 | Conversion | `to_array`, `to_tensor` — the seam between `Tensor` (shape and device) and `Array[T, n]` (the `FloatLike` conformer layer `numax.linalg`, `numax.signal` and `numax.interpolate` take). Lifting works at any conformer; lowering is `Plain`-only, since `FloatLike` can build a value from a `Float64` but not read one back | [`core/array.mojo`](../numax/core/array.mojo), [`npy_to_cholesky.mojo`](../examples/intermediate/npy_to_cholesky.mojo) |
 | Matrix builders | `diag`, `diagflat`, `diagonal`, `tri`, `tril`, `triu`, `vander` | [`core/array.mojo`](../numax/core/array.mojo) |

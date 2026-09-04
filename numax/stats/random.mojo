@@ -58,13 +58,15 @@ from std.random import rand, randn, seed as _std_seed
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor, _product
+from ..core.array import Tensor, _context, _product
 
 
 def uniform[
     dtype: DType, *dims: Int
 ](
-    ctx: DeviceContext, low: Scalar[dtype] = 0, high: Scalar[dtype] = 1
+    low: Scalar[dtype] = 0,
+    high: Scalar[dtype] = 1,
+    ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with values drawn uniformly from `[low, high)`.
@@ -79,13 +81,15 @@ def uniform[
     var span = high - low
     for i in range(n):
         storage[i] = low + span * storage[i]
-    return Tensor[dtype, *dims](ctx, storage^)
+    return Tensor[dtype, *dims](_context(ctx), storage^)
 
 
 def normal[
     dtype: DType, *dims: Int
 ](
-    ctx: DeviceContext, mean: Scalar[dtype] = 0, stddev: Scalar[dtype] = 1
+    mean: Scalar[dtype] = 0,
+    stddev: Scalar[dtype] = 1,
+    ctx: Optional[DeviceContext] = None,
 ) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with values drawn from a normal distribution with the given
@@ -94,12 +98,14 @@ def normal[
     comptime n = _product[*dims]()
     var storage = List[Scalar[dtype]](length=n, fill=0)
     randn(storage.unsafe_ptr(), n, Float64(mean), Float64(stddev))
-    return Tensor[dtype, *dims](ctx, storage^)
+    return Tensor[dtype, *dims](_context(ctx), storage^)
 
 
 def exponential[
     dtype: DType, *dims: Int
-](ctx: DeviceContext, scale: Scalar[dtype] = 1) raises -> Tensor[dtype, *dims]:
+](
+    scale: Scalar[dtype] = 1, ctx: Optional[DeviceContext] = None
+) raises -> Tensor[dtype, *dims]:
     """A new tensor of the given compile-time shape, filled with values drawn
     from an exponential distribution with the given `scale` (`1/rate`).
 
@@ -113,12 +119,14 @@ def exponential[
         storage[i] = -scale * Scalar[dtype](
             log(Float64(1) - Float64(storage[i]))
         )
-    return Tensor[dtype, *dims](ctx, storage^)
+    return Tensor[dtype, *dims](_context(ctx), storage^)
 
 
 def randint[
     dtype: DType, *dims: Int
-](ctx: DeviceContext, low: Int, high: Int) raises -> Tensor[dtype, *dims]:
+](low: Int, high: Int, ctx: Optional[DeviceContext] = None) raises -> Tensor[
+    dtype, *dims
+]:
     """A new tensor filled with integers drawn uniformly from `[low, high)`.
     `numpy.random.randint`.
 
@@ -135,12 +143,12 @@ def randint[
     for i in range(n):
         var value = Float64(low) + span * Float64(draws[i])
         storage[i] = Scalar[dtype](Int(value))
-    return Tensor[dtype, *dims](ctx, storage^)
+    return Tensor[dtype, *dims](_context(ctx), storage^)
 
 
 def randbool[
     dtype: DType, *dims: Int
-](ctx: DeviceContext, p: Float64 = 0.5) raises -> Tensor[
+](p: Float64 = 0.5, ctx: Optional[DeviceContext] = None) raises -> Tensor[
     DType.bool, *dims
 ] where (dtype == DType.bool):
     """A new boolean tensor, true with probability `p`.
@@ -150,7 +158,7 @@ def randbool[
 
     Takes a leading `dtype` parameter like every other draw in this module
     even though the only admissible one is `DType.bool`: a caller writing
-    `randbool[DType.bool, 4](ctx)` beside `uniform[DType.float32, 4](ctx)`
+    `randbool[DType.bool, 4](ctx=ctx)` beside `uniform[DType.float32, 4](ctx=ctx)`
     does not have to remember that this one is shaped differently.
     """
     comptime n = _product[*dims]()
@@ -159,7 +167,7 @@ def randbool[
     var storage = List[Scalar[DType.bool]](length=n, fill=False)
     for i in range(n):
         storage[i] = Float64(draws[i]) < p
-    return Tensor[DType.bool, *dims](ctx, storage^)
+    return Tensor[DType.bool, *dims](_context(ctx), storage^)
 
 
 def seed(value: Int):

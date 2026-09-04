@@ -48,7 +48,7 @@ from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor
+from ..core.array import Tensor, _context
 
 
 # The magic's first byte is 0x93, which is not valid UTF-8 on its own: a
@@ -213,7 +213,9 @@ struct numpy:
     @staticmethod
     def load[
         dtype: DType, *dims: Int
-    ](ctx: DeviceContext, path: String) raises -> Tensor[dtype, *dims]:
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Tensor[
+        dtype, *dims
+    ]:
         """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s device.
 
         Raises if the file's `descr` names a different dtype, if its `shape`
@@ -347,7 +349,7 @@ struct numpy:
         var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Tensor[dtype, *dims](ctx, out_storage^)
+        return Tensor[dtype, *dims](_context(ctx), out_storage^)
 
 
 def _descr_matches(file_descr: String, expected: String) -> Bool:

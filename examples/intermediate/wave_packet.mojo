@@ -91,8 +91,8 @@ def main() raises:
     var ctx = DeviceContext(api="cpu")
 
     # --- the grid: two coordinate vectors, one pair of coordinate fields ---
-    var axis_x = linspace[dtype, n](ctx, -extent, extent)
-    var axis_y = linspace[dtype, n](ctx, -extent, extent)
+    var axis_x = linspace[dtype, n](-extent, extent, ctx=ctx)
+    var axis_y = linspace[dtype, n](-extent, extent, ctx=ctx)
     var grid = meshgrid(axis_x, axis_y)
 
     # --- the wavefunction, as two real fields ---

@@ -45,7 +45,7 @@ def test_constants_round_trip_through_floatlike() raises:
 
 def test_randint_stays_in_range_and_shape() raises:
     var ctx = DeviceContext(api="cpu")
-    var draws = randint[DType.int64, 64](ctx, -5, 5)
+    var draws = randint[DType.int64, 64](-5, 5, ctx=ctx)
     assert_equal(draws.num_elements, 64)
     var values = draws.to_host()
     for i in range(64):
@@ -56,24 +56,24 @@ def test_randint_stays_in_range_and_shape() raises:
 def test_randint_is_reproducible_under_a_fixed_seed() raises:
     var ctx = DeviceContext(api="cpu")
     seed(2026)
-    var first = randint[DType.int64, 16](ctx, 0, 100).to_host()
+    var first = randint[DType.int64, 16](0, 100, ctx=ctx).to_host()
     seed(2026)
-    var second = randint[DType.int64, 16](ctx, 0, 100).to_host()
+    var second = randint[DType.int64, 16](0, 100, ctx=ctx).to_host()
     for i in range(16):
         assert_equal(first[i], second[i])
 
 
 def test_randbool_honours_the_extremes() raises:
     var ctx = DeviceContext(api="cpu")
-    var never = randbool[DType.bool, 32](ctx, 0.0)
-    var always = randbool[DType.bool, 32](ctx, 1.0)
+    var never = randbool[DType.bool, 32](0.0, ctx=ctx)
+    var always = randbool[DType.bool, 32](1.0, ctx=ctx)
     assert_true(not any(never))
     assert_true(all(always))
 
 
 def test_randbool_preserves_rank() raises:
     var ctx = DeviceContext(api="cpu")
-    var draws = randbool[DType.bool, 2, 3](ctx)
+    var draws = randbool[DType.bool, 2, 3](ctx=ctx)
     assert_equal(draws.num_elements, 6)
     assert_equal(draws.rank, 2)
 

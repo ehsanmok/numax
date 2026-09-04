@@ -52,7 +52,7 @@ def _m[
 
 def test_geomspace_is_a_geometric_progression() raises:
     var ctx = DeviceContext(api="cpu")
-    var g = geomspace[dtype, 4](ctx, 1.0, 1000.0).to_host()
+    var g = geomspace[dtype, 4](1.0, 1000.0, ctx=ctx).to_host()
     assert_almost_equal(g[0], 1.0)
     assert_almost_equal(g[1], 10.0)
     assert_almost_equal(g[2], 100.0)
@@ -61,7 +61,7 @@ def test_geomspace_is_a_geometric_progression() raises:
 
 def test_geomspace_of_one_point_returns_start() raises:
     var ctx = DeviceContext(api="cpu")
-    var g = geomspace[dtype, 1](ctx, 7.0, 9.0).to_host()
+    var g = geomspace[dtype, 1](7.0, 9.0, ctx=ctx).to_host()
     assert_almost_equal(g[0], 7.0)
 
 

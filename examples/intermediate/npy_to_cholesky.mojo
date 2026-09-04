@@ -47,7 +47,7 @@ def main() raises:
     print("wrote", path)
 
     # --- 1. back off disk, into the conformer layer ----------------------
-    var loaded = numpy.load[dtype, N, N](ctx, path)
+    var loaded = numpy.load[dtype, N, N](path, ctx=ctx)
     print("loaded:  ", loaded)
 
     var lifted = to_array[P](loaded)

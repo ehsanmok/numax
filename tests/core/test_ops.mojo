@@ -134,7 +134,7 @@ def test_unary_minus_operator() raises:
 def test_operators_preserve_rank() raises:
     var ctx = DeviceContext(api="cpu")
     var a = ones[dtype, 2, 3](ctx)
-    var b = full[dtype, 2, 3](ctx, 2.0)
+    var b = full[dtype, 2, 3](2.0, ctx=ctx)
     var result = a + b
     assert_equal(result.num_elements, 6)
     assert_equal(result.rank, 2)

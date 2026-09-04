@@ -25,7 +25,7 @@ np.save("/tmp/from_numpy.npy", np.arange(6, dtype=np.float32).reshape(2, 3))
 ```
 
 and that second file loads here with
-`numpy.load[DType.float32, 2, 3](ctx, "/tmp/from_numpy.npy")`.
+`numpy.load[DType.float32, 2, 3]("/tmp/from_numpy.npy", ctx=ctx)`.
 
 `numax.io.nmx.save`/`nmx.load` remain the choice for numax-to-numax round trips:
 that format (`NMX1`) carries the dtype name in full and has no Python
@@ -71,7 +71,7 @@ def main() raises:
     print("wrote", f32_path)
     print("  header:", _header_of(f32_path))
 
-    var loaded = numpy.load[DType.float32, N_ROWS, N_COLS](ctx, f32_path)
+    var loaded = numpy.load[DType.float32, N_ROWS, N_COLS](f32_path, ctx=ctx)
     print("  values: ", end="")
     print_tensor(loaded)
 
@@ -91,7 +91,7 @@ def main() raises:
     numpy.save(Tensor[DType.float64, 4](ctx, f64_storage^), f64_path)
     print("wrote", f64_path)
     print("  header:", _header_of(f64_path))
-    var f64_back = numpy.load[DType.float64, 4](ctx, f64_path)
+    var f64_back = numpy.load[DType.float64, 4](f64_path, ctx=ctx)
     print("  values: ", end="")
     print_tensor(f64_back, precision=6)
 
@@ -102,7 +102,7 @@ def main() raises:
     numpy.save(Tensor[DType.int32, 2, 2](ctx, i32_storage^), i32_path)
     print("wrote", i32_path)
     print("  header:", _header_of(i32_path))
-    var i32_back = numpy.load[DType.int32, 2, 2](ctx, i32_path)
+    var i32_back = numpy.load[DType.int32, 2, 2](i32_path, ctx=ctx)
     var i32_values = i32_back.to_host()
     print(
         "  values: [",
@@ -117,13 +117,13 @@ def main() raises:
     # `dtype`/`dims` are compile-time parameters, so `numpy.load` checks the
     # file against what the caller asked for instead of inferring a shape.
     try:
-        _ = numpy.load[DType.int32, N_ROWS, N_COLS](ctx, f32_path)
+        _ = numpy.load[DType.int32, N_ROWS, N_COLS](f32_path, ctx=ctx)
         print("unreachable: loading a float32 file as int32 should raise")
     except e:
         print("asking for the wrong dtype raises:", e)
 
     try:
-        _ = numpy.load[DType.float32, 6](ctx, f32_path)
+        _ = numpy.load[DType.float32, 6](f32_path, ctx=ctx)
         print("unreachable: loading a (2, 3) file as (6,) should raise")
     except e:
         print("asking for the wrong shape raises:", e)

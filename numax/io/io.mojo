@@ -36,7 +36,7 @@ from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor, _format_tensor
+from ..core.array import Tensor, _context, _format_tensor
 
 
 comptime _MAGIC = "NMX1"
@@ -104,7 +104,9 @@ struct nmx:
     @staticmethod
     def load[
         dtype: DType, *dims: Int
-    ](ctx: DeviceContext, path: String) raises -> Tensor[dtype, *dims]:
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Tensor[
+        dtype, *dims
+    ]:
         """Read a tensor written by `nmx.save`, onto `ctx`'s device.
 
         Raises if the file's dtype name, rank, or shape doesn't exactly match
@@ -165,7 +167,7 @@ struct nmx:
         var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Tensor[dtype, *dims](ctx, out_storage^)
+        return Tensor[dtype, *dims](_context(ctx), out_storage^)
 
 
 def print_tensor[

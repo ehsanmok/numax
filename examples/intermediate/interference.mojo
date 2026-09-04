@@ -75,8 +75,8 @@ def fringe_phase[T: FloatLike](gap: T) -> T:
 def main() raises:
     var ctx = DeviceContext(api="cpu")
 
-    var axis_x = linspace[dtype, cols](ctx, 0.15, 10.0)
-    var axis_y = linspace[dtype, rows](ctx, -4.0, 4.0)
+    var axis_x = linspace[dtype, cols](0.15, 10.0, ctx=ctx)
+    var axis_y = linspace[dtype, rows](-4.0, 4.0, ctx=ctx)
     var grid = meshgrid(axis_x, axis_y)
 
     var field = Tensor[dtype, rows, cols](ctx)

@@ -91,7 +91,7 @@ def test_median_of_an_even_count_averages_the_two_middle_values() raises:
 
 def test_median_of_an_odd_count_returns_the_middle_value() raises:
     var ctx = DeviceContext(api="cpu")
-    var xs = full[dtype, 5](ctx, Scalar[dtype](0))
+    var xs = full[dtype, 5](Scalar[dtype](0), ctx=ctx)
     var v = xs.view()
     var vals = [5.0, 1.0, 3.0, 2.0, 4.0]
     for i in range(5):
@@ -108,7 +108,7 @@ def test_mode_returns_the_most_frequent_value() raises:
 
 def test_mode_returns_the_smallest_among_tied_values() raises:
     var ctx = DeviceContext(api="cpu")
-    var xs = full[dtype, 4](ctx, Scalar[dtype](0))
+    var xs = full[dtype, 4](Scalar[dtype](0), ctx=ctx)
     var v = xs.view()
     var vals = [5.0, 5.0, 1.0, 1.0]
     for i in range(4):
