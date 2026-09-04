@@ -41,14 +41,42 @@ from std.math import cos as _cos_f64, pi as _PI
 from ..core.numeric import FloatLike
 
 
+comptime full = 0
+"""`mode` for `convolve`: the full `m + k - 1` convolution. The default."""
+comptime same = 1
+"""`mode` for `convolve`: the central `m` points, output as long as `a`."""
+
+
+def _convolve_len[m: Int, k: Int, mode: Int]() -> Int:
+    """`convolve`'s output length for `mode`, evaluated at compile time so
+    it can appear in the return type."""
+    return m + k - 1 if mode == full else m
+
+
 def convolve[
-    T: FloatLike, m: Int, k: Int
-](a: Array[T, m], b: Array[T, k]) -> Array[T, m + k - 1]:
-    """Linear convolution of `a` and `b`: `numpy.convolve(a, b, "full")`.
+    T: FloatLike, m: Int, k: Int, mode: Int = full
+](a: Array[T, m], b: Array[T, k]) -> Array[
+    T, _convolve_len[m, k, mode]()
+] where (mode == full or mode == same):
+    """Linear convolution of `a` and `b`. `numpy.convolve(a, b, mode)`.
 
     `out[i] = sum_j a[j] * b[i - j]`, over the `j` where both indices are
-    in range. Length `m + k - 1`, which is a compile-time function of the
-    input lengths.
+    in range.
+
+    | `mode` | Output |
+    |---|---|
+    | `full` (default) | Length `m + k - 1`, every overlap |
+    | `same` | The central `m` points, so the output is as long as `a` |
+
+    Both lengths are compile-time functions of the input lengths, which is
+    why `mode` is a parameter rather than an argument -- the return type
+    depends on it. `numpy.convolve`'s third mode, `"valid"`, is not
+    provided; nothing in numax needs it yet.
+
+    For `same`, the centre offset is `(k - 1) // 2`, matching NumPy for
+    both odd and even `k`. For an even-length kernel the centre is
+    ambiguous and NumPy picks the earlier of the two; this does the same
+    rather than choosing differently and being subtly incompatible.
 
     The loop bounds are computed from `i` rather than guarded by an `if`
     inside the sum, so no lane-dependent branch appears: `j` runs over
@@ -56,14 +84,18 @@ def convolve[
     range on a *loop index*, not on any `T` value.
     """
     comptime n = m + k - 1
-    var out = Array[T, n](fill=T.constant(0.0))
-    for i in range(n):
+    comptime out_n = _convolve_len[m, k, mode]()
+    comptime offset = 0 if mode == full else (k - 1) // 2
+    var out = Array[T, out_n](fill=T.constant(0.0))
+    for o in range(out_n):
+        var i = o + offset
         var total = T.constant(0.0)
         var lo = 0 if i < k else i - k + 1
         var hi = i if i < m else m - 1
         for j in range(lo, hi + 1):
             total = total + a[j] * b[i - j]
-        out[i] = total^
+        out[o] = total^
+    _ = n
     return out^
 
 
@@ -90,25 +122,6 @@ def correlate[
         for j in range(lo, hi + 1):
             total = total + a[j] * b[k - 1 - i + j]
         out[i] = total^
-    return out^
-
-
-def convolve_same[
-    T: FloatLike, m: Int, k: Int
-](a: Array[T, m], b: Array[T, k]) -> Array[T, m]:
-    """`numpy.convolve(a, b, "same")`: the central `m` points of the full
-    convolution, so the output is the same length as `a`.
-
-    The centre offset is `(k - 1) // 2`, matching NumPy for both odd and
-    even `k`. For an even-length kernel the centre is ambiguous and NumPy
-    picks the earlier of the two; this does the same rather than choosing
-    differently and being subtly incompatible.
-    """
-    var full = convolve[T, m, k](a, b)
-    comptime offset = (k - 1) // 2
-    var out = Array[T, m](fill=T.constant(0.0))
-    for i in range(m):
-        out[i] = full[i + offset].copy()
     return out^
 
 

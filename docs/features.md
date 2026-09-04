@@ -123,7 +123,7 @@ differentiable or extra-precise through whichever conformer instantiates it.
 | [`erf`](../numax/special/erf.mojo) | `erf`, `erfc` |
 | [`gamma`](../numax/special/gamma.mojo) | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc` |
 | [`beta`](../numax/special/beta.mojo) | `beta`, `betainc`, `betaincc` |
-| [`bessel`](../numax/special/bessel.mojo) | `bessel_j0`, `bessel_j1`, `bessel_y0`, `bessel_y1` |
+| [`bessel`](../numax/special/bessel.mojo) | `j0`, `j1`, `y0`, `y1` |
 | [`elliptic`](../numax/special/elliptic.mojo) | `elliptic_k`, `elliptic_e` |
 | [`lambertw`](../numax/special/lambertw.mojo) | `lambertw`, `lambertw_m1` |
 | [`legendre`](../numax/special/legendre.mojo) | `legendre_p` |
@@ -220,7 +220,7 @@ conformer. MAX ships no forward FFT to route to.
 
 | Surface | Where |
 |---|---|
-| `convolve`, `convolve_same`, `correlate` — direct sums over comptime-sized `Array`s | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
+| `convolve` (`mode=full`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
 | `hann`, `hamming`, `blackman`, `apply_window` | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
 
 Tier 1; `numax.fft.circular_convolve` is the transform-domain route.

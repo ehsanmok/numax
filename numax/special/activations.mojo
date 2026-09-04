@@ -8,7 +8,7 @@ instruction set.
 
 `erf`/`erfc` live in `numax.special.erf`;
 `gamma`/`lgamma`/`gammainc`/`gammaincc` in `numax.special.gamma`;
-`bessel_j0` in `numax.special.bessel`; `lambertw` in
+`j0` in `numax.special.bessel`; `lambertw` in
 `numax.special.lambertw`
 -- this module keeps the activations (`gaussian`, `sigmoid`, `swish`,
 `tanh`, `relu`, `leaky_relu`, `gelu`) plus `softmax`, matching `numax`'s

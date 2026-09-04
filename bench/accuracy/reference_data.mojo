@@ -833,7 +833,7 @@ comptime DIGAMMA_NEG_REF: Array[Float64, 48] = [
     15.98617949137935,
 ]
 
-# bessel_j0, [-15, 15]
+# j0, [-15, 15]
 comptime BESSEL_J0_N = 48
 comptime BESSEL_J0_X: Array[Float64, 48] = [
     -15.0,
@@ -936,7 +936,7 @@ comptime BESSEL_J0_REF: Array[Float64, 48] = [
     -0.014224472826780772,
 ]
 
-# bessel_j1, [-15, 15]
+# j1, [-15, 15]
 comptime BESSEL_J1_N = 48
 comptime BESSEL_J1_X: Array[Float64, 48] = [
     -15.0,
@@ -1039,7 +1039,7 @@ comptime BESSEL_J1_REF: Array[Float64, 48] = [
     0.20510403861352275,
 ]
 
-# bessel_y0, [0.1, 15]
+# y0, [0.1, 15]
 comptime BESSEL_Y0_N = 48
 comptime BESSEL_Y0_X: Array[Float64, 48] = [
     0.1,
@@ -1142,7 +1142,7 @@ comptime BESSEL_Y0_REF: Array[Float64, 48] = [
     0.20546429603891828,
 ]
 
-# bessel_y1, [0.1, 15]
+# y1, [0.1, 15]
 comptime BESSEL_Y1_N = 48
 comptime BESSEL_Y1_X: Array[Float64, 48] = [
     0.1,

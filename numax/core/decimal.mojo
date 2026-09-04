@@ -12,7 +12,7 @@ and their sums, vs. extra *binary* significand bits), so it sits next to
 `int64`'s range divided by `10^scale`; `__mul__` in particular squares that
 bound before dividing back out, so this is scoped to modest magnitudes and
 a modest `scale` (single digits), not arbitrary-precision decimal -- see
-`gammainc`'s and `bessel_j0`'s docstrings in
+`gammainc`'s and `j0`'s docstrings in
 `numax.special.gamma`/`numax.special.bessel`
 for the same kind of explicit, documented scope limit rather than silent
 overflow.

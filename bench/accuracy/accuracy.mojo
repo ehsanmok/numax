@@ -60,10 +60,10 @@ from std.memory import bitcast
 
 from numax import (
     Plain,
-    bessel_j0,
-    bessel_j1,
-    bessel_y0,
-    bessel_y1,
+    j0,
+    j1,
+    y0,
+    y1,
     betainc,
     chebyshev_t,
     digamma,
@@ -296,29 +296,29 @@ def main():
     xs = materialize[BESSEL_J0_X]()
     refs = materialize[BESSEL_J0_REF]()
     for i in range(BESSEL_J0_N):
-        s.observe(xs[i], bessel_j0(p(xs[i])).v[0], refs[i])
-    s.report("bessel_j0 (A&S 9.4.1/9.4.3), [-15,15]")
+        s.observe(xs[i], j0(p(xs[i])).v[0], refs[i])
+    s.report("j0 (A&S 9.4.1/9.4.3), [-15,15]")
 
     s = Stats()
     xs = materialize[BESSEL_J1_X]()
     refs = materialize[BESSEL_J1_REF]()
     for i in range(BESSEL_J1_N):
-        s.observe(xs[i], bessel_j1(p(xs[i])).v[0], refs[i])
-    s.report("bessel_j1, [-15,15]")
+        s.observe(xs[i], j1(p(xs[i])).v[0], refs[i])
+    s.report("j1, [-15,15]")
 
     s = Stats()
     xs = materialize[BESSEL_Y0_X]()
     refs = materialize[BESSEL_Y0_REF]()
     for i in range(BESSEL_Y0_N):
-        s.observe(xs[i], bessel_y0(p(xs[i])).v[0], refs[i])
-    s.report("bessel_y0, [0.1,15]")
+        s.observe(xs[i], y0(p(xs[i])).v[0], refs[i])
+    s.report("y0, [0.1,15]")
 
     s = Stats()
     xs = materialize[BESSEL_Y1_X]()
     refs = materialize[BESSEL_Y1_REF]()
     for i in range(BESSEL_Y1_N):
-        s.observe(xs[i], bessel_y1(p(xs[i])).v[0], refs[i])
-    s.report("bessel_y1 (fitted near branch), [0.1,15]")
+        s.observe(xs[i], y1(p(xs[i])).v[0], refs[i])
+    s.report("y1 (fitted near branch), [0.1,15]")
 
     # --- Lambert W ----------------------------------------------------
     section("Lambert W")

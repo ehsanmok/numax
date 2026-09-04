@@ -208,7 +208,7 @@ def _theta1[T: FloatLike](ax_safe: T, p: T) -> T:
     )
 
 
-def bessel_j0[T: FloatLike](x: T) -> T:
+def j0[T: FloatLike](x: T) -> T:
     """`J0(x)`, the order-zero Bessel function of the first kind, for any
     real `x`. Even, so only `|x|` ever reaches either branch.
     """
@@ -224,7 +224,7 @@ def bessel_j0[T: FloatLike](x: T) -> T:
     return near * s + far * (T.one() + (-s))
 
 
-def bessel_j1[T: FloatLike](x: T) -> T:
+def j1[T: FloatLike](x: T) -> T:
     """`J1(x)`, the order-one Bessel function of the first kind, for any
     real `x`. Odd: the far branch is computed at `|x|` and then given
     `x`'s sign back via `copysign` (`_j1_near`'s `x * poly(x^2)` shape
@@ -248,7 +248,7 @@ def bessel_j1[T: FloatLike](x: T) -> T:
     return near * s + far * (T.one() + (-s))
 
 
-def bessel_y0[T: FloatLike](x: T) -> T:
+def y0[T: FloatLike](x: T) -> T:
     """`Y0(x)`, the order-zero Bessel function of the second kind, for
     `x > 0` (`Y0` itself has a logarithmic singularity at `0` and isn't
     real-valued for negative `x`).
@@ -284,7 +284,7 @@ def bessel_y0[T: FloatLike](x: T) -> T:
     return near * s + far * (T.one() + (-s))
 
 
-def bessel_y1[T: FloatLike](x: T) -> T:
+def y1[T: FloatLike](x: T) -> T:
     """`Y1(x)`, the order-one Bessel function of the second kind, for
     `x > 0` (same domain restriction as `Y0`, plus its own `-2/(pi*x)`
     singularity at `0`).

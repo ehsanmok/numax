@@ -108,10 +108,10 @@ branch.
 
 | function / domain | max abs | max rel | max ULP |
 | --- | --- | --- | --- |
-| `bessel_j0` (A&S 9.4.1/9.4.3), [-15, 15] | 3.90e-08 | 8.50e-07 | 5,615,164,118 |
-| `bessel_j1`, [-15, 15] | 7.63e-09 | 3.08e-07 | 2,477,114,337 |
-| `bessel_y0`, [0.1, 15] | 2.10e-08 | 1.35e-06 | 7,509,339,843 |
-| `bessel_y1` (fitted near branch), [0.1, 15] | 1.61e-08 | 4.45e-07 | 3,819,678,784 |
+| `j0` (A&S 9.4.1/9.4.3), [-15, 15] | 3.90e-08 | 8.50e-07 | 5,615,164,118 |
+| `j1`, [-15, 15] | 7.63e-09 | 3.08e-07 | 2,477,114,337 |
+| `y0`, [0.1, 15] | 2.10e-08 | 1.35e-06 | 7,509,339,843 |
+| `y1` (fitted near branch), [0.1, 15] | 1.61e-08 | 4.45e-07 | 3,819,678,784 |
 
 Read the absolute column here. All four functions oscillate through zero
 repeatedly on these domains, so relative error blows up near each root
@@ -119,7 +119,7 @@ regardless of implementation quality — which is exactly why A&S quotes
 these bounds in absolute terms. The absolute numbers confirm them, across
 both the near and far branches and their blend.
 
-`bessel_y1`'s near-branch polynomial is the one coefficient set in `numax`
+`y1`'s near-branch polynomial is the one coefficient set in `numax`
 fit from scratch rather than transcribed, and at 1.61e-08 it is the *most*
 accurate of the four.
 

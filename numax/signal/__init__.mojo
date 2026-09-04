@@ -4,7 +4,7 @@
 from numax.signal import convolve, correlate, hann, apply_window
 ```
 
-`convolve`/`convolve_same`, `correlate`, the Hann, Hamming and Blackman
+`convolve` (`mode=full` or `same`), `correlate`, the Hann, Hamming and Blackman
 windows, and `apply_window`. Direct sums over comptime-sized `Array`s,
 tier 1; `numax.fft.circular_convolve` is the transform-domain route.
 """
@@ -13,7 +13,8 @@ from .signal import (
     apply_window,
     blackman,
     convolve,
-    convolve_same,
+    full,
+    same,
     correlate,
     hamming,
     hann,

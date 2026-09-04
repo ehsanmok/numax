@@ -212,7 +212,7 @@ from .special.activations import (
     swish,
     tanh,
 )
-from .special.bessel import bessel_j0, bessel_j1, bessel_y0, bessel_y1
+from .special.bessel import j0, j1, y0, y1
 from .special.beta import beta, betainc, betaincc
 from .special.elliptic import elliptic_e, elliptic_k
 from .special.erf import erf, erfc
@@ -304,7 +304,6 @@ from .signal.signal import (
     apply_window,
     blackman,
     convolve,
-    convolve_same,
     correlate,
     hamming,
     hann,

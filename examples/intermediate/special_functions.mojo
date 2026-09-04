@@ -17,10 +17,10 @@ from std.math import exp
 from numax import (
     Dual,
     Plain,
-    bessel_j0,
-    bessel_j1,
-    bessel_y0,
-    bessel_y1,
+    j0,
+    j1,
+    y0,
+    y1,
     elliptic_e,
     elliptic_k,
     gamma,
@@ -73,12 +73,12 @@ def main():
     )
     for x_raw in [0.0, 1.0, 2.0, 2.4048, 3.0, 5.0, 10.0, 20.0]:
         var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
-        print("x=", x_raw, " J0(x)=", bessel_j0(x).v, " J1(x)=", bessel_j1(x).v)
+        print("x=", x_raw, " J0(x)=", j0(x).v, " J1(x)=", j1(x).v)
 
     print("--- bessel Y0/Y1 (x > 0) ---")
     for x_raw in [0.5, 1.0, 2.0, 5.0, 10.0, 20.0]:
         var x = Plain[dtype, width](SIMD[dtype, width](x_raw))
-        print("x=", x_raw, " Y0(x)=", bessel_y0(x).v, " Y1(x)=", bessel_y1(x).v)
+        print("x=", x_raw, " Y0(x)=", y0(x).v, " Y1(x)=", y1(x).v)
 
     print(
         "--- lambertw, W0 branch (now valid down to the branch point"

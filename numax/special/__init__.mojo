@@ -7,7 +7,7 @@ instantiates it -- and every one is tier 1, launchable inside a GPU
 thread.
 
 ```mojo
-from numax.special import gamma, bessel_j0, erf, gaussian
+from numax.special import gamma, j0, erf, gaussian
 ```
 
 | Module | Contents |
@@ -15,7 +15,7 @@ from numax.special import gamma, bessel_j0, erf, gaussian
 | `erf` | `erf`, `erfc` |
 | `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc` |
 | `beta` | `beta`, `betainc`, `betaincc` |
-| `bessel` | `bessel_j0`, `bessel_j1`, `bessel_y0`, `bessel_y1` |
+| `bessel` | `j0`, `j1`, `y0`, `y1` |
 | `elliptic` | `elliptic_k`, `elliptic_e` |
 | `lambertw` | `lambertw`, `lambertw_m1` |
 | `legendre`, `orthopoly` | `legendre_p`; Chebyshev `T`/`U`, Hermite `H`, Laguerre `L` |
@@ -35,7 +35,7 @@ from .activations import (
     swish,
     tanh,
 )
-from .bessel import bessel_j0, bessel_j1, bessel_y0, bessel_y1
+from .bessel import j0, j1, y0, y1
 from .beta import beta, betainc, betaincc
 from .elliptic import elliptic_e, elliptic_k
 from .erf import erf, erfc
