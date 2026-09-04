@@ -235,3 +235,75 @@ def _chebyshev_cosine_table[n: Int]() -> Array[Float64, n * n]:
                 Float64(k) * _PI * (Float64(j) + 0.5) / Float64(n)
             )
     return out^
+
+
+# --------------------------------------------------------------------------
+# The scipy.interpolate-shaped objects over the two-call protocols above
+# --------------------------------------------------------------------------
+
+
+@fieldwise_init
+struct CubicSpline[T: FloatLike, n: Int](Copyable, Movable):
+    """A natural cubic spline through `n` uniformly spaced knots, built
+    once and called many times. `scipy.interpolate.CubicSpline`.
+
+    ```mojo
+    var spline = CubicSpline[f64, 5](y, x0, h)
+    var value = spline(x)
+    ```
+
+    The moments are solved in the constructor and kept, which is the whole
+    point of the split `cubic_spline_moments`/`cubic_spline_eval` protocol
+    this wraps -- those stay public and stay tier 1, since they are what a
+    GPU-launchable kernel calls. This is the convenience over them, not a
+    replacement.
+    """
+
+    var y: Array[Self.T, Self.n]
+    var moments: Array[Self.T, Self.n]
+    var x0: Self.T
+    var h: Self.T
+
+    def __init__(out self, y: Array[Self.T, Self.n], x0: Self.T, h: Self.T):
+        """Solve for the spline's second derivatives at the knots."""
+        self.moments = cubic_spline_moments[Self.T, Self.n](y, h)
+        self.y = y.copy()
+        self.x0 = x0.copy()
+        self.h = h.copy()
+
+    def __call__(self, x: Self.T) -> Self.T:
+        """The spline's value at `x`, clamped to the knot range."""
+        return cubic_spline_eval[Self.T, Self.n](
+            self.y, self.moments, self.x0, self.h, x
+        )
+
+
+@fieldwise_init
+struct Chebyshev[T: FloatLike, n: Int](Copyable, Movable):
+    """A Chebyshev series on `[a, b]`, built once and called many times.
+    `numpy.polynomial.chebyshev.Chebyshev`.
+
+    ```mojo
+    var series = Chebyshev[f64, 16](chebyshev_fit[f64, g, 16](a, b), a, b)
+    var value = series(x)
+    ```
+
+    Wraps the `chebyshev_fit`/`chebyshev_eval` pair, which stay public and
+    tier 1. `fit` below is the shorthand that does both.
+    """
+
+    var coefficients: Array[Self.T, Self.n]
+    var a: Self.T
+    var b: Self.T
+
+    @staticmethod
+    def fit[f: def[U: FloatLike](U) thin -> U](a: Self.T, b: Self.T) -> Self:
+        """Fit `f` on `[a, b]` and keep the coefficients.
+        `Chebyshev[f64, 16].fit[g](a, b)`."""
+        return Self(chebyshev_fit[Self.T, f, Self.n](a, b), a.copy(), b.copy())
+
+    def __call__(self, x: Self.T) -> Self.T:
+        """The series' value at `x`, by Clenshaw recurrence."""
+        return chebyshev_eval[Self.T, Self.n](
+            self.coefficients, self.a, self.b, x
+        )

@@ -281,6 +281,8 @@ from .integrate.quadrature import gauss_legendre, simpson, trapezoid
 
 # Interpolation -- `numax.interpolate`.
 from .interpolate.interp import (
+    Chebyshev,
+    CubicSpline,
     chebyshev_eval,
     chebyshev_fit,
     cubic_spline_eval,

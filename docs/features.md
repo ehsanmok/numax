@@ -231,7 +231,8 @@ run one per GPU thread with solution sensitivities from the same integrator.
 | Surface | Where |
 |---|---|
 | `horner` — polynomial evaluation | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
-| `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines, over `numax.linalg`'s tridiagonal solve | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
+| `CubicSpline`, `Chebyshev` — the `scipy.interpolate`-shaped objects: built once, called many times, `__call__` evaluates. `Chebyshev[T, n].fit[f](a, b)` fits and keeps the coefficients | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
+| `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines, over `numax.linalg`'s tridiagonal solve. The pair the `CubicSpline` object wraps, kept public because they are what a GPU-launchable kernel calls | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
 | `chebyshev_fit`, `chebyshev_eval` — Chebyshev fit and evaluation | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
 
 Tier 1, 1-D.

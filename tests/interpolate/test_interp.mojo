@@ -8,6 +8,8 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Plain
 from numax.interpolate import (
+    Chebyshev,
+    CubicSpline,
     chebyshev_eval,
     chebyshev_fit,
     cubic_spline_eval,
@@ -309,6 +311,40 @@ def test_simd_lanes_evaluate_independently() raises:
         assert_almost_equal(
             Float64(result.v[lane]), Float64(expected[lane]), atol=1e-13
         )
+
+
+def test_cubic_spline_object_matches_the_two_call_form() raises:
+    var y = Array[P, 5](fill=P.constant(0.0))
+    for i in range(5):
+        y[i] = P.constant(Float64(i) * Float64(i))
+    var x0 = P.constant(0.0)
+    var h = P.one()
+
+    var spline = CubicSpline[P, 5](y, x0, h)
+    var moments = cubic_spline_moments[P, 5](y, h)
+    for k in range(9):
+        var x = P.constant(Float64(k) * 0.5)
+        assert_almost_equal(
+            spline(x).v,
+            cubic_spline_eval[P, 5](y, moments, x0, h, x).v,
+        )
+
+
+def test_chebyshev_object_matches_the_two_call_form() raises:
+    var a = P.constant(0.0)
+    var b = P.one()
+    var series = Chebyshev[P, 16].fit[sine](a, b)
+    var coefficients = chebyshev_fit[P, f=sine, n_terms=16](a, b)
+    for k in range(5):
+        var x = P.constant(Float64(k) * 0.25)
+        assert_almost_equal(
+            series(x).v, chebyshev_eval[P, 16](coefficients, a, b, x).v
+        )
+
+
+def test_chebyshev_object_approximates_the_function_it_fit() raises:
+    var series = Chebyshev[P, 16].fit[sine](P.constant(0.0), P.one())
+    assert_almost_equal(series(P.constant(0.5)).v, sin_f64(0.5), atol=1e-12)
 
 
 def main() raises:
