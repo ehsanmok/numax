@@ -14,10 +14,12 @@
 
 ## What νMAX is
 
-A numerical computing library for [Mojo](https://mojolang.org): special
-functions, linear algebra, quadrature, ODE solvers, FFTs, distributions, and a
-NumPy-named array surface, built on [MAX](https://max.modular.com/docs/)'s
-`TileTensor` and kernels.
+A numerical computing library built on
+[MAX](https://max.modular.com/docs/): special functions, linear algebra,
+quadrature, ODE solvers, FFTs, distributions, and a NumPy-named array surface,
+written in [Mojo](https://mojolang.org) against MAX's `TileTensor` and kernel
+infrastructure. Data lives in a MAX `DeviceBuffer`, so the `DeviceContext` you
+pass decides host or device: the same kernel, any accelerator, unmodified.
 
 ```mojo
 from numax import Dual, FloatLike, Plain, f32
