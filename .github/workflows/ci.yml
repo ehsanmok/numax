@@ -91,10 +91,12 @@ jobs:
       - name: Run CPU examples
         run: pixi run examples-cpu
 
-      # The GPU examples cannot run here, but `mojo build` type-checks their
-      # bodies without a device -- which is what would have caught the
-      # `linspace(ctx, ...)` calls that sat broken because nothing in CI
-      # compiled these files at all.
+      # The GPU examples cannot run here, but `mojo build` against a named
+      # `--target-accelerator` type-checks their bodies with no device present
+      # -- which is what would have caught the `linspace(ctx, ...)` calls that
+      # sat broken because nothing in CI compiled these files at all. The
+      # architecture is pinned in the pixi task; see the comment there for why
+      # host detection is not an option on a GPU-less runner.
       - name: Compile GPU examples
         run: pixi run examples-gpu-build
 
