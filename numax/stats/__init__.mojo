@@ -10,6 +10,7 @@ from numax.stats import mean, variance, norm, uniform, seed
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with `.pdf`/`.pmf`, `.cdf` and `.ppf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed` |
 
+Every reduction takes a `Tensor` and covers every element.
 `mean`/`variance`/`stddev`/`cumsum` also have a `FloatLike`-generic form
 over `List[T]`, so calling them at `Compensated` recovers the precision a
 long float32 summation loses. Reductions cover every element -- there is

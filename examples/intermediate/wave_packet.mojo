@@ -28,7 +28,7 @@ from max.gpu.host import DeviceContext
 from numax import Dual, FloatLike, Plain
 from numax.core.array import Tensor, linspace, meshgrid
 from numax.core.ops import add, multiply
-from numax.stats import sum as tensor_sum
+from numax.stats import sum
 from numax.core.tensor import map
 
 comptime dtype = DType.float64
@@ -107,7 +107,7 @@ def main() raises:
 
     # --- |psi|^2, and the norm that makes it a density ---
     var density = add(multiply(re, re), multiply(im, im))
-    var norm = tensor_sum(density.view())
+    var norm = sum(density)
     var cell = (2.0 * extent / Float64(n - 1)) ** 2
 
     print("2-D Gaussian wave packet")

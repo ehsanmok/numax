@@ -65,15 +65,15 @@ def test_randint_is_reproducible_under_a_fixed_seed() raises:
 
 def test_randbool_honours_the_extremes() raises:
     var ctx = DeviceContext(api="cpu")
-    var never = randbool[32](ctx, 0.0)
-    var always = randbool[32](ctx, 1.0)
+    var never = randbool[DType.bool, 32](ctx, 0.0)
+    var always = randbool[DType.bool, 32](ctx, 1.0)
     assert_true(not any(never))
     assert_true(all(always))
 
 
 def test_randbool_preserves_rank() raises:
     var ctx = DeviceContext(api="cpu")
-    var draws = randbool[2, 3](ctx)
+    var draws = randbool[DType.bool, 2, 3](ctx)
     assert_equal(draws.num_elements, 6)
     assert_equal(draws.rank, 2)
 

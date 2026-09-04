@@ -40,7 +40,7 @@ comptime dtype = DType.float32
 
 def main() raises:
     var ctx = DeviceContext(api="cpu")
-    print("--- Plain-only, over TileTensor ---")
+    print("--- Plain-only, over Tensor ---")
     var xs = full[dtype, 6](ctx, Scalar[dtype](0))
     var v = xs.view()
     var vals = [3.0, 1.0, 9.0, 2.0, 7.0, 2.0]
@@ -48,15 +48,15 @@ def main() raises:
         v[i] = Scalar[dtype](vals[i])
 
     print("xs:", v[0], v[1], v[2], v[3], v[4], v[5])
-    print("sum:", sum(v))
-    print("prod:", prod(v))
-    print("min:", min(v))
-    print("max:", max(v))
-    print("mean:", mean(v))
-    print("median:", median(v))
-    print("mode:", mode(v))
-    print("argmax:", argmax(v))
-    print("argmin:", argmin(v))
+    print("sum:", sum(xs))
+    print("prod:", prod(xs))
+    print("min:", min(xs))
+    print("max:", max(xs))
+    print("mean:", mean(xs))
+    print("median:", median(xs))
+    print("mode:", mode(xs))
+    print("argmax:", argmax(xs))
+    print("argmin:", argmin(xs))
 
     var cp = cumprod(xs)
     print("cumprod:", cp[0], cp[1], cp[2], cp[3], cp[4], cp[5])

@@ -55,38 +55,38 @@ def _fixed_array() raises -> Tensor[dtype, 6]:
 def test_sum_matches_hand_computed_total() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(sum(xs.view()), Scalar[dtype](24))
+    assert_almost_equal(sum(xs), Scalar[dtype](24))
 
 
 def test_prod_matches_hand_computed_product() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(prod(xs.view()), Scalar[dtype](756))
+    assert_almost_equal(prod(xs), Scalar[dtype](756))
 
 
 def test_min_returns_the_smallest_element() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(min(xs.view()), Scalar[dtype](1))
+    assert_almost_equal(min(xs), Scalar[dtype](1))
 
 
 def test_max_returns_the_largest_element() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(max(xs.view()), Scalar[dtype](9))
+    assert_almost_equal(max(xs), Scalar[dtype](9))
 
 
 def test_mean_matches_hand_computed_average() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(mean(xs.view()), Scalar[dtype](4))
+    assert_almost_equal(mean(xs), Scalar[dtype](4))
 
 
 def test_median_of_an_even_count_averages_the_two_middle_values() raises:
     var ctx = DeviceContext(api="cpu")
     # sorted: [1, 2, 2, 3, 7, 9] -> middle two are 2 and 3
     var xs = _fixed_array()
-    assert_almost_equal(median(xs.view()), Scalar[dtype](2.5))
+    assert_almost_equal(median(xs), Scalar[dtype](2.5))
 
 
 def test_median_of_an_odd_count_returns_the_middle_value() raises:
@@ -96,14 +96,14 @@ def test_median_of_an_odd_count_returns_the_middle_value() raises:
     var vals = [5.0, 1.0, 3.0, 2.0, 4.0]
     for i in range(5):
         v[i] = Scalar[dtype](vals[i])
-    assert_almost_equal(median(xs.view()), Scalar[dtype](3))
+    assert_almost_equal(median(xs), Scalar[dtype](3))
 
 
 def test_mode_returns_the_most_frequent_value() raises:
     var ctx = DeviceContext(api="cpu")
     # sorted: [1, 2, 2, 3, 7, 9] -> 2 appears twice, everything else once
     var xs = _fixed_array()
-    assert_almost_equal(mode(xs.view()), Scalar[dtype](2))
+    assert_almost_equal(mode(xs), Scalar[dtype](2))
 
 
 def test_mode_returns_the_smallest_among_tied_values() raises:
@@ -113,19 +113,19 @@ def test_mode_returns_the_smallest_among_tied_values() raises:
     var vals = [5.0, 5.0, 1.0, 1.0]
     for i in range(4):
         v[i] = Scalar[dtype](vals[i])
-    assert_almost_equal(mode(xs.view()), Scalar[dtype](1))
+    assert_almost_equal(mode(xs), Scalar[dtype](1))
 
 
 def test_argmax_returns_the_index_of_the_largest_element() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_equal(argmax(xs.view()), 2)
+    assert_equal(argmax(xs), 2)
 
 
 def test_argmin_returns_the_index_of_the_smallest_element() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_equal(argmin(xs.view()), 1)
+    assert_equal(argmin(xs), 1)
 
 
 def test_cumprod_matches_the_running_product() raises:

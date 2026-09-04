@@ -229,7 +229,7 @@ Tier 1; `numax.fft.circular_convolve` is the transform-domain route.
 
 | Area | Surface | Where |
 |---|---|---|
-| Reductions | `sum`, `prod`, `mean`, `median`, `mode`, `min`, `max`, `argmin`, `argmax`, `cumsum`, `cumprod`, `variance`, `stddev` | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
+| Reductions | `sum`, `prod`, `mean`, `median`, `mode`, `min`, `max`, `argmin`, `argmax`, `cumsum`, `cumprod`, `variance`, `stddev` — every one takes a `Tensor` and covers all of it; `mean`, `variance`, `stddev` and `cumsum` also have a `FloatLike`-generic `List[T]` form | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
 | Distributions | Nine `scipy.stats`-shaped namespaces — `norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` — each with `.pdf` (or `.pmf`), `.cdf` and, where defined, `.ppf`. Reached as `numax.stats.norm.cdf(...)`; not re-exported at the root, where `gamma` and `beta` are the special functions | [`stats/distributions.mojo`](../numax/stats/distributions.mojo) |
 | Sampling | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed` | [`stats/random.mojo`](../numax/stats/random.mojo) |
 

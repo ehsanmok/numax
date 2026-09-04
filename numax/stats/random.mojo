@@ -139,12 +139,19 @@ def randint[
 
 
 def randbool[
-    *dims: Int
-](ctx: DeviceContext, p: Float64 = 0.5) raises -> Tensor[DType.bool, *dims]:
+    dtype: DType, *dims: Int
+](ctx: DeviceContext, p: Float64 = 0.5) raises -> Tensor[
+    DType.bool, *dims
+] where (dtype == DType.bool):
     """A new boolean tensor, true with probability `p`.
 
     `numpy.random.binomial(1, p)` reshaped as a mask, which is what a
     caller wants it for.
+
+    Takes a leading `dtype` parameter like every other draw in this module
+    even though the only admissible one is `DType.bool`: a caller writing
+    `randbool[DType.bool, 4](ctx)` beside `uniform[DType.float32, 4](ctx)`
+    does not have to remember that this one is shaped differently.
     """
     comptime n = _product[*dims]()
     var draws = List[Scalar[DType.float64]](length=n, fill=0)
