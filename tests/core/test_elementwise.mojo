@@ -19,7 +19,7 @@ from max.gpu.host import DeviceContext
 
 from numax.core import Tensor, tanh
 from numax import (
-    absolute,
+    abs,
     arccos,
     arccosh,
     arcsin,
@@ -150,9 +150,9 @@ def test_rounding_family_splits_on_sign() raises:
     assert_equal(r[3], -2.0)
 
 
-def test_absolute() raises:
+def test_abs() raises:
     var a = _t[3]([-2.5, 0.0, 2.5])
-    var abs_ = absolute(a).to_host()
+    var abs_ = abs(a).to_host()
     assert_equal(abs_[0], 2.5)
     assert_equal(abs_[1], 0.0)
     assert_equal(abs_[2], 2.5)

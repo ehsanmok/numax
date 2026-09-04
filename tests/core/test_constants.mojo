@@ -20,7 +20,7 @@ from max.gpu.host import DeviceContext
 from numax import Plain
 from numax.core.array import Tensor
 from numax.core.constants import e, e_at, pi, pi_at
-from numax.core.logic import all_true, any_true
+from numax.core.logic import all, any
 from numax.core.ops import invert
 from numax.stats import randbool, randint, seed
 
@@ -67,8 +67,8 @@ def test_randbool_honours_the_extremes() raises:
     var ctx = DeviceContext(api="cpu")
     var never = randbool[32](ctx, 0.0)
     var always = randbool[32](ctx, 1.0)
-    assert_true(not any_true(never))
-    assert_true(all_true(always))
+    assert_true(not any(never))
+    assert_true(all(always))
 
 
 def test_randbool_preserves_rank() raises:

@@ -12,9 +12,9 @@ from max.gpu.host import DeviceContext
 
 from numax.core.array import Tensor
 from numax.core.logic import (
-    all_true,
+    all,
     allclose,
-    any_true,
+    any,
     array_equal,
     equal,
     greater,
@@ -129,14 +129,14 @@ def test_logical_not_inverts_every_element() raises:
     assert_true(not inverted[0] and inverted[1] and not inverted[2])
 
 
-def test_all_true_and_any_true() raises:
+def test_all_and_any() raises:
     var all_set = _bools[3]([True, True, True])
     var some_set = _bools[3]([False, True, False])
     var none_set = _bools[3]([False, False, False])
-    assert_true(all_true(all_set))
-    assert_false(all_true(some_set))
-    assert_true(any_true(some_set))
-    assert_false(any_true(none_set))
+    assert_true(all(all_set))
+    assert_false(all(some_set))
+    assert_true(any(some_set))
+    assert_false(any(none_set))
 
 
 def test_to_mask_reads_nonzero_as_true() raises:

@@ -113,7 +113,7 @@ from .core.constants import e, e_at, pi, pi_at
 from .core.decimal import Decimal
 from .core.dual import Dual
 from .core.elementwise import (
-    absolute,
+    abs,
     arccos,
     arccosh,
     arcsin,
@@ -152,9 +152,9 @@ from .core.elementwise import (
 from .core.gradient import Gradient
 from .core.interval import Interval
 from .core.logic import (
-    all_true,
+    all,
     allclose,
-    any_true,
+    any,
     array_equal,
     equal,
     greater,

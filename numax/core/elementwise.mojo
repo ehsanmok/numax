@@ -545,15 +545,23 @@ def remainder[
     return _binary[dtype, *dims, op=_remainder_op[dtype]](a, b)
 
 
-def _absolute_op[dtype: DType](x: Scalar[dtype]) -> Scalar[dtype]:
-    return abs(x)
+def _abs_op[dtype: DType](x: Scalar[dtype]) -> Scalar[dtype]:
+    # `x.__abs__()` rather than `abs(x)`: the module-level `abs` below hides
+    # the builtin throughout this file.
+    return x.__abs__()
 
 
-def absolute[
+def abs[
     dtype: DType, *dims: Int
 ](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
-    """Elementwise magnitude. `numpy.absolute`, named around the builtin."""
-    return _unary[dtype, *dims, op=_absolute_op[dtype]](a)
+    """Elementwise magnitude. `numpy.abs`.
+
+    Defining `abs` here hides Mojo's builtin `abs` for the rest of this
+    file, which is why the private op above spells it `x.__abs__()`. A
+    caller who imports this name pays the same price in their own file,
+    exactly as `from numpy import abs` does in Python.
+    """
+    return _unary[dtype, *dims, op=_abs_op[dtype]](a)
 
 
 def _maximum_op[

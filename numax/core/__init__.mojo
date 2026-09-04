@@ -64,7 +64,7 @@ from .constants import e, e_at, pi, pi_at
 from .decimal import Decimal
 from .dual import Dual
 from .elementwise import (
-    absolute,
+    abs,
     arccos,
     arccosh,
     arcsin,
@@ -104,9 +104,9 @@ from .elementwise import (
 from .gradient import Gradient
 from .interval import Interval
 from .logic import (
-    all_true,
+    all,
     allclose,
-    any_true,
+    any,
     array_equal,
     equal,
     greater,

@@ -21,7 +21,7 @@ is what makes `greater(a, b)` compose with `logical_and` and read as a mask.
 condition where nonzero means true; `to_mask` converts between the two.
 
 Names: `all`/`any` are Mojo builtins and `where` is a keyword, so the
-reductions here are `all_true`/`any_true` and the selection stays
+reductions here are `all`/`any` and the selection stays
 `numax.core.sorting.select`. Same collision rule that produced `variance`,
 `stddev` and `any_nonzero`.
 """
@@ -304,10 +304,13 @@ def to_mask[
     return _predicate[dtype, *dims, step=_nonzero_step[dtype, _]](a)
 
 
-def all_true[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
-    """Whether every element is true. `numpy.all`, named around the builtin.
+def all[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
+    """Whether every element is true. `numpy.all`.
 
-    Short-circuits on the first false, which is why this is tier 2.
+    Short-circuits on the first false, which is why this is tier 2. This
+    name hides Mojo's builtin `all` in any file that imports it -- the
+    price `from numpy import all` charges in Python too, and worth paying
+    for the name a NumPy caller actually reaches for.
     """
     var values = a.to_host()
     for i in range(_product[*dims]()):
@@ -316,8 +319,9 @@ def all_true[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
     return True
 
 
-def any_true[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
-    """Whether any element is true. `numpy.any`. Short-circuits, tier 2."""
+def any[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
+    """Whether any element is true. `numpy.any`. Short-circuits, tier 2.
+    Hides the builtin `any` in an importing file, like `all` above."""
     var values = a.to_host()
     for i in range(_product[*dims]()):
         if values[i]:
@@ -358,7 +362,7 @@ def allclose[
 ) raises -> Bool where dtype.is_floating_point():
     """Whether every element is within tolerance. `numpy.allclose`."""
     var close = isclose[dtype, *dims](a, b, rtol, atol)
-    return all_true[*dims](close)
+    return all[*dims](close)
 
 
 def array_equal[
@@ -370,4 +374,4 @@ def array_equal[
     equal -- matching NumPy.
     """
     var same = equal[dtype, *dims](a, b)
-    return all_true[*dims](same)
+    return all[*dims](same)
