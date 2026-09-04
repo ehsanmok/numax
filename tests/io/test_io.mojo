@@ -18,9 +18,8 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Tensor, full
+from numax.core.array import Tensor, _format_tensor, full
 from numax.io import nmx, print_tensor
-from numax.io.io import _format_tensor
 
 comptime dtype = DType.float32
 comptime _TMP_DIR = "/tmp/numax_test_io"
@@ -154,6 +153,11 @@ def test_print_tensor_truncates_arrays_over_threshold() raises:
     var formatted = _format_tensor(xs, 4, 10, 2)
     assert_equal(formatted, "[0.0, 1.0, ..., 18.0, 19.0]")
     print_tensor(xs, threshold=10, edge_items=2)
+
+
+def test_writable_matches_print_tensor_defaults() raises:
+    var xs = _fixed_1d()
+    assert_equal(String(xs), _format_tensor(xs, 4, 1000, 3))
 
 
 def main() raises:

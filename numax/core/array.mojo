@@ -119,7 +119,7 @@ def _product[*dims: Int]() -> Int:
     return p
 
 
-struct Tensor[dtype: DType, *dims: Int](Movable):
+struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
     """An owned `DeviceBuffer` paired with a compile-time row-major layout.
 
     The one owning tensor type in `numax`, on CPU and GPU alike -- see this
@@ -127,6 +127,10 @@ struct Tensor[dtype: DType, *dims: Int](Movable):
     chosen. `dims` is the shape, exactly as passed to the factory function
     that built this (`Tensor[dtype, 4, 4]` for a 4x4 matrix); `rank` and
     `num_elements` are derived from it at compile time.
+
+    Conforms to `Writable`, so `print(a)` works; `numax.io.print_tensor` is
+    the same output with the precision and truncation under the caller's
+    control.
     """
 
     comptime layout = row_major[*Self.dims]()
@@ -243,6 +247,23 @@ struct Tensor[dtype: DType, *dims: Int](Movable):
             return
         with self.buffer.map_to_host() as host:
             host[i] = value
+
+    def write_to(self, mut writer: Some[Writer]):
+        """`print(a)`, at `print_tensor`'s default settings.
+
+        `numax.io.print_tensor` is the same output with `precision`,
+        `threshold` and `edge_items` under the caller's control; both go
+        through `_format_tensor` below, so the two cannot disagree.
+
+        `Writable.write_to` cannot raise, but reading the elements can --
+        it is a device mapping. A failed read prints as `<unreadable>`
+        rather than taking the process down inside a `print`; a caller who
+        needs the error takes `to_host()` itself, which does raise.
+        """
+        try:
+            writer.write(_format_tensor(self, 4, 1000, 3))
+        except e:
+            writer.write("<unreadable: ", String(e), ">")
 
     def __add__(self, other: Self) raises -> Self:
         """`a + b`, elementwise. Forwards to `numax.core.ops.add`."""
@@ -805,3 +826,48 @@ def hstack[
                 r * cols_b + c
             ]
     return Tensor[dtype, rows, cols_a + cols_b](a.context(), values^)
+
+
+def _format_tensor[
+    dtype: DType, *dims: Int
+](
+    a: Tensor[dtype, *dims], precision: Int, threshold: Int, edge_items: Int
+) raises -> String:
+    comptime n = Tensor[dtype, *dims].num_elements
+    var values = a.to_host()
+    var out = String("[")
+    if n <= threshold:
+        for i in range(n):
+            out += _format_one(values[i], precision)
+            if i != n - 1:
+                out += ", "
+    else:
+        for i in range(edge_items):
+            out += _format_one(values[i], precision)
+            out += ", "
+        out += "..."
+        for i in range(n - edge_items, n):
+            out += ", "
+            out += _format_one(values[i], precision)
+    out += "]"
+    return out^
+
+
+def _round_to[dtype: DType](x: Scalar[dtype], precision: Int) -> Scalar[dtype]:
+    """Round `x` to `precision` decimal digits, half-away-from-zero.
+
+    An approximation, not `Python`'s exact `%.4f` truncation -- the
+    rounded value is still a `dtype` float, and its default `String`
+    conversion (shortest round-trippable representation) occasionally
+    shows one digit more or fewer than `precision` when the rounded value
+    itself isn't exactly representable in binary. Good enough for a
+    convenience printer; not a claim of exact fixed-point formatting.
+    """
+    var scale = Scalar[dtype](10.0) ** Scalar[dtype](precision)
+    var sign = Scalar[dtype](1) if x >= 0 else Scalar[dtype](-1)
+    var shifted = x * scale + sign * Scalar[dtype](0.5)
+    return Scalar[dtype](Int64(shifted)) / scale
+
+
+def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
+    return String(_round_to(x, precision))

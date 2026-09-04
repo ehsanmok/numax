@@ -36,7 +36,7 @@ from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor
+from ..core.array import Tensor, _format_tensor
 
 
 comptime _MAGIC = "NMX1"
@@ -189,48 +189,3 @@ def print_tensor[
     testable (`tests/io/test_io.mojo` checks it against frozen fixtures).
     """
     print(_format_tensor(a, precision, threshold, edge_items))
-
-
-def _format_tensor[
-    dtype: DType, *dims: Int
-](
-    a: Tensor[dtype, *dims], precision: Int, threshold: Int, edge_items: Int
-) raises -> String:
-    comptime n = Tensor[dtype, *dims].num_elements
-    var values = a.to_host()
-    var out = String("[")
-    if n <= threshold:
-        for i in range(n):
-            out += _format_one(values[i], precision)
-            if i != n - 1:
-                out += ", "
-    else:
-        for i in range(edge_items):
-            out += _format_one(values[i], precision)
-            out += ", "
-        out += "..."
-        for i in range(n - edge_items, n):
-            out += ", "
-            out += _format_one(values[i], precision)
-    out += "]"
-    return out^
-
-
-def _round_to[dtype: DType](x: Scalar[dtype], precision: Int) -> Scalar[dtype]:
-    """Round `x` to `precision` decimal digits, half-away-from-zero.
-
-    An approximation, not `Python`'s exact `%.4f` truncation -- the
-    rounded value is still a `dtype` float, and its default `String`
-    conversion (shortest round-trippable representation) occasionally
-    shows one digit more or fewer than `precision` when the rounded value
-    itself isn't exactly representable in binary. Good enough for a
-    convenience printer; not a claim of exact fixed-point formatting.
-    """
-    var scale = Scalar[dtype](10.0) ** Scalar[dtype](precision)
-    var sign = Scalar[dtype](1) if x >= 0 else Scalar[dtype](-1)
-    var shifted = x * scale + sign * Scalar[dtype](0.5)
-    return Scalar[dtype](Int64(shifted)) / scale
-
-
-def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
-    return String(_round_to(x, precision))

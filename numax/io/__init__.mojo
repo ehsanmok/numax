@@ -14,8 +14,9 @@ has and hand results back the same way.
 
 `nmx.save`/`nmx.load` use numax's own `NMX1` binary format -- little-endian, with
 the dtype, rank and shape in the header, checked on load -- because MAX
-ships no array I/O to interchange with. `print_tensor` is NumPy-style,
-truncating past a threshold. Tier 2, `Plain`-only, host-side.
+ships no array I/O to interchange with. `print_tensor` is NumPy-style, truncating past a threshold; plain
+`print(a)` is the same output at its defaults, since `Tensor` conforms to
+`Writable`. Tier 2, `Plain`-only, host-side.
 """
 
 from .io import nmx, print_tensor
