@@ -15,6 +15,10 @@ instruction set.
 one-concept-per-file convention (`plain.mojo`, `dual.mojo`,
 `compensated.mojo`).
 
+The `tanh` here is the `FloatLike` scalar, and it is what the root package
+exports: it is the one a kernel calls, and `gelu` below is built from it.
+`numax.core.tanh` is the elementwise form over a whole `Tensor`.
+
 `softmax`, at the bottom, is the exception: it isn't purely elementwise (it
 needs a whole row of a tensor to compute one output element), so it isn't
 `FloatLike`-generic like everything above it -- it's a small orchestration

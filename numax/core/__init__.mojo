@@ -73,11 +73,16 @@ from .elementwise import (
     arctan2,
     arctanh,
     cbrt,
+    ceil,
     clip,
+    copysign,
+    cos,
+    cosh,
     diff,
     exp,
     exp2,
     expm1,
+    floor,
     gradient,
     hypot,
     log,
@@ -87,9 +92,14 @@ from .elementwise import (
     maximum,
     minimum,
     remainder,
+    round,
     rsqrt,
+    sin,
+    sinh,
     sqrt,
     tan,
+    tanh,
+    trunc,
 )
 from .gradient import Gradient
 from .interval import Interval
@@ -116,7 +126,15 @@ from .logic import (
     not_equal,
     to_mask,
 )
-from .numeric import FloatLike
+from .numeric import (
+    FloatLike,
+    blend,
+    default_erf_approx,
+    ge_indicator,
+    guard_nonzero,
+    max_of,
+    min_of,
+)
 from .ops import (
     add,
     invert,
@@ -130,6 +148,17 @@ from .ops import (
     subtract,
 )
 from .plain import Plain
+from .tensor import (
+    add_combine,
+    broadcast_op_axis,
+    broadcast_op_rows,
+    map,
+    map_threaded,
+    max_combine,
+    reduce,
+    reduce_axis,
+    reduce_rows,
+)
 from .sorting import (
     all_nonzero,
     any_nonzero,

@@ -5,14 +5,20 @@ Each family is checked against a hand-computed value rather than against
 wired to a numax name. Identities (`exp`/`log`, `sin`/`arcsin`,
 `sinh`/`arcsinh`) cover the round trips; `diff`/`gradient` are checked
 against their NumPy definitions including the one-sided endpoints.
+
+The imports come from `numax` and `numax.core` rather than from
+`numax.core.elementwise`, so a function that exists but is re-exported
+nowhere fails here instead of being reachable only by its module path.
+`tanh` is the exception: the root `tanh` is `numax.special.activations`'
+scalar one, so the tensor form comes from `numax.core`.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Tensor
-from numax.core.elementwise import (
+from numax.core import Tensor, tanh
+from numax import (
     absolute,
     arccos,
     arccosh,
@@ -46,7 +52,6 @@ from numax.core.elementwise import (
     sinh,
     sqrt,
     tan,
-    tanh,
     trunc,
 )
 

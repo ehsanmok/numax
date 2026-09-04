@@ -13,10 +13,15 @@ over raw `SIMD` rather than trait growth: nothing in numax needs `arctanh`
 at `Dual`, and adding twenty methods to the trait to reach parity on names
 would make every one of the seven conformers implement them.
 
-`abs`, `min` and `max` are Mojo builtins, so the elementwise forms here are
-`absolute`, `minimum` and `maximum` -- the same collision rule that produced
-`variance`, `stddev` and `numax.core.logic.all_true`. `nextafter` is absent from
-`std.math` under the pinned toolchain and is therefore not provided.
+`min` and `max` are Mojo builtins, so the elementwise forms here are
+`minimum` and `maximum` -- NumPy's own names for the two-argument form, so
+nothing is lost. `nextafter` is absent from `std.math` under the pinned
+toolchain and is therefore not provided.
+
+`tanh` is the one name this module shares with `numax.special.activations`,
+which has the `FloatLike` scalar of the same name. The root package exports
+the activation, because that is the one a kernel calls; the tensor form here
+is `numax.core.tanh`.
 """
 
 from std.math import (
