@@ -19,7 +19,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Tensor, full
-from numax.io import load, print_tensor, save
+from numax.io import nmx, print_tensor
 from numax.io.io import _format_tensor
 
 comptime dtype = DType.float32
@@ -39,8 +39,8 @@ def test_save_load_round_trips_a_rank_1_tensor() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_rank1.nmx")
-    save(xs, path)
-    var loaded = load[dtype, 4](ctx, path)
+    nmx.save(xs, path)
+    var loaded = nmx.load[dtype, 4](ctx, path)
     for i in range(4):
         assert_almost_equal(loaded[i], xs[i])
 
@@ -55,8 +55,8 @@ def test_save_load_round_trips_a_rank_2_tensor() raises:
             v[r, c] = Scalar[dtype](k)
             k += 1
     var path = String(_TMP_DIR, "_rank2.nmx")
-    save(xs, path)
-    var loaded = load[dtype, 2, 3](ctx, path)
+    nmx.save(xs, path)
+    var loaded = nmx.load[dtype, 2, 3](ctx, path)
     for i in range(6):
         assert_almost_equal(loaded[i], xs[i])
 
@@ -72,8 +72,8 @@ def test_save_load_round_trips_a_rank_3_tensor() raises:
                 v[a, b, c] = Scalar[dtype](k) * 1.5
                 k += 1
     var path = String(_TMP_DIR, "_rank3.nmx")
-    save(xs, path)
-    var loaded = load[dtype, 2, 2, 2](ctx, path)
+    nmx.save(xs, path)
+    var loaded = nmx.load[dtype, 2, 2, 2](ctx, path)
     for i in range(8):
         assert_almost_equal(loaded[i], xs[i])
 
@@ -82,10 +82,10 @@ def test_load_raises_on_dtype_mismatch() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_dtype_mismatch.nmx")
-    save(xs, path)
+    nmx.save(xs, path)
     var raised = False
     try:
-        _ = load[DType.float64, 4](ctx, path)
+        _ = nmx.load[DType.float64, 4](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on a dtype mismatch")
@@ -95,10 +95,10 @@ def test_load_raises_on_shape_mismatch() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_shape_mismatch.nmx")
-    save(xs, path)
+    nmx.save(xs, path)
     var raised = False
     try:
-        _ = load[dtype, 5](ctx, path)
+        _ = nmx.load[dtype, 5](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on a shape mismatch")
@@ -108,10 +108,10 @@ def test_load_raises_on_rank_mismatch() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_1d()
     var path = String(_TMP_DIR, "_rank_mismatch.nmx")
-    save(xs, path)
+    nmx.save(xs, path)
     var raised = False
     try:
-        _ = load[dtype, 2, 2](ctx, path)
+        _ = nmx.load[dtype, 2, 2](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on a rank mismatch")
@@ -128,7 +128,7 @@ def test_load_raises_on_bad_magic_bytes() raises:
     f.close()
     var raised = False
     try:
-        _ = load[dtype, 4](ctx, path)
+        _ = nmx.load[dtype, 4](ctx, path)
     except:
         raised = True
     assert_true(raised, msg="load should raise on bad magic bytes")

@@ -5,7 +5,7 @@
 numax programs. This module is the other half: the format a user arrives
 with. Someone porting a NumPy program to Mojo already has their data in
 `.npy` files, and re-exporting all of it is not a reasonable first step --
-so `npy_load` reads those files directly, and `npy_save` writes files
+so `numpy.load` reads those files directly, and `numpy.save` writes files
 `numpy.load` opens, with no conversion step on either side.
 
 No Python and no NumPy is involved. `.npy` is a documented, self-contained
@@ -23,14 +23,14 @@ ASCII holding a Python dict literal plus padding, for example
 
 padded with spaces so the whole header (the 10-byte prelude included) is a
 multiple of 64 bytes and ends in a newline. The raw C-order payload
-follows. `npy_save` reproduces that layout byte for byte -- NumPy's key
+follows. `numpy.save` reproduces that layout byte for byte -- NumPy's key
 order, its `, }` before the padding, its 64-byte alignment -- so a file
 this writes is indistinguishable from one `numpy.save` wrote, which is
 what `tests/io/test_npy.mojo` asserts against real NumPy bytes.
 
-**A typed load, like `load`.** `dtype` and `dims` are compile-time
+**A typed load, like `nmx.load`.** `dtype` and `dims` are compile-time
 parameters the caller supplies, matching every other `numax.core.array`
-factory, and `npy_load` raises if the file disagrees. It is not a
+factory, and `numpy.load` raises if the file disagrees. It is not a
 shape-inferring reader: a numax `Tensor`'s shape lives in its type.
 
 **What is rejected, loudly.** `fortran_order: True` (column-major, so the
@@ -131,209 +131,223 @@ def _shape_literal[*dims: Int]() -> String:
     return out^
 
 
-def npy_save[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], path: String) raises:
-    """Write `a` to `path` as a NumPy `.npy` file (format version 1.0).
+struct numpy:
+    """NumPy `.npy` interchange, namespaced so the format is the namespace.
 
-    The bytes are what `numpy.save` would have written for the same array,
-    so `numpy.load(path)` returns it with the right dtype and shape and no
-    conversion in between. The payload comes out through
-    `Tensor.to_host()`, so the file is the same whichever device the tensor
-    lives on.
-
-    Raises if `dtype` has no NumPy equivalent (`bfloat16`, the float8
-    formats).
+    `from numax.io import numpy` then `numpy.save(a, path)` / `numpy.load`,
+    reading and writing exactly what `numpy.save`/`numpy.load` do. A struct
+    with two static methods rather than two prefixed free functions: the
+    subpackage tree already exists, and `npy_save` was that tree spelled
+    into an identifier.
     """
-    comptime descr = _descr[dtype]()
-    comptime shape = _shape_literal[*dims]()
-    if descr == "":
-        raise Error(
-            String(
-                "numax.io.npy_save: ",
-                dtype,
-                " has no NumPy dtype, so it has no .npy representation",
-            )
-        )
 
-    # NumPy's key order and its `, }` terminator, so a byte-for-byte
-    # comparison against `numpy.save` output holds.
-    var dict_text = String(
-        "{'descr': '",
-        descr,
-        "', 'fortran_order': False, 'shape': ",
-        shape,
-        ", }",
-    )
+    @staticmethod
+    def save[
+        dtype: DType, *dims: Int
+    ](a: Tensor[dtype, *dims], path: String) raises:
+        """Write `a` to `path` as a NumPy `.npy` file (format version 1.0).
 
-    # `numpy.lib.format._write_array_header`: pad so 6 magic + 2 version +
-    # 2 length + dict + padding + newline is a multiple of 64. The `+ 1` is
-    # the newline; padding a full 64 bytes when the dict already lands on
-    # the boundary is what NumPy does too.
-    var pad = _ALIGN - ((10 + dict_text.byte_length() + 1) % _ALIGN)
-    var header = String(dict_text)
-    for _ in range(pad):
-        header += " "
-    header += "\n"
+        The bytes are what `numpy.save` would have written for the same array,
+        so `numpy.load(path)` returns it with the right dtype and shape and no
+        conversion in between. The payload comes out through
+        `Tensor.to_host()`, so the file is the same whichever device the tensor
+        lives on.
 
-    var out = _magic_bytes()
-    out.append(UInt8(1))  # major version
-    out.append(UInt8(0))  # minor version
-    var header_len = header.byte_length()
-    out.append(UInt8(header_len & 0xFF))
-    out.append(UInt8((header_len >> 8) & 0xFF))
-    for c in header.as_bytes():
-        out.append(c)
-
-    var f = open(path, "w")
-    f.write_bytes(Span(out))
-
-    comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
-        Scalar[dtype]
-    ]()
-    var values = a.to_host()
-    var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
-    var payload = Span[UInt8, origin_of(values)](
-        unsafe_ptr=byte_ptr, length=nbytes
-    )
-    f.write_bytes(payload)
-    f.close()
-
-
-def npy_load[
-    dtype: DType, *dims: Int
-](ctx: DeviceContext, path: String) raises -> Tensor[dtype, *dims]:
-    """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s device.
-
-    Raises if the file's `descr` names a different dtype, if its `shape`
-    doesn't match `dims` exactly, if it is Fortran-ordered or big-endian,
-    if the payload length disagrees with the header, or if it is not an
-    `.npy` file at all -- a `.npz` archive lands here as bad magic bytes,
-    since it is a zip container.
-
-    The `DeviceContext` is what every `numax.core.array` root factory
-    takes, for the same reason: the bytes have to land on a device, and the
-    file does not name one.
-    """
-    var f = open(path, "r")
-    var data = f.read_bytes()
-    f.close()
-
-    var magic = _magic_bytes()
-    if len(data) < 10:
-        raise Error("numax.io.npy_load: file too short to be a .npy file")
-    for i in range(len(magic)):
-        if data[i] != magic[i]:
-            raise Error(
-                "numax.io.npy_load: bad magic bytes -- not a .npy file. A"
-                " .npz archive is a zip container, not an .npy file: unzip"
-                " it, or re-save each array with numpy.save"
-            )
-
-    var major = Int(data[6])
-    if major != 1 and major != 2:
-        raise Error(
-            "numax.io.npy_load: unsupported .npy format version -- only the"
-            " 1.x and 2.x headers are understood"
-        )
-
-    # 1.x stores the header length as a little-endian `UInt16`, 2.x as a
-    # `UInt32`; the dict text that follows is identical.
-    var header_len: Int
-    var header_start: Int
-    if major == 1:
-        header_len = Int(data[8]) | (Int(data[9]) << 8)
-        header_start = 10
-    else:
-        if len(data) < 12:
-            raise Error("numax.io.npy_load: truncated .npy 2.x header")
-        header_len = (
-            Int(data[8])
-            | (Int(data[9]) << 8)
-            | (Int(data[10]) << 16)
-            | (Int(data[11]) << 24)
-        )
-        header_start = 12
-    if len(data) < header_start + header_len:
-        raise Error("numax.io.npy_load: truncated .npy header")
-
-    var header = String(
-        StringSlice(
-            unsafe_from_utf8=Span(data)[
-                header_start : header_start + header_len
-            ]
-        )
-    )
-
-    comptime expected_descr = _descr[dtype]()
-    if expected_descr == "":
-        raise Error(
-            String(
-                "numax.io.npy_load: ",
-                dtype,
-                " has no NumPy dtype, so no .npy file can hold it",
-            )
-        )
-    var file_descr = _dict_value(header, "descr")
-    if not _descr_matches(file_descr, expected_descr):
-        if file_descr.startswith(">"):
+        Raises if `dtype` has no NumPy equivalent (`bfloat16`, the float8
+        formats).
+        """
+        comptime descr = _descr[dtype]()
+        comptime shape = _shape_literal[*dims]()
+        if descr == "":
             raise Error(
                 String(
-                    "numax.io.npy_load: big-endian .npy (descr '",
-                    file_descr,
-                    (
-                        "') -- nothing in numax byte-swaps; re-save it native"
-                        " with arr.astype(arr.dtype.newbyteorder('<'))"
-                    ),
+                    "numax.io.numpy.save: ",
+                    dtype,
+                    " has no NumPy dtype, so it has no .npy representation",
                 )
             )
-        raise Error(
-            String(
-                "numax.io.npy_load: dtype mismatch -- the file holds '",
-                file_descr,
-                "' but '",
-                expected_descr,
-                "' was requested",
+
+        # NumPy's key order and its `, }` terminator, so a byte-for-byte
+        # comparison against `numpy.save` output holds.
+        var dict_text = String(
+            "{'descr': '",
+            descr,
+            "', 'fortran_order': False, 'shape': ",
+            shape,
+            ", }",
+        )
+
+        # `numpy.lib.format._write_array_header`: pad so 6 magic + 2 version +
+        # 2 length + dict + padding + newline is a multiple of 64. The `+ 1` is
+        # the newline; padding a full 64 bytes when the dict already lands on
+        # the boundary is what NumPy does too.
+        var pad = _ALIGN - ((10 + dict_text.byte_length() + 1) % _ALIGN)
+        var header = String(dict_text)
+        for _ in range(pad):
+            header += " "
+        header += "\n"
+
+        var out = _magic_bytes()
+        out.append(UInt8(1))  # major version
+        out.append(UInt8(0))  # minor version
+        var header_len = header.byte_length()
+        out.append(UInt8(header_len & 0xFF))
+        out.append(UInt8((header_len >> 8) & 0xFF))
+        for c in header.as_bytes():
+            out.append(c)
+
+        var f = open(path, "w")
+        f.write_bytes(Span(out))
+
+        comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
+            Scalar[dtype]
+        ]()
+        var values = a.to_host()
+        var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
+        var payload = Span[UInt8, origin_of(values)](
+            unsafe_ptr=byte_ptr, length=nbytes
+        )
+        f.write_bytes(payload)
+        f.close()
+
+    @staticmethod
+    def load[
+        dtype: DType, *dims: Int
+    ](ctx: DeviceContext, path: String) raises -> Tensor[dtype, *dims]:
+        """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s device.
+
+        Raises if the file's `descr` names a different dtype, if its `shape`
+        doesn't match `dims` exactly, if it is Fortran-ordered or big-endian,
+        if the payload length disagrees with the header, or if it is not an
+        `.npy` file at all -- a `.npz` archive lands here as bad magic bytes,
+        since it is a zip container.
+
+        The `DeviceContext` is what every `numax.core.array` root factory
+        takes, for the same reason: the bytes have to land on a device, and the
+        file does not name one.
+        """
+        var f = open(path, "r")
+        var data = f.read_bytes()
+        f.close()
+
+        var magic = _magic_bytes()
+        if len(data) < 10:
+            raise Error("numax.io.numpy.load: file too short to be a .npy file")
+        for i in range(len(magic)):
+            if data[i] != magic[i]:
+                raise Error(
+                    "numax.io.numpy.load: bad magic bytes -- not a .npy file. A"
+                    " .npz archive is a zip container, not an .npy file: unzip"
+                    " it, or re-save each array with numpy.save"
+                )
+
+        var major = Int(data[6])
+        if major != 1 and major != 2:
+            raise Error(
+                "numax.io.numpy.load: unsupported .npy format version -- only"
+                " the 1.x and 2.x headers are understood"
+            )
+
+        # 1.x stores the header length as a little-endian `UInt16`, 2.x as a
+        # `UInt32`; the dict text that follows is identical.
+        var header_len: Int
+        var header_start: Int
+        if major == 1:
+            header_len = Int(data[8]) | (Int(data[9]) << 8)
+            header_start = 10
+        else:
+            if len(data) < 12:
+                raise Error("numax.io.numpy.load: truncated .npy 2.x header")
+            header_len = (
+                Int(data[8])
+                | (Int(data[9]) << 8)
+                | (Int(data[10]) << 16)
+                | (Int(data[11]) << 24)
+            )
+            header_start = 12
+        if len(data) < header_start + header_len:
+            raise Error("numax.io.numpy.load: truncated .npy header")
+
+        var header = String(
+            StringSlice(
+                unsafe_from_utf8=Span(data)[
+                    header_start : header_start + header_len
+                ]
             )
         )
 
-    if _dict_value(header, "fortran_order") != "False":
-        raise Error(
-            "numax.io.npy_load: Fortran-ordered .npy -- numax tensors are"
-            " row-major; re-save with numpy.ascontiguousarray(arr)"
-        )
-
-    comptime rank = dims.__len__()
-    var file_dims = _parse_shape(_dict_value(header, "shape"))
-    if len(file_dims) != rank:
-        raise Error(
-            String(
-                "numax.io.npy_load: rank mismatch -- the file is rank ",
-                len(file_dims),
-                ", rank ",
-                rank,
-                " was requested",
+        comptime expected_descr = _descr[dtype]()
+        if expected_descr == "":
+            raise Error(
+                String(
+                    "numax.io.numpy.load: ",
+                    dtype,
+                    " has no NumPy dtype, so no .npy file can hold it",
+                )
             )
+        var file_descr = _dict_value(header, "descr")
+        if not _descr_matches(file_descr, expected_descr):
+            if file_descr.startswith(">"):
+                raise Error(
+                    String(
+                        "numax.io.numpy.load: big-endian .npy (descr '",
+                        file_descr,
+                        (
+                            "') -- nothing in numax byte-swaps; re-save it"
+                            " native with"
+                            " arr.astype(arr.dtype.newbyteorder('<'))"
+                        ),
+                    )
+                )
+            raise Error(
+                String(
+                    "numax.io.numpy.load: dtype mismatch -- the file holds '",
+                    file_descr,
+                    "' but '",
+                    expected_descr,
+                    "' was requested",
+                )
+            )
+
+        if _dict_value(header, "fortran_order") != "False":
+            raise Error(
+                "numax.io.numpy.load: Fortran-ordered .npy -- numax tensors are"
+                " row-major; re-save with numpy.ascontiguousarray(arr)"
+            )
+
+        comptime rank = dims.__len__()
+        var file_dims = _parse_shape(_dict_value(header, "shape"))
+        if len(file_dims) != rank:
+            raise Error(
+                String(
+                    "numax.io.numpy.load: rank mismatch -- the file is rank ",
+                    len(file_dims),
+                    ", rank ",
+                    rank,
+                    " was requested",
+                )
+            )
+
+        comptime for i in range(rank):
+            if file_dims[i] != dims[i]:
+                raise Error("numax.io.numpy.load: shape mismatch")
+
+        var offset = header_start + header_len
+        comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
+            Scalar[dtype]
+        ]()
+        if len(data) - offset != nbytes:
+            raise Error(
+                "numax.io.numpy.load: payload size doesn't match the header"
+            )
+
+        var out_storage = List[Scalar[dtype]](
+            length=Tensor[dtype, *dims].num_elements, fill=0
         )
-
-    comptime for i in range(rank):
-        if file_dims[i] != dims[i]:
-            raise Error("numax.io.npy_load: shape mismatch")
-
-    var offset = header_start + header_len
-    comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
-        Scalar[dtype]
-    ]()
-    if len(data) - offset != nbytes:
-        raise Error("numax.io.npy_load: payload size doesn't match the header")
-
-    var out_storage = List[Scalar[dtype]](
-        length=Tensor[dtype, *dims].num_elements, fill=0
-    )
-    var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
-    for i in range(nbytes):
-        dst_ptr[unsafe_offset=i] = data[offset + i]
-    return Tensor[dtype, *dims](ctx, out_storage^)
+        var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
+        for i in range(nbytes):
+            dst_ptr[unsafe_offset=i] = data[offset + i]
+        return Tensor[dtype, *dims](ctx, out_storage^)
 
 
 def _descr_matches(file_descr: String, expected: String) -> Bool:
@@ -377,11 +391,11 @@ def _dict_value(header: String, key: String) raises -> String:
     var start = header.find(needle)
     if start < 0:
         raise Error(
-            String("numax.io.npy_load: .npy header has no '", key, "' key")
+            String("numax.io.numpy.load: .npy header has no '", key, "' key")
         )
     var colon = header.find(":", start)
     if colon < 0:
-        raise Error(String("numax.io.npy_load: malformed '", key, "' entry"))
+        raise Error(String("numax.io.numpy.load: malformed '", key, "' entry"))
 
     comptime _OPEN_PAREN = UInt8(ord("("))
     comptime _OPEN_BRACKET = UInt8(ord("["))

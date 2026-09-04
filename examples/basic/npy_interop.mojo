@@ -1,13 +1,13 @@
-"""`numax.io.npy_load`/`npy_save`: NumPy's `.npy`, read and written directly.
+"""`numax.io.numpy.load`/`numpy.save`: NumPy's `.npy`, read and written directly.
 
 The realistic first step in porting a NumPy program is not re-exporting
 the data -- it is opening the `.npy` files that already exist. This example
 does the round trip from Mojo's side:
 
-1. Write a `Tensor` as `.npy` with `npy_save`. The bytes are what
+1. Write a `Tensor` as `.npy` with `numpy.save`. The bytes are what
    `numpy.save` would have written for the same array, so `numpy.load`
    opens it with the right dtype and shape.
-2. Read it back with `npy_load` and check every element survived
+2. Read it back with `numpy.load` and check every element survived
    bit-for-bit.
 3. Show the header the file actually carries, which is the interchange
    contract: `{'descr': '<f4', 'fortran_order': False, 'shape': (2, 3), }`.
@@ -25,9 +25,9 @@ np.save("/tmp/from_numpy.npy", np.arange(6, dtype=np.float32).reshape(2, 3))
 ```
 
 and that second file loads here with
-`npy_load[DType.float32, 2, 3](ctx, "/tmp/from_numpy.npy")`.
+`numpy.load[DType.float32, 2, 3](ctx, "/tmp/from_numpy.npy")`.
 
-`numax.io.save`/`load` remain the choice for numax-to-numax round trips:
+`numax.io.nmx.save`/`nmx.load` remain the choice for numax-to-numax round trips:
 that format (`NMX1`) carries the dtype name in full and has no Python
 literal to parse.
 """
@@ -35,7 +35,7 @@ literal to parse.
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Tensor
-from numax.io import npy_load, npy_save, print_tensor
+from numax.io import numpy, print_tensor
 
 comptime N_ROWS = 2
 comptime N_COLS = 3
@@ -67,11 +67,11 @@ def main() raises:
     var xs = Tensor[DType.float32, N_ROWS, N_COLS](ctx, storage^)
 
     var f32_path = String("/tmp/numax_example_f32.npy")
-    npy_save(xs, f32_path)
+    numpy.save(xs, f32_path)
     print("wrote", f32_path)
     print("  header:", _header_of(f32_path))
 
-    var loaded = npy_load[DType.float32, N_ROWS, N_COLS](ctx, f32_path)
+    var loaded = numpy.load[DType.float32, N_ROWS, N_COLS](ctx, f32_path)
     print("  values: ", end="")
     print_tensor(loaded)
 
@@ -88,10 +88,10 @@ def main() raises:
     for i in range(4):
         f64_storage.append(Scalar[DType.float64](Float64(i) / 3.0))
     var f64_path = String("/tmp/numax_example_f64.npy")
-    npy_save(Tensor[DType.float64, 4](ctx, f64_storage^), f64_path)
+    numpy.save(Tensor[DType.float64, 4](ctx, f64_storage^), f64_path)
     print("wrote", f64_path)
     print("  header:", _header_of(f64_path))
-    var f64_back = npy_load[DType.float64, 4](ctx, f64_path)
+    var f64_back = numpy.load[DType.float64, 4](ctx, f64_path)
     print("  values: ", end="")
     print_tensor(f64_back, precision=6)
 
@@ -99,10 +99,10 @@ def main() raises:
     for i in range(4):
         i32_storage.append(Scalar[DType.int32](i * i))
     var i32_path = String("/tmp/numax_example_i32.npy")
-    npy_save(Tensor[DType.int32, 2, 2](ctx, i32_storage^), i32_path)
+    numpy.save(Tensor[DType.int32, 2, 2](ctx, i32_storage^), i32_path)
     print("wrote", i32_path)
     print("  header:", _header_of(i32_path))
-    var i32_back = npy_load[DType.int32, 2, 2](ctx, i32_path)
+    var i32_back = numpy.load[DType.int32, 2, 2](ctx, i32_path)
     var i32_values = i32_back.to_host()
     print(
         "  values: [",
@@ -114,16 +114,16 @@ def main() raises:
     )
 
     # --- the load is typed: a wrong dtype or shape raises -----------------
-    # `dtype`/`dims` are compile-time parameters, so `npy_load` checks the
+    # `dtype`/`dims` are compile-time parameters, so `numpy.load` checks the
     # file against what the caller asked for instead of inferring a shape.
     try:
-        _ = npy_load[DType.int32, N_ROWS, N_COLS](ctx, f32_path)
+        _ = numpy.load[DType.int32, N_ROWS, N_COLS](ctx, f32_path)
         print("unreachable: loading a float32 file as int32 should raise")
     except e:
         print("asking for the wrong dtype raises:", e)
 
     try:
-        _ = npy_load[DType.float32, 6](ctx, f32_path)
+        _ = numpy.load[DType.float32, 6](ctx, f32_path)
         print("unreachable: loading a (2, 3) file as (6,) should raise")
     except e:
         print("asking for the wrong shape raises:", e)

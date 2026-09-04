@@ -17,7 +17,7 @@ Single-feature entry points -- one concept per file.
 |---|---|
 | [gaussian.mojo](basic/gaussian.mojo) | `Plain` / `Dual` / `Compensated` three ways, via `numax.core.tensor.map` at native SIMD width, checked against a reference. |
 | [array_creation.mojo](basic/array_creation.mojo) | `numax.core.array`'s NumPy-named creation (`zeros`/`ones`/`full`/`eye`/`linspace`) and manipulation (`transpose`/`squeeze`/`stack`) surface over `TileTensor`. |
-| [npy_interop.mojo](basic/npy_interop.mojo) | NumPy `.npy` read and written directly with `npy_load`/`npy_save` — byte-identical to `numpy.save`, so a ported program can ingest the files it already has. No Python or NumPy involved. |
+| [npy_interop.mojo](basic/npy_interop.mojo) | NumPy `.npy` read and written directly with `numax.io.numpy.load`/`.save` — byte-identical to `numpy.save`, so a ported program can ingest the files it already has. No Python or NumPy involved. |
 | [activations.mojo](basic/activations.mojo) | Activations differentiated via `Dual`, checked against their closed-form derivatives. |
 | [complex.mojo](basic/complex.mojo) | `Complex[Plain]` arithmetic, plus `Complex[Dual[Plain]]` differentiating `z^2` holomorphically. |
 | [gradient.mojo](basic/gradient.mojo) | `Gradient[Plain, 2]` recovering both partial derivatives of a two-variable kernel from one call. |
