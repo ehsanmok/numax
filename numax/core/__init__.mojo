@@ -13,7 +13,7 @@ from numax.core.tensor import map, reduce, reduce_axis   # the engine
 | `numeric` | The `FloatLike` trait, plus the branchless helpers (`max_of`, `blend`, `ge_indicator`) every conformer-generic kernel is built from |
 | `plain`, `dual`, `gradient`, `compensated`, `decimal`, `interval`, `complex` | The conformers: ordinary SIMD, forward-mode autodiff, multi-variable gradients, error-compensated arithmetic, exact base-10 fixed point, interval enclosures, complex over any of them |
 | `tensor` | `map`/`reduce`/`reduce_axis`/`reduce_rows`/`broadcast_op_rows` -- one `gpu: Bool` parameter picks CPU or GPU, comptime and runtime shapes under one name |
-| `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/...) and manipulation (`reshape`/`transpose`/`stack`/`split`/...) |
+| `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/...), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Tensor[DType.bool]`, and sort/search/mask |
 | `constants` | `pi` and `e` at any conformer |
 
@@ -50,6 +50,8 @@ from .array import (
     squeeze,
     stack,
     transpose,
+    to_array,
+    to_tensor,
     tri,
     tril,
     triu,

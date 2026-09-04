@@ -99,6 +99,8 @@ from .core.array import (
     squeeze,
     stack,
     transpose,
+    to_array,
+    to_tensor,
     tri,
     tril,
     triu,

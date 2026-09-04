@@ -97,11 +97,15 @@ shape for a large device-resident tensor.
 # one of them on a hot device path.
 """
 
+from std.collections import Array
+
 from max.gpu.host import DeviceBuffer, DeviceContext
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
 from linalg.transpose import transpose as _max_transpose
 
+from .numeric import FloatLike
+from .plain import Plain
 from .ops import (
     add as _add,
     divide as _divide,
@@ -879,3 +883,88 @@ def _round_to[dtype: DType](x: Scalar[dtype], precision: Int) -> Scalar[dtype]:
 
 def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
     return String(_round_to(x, precision))
+
+
+# --------------------------------------------------------------------------
+# The seam between the two array types
+# --------------------------------------------------------------------------
+#
+# `Tensor` is the array of `numax.core`, `numax.stats` and `numax.io`: heap
+# storage on a device, a shape in its type. `Array[T, n]` is the array of
+# `numax.linalg`, `numax.signal`, `numax.interpolate` and `numax.optimize`:
+# comptime-sized, register-resident, and generic over the `FloatLike`
+# conformer -- which is what makes `cholesky` differentiable at `Dual` and
+# launchable inside a GPU thread.
+#
+# Both are right for their half of the library, and the pair below is how a
+# program crosses between them: load a matrix with `numax.io.numpy.load`,
+# `to_array` it, factor it, `to_tensor` the result, save it.
+
+
+def to_array[
+    T: FloatLike, dtype: DType, n: Int
+](a: Tensor[dtype, n]) raises -> Array[T, n]:
+    """A rank-1 `a`'s elements as an `Array` of `T`.
+
+    The lift into the conformer layer: `numax.linalg`'s vectors,
+    `numax.signal`'s sequences and `numax.interpolate`'s nodes are all
+    `Array[T, n]`. `T` is whatever the caller wants the result computed at
+    -- `Plain` for a plain answer, `Dual` for a derivative, `Compensated`
+    for precision -- and each element arrives through `T.constant`, so a
+    `Dual` lifted this way carries a zero derivative until the caller seeds
+    one.
+
+    Total in this direction, unlike `to_tensor`: every conformer can be
+    built from a `Float64`, but only `Plain` can be read back out to one.
+    """
+    var values = a.to_host()
+    var out = Array[T, n](fill=T.constant(0.0))
+    for i in range(n):
+        out[i] = T.constant(Float64(values[i]))
+    return out^
+
+
+def to_array[
+    T: FloatLike, dtype: DType, n: Int
+](a: Tensor[dtype, n, n]) raises -> Array[T, n * n]:
+    """A square `a`'s elements as an `Array` of `T`, row-major.
+
+    The shape `numax.linalg` takes: every factorization, solve and norm
+    there is written against `Array[T, n * n]`. See the rank-1 overload
+    above for what `T` does.
+    """
+    var values = a.to_host()
+    var out = Array[T, n * n](fill=T.constant(0.0))
+    for i in range(n * n):
+        out[i] = T.constant(Float64(values[i]))
+    return out^
+
+
+def to_tensor[
+    dtype: DType, n: Int
+](a: Array[Plain[dtype, 1], n], ctx: DeviceContext) raises -> Tensor[dtype, n]:
+    """A rank-1 `Tensor` holding `a`'s elements.
+
+    The way back down from the conformer layer, and `Plain`-only on
+    purpose: `FloatLike` can build any conformer from a `Float64`
+    (`T.constant`) but offers no way to read one back out, and there is no
+    single right answer for what a `Dual` or an `Interval` would even mean
+    as a tensor element. Take `.value` or `.lo`/`.hi` first, then lower.
+    """
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(a[i].v)
+    return Tensor[dtype, n](ctx, values^)
+
+
+def to_tensor[
+    dtype: DType, n: Int
+](a: Array[Plain[dtype, 1], n * n], ctx: DeviceContext) raises -> Tensor[
+    dtype, n, n
+]:
+    """A square `Tensor` holding `a`'s elements, row-major. `Plain`-only,
+    for the reason the rank-1 overload above gives."""
+    var values = List[Scalar[dtype]](capacity=n * n)
+    for i in range(n * n):
+        values.append(a[i].v)
+    return Tensor[dtype, n, n](ctx, values^)
