@@ -257,6 +257,8 @@ from .linalg.linalg import (
     slogdet_cholesky,
     lstsq,
     lu,
+    lu_factor,
+    PivotedLU,
     matmul,
     matvec,
     norm,

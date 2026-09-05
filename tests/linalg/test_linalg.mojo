@@ -8,7 +8,12 @@ matrix while the identity checks the algorithm.
 
 from std.collections import Array
 from std.math import log as log_f64
-from std.testing import TestSuite, assert_almost_equal, assert_true
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_true,
+)
 
 from numax import Compensated, Dual, FloatLike, Plain
 from numax.linalg import (
@@ -21,6 +26,7 @@ from numax.linalg import (
     lstsq,
     slogdet_cholesky,
     lu,
+    lu_factor,
     matmul,
     cond,
     dot,
@@ -874,6 +880,110 @@ def test_lstsq_differentiates_through_the_fit() raises:
 
     var x = lstsq[D, 4, 2](a, b)
     assert_almost_equal(Float64(x[0].deriv.v), 0.7, atol=1e-10)
+
+
+def exchange2() -> Array[P, 4]:
+    """`[[0, 1], [1, 0]]`: well conditioned, determinant -1, and the
+    standard matrix the unpivoted LU cannot start on."""
+    var a = Array[P, 4](fill=pv(0.0))
+    a[1] = pv(1.0)
+    a[2] = pv(1.0)
+    return a^
+
+
+def test_pivoting_factors_the_matrix_the_unpivoted_lu_cannot_start_on() raises:
+    var a = exchange2()
+    var factored = lu_factor[dtype, 2](a)
+
+    assert_equal(factored.permutation[0], 1)
+    assert_equal(factored.permutation[1], 0)
+    assert_equal(factored.sign, -1)
+    assert_almost_equal(s(factored.det()), -1.0, atol=1e-12)
+
+    # What the tier-1 route returns on the same matrix, pinned so the
+    # difference the pivoting buys is visible rather than asserted.
+    assert_almost_equal(s(det[P, 2](a)), 0.0, atol=1e-12)
+
+
+def test_a_pivoted_solve_reproduces_its_right_hand_side() raises:
+    var a = exchange2()
+    var b = Array[P, 2](fill=pv(0.0))
+    b[0] = pv(3.0)
+    b[1] = pv(7.0)
+
+    var x = lu_factor[dtype, 2](a).solve(b)
+
+    # A x = b with A the exchange matrix means x is b reversed.
+    assert_almost_equal(s(x[0]), 7.0, atol=1e-12)
+    assert_almost_equal(s(x[1]), 3.0, atol=1e-12)
+
+
+def test_one_factorization_serves_several_right_hand_sides() raises:
+    var a = general3()
+    var factored = lu_factor[dtype, 3](a)
+
+    var first = factored.solve(rhs3())
+    var residual = matvec[P, 3](a, first)
+    for i in range(3):
+        assert_almost_equal(s(residual[i]), s(rhs3()[i]), atol=1e-10)
+
+    var b = Array[P, 3](fill=pv(0.0))
+    b[0] = pv(1.0)
+    b[1] = pv(2.0)
+    b[2] = pv(3.0)
+    var second = factored.solve(b)
+    var second_residual = matvec[P, 3](a, second)
+    for i in range(3):
+        assert_almost_equal(s(second_residual[i]), s(b[i]), atol=1e-10)
+
+
+def test_the_permuted_matrix_is_the_product_of_its_factors() raises:
+    var a = general3()
+    var factored = lu_factor[dtype, 3](a)
+
+    var lower = Array[P, 9](fill=pv(0.0))
+    var upper = Array[P, 9](fill=pv(0.0))
+    for i in range(3):
+        lower[i * 3 + i] = pv(1.0)
+        for j in range(3):
+            if j < i:
+                lower[i * 3 + j] = factored.factored[i * 3 + j].copy()
+            else:
+                upper[i * 3 + j] = factored.factored[i * 3 + j].copy()
+
+    var product = matmul[P, 3](lower, upper)
+    for i in range(3):
+        for j in range(3):
+            assert_almost_equal(
+                s(product[i * 3 + j]),
+                s(a[factored.permutation[i] * 3 + j]),
+                atol=1e-10,
+            )
+
+
+def test_pivoting_beats_the_unpivoted_route_on_a_small_pivot() raises:
+    # The textbook near-singular-pivot case: solving it without pivoting
+    # subtracts a huge multiple of row 0 from row 1 and loses the original
+    # entries to rounding.
+    var a = Array[P, 4](fill=pv(0.0))
+    a[0] = pv(1e-18)
+    a[1] = pv(1.0)
+    a[2] = pv(1.0)
+    a[3] = pv(1.0)
+    var b = Array[P, 2](fill=pv(0.0))
+    b[0] = pv(1.0)
+    b[1] = pv(2.0)
+
+    var pivoted = lu_factor[dtype, 2](a).solve(b)
+    var unpivoted = solve[P, 2](a, b)
+
+    # x is approximately (1, 1) here.
+    var pivoted_error = abs(s(pivoted[0]) - 1.0) + abs(s(pivoted[1]) - 1.0)
+    var unpivoted_error = abs(s(unpivoted[0]) - 1.0) + abs(
+        s(unpivoted[1]) - 1.0
+    )
+    assert_true(pivoted_error < 1e-12)
+    assert_true(unpivoted_error > pivoted_error)
 
 
 def main() raises:

@@ -194,14 +194,18 @@ roughly 8x8.
 | Area | Surface |
 |---|---|
 | Factorizations | `cholesky`, `lu`, `qr`, `eigh`, `svd` |
-| Solves | `solve`, `cholesky_solve`, `tridiagonal_solve`, `forward_substitution`, `back_substitution` |
+| Solves | `solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, `forward_substitution`, `back_substitution` |
 | Inverses | `inverse`, `pinv` |
 | Scalars | `det`, `trace`, `cond`, `slogdet_cholesky` |
+| Pivoted (tier 2) | `lu_factor` and the `PivotedLU` it returns, whose `solve` and `det` get the answers the unpivoted routines cannot |
 | Norms | `norm` — `ord=fro` (default), `1` or `inf`, per `numpy.linalg.norm` — and `nrm2` |
 | Products | `dot`, `outer`, `matvec`, `matmul` |
 
 All in [`linalg/linalg.mojo`](../numax/linalg/linalg.mojo); every function's
 docstring records its own error behaviour and where MAX's kernel takes over.
+Everything is tier 1 except the pivoted row: choosing a pivot by magnitude
+is a data-dependent branch, so `PivotedLU` gives up the GPU and the generic
+`T` in exchange for factoring matrices `lu` cannot start on.
 
 ## `numax.optimize`
 

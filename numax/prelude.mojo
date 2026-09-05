@@ -200,6 +200,8 @@ from .linalg.linalg import (
     inverse,
     lstsq,
     lu,
+    lu_factor,
+    PivotedLU,
     matmul,
     matvec,
     norm,

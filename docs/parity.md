@@ -70,7 +70,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 | Comparison and logic | `numax/core/logic.mojo` | Truth is a `Shaped[DType.bool]`, so a comparison composes with `logical_and` |
 | Statistics | `numax/stats/statistics.mojo` | `variance`/`stddev`/`cumsum`/`mean` are `FloatLike`-generic — at `Compensated` they match a float64 reference where `Plain` drifts. `argmin`/`argmax` route into `nn.argmaxmin` |
 | Sorting, searching, masking | `numax/core/sorting.mojo` | Tier 2. `argsort` routes into `nn.argsort`; the rest walk a host copy, where `std.builtin.sort` is the better route |
-| Small dense linalg | `numax/linalg/linalg.mojo` | `FloatLike`-generic over comptime `Array[T, n*n]`. Differentiability is the point; MAX's `matmul` is the call past ~8x8 |
+| Small dense linalg | `numax/linalg/linalg.mojo` | `FloatLike`-generic over comptime `Array[T, n*n]`. Differentiability is the point; MAX's `matmul` is the call past ~8x8. `PivotedLU` is the tier-2 exception, since a pivot choice is a branch on data |
 | Root finding and minimization | `numax/optimize/solve.mojo`, `numax/optimize/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2) |
 | Quadrature and ODE | `numax/integrate/quadrature.mojo`, `numax/integrate/ode.mojo`, `numax/integrate/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2 |
 | Transforms and signal | `numax/fft/fft.mojo`, `numax/signal/signal.mojo` | Power-of-two by construction. MAX has no forward FFT to route to |

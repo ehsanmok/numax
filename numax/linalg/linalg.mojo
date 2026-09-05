@@ -1,9 +1,10 @@
 """Small dense linear algebra, `FloatLike`-generic and compile-time-sized.
 
-**This module is tier 1.** Every factorization here runs a fixed number of
-passes -- `n - 1` reflectors, `sweeps` Jacobi sweeps -- and selects
-branchlessly, so all of it launches inside a GPU thread. That is also what
-forecloses pivoting; see "Scope: no pivoting" below.
+**This module is tier 1, except `lu_factor`/`lu_solve`/`det_lu`, which
+declare tier 2 in their own docstrings.** Every tier-1 factorization here
+runs a fixed number of passes -- `n - 1` reflectors, `sweeps` Jacobi sweeps
+-- and selects branchlessly, so all of it launches inside a GPU thread.
+That is also what forecloses pivoting; see "Scope: no pivoting" below.
 
 MAX already ships `linalg.matmul` and `linalg.qr_factorization` over
 `TileTensor`, both fast and both CPU/GPU. Neither is what this module is
@@ -35,8 +36,9 @@ lane -- `n` is the matrix dimension, not the vector width.
 ## Scope: no pivoting
 
 `lu` and `cholesky` do no pivoting, and `det`/`inverse`/`solve` inherit
-that. This is the honest limitation of the whole module, in the same
-category as `gammainc`'s large-`x` caveat rather than an oversight: partial
+that. This is the honest limitation of the tier-1 half of the module, in
+the same category as `gammainc`'s large-`x` caveat rather than an
+oversight: partial
 pivoting means choosing a row based on the magnitude of a value, which is a
 per-lane data-dependent decision, and different SIMD lanes holding
 different matrices would want different pivot orders. Nothing in
@@ -52,8 +54,11 @@ Consequences worth knowing:
   from zero so the result is finite rather than NaN, but finite is not the
   same as correct.
 
-For a general non-symmetric solve where you can't vouch for the pivots,
-this module is the wrong tool.
+For a general non-symmetric solve where you can't vouch for the pivots, the
+tier-2 `lu_factor`/`lu_solve`/`det_lu` pivot properly. They give up the GPU
+and the generic `T` to do it -- they are `Plain[dtype, 1]` at width 1, since
+a SIMD lane holding a different matrix would want a different pivot order
+-- which is the whole trade, stated once here and again at each of them.
 
 ## Use MAX past N (see `docs/parity.md`)
 
@@ -91,6 +96,7 @@ from ..core.numeric import (
     max_of,
     min_of,
 )
+from ..core.plain import Plain
 
 comptime _PIVOT_FLOOR = 1e-30
 
@@ -211,6 +217,125 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
                 out[i * n + j] = out[i * n + j] - (factor * out[k * n + j])
 
     return out^
+
+
+@fieldwise_init
+struct PivotedLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
+    """**Tier 2.** An `LU` factorization with partial pivoting, and the
+    solves that reuse it. `scipy.linalg`'s `lu_factor`/`lu_solve` pair.
+
+    The answer to this module's "Scope: no pivoting" limitation, and the
+    reason it is separate from `lu` rather than an improvement to it:
+    choosing a row by the magnitude of a value is a data-dependent branch,
+    so this cannot be tier 1 and cannot run inside a GPU thread. It is
+    `Plain[dtype, 1]` at width 1 for the same reason -- a SIMD `T` holds
+    several matrices whose lanes would want different pivot orders, and
+    there is no single order to pick.
+
+    What it buys is correctness where `lu` has none. The exchange matrix
+    `[[0, 1], [1, 0]]` is perfectly well conditioned with a determinant of
+    `-1`, and unpivoted `lu` cannot start on it at all; this factors it.
+    Accuracy on a small-pivot matrix improves for the same reason.
+
+    Rank deficiency is still not detected: a singular matrix factors to a
+    zero pivot, which is floored rather than reported, so the result is
+    finite and wrong. `cond` on the original matrix is the check.
+    """
+
+    var factored: Array[Plain[Self.dtype, 1], Self.n * Self.n]
+    """`L` below the diagonal (its own diagonal an implicit `1`) and `U` on
+    and above it, packed the way `lu` packs them."""
+
+    var permutation: Array[Int, Self.n]
+    """`permutation[i]` is the row of `A` that became row `i`."""
+
+    var sign: Int
+    """`+1` or `-1`, by the parity of the row swaps. `det` needs it; a
+    determinant read off the diagonal alone would be wrong by that factor.
+    """
+
+    def solve(
+        self, b: Array[Plain[Self.dtype, 1], Self.n]
+    ) -> Array[
+        Plain[Self.dtype, 1], Self.n
+    ] where Self.dtype.is_floating_point():
+        """Solve `A @ x = b`, reusing this factorization.
+
+        Permutes `b` the way the factorization permuted `A`'s rows, then
+        runs the same two substitutions the unpivoted `solve` does. Several
+        right-hand sides against one matrix is what the split into a
+        factorization and a solve is for.
+        """
+        var permuted = _zeros[Plain[Self.dtype, 1], Self.n]()
+        for i in range(Self.n):
+            permuted[i] = b[self.permutation[i]].copy()
+        var y = forward_substitution[
+            Plain[Self.dtype, 1], Self.n, unit_diagonal=True
+        ](self.factored, permuted)
+        return back_substitution[Plain[Self.dtype, 1], Self.n](self.factored, y)
+
+    def det(self) -> Plain[Self.dtype, 1] where Self.dtype.is_floating_point():
+        """The determinant: the product of `U`'s diagonal, signed by the
+        permutation.
+
+        The pivoted counterpart of `det`, and it gets the answers `det`
+        cannot -- the exchange matrix comes out as `-1` where the unpivoted
+        route returns approximately zero.
+        """
+        var product = Plain[Self.dtype, 1].constant(Float64(self.sign))
+        for i in range(Self.n):
+            product = product * self.factored[i * Self.n + i]
+        return product^
+
+
+def lu_factor[
+    dtype: DType, n: Int
+](a: Array[Plain[dtype, 1], n * n]) -> PivotedLU[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** Factor `A` into `L @ U` with partial pivoting.
+    `scipy.linalg.lu_factor`.
+
+    See `PivotedLU` for what pivoting costs and what it buys.
+    """
+    var out = _zeros[Plain[dtype, 1], n * n]()
+    for i in range(n * n):
+        out[i] = a[i].copy()
+
+    var permutation = Array[Int, n](fill=0)
+    for i in range(n):
+        permutation[i] = i
+    var sign = 1
+
+    for k in range(n):
+        var best = k
+        var best_magnitude = abs(out[k * n + k].v)
+        for i in range(k + 1, n):
+            var magnitude = abs(out[i * n + k].v)
+            if magnitude > best_magnitude:
+                best = i
+                best_magnitude = magnitude
+
+        if best != k:
+            for j in range(n):
+                var swap = out[k * n + j].copy()
+                out[k * n + j] = out[best * n + j].copy()
+                out[best * n + j] = swap^
+            var swap_index = permutation[k]
+            permutation[k] = permutation[best]
+            permutation[best] = swap_index
+            sign = -sign
+
+        var pivot = guard_nonzero(
+            out[k * n + k], Plain[dtype, 1].constant(_PIVOT_FLOOR)
+        )
+        for i in range(k + 1, n):
+            var factor = out[i * n + k] / pivot
+            out[i * n + k] = factor.copy()
+            for j in range(k + 1, n):
+                out[i * n + j] = out[i * n + j] - (factor * out[k * n + j])
+
+    return PivotedLU[dtype, n](out^, permutation^, sign)
 
 
 def forward_substitution[
