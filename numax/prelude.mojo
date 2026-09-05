@@ -196,6 +196,7 @@ from .linalg.linalg import (
     det,
     dot,
     eigh,
+    eigvals,
     fro,
     inverse,
     lstsq,

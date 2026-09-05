@@ -31,6 +31,7 @@ from numax.linalg import (
     cond,
     dot,
     eigh,
+    eigvals,
     matvec,
     inf,
     norm,
@@ -984,6 +985,103 @@ def test_pivoting_beats_the_unpivoted_route_on_a_small_pivot() raises:
     )
     assert_true(pivoted_error < 1e-12)
     assert_true(unpivoted_error > pivoted_error)
+
+
+def test_eigvals_of_a_triangular_matrix_are_its_diagonal() raises:
+    var a = Array[P, 9](fill=pv(0.0))
+    var entries = [3.0, 1.0, 2.0, 0.0, 5.0, 4.0, 0.0, 0.0, -2.0]
+    for i in range(9):
+        a[i] = pv(entries[i])
+
+    var values = eigvals[P, 3](a)
+    var found = List[Float64]()
+    for i in range(3):
+        assert_almost_equal(s(values[i].im), 0.0, atol=1e-8)
+        found.append(s(values[i].re))
+
+    for expected in [3.0, 5.0, -2.0]:
+        var matched = False
+        for got in found:
+            if abs(got - expected) < 1e-8:
+                matched = True
+        assert_true(matched)
+
+
+def test_eigvals_of_a_quarter_turn_are_the_imaginary_units() raises:
+    # [[0, -1], [1, 0]] rotates by 90 degrees, so it has no real eigenvalue
+    # and no real matrix to round to -- the case `eigh` cannot express.
+    var a = Array[P, 4](fill=pv(0.0))
+    a[1] = pv(-1.0)
+    a[2] = pv(1.0)
+
+    var values = eigvals[P, 2](a)
+    for i in range(2):
+        assert_almost_equal(s(values[i].re), 0.0, atol=1e-10)
+        assert_almost_equal(abs(s(values[i].im)), 1.0, atol=1e-10)
+    assert_almost_equal(s(values[0].im) + s(values[1].im), 0.0, atol=1e-10)
+
+
+def test_eigvals_sum_to_the_trace_and_multiply_to_the_determinant() raises:
+    # The two identities that hold whatever the spectrum turns out to be,
+    # which is what makes them the check when convergence is in question.
+    var a = general3()
+    var values = eigvals[P, 3](a)
+
+    var sum_re = 0.0
+    var sum_im = 0.0
+    var product_re = 1.0
+    var product_im = 0.0
+    for i in range(3):
+        sum_re += s(values[i].re)
+        sum_im += s(values[i].im)
+        var re = product_re * s(values[i].re) - product_im * s(values[i].im)
+        var im = product_re * s(values[i].im) + product_im * s(values[i].re)
+        product_re = re
+        product_im = im
+
+    assert_almost_equal(sum_re, s(trace[P, 3](a)), atol=1e-9)
+    assert_almost_equal(sum_im, 0.0, atol=1e-9)
+    assert_almost_equal(product_re, s(det[P, 3](a)), atol=1e-8)
+    assert_almost_equal(product_im, 0.0, atol=1e-9)
+
+
+def test_eigvals_agrees_with_eigh_on_a_symmetric_matrix() raises:
+    var a = spd3()
+    var expected = eigh[P, 3](a)[0].copy()
+    var values = eigvals[P, 3](a)
+
+    for i in range(3):
+        assert_almost_equal(s(values[i].im), 0.0, atol=1e-8)
+        var matched = False
+        for j in range(3):
+            if abs(s(values[i].re) - s(expected[j])) < 1e-7:
+                matched = True
+        assert_true(matched)
+
+
+def test_eigvals_recovers_a_mixed_real_and_complex_spectrum() raises:
+    # Block diagonal: a 1x1 block at 2, and a rotation-and-scale block whose
+    # eigenvalues are 1 +/- 3i.
+    var a = Array[P, 9](fill=pv(0.0))
+    a[0] = pv(2.0)
+    a[4] = pv(1.0)
+    a[5] = pv(-3.0)
+    a[7] = pv(3.0)
+    a[8] = pv(1.0)
+
+    var values = eigvals[P, 3](a)
+    var real_count = 0
+    var complex_count = 0
+    for i in range(3):
+        if abs(s(values[i].im)) < 1e-8:
+            assert_almost_equal(s(values[i].re), 2.0, atol=1e-8)
+            real_count += 1
+        else:
+            assert_almost_equal(s(values[i].re), 1.0, atol=1e-8)
+            assert_almost_equal(abs(s(values[i].im)), 3.0, atol=1e-8)
+            complex_count += 1
+    assert_equal(real_count, 1)
+    assert_equal(complex_count, 2)
 
 
 def main() raises:

@@ -193,7 +193,7 @@ roughly 8x8.
 
 | Area | Surface |
 |---|---|
-| Factorizations | `cholesky`, `lu`, `qr`, `eigh`, `svd` |
+| Factorizations | `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd` |
 | Solves | `solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, `forward_substitution`, `back_substitution` |
 | Inverses | `inverse`, `pinv` |
 | Scalars | `det`, `trace`, `cond`, `slogdet_cholesky` |
