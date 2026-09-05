@@ -238,6 +238,7 @@ accuracy; AD has neither the truncation nor the cancellation term.
 | `rk4`, `rk4_system`, `dopri5_step`, `dopri5_with_error`, `dopri5` — fixed-step integration, one state or `n` components, with the embedded error estimate | 1 | [`integrate/ode.mojo`](../numax/integrate/ode.mojo) |
 | `quad`, `quad_vec` — adaptive quadrature to a tolerance, returning `QuadResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
 | `solve_ivp` — adaptive step-size control, returning `IVPResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
+| `solve_ivp_stiff` — A-stable implicit trapezoid, for the problem whose step size stability rather than accuracy decides | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
 
 Because the integrand is a `FloatLike` kernel, differentiating through an
 integral is just calling the same quadrature at `Dual`. 1024 ODE trajectories

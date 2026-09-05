@@ -47,6 +47,7 @@ under the integral sign, with no second implementation. See
 
 from std.collections import Array
 
+from ..core.dual import Dual
 from ..core.numeric import FloatLike
 from ..core.plain import Plain
 from .ode import dopri5_step
@@ -345,6 +346,128 @@ def solve_ivp[
             scale = 5.0
         else:
             scale = 0.9 * (1.0 / ratio) ** 0.2
+            scale = min(5.0, max(0.2, scale))
+        h = h * scale
+
+    return IVPResult(t, y, accepted, rejected, False)
+
+
+def _trapezoid_step[
+    f: def[U: FloatLike](U, U) thin -> U,
+](t: Float64, y: Float64, h: Float64) -> Float64:
+    """One implicit trapezoid step, `y1 = y + h/2*(f(t,y) + f(t+h,y1))`,
+    solved for `y1` by Newton's method.
+
+    The derivative `df/dy` that Newton needs comes from evaluating `f` at
+    `Dual` with the state seeded -- the same trick the root finders use,
+    which is why an implicit method costs no extra function from the
+    caller. Explicit Euler supplies the initial guess; near-quadratic
+    convergence takes it from there in a handful of iterations.
+    """
+    var f0 = f[_P](_P.constant(t), _P.constant(y)).v
+    var guess = y + h * Float64(f0)
+
+    for _ in range(20):
+        var evaluated = f[Dual[_P]](
+            Dual[_P].constant(t + h), Dual[_P](_P(guess), _P.one())
+        )
+        var residual = guess - y - 0.5 * h * (Float64(f0) + evaluated.value.v)
+        var slope = 1.0 - 0.5 * h * evaluated.deriv.v
+        if abs(slope) < 1e-300:
+            break
+        var step = residual / slope
+        guess -= step
+        if abs(step) <= 1e-14 * (1.0 + abs(guess)):
+            break
+
+    return guess
+
+
+def solve_ivp_stiff[
+    f: def[U: FloatLike](U, U) thin -> U,
+](
+    t0: Float64,
+    y0: Float64,
+    t1: Float64,
+    rtol: Float64 = 1e-8,
+    atol: Float64 = 1e-10,
+    max_steps: Int = 10000,
+) -> IVPResult:
+    """Integrate a *stiff* `dy/dt = f(t, y)` from `t0` to `t1`. The
+    A-stable counterpart of `solve_ivp`.
+
+    A stiff problem is one where the step size an explicit method can take
+    is set by stability rather than by accuracy: a decay a thousand times
+    faster than anything the solution actually does still forces
+    Dormand-Prince to step around a thousand times more finely, long after
+    that component has vanished. The implicit trapezoid has no such limit
+    -- it is A-stable, so the step size is chosen for accuracy alone --
+    which is the entire reason to pay for the nonlinear solve each step
+    costs. `tests/integrate/test_integrate.mojo` measures the step counts
+    against `solve_ivp` on such a problem rather than asserting the
+    difference.
+
+    Second order, with the error estimated by step doubling: one step of
+    `h` against two of `h/2`, whose difference over 3 is the Richardson
+    estimate. That is three implicit solves per attempted step, which is
+    the honest price of not carrying an embedded pair; a production BDF or
+    Radau code would do better, and this is the shape that fits in the
+    module rather than the fastest one available.
+
+    The Newton iteration inside each step takes `df/dy` from `Dual`, so
+    there is no `jac` argument here either -- the caller writes one
+    ordinary `FloatLike` kernel and it serves the explicit solver, the
+    implicit one, and a GPU launch.
+
+    Only scalar equations, matching `solve_ivp`. A stiff *system* needs the
+    full Jacobian and a linear solve per Newton iteration; `Gradient` and
+    `numax.linalg.solve` are both here, so it is a continuation rather than
+    a redesign.
+    """
+    if t0 == t1:
+        return IVPResult(t0, y0, 0, 0, True)
+
+    var direction = 1.0 if t1 > t0 else -1.0
+    var span = abs(t1 - t0)
+
+    var t = t0
+    var y = y0
+    var h = direction * span / 100.0
+
+    var accepted = 0
+    var rejected = 0
+
+    for _ in range(max_steps):
+        if abs(t - t1) <= 0.0:
+            return IVPResult(t, y, accepted, rejected, True)
+
+        if abs(h) > abs(t1 - t):
+            h = t1 - t
+
+        var coarse = _trapezoid_step[f](t, y, h)
+        var midpoint = _trapezoid_step[f](t, y, h / 2.0)
+        var fine = _trapezoid_step[f](t + h / 2.0, midpoint, h / 2.0)
+
+        # Richardson at order 2: the two-half-step result is four times as
+        # accurate, so their difference over 3 estimates what remains.
+        var error = abs(fine - coarse) / 3.0
+        var tolerance = atol + rtol * max(abs(y), abs(fine))
+        var ratio = error / tolerance if tolerance > 0.0 else 0.0
+
+        if ratio <= 1.0:
+            t += h
+            y = fine
+            accepted += 1
+            if abs(t - t1) <= 0.0:
+                return IVPResult(t, y, accepted, rejected, True)
+        else:
+            rejected += 1
+
+        var scale: Float64
+        if ratio <= 0.0:
+            scale = 5.0
+        else:
+            scale = 0.9 * (1.0 / ratio) ** (1.0 / 3.0)
             scale = min(5.0, max(0.2, scale))
         h = h * scale
 

@@ -7,11 +7,11 @@ rule cannot see, and `test_a_named_breakpoint_costs_far_fewer_panels` shows
 what naming a kink saves.
 """
 
-from std.math import atan, exp, pi, sqrt
+from std.math import atan, cos as cos_f64, exp, pi, sqrt
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import FloatLike, Plain
-from numax.integrate import quad, quad_vec, solve_ivp
+from numax.integrate import quad, quad_vec, solve_ivp, solve_ivp_stiff
 from numax.integrate import dopri5
 from numax.integrate import gauss_legendre
 
@@ -362,6 +362,45 @@ def test_solve_ivp_agrees_with_a_well_resolved_fixed_step_run() raises:
         ).v
     )
     assert_almost_equal(adaptive.y, fixed, atol=1e-11)
+
+
+def very_stiff[U: FloatLike](t: U, y: U) -> U:
+    """`dy/dt = -1000*(y - cos(t)) - sin(t)`, whose solution is
+    `cos(t)` once the transient at the start has died.
+
+    Stiff in the technical sense: the solution is as smooth as a cosine,
+    but an explicit method's step is capped near `2.8/1000` by stability
+    no matter how little accuracy that buys.
+    """
+    return -U.constant(1000.0) * (y - t.cos()) - t.sin()
+
+
+def test_the_stiff_solver_reaches_the_same_answer() raises:
+    var result = solve_ivp_stiff[decay](0.0, 1.0, 1.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, exp(-3.0), atol=1e-7)
+
+
+def test_the_stiff_solver_integrates_a_time_dependent_equation() raises:
+    var result = solve_ivp_stiff[time_dependent](0.0, 1.0, 2.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.y, 5.0, atol=1e-8)
+
+
+def test_the_stiff_solver_takes_far_fewer_steps_on_a_stiff_problem() raises:
+    # Both start at the value the transient has already relaxed to, so the
+    # difference in step count is stability and nothing else.
+    var explicit = solve_ivp[very_stiff](0.0, 1.0, 1.0, rtol=1e-6, atol=1e-8)
+    var implicit = solve_ivp_stiff[very_stiff](
+        0.0, 1.0, 1.0, rtol=1e-6, atol=1e-8
+    )
+
+    assert_true(explicit.converged)
+    assert_true(implicit.converged)
+    assert_almost_equal(explicit.y, cos_f64(1.0), atol=1e-5)
+    assert_almost_equal(implicit.y, cos_f64(1.0), atol=1e-5)
+
+    assert_true(implicit.accepted * 4 < explicit.accepted)
 
 
 def main() raises:
