@@ -48,7 +48,8 @@ from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor, _context
+from layout.tile_layout import TensorLayout
+from ..core.array import Shaped, Tensor, _context
 
 
 # The magic's first byte is 0x93, which is not valid UTF-8 on its own: a
@@ -112,17 +113,20 @@ def _descr[dtype: DType]() -> String:
         return ""
 
 
-def _shape_literal[*dims: Int]() -> String:
-    """`dims` as Python's tuple literal: `(3,)` at rank 1, `(2, 3)` above.
+def _shape_literal[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) -> String:
+    """`a`'s shape as Python's tuple literal: `(3,)` at rank 1, `(2, 3)`
+    above.
 
     The rank-1 trailing comma is not cosmetic: `(3)` is an `int` in Python,
     not a tuple, and `numpy.load` evaluates this text.
     """
-    comptime rank = dims.__len__()
+    comptime rank = LayoutType.rank
     var out = String("(")
 
     comptime for i in range(rank):
-        out += String(dims[i])
+        out += String(a.dim[i]())
         if i != rank - 1:
             out += ", "
     if rank == 1:
@@ -143,8 +147,8 @@ struct numpy:
 
     @staticmethod
     def save[
-        dtype: DType, *dims: Int
-    ](a: Tensor[dtype, *dims], path: String) raises:
+        dtype: DType, LayoutType: TensorLayout
+    ](a: Tensor[dtype, LayoutType], path: String) raises:
         """Write `a` to `path` as a NumPy `.npy` file (format version 1.0).
 
         The bytes are what `numpy.save` would have written for the same array,
@@ -157,7 +161,7 @@ struct numpy:
         formats).
         """
         comptime descr = _descr[dtype]()
-        comptime shape = _shape_literal[*dims]()
+        var shape = _shape_literal(a)
         if descr == "":
             raise Error(
                 String(
@@ -199,9 +203,7 @@ struct numpy:
         var f = open(path, "w")
         f.write_bytes(Span(out))
 
-        comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
-            Scalar[dtype]
-        ]()
+        var nbytes = a.size() * size_of[Scalar[dtype]]()
         var values = a.to_host()
         var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
         var payload = Span[UInt8, origin_of(values)](
@@ -213,7 +215,7 @@ struct numpy:
     @staticmethod
     def load[
         dtype: DType, *dims: Int
-    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Tensor[
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Shaped[
         dtype, *dims
     ]:
         """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s device.
@@ -335,7 +337,7 @@ struct numpy:
                 raise Error("numax.io.numpy.load: shape mismatch")
 
         var offset = header_start + header_len
-        comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
+        comptime nbytes = Shaped[dtype, *dims].num_elements * size_of[
             Scalar[dtype]
         ]()
         if len(data) - offset != nbytes:
@@ -344,12 +346,12 @@ struct numpy:
             )
 
         var out_storage = List[Scalar[dtype]](
-            length=Tensor[dtype, *dims].num_elements, fill=0
+            length=Shaped[dtype, *dims].num_elements, fill=0
         )
         var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Tensor[dtype, *dims](_context(ctx), out_storage^)
+        return Shaped[dtype, *dims](_context(ctx), out_storage^)
 
 
 def _descr_matches(file_descr: String, expected: String) -> Bool:

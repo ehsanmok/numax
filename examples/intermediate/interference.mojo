@@ -19,7 +19,7 @@ from std.math import cos, sqrt
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.core.array import Tensor, linspace, meshgrid
+from numax.core.array import Shaped, Tensor, linspace, meshgrid
 from numax.core.tensor import map
 
 comptime dtype = DType.float64
@@ -79,7 +79,7 @@ def main() raises:
     var axis_y = linspace[rows](-4.0, 4.0, ctx=ctx)
     var grid = meshgrid(axis_x, axis_y)
 
-    var field = Tensor[dtype, rows, cols](ctx)
+    var field = Shaped[dtype, rows, cols](ctx)
     var xs = grid[0].view()
     var ys = grid[1].view()
     var out = field.view()

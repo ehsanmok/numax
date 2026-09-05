@@ -26,7 +26,7 @@ from std.math import cos, exp, sin, sqrt
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.core.array import Tensor, linspace, meshgrid
+from numax.core.array import Shaped, Tensor, linspace, meshgrid
 from numax.core.ops import add, multiply
 from numax.stats import sum
 from numax.core.tensor import map
@@ -96,8 +96,8 @@ def main() raises:
     var grid = meshgrid(axis_x, axis_y)
 
     # --- the wavefunction, as two real fields ---
-    var re = Tensor[dtype, n, n](ctx)
-    var im = Tensor[dtype, n, n](ctx)
+    var re = Shaped[dtype, n, n](ctx)
+    var im = Shaped[dtype, n, n](ctx)
     var xs = grid[0].view()
     var ys = grid[1].view()
     var re_view = re.view()

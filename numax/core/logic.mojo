@@ -15,7 +15,7 @@ on a device.
 `Plain`-only. A comparison returns truth, not a number, so there is nothing
 for a `Dual` derivative or a `Compensated` error term to carry.
 
-Truth is a `Tensor[DType.bool, *dims]`, not a same-dtype tensor of 0/1. That
+Truth is a `Shaped[DType.bool, *dims]`, not a same-dtype tensor of 0/1. That
 is what makes `greater(a, b)` compose with `logical_and`, and it is the type
 `numax.core.sorting.extract`/`select` take, so `select(a > b, x, y)` needs
 nothing in between. A tensor of values becomes a mask with
@@ -33,7 +33,8 @@ from std.math import (
     isnan as _std_isnan,
 )
 
-from .array import Tensor, _product
+from layout.tile_layout import TensorLayout
+from .array import Shaped, Tensor, _product
 
 
 def _eq_step[
@@ -132,169 +133,171 @@ def _nonzero_step[
 
 def _compare[
     dtype: DType,
-    *dims: Int,
+    LayoutType: TensorLayout,
     step: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[
         DType.bool, w
     ],
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
-    comptime n = _product[*dims]()
+    var n = a.size()
     var a_values = a.to_host()
     var b_values = b.to_host()
     var out = List[Scalar[DType.bool]](length=n, fill=False)
     for i in range(n):
         out[i] = step[1](a_values[i], b_values[i])[0]
-    return Tensor[DType.bool, *dims](a.context(), out^)
+    return Tensor[DType.bool, LayoutType](a.context(), a.layout, out^)
 
 
 def _predicate[
     dtype: DType,
-    *dims: Int,
+    LayoutType: TensorLayout,
     step: def[w: Int](SIMD[dtype, w]) thin -> SIMD[DType.bool, w],
-](a: Tensor[dtype, *dims]) raises -> Tensor[DType.bool, *dims]:
-    comptime n = _product[*dims]()
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[DType.bool, LayoutType]:
+    var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[DType.bool]](length=n, fill=False)
     for i in range(n):
         out[i] = step[1](values[i])[0]
-    return Tensor[DType.bool, *dims](a.context(), out^)
+    return Tensor[DType.bool, LayoutType](a.context(), a.layout, out^)
 
 
 def equal[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
     """`a == b`, elementwise. `numpy.equal`."""
-    return _compare[dtype, *dims, step=_eq_step[dtype, _]](a, b)
+    return _compare[dtype, LayoutType, step=_eq_step[dtype, _]](a, b)
 
 
 def not_equal[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
     """`a != b`, elementwise. `numpy.not_equal`."""
-    return _compare[dtype, *dims, step=_ne_step[dtype, _]](a, b)
+    return _compare[dtype, LayoutType, step=_ne_step[dtype, _]](a, b)
 
 
 def less[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
     """`a < b`, elementwise. `numpy.less`."""
-    return _compare[dtype, *dims, step=_lt_step[dtype, _]](a, b)
+    return _compare[dtype, LayoutType, step=_lt_step[dtype, _]](a, b)
 
 
 def less_equal[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
     """`a <= b`, elementwise. `numpy.less_equal`."""
-    return _compare[dtype, *dims, step=_le_step[dtype, _]](a, b)
+    return _compare[dtype, LayoutType, step=_le_step[dtype, _]](a, b)
 
 
 def greater[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
     """`a > b`, elementwise. `numpy.greater`."""
-    return _compare[dtype, *dims, step=_gt_step[dtype, _]](a, b)
+    return _compare[dtype, LayoutType, step=_gt_step[dtype, _]](a, b)
 
 
 def greater_equal[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ]:
     """`a >= b`, elementwise. `numpy.greater_equal`."""
-    return _compare[dtype, *dims, step=_ge_step[dtype, _]](a, b)
+    return _compare[dtype, LayoutType, step=_ge_step[dtype, _]](a, b)
 
 
 def isnan[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ] where dtype.is_floating_point():
     """Which elements are NaN. `numpy.isnan`."""
-    return _predicate[dtype, *dims, step=_isnan_step[dtype, _]](a)
+    return _predicate[dtype, LayoutType, step=_isnan_step[dtype, _]](a)
 
 
 def isinf[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ] where dtype.is_floating_point():
     """Which elements are an infinity of either sign. `numpy.isinf`."""
-    return _predicate[dtype, *dims, step=_isinf_step[dtype, _]](a)
+    return _predicate[dtype, LayoutType, step=_isinf_step[dtype, _]](a)
 
 
 def isfinite[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ] where dtype.is_floating_point():
     """Which elements are neither NaN nor infinite. `numpy.isfinite`."""
-    return _predicate[dtype, *dims, step=_isfinite_step[dtype, _]](a)
+    return _predicate[dtype, LayoutType, step=_isfinite_step[dtype, _]](a)
 
 
 def isposinf[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ] where dtype.is_floating_point():
     """Which elements are `+inf`. `numpy.isposinf`."""
-    return _predicate[dtype, *dims, step=_isposinf_step[dtype, _]](a)
+    return _predicate[dtype, LayoutType, step=_isposinf_step[dtype, _]](a)
 
 
 def isneginf[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    DType.bool, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    DType.bool, LayoutType
 ] where dtype.is_floating_point():
     """Which elements are `-inf`. `numpy.isneginf`."""
-    return _predicate[dtype, *dims, step=_isneginf_step[dtype, _]](a)
+    return _predicate[dtype, LayoutType, step=_isneginf_step[dtype, _]](a)
 
 
 def logical_and[
-    *dims: Int
-](a: Tensor[DType.bool, *dims], b: Tensor[DType.bool, *dims]) raises -> Tensor[
-    DType.bool, *dims
-]:
+    LayoutType: TensorLayout
+](
+    a: Tensor[DType.bool, LayoutType], b: Tensor[DType.bool, LayoutType]
+) raises -> Tensor[DType.bool, LayoutType]:
     """`a and b`, elementwise. `numpy.logical_and`."""
-    return _compare[DType.bool, *dims, step=_and_step](a, b)
+    return _compare[DType.bool, LayoutType, step=_and_step](a, b)
 
 
 def logical_or[
-    *dims: Int
-](a: Tensor[DType.bool, *dims], b: Tensor[DType.bool, *dims]) raises -> Tensor[
-    DType.bool, *dims
-]:
+    LayoutType: TensorLayout
+](
+    a: Tensor[DType.bool, LayoutType], b: Tensor[DType.bool, LayoutType]
+) raises -> Tensor[DType.bool, LayoutType]:
     """`a or b`, elementwise. `numpy.logical_or`."""
-    return _compare[DType.bool, *dims, step=_or_step](a, b)
+    return _compare[DType.bool, LayoutType, step=_or_step](a, b)
 
 
 def logical_xor[
-    *dims: Int
-](a: Tensor[DType.bool, *dims], b: Tensor[DType.bool, *dims]) raises -> Tensor[
-    DType.bool, *dims
-]:
+    LayoutType: TensorLayout
+](
+    a: Tensor[DType.bool, LayoutType], b: Tensor[DType.bool, LayoutType]
+) raises -> Tensor[DType.bool, LayoutType]:
     """`a xor b`, elementwise. `numpy.logical_xor`."""
-    return _compare[DType.bool, *dims, step=_xor_step](a, b)
+    return _compare[DType.bool, LayoutType, step=_xor_step](a, b)
 
 
 def logical_not[
-    *dims: Int
-](a: Tensor[DType.bool, *dims]) raises -> Tensor[DType.bool, *dims]:
+    LayoutType: TensorLayout
+](a: Tensor[DType.bool, LayoutType]) raises -> Tensor[DType.bool, LayoutType]:
     """`not a`, elementwise. `numpy.logical_not`."""
-    return _predicate[DType.bool, *dims, step=_not_step](a)
+    return _predicate[DType.bool, LayoutType, step=_not_step](a)
 
 
-def all[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
+def all[
+    LayoutType: TensorLayout
+](a: Tensor[DType.bool, LayoutType]) raises -> Bool:
     """Whether every element is true. `numpy.all`.
 
     Short-circuits on the first false, which is why this is tier 2. This
@@ -303,65 +306,67 @@ def all[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
     for the name a NumPy caller actually reaches for.
     """
     var values = a.to_host()
-    for i in range(_product[*dims]()):
+    for i in range(a.size()):
         if not values[i]:
             return False
     return True
 
 
-def any[*dims: Int](a: Tensor[DType.bool, *dims]) raises -> Bool:
+def any[
+    LayoutType: TensorLayout
+](a: Tensor[DType.bool, LayoutType]) raises -> Bool:
     """Whether any element is true. `numpy.any`. Short-circuits, tier 2.
     Hides the builtin `any` in an importing file, like `all` above."""
     var values = a.to_host()
-    for i in range(_product[*dims]()):
+    for i in range(a.size()):
         if values[i]:
             return True
     return False
 
 
 def isclose[
-    dtype: DType, *dims: Int
+    dtype: DType, LayoutType: TensorLayout
 ](
-    a: Tensor[dtype, *dims],
-    b: Tensor[dtype, *dims],
+    a: Tensor[dtype, LayoutType],
+    b: Tensor[dtype, LayoutType],
     rtol: Scalar[dtype] = 1e-5,
     atol: Scalar[dtype] = 1e-8,
-) raises -> Tensor[DType.bool, *dims] where dtype.is_floating_point():
+) raises -> Tensor[DType.bool, LayoutType] where dtype.is_floating_point():
     """Which elements are within `atol + rtol * abs(b)`. `numpy.isclose`.
 
     Tolerances are runtime values, so this is a host walk rather than a
     `zip_to` -- a `thin` step cannot close over them.
     """
-    comptime n = _product[*dims]()
+    var n = a.size()
     var a_values = a.to_host()
     var b_values = b.to_host()
     var out = List[Scalar[DType.bool]](length=n, fill=False)
     for i in range(n):
         var diff = abs(a_values[i] - b_values[i])
         out[i] = diff <= atol + rtol * abs(b_values[i])
-    return Tensor[DType.bool, *dims](a.context(), out^)
+    return Tensor[DType.bool, LayoutType](a.context(), a.layout, out^)
 
 
 def allclose[
-    dtype: DType, *dims: Int
+    dtype: DType, LayoutType: TensorLayout
 ](
-    a: Tensor[dtype, *dims],
-    b: Tensor[dtype, *dims],
+    a: Tensor[dtype, LayoutType],
+    b: Tensor[dtype, LayoutType],
     rtol: Scalar[dtype] = 1e-5,
     atol: Scalar[dtype] = 1e-8,
 ) raises -> Bool where dtype.is_floating_point():
     """Whether every element is within tolerance. `numpy.allclose`."""
-    var close = isclose[dtype, *dims](a, b, rtol, atol)
-    return all[*dims](close)
+    var close = isclose[dtype, LayoutType](a, b, rtol, atol)
+    return all[LayoutType](close)
 
 
 def array_equal[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Bool:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Bool:
     """Whether every element is exactly equal. `numpy.array_equal`.
 
     Exact, so NaN compares unequal to itself and two tensors of NaN are not
     equal -- matching NumPy.
     """
-    var same = equal[dtype, *dims](a, b)
-    return all[*dims](same)
+    var same = equal[dtype, LayoutType](a, b)
+    return all[LayoutType](same)

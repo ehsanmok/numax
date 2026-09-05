@@ -41,6 +41,8 @@ from .core.constants import e, e_at, pi, pi_at
 # The tensor, its creation and manipulation surface, and the seam to
 # `Array[T, n]`.
 from .core.array import (
+    Dynamic,
+    Shaped,
     Tensor,
     arange,
     concatenate,

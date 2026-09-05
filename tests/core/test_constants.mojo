@@ -18,7 +18,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Tensor
+from numax.core.array import Shaped, Tensor
 from numax.core.constants import e, e_at, pi, pi_at
 from numax.core.logic import all, any
 from numax.core.ops import invert
@@ -84,7 +84,7 @@ def test_invert_is_bitwise_not() raises:
     values.append(0)
     values.append(1)
     values.append(-1)
-    var a = Tensor[DType.int32, 3](ctx, values^)
+    var a = Shaped[DType.int32, 3](ctx, values^)
     var inverted = invert(a).to_host()
     assert_equal(Int(inverted[0]), -1)
     assert_equal(Int(inverted[1]), -2)

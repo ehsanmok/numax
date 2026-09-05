@@ -12,6 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.array import (
+    Shaped,
     Tensor,
     arange,
     concatenate,
@@ -131,7 +132,7 @@ def test_empty_like_matches_source_shape() raises:
     var ctx = DeviceContext(api="cpu")
     var src = zeros[dtype, 2, 2](ctx)
     var _unused = empty_like(src)
-    assert_equal(Tensor[dtype, 2, 2].num_elements, src.num_elements)
+    assert_equal(Shaped[dtype, 2, 2].num_elements, src.num_elements)
 
 
 def test_transpose_swaps_rows_and_columns() raises:

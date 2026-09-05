@@ -11,7 +11,7 @@ over `TileTensor` -- not a competing array type. Any array-level work in
 numax builds as a thin layer over `TileTensor`, because that is what every
 MAX kernel already takes.
 
-**One tensor type, CPU and GPU.** `Tensor[dtype, *dims]` is the only owning
+**One tensor type, CPU and GPU.** `Shaped[dtype, *dims]` is the only owning
 tensor in `numax`, and it works on either kind of device because its storage
 is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
 `DeviceContext(api="cpu")` and the buffer is host memory, pass
@@ -117,6 +117,7 @@ from std.collections import Array
 
 from max.gpu.host import DeviceBuffer, DeviceContext
 from layout import Coord, TileTensor
+from layout.coord import DynamicCoord
 from layout.tile_layout import row_major, TensorLayout
 from linalg.transpose import transpose as _max_transpose
 
@@ -139,26 +140,60 @@ def _product[*dims: Int]() -> Int:
     return p
 
 
-struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
-    """An owned `DeviceBuffer` paired with a compile-time row-major layout.
+comptime _LayoutOf[*dims: Int] = type_of(row_major[*dims]())
+"""The row-major layout type of a compile-time shape."""
+
+comptime _DynLayoutOf[rank: Int] = type_of(
+    row_major(DynamicCoord[DType.int64, rank]())
+)
+"""The row-major layout type of a rank-`rank` shape carried at run time.
+
+Static and dynamic are two spellings rather than one with a sentinel extent
+because a sentinel makes staticness depend on a parameter's *value*: under a
+generic `*dims` the compiler cannot decide whether `dims[i] >= 0`, so every
+generic wrapper -- `zeros_like`, and any caller's own -- would have to
+restate a `where` clause to say so. Keeping the two apart makes the answer
+structural, and a shape that is static in some axes and dynamic in others is
+still expressible by naming its layout type directly.
+"""
+
+
+def _dyn_shape[rank: Int](*extents: Int) -> DynamicCoord[DType.int64, rank]:
+    """A rank-`rank` shape coordinate holding `extents`."""
+    var shape = DynamicCoord[DType.int64, rank]()
+    comptime for i in range(rank):
+        shape[i] = rebind[DynamicCoord[DType.int64, rank].element_types[i]](
+            Scalar[DType.int64](extents[i])
+        )
+    return shape
+
+
+struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
+    """An owned `DeviceBuffer` paired with a row-major layout.
 
     The one owning tensor type in `numax`, on CPU and GPU alike -- see this
     module's docstring for why the wrapper exists and how the device is
-    chosen. `dims` is the shape, exactly as passed to the factory function
-    that built this (`Tensor[dtype, 4, 4]` for a 4x4 matrix); `rank` and
-    `num_elements` are derived from it at compile time.
+    chosen. The shape lives in `LayoutType`, one dimension at a time: an
+    extent compiled in as a `ComptimeInt` is known to every `where` clause
+    and every kernel launch, one carried as a `Scalar` is read at run time.
+    `Shaped[dtype, 4, 4]` names the fully-static case and
+    `Dynamic[dtype, 2]` a matrix whose extents arrive at run time, both of
+    them this same type.
+
+    `num_elements` is the compile-time element count and is only meaningful
+    when `LayoutType.all_dims_known`; `size()` is the run-time count and is
+    correct either way.
 
     Conforms to `Writable`, so `print(a)` works; `a.format(precision=8)`
     is the same output with the precision and truncation under the
     caller's control.
     """
 
-    comptime layout = row_major[*Self.dims]()
-    comptime LayoutType = type_of(Self.layout)
-    comptime rank = Self.dims.__len__()
-    comptime num_elements = _product[*Self.dims]()
+    comptime rank = Self.LayoutType.rank
+    comptime num_elements = Self.LayoutType.static_product
 
     var buffer: DeviceBuffer[Self.dtype]
+    var layout: Self.LayoutType
     var host_addressable: Bool
     """Whether this tensor's storage can be read through a plain host
     pointer -- true on a CPU context, false on a discrete GPU.
@@ -170,8 +205,41 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
     the fast path is only ever taken where it is unconditionally safe.
     """
 
+    @staticmethod
+    def _static_layout() raises -> Self.LayoutType:
+        """The layout of a fully compile-time shape, which needs nothing at
+        run time to build.
+
+        Raises on a run-time-shaped `LayoutType`, where the extents are not
+        in the type to read: those tensors are built from a layout, which is
+        what `zeros_dyn` and its siblings pass. The check is a comptime
+        constant folded away in either case, and is a raise rather than a
+        `where` clause because a constraint on `all_dims_known` cannot be
+        discharged from inside a function generic over the shape -- every
+        wrapper up the call chain would have to restate it.
+        """
+        if not Self.LayoutType.all_dims_known:
+            raise Error(
+                "shape is not compile-time; build this tensor from a layout"
+            )
+        return rebind[Self.LayoutType](
+            row_major(Coord[*Self.LayoutType._shape_types]())
+        )
+
     def __init__(out self, ctx: DeviceContext) raises:
-        """A zero-filled tensor on `ctx`'s device.
+        """A zero-filled tensor on `ctx`'s device, at a compile-time shape.
+        See the layout-taking form below."""
+        self = Self(ctx, Self._static_layout())
+
+    def __init__(
+        out self, ctx: DeviceContext, var values: List[Scalar[Self.dtype]]
+    ) raises:
+        """A tensor on `ctx`'s device holding `values`, row-major, at a
+        compile-time shape."""
+        self = Self(ctx, Self._static_layout(), values^)
+
+    def __init__(out self, ctx: DeviceContext, layout: Self.LayoutType) raises:
+        """A zero-filled tensor on `ctx`'s device with the given layout.
 
         Zeroing is `ctx.enqueue_memset`, which runs on the device rather
         than staging a host write, so this is the cheap constructor on both
@@ -199,23 +267,28 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         a read immediately after construction can see unwritten memory
         (caught by `tests/core/test_array.mojo`'s zero-content check).
         """
-        self.buffer = ctx.enqueue_create_buffer[Self.dtype](Self.num_elements)
+        self.layout = layout
+        self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
         self.host_addressable = ctx.api() == "cpu"
         ctx.enqueue_memset(self.buffer, Scalar[Self.dtype](0))
         ctx.synchronize()
 
     def __init__(
-        out self, ctx: DeviceContext, var values: List[Scalar[Self.dtype]]
+        out self,
+        ctx: DeviceContext,
+        layout: Self.LayoutType,
+        var values: List[Scalar[Self.dtype]],
     ) raises:
         """A tensor on `ctx`'s device holding `values`, row-major.
 
-        `values` must have exactly `Self.num_elements` entries; this is the
+        `values` must have exactly `layout.size()` entries; this is the
         escape hatch the host-filled factory functions below funnel through.
         """
-        self.buffer = ctx.enqueue_create_buffer[Self.dtype](Self.num_elements)
+        self.layout = layout
+        self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
         self.host_addressable = ctx.api() == "cpu"
         with self.buffer.map_to_host() as host:
-            for i in range(Self.num_elements):
+            for i in range(layout.size()):
                 host[i] = values[i]
 
     def context(self) raises -> DeviceContext:
@@ -226,10 +299,18 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         """
         return self.buffer.context()
 
-    @staticmethod
-    def dim[i: Int]() -> Int:
-        """The compile-time extent of axis `i`."""
-        return Self.dims[i]
+    def size(self) -> Int:
+        """The element count, read from the layout.
+
+        Correct whether or not the shape is fully compile-time; the
+        `num_elements` alias is the comptime answer and is only meaningful
+        when `LayoutType.all_dims_known`.
+        """
+        return self.layout.size()
+
+    def dim[i: Int](self) -> Int:
+        """The extent of axis `i`."""
+        return Int(self.layout.shape[i]().value())
 
     def view(mut self) -> TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin]:
         """A `TileTensor` view over this tensor's storage.
@@ -241,7 +322,7 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         """
         var v: TileTensor[
             Self.dtype, Self.LayoutType, MutAnyOrigin
-        ] = TileTensor(self.buffer, Self.layout)
+        ] = TileTensor(self.buffer, self.layout)
         return v
 
     @staticmethod
@@ -271,10 +352,11 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         """
         var device = _context(ctx)
         var src = v.ptr_at_offset(Coord(0))
-        var values = List[Scalar[Self.dtype]](capacity=Self.num_elements)
-        for i in range(Self.num_elements):
+        var n = v.layout.size()
+        var values = List[Scalar[Self.dtype]](capacity=n)
+        for i in range(n):
             values.append(src[unsafe_offset=i])
-        return Self(device, values^)
+        return Self(device, v.layout, values^)
 
     def to_host(self) raises -> List[Scalar[Self.dtype]]:
         """A host copy of every element, row-major.
@@ -283,9 +365,10 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         regardless of device -- see this module's docstring for why
         `DeviceBuffer.unsafe_ptr()` alone is not a safe substitute.
         """
-        var out = List[Scalar[Self.dtype]](capacity=Self.num_elements)
+        var n = self.size()
+        var out = List[Scalar[Self.dtype]](capacity=n)
         with self.buffer.map_to_host() as host:
-            for i in range(Self.num_elements):
+            for i in range(n):
                 out.append(host[i])
         return out^
 
@@ -306,16 +389,16 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
         """`a[r, c]` on a rank-2 tensor, row-major.
 
         The same read as the flat `a[r * cols + c]`, spelled the way the
-        shape is. Rank-2 only -- `Self.dims[1]` is a compile-time error on
+        shape is. Rank-2 only -- axis `1` is a compile-time error on
         a rank-1 tensor, so a wrong-rank call fails where it is written.
         `.view()[i, j, k]` is the general form, and the same per-access
         mapping cost applies on a GPU.
         """
-        return self[r * Self.dims[1] + c]
+        return self[r * self.dim[1]() + c]
 
     def __setitem__(mut self, r: Int, c: Int, value: Scalar[Self.dtype]) raises:
         """`a[r, c] = v` on a rank-2 tensor. See `__getitem__` above."""
-        self[r * Self.dims[1] + c] = value
+        self[r * self.dim[1]() + c] = value
 
     def __setitem__(mut self, i: Int, value: Scalar[Self.dtype]) raises:
         """Flat (row-major) element assignment.
@@ -408,13 +491,31 @@ struct Tensor[dtype: DType, *dims: Int](Movable, Writable):
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from a host buffer, row-major.
 
-        `values` must have exactly `Self.num_elements` entries. On a GPU
+        `values` must have exactly `size()` entries. On a GPU
         context the write is flushed to the device when the mapping scope
         exits, which is inside this call.
         """
+        var n = self.size()
         with self.buffer.map_to_host() as host:
-            for i in range(Self.num_elements):
+            for i in range(n):
                 host[i] = values[i]
+
+
+comptime Shaped[dtype: DType, *dims: Int] = Tensor[dtype, _LayoutOf[*dims]]
+"""`Tensor` at a compile-time shape: `Shaped[f32, 2, 3]` is a 2x3.
+
+The struct's own name cannot double as this alias, so a signature that
+names a shape spells `Shaped`; the factories take the same `*dims`.
+"""
+
+comptime Dynamic[dtype: DType, rank: Int] = Tensor[dtype, _DynLayoutOf[rank]]
+"""`Tensor` at a rank that is compile-time and extents that are not:
+`Dynamic[f32, 2]` is a matrix whose shape is a constructor argument.
+
+`zeros_dyn` and its siblings build one. The name differs from `Shaped`
+rather than overloading it because a parameter list of extents and a
+parameter list holding only a rank cannot be told apart at a call site.
+"""
 
 
 def _context(ctx: Optional[DeviceContext]) raises -> DeviceContext:
@@ -431,41 +532,84 @@ def _context(ctx: Optional[DeviceContext]) raises -> DeviceContext:
 
 def zeros[
     dtype: DType, *dims: Int
-](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `0`."""
-    return Tensor[dtype, *dims](_context(ctx))
+    return Shaped[dtype, *dims](_context(ctx))
+
+
+def zeros_dyn[
+    dtype: DType, rank: Int
+](*extents: Int, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
+    dtype, rank
+]:
+    """A new zero-filled tensor of rank `rank` whose extents are `extents`.
+
+    The run-time-shaped sibling of `zeros`: `zeros_dyn[f32, 2](rows, cols)`
+    where `zeros[f32, 4, 3]()` would have compiled the shape in.
+    """
+    return Dynamic[dtype, rank](
+        _context(ctx), row_major(_dyn_shape[rank](*extents))
+    )
 
 
 def ones[
     dtype: DType, *dims: Int
-](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `1`."""
     return full[dtype, *dims](1, ctx=ctx)
+
+
+def ones_dyn[
+    dtype: DType, rank: Int
+](*extents: Int, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
+    dtype, rank
+]:
+    """A new one-filled tensor sized by `extents`; see `zeros_dyn`."""
+    return _filled(zeros_dyn[dtype, rank](*extents, ctx=ctx), 1)
+
+
+def _filled[
+    dtype: DType, LayoutType: TensorLayout
+](
+    var result: Tensor[dtype, LayoutType], fill_value: Scalar[dtype]
+) raises -> Tensor[dtype, LayoutType]:
+    """`result` overwritten with `fill_value` on its own device.
+
+    The fill is `enqueue_memset`, so it runs on the device rather than
+    staging a host write -- the same reason `zeros` is cheap on both paths.
+    """
+    var device = result.context()
+    device.enqueue_memset(result.buffer, fill_value)
+    device.synchronize()
+    return result^
 
 
 def full[
     dtype: DType, *dims: Int
 ](
     fill_value: Scalar[dtype], ctx: Optional[DeviceContext] = None
-) raises -> Tensor[dtype, *dims]:
+) raises -> Shaped[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
-    filled with `fill_value`.
+    filled with `fill_value`."""
+    return _filled(zeros[dtype, *dims](ctx), fill_value)
 
-    The fill is `enqueue_memset`, so it runs on the device rather than
-    staging a host write -- the same reason `zeros` is cheap on both paths.
-    """
-    var device = _context(ctx)
-    var result = Tensor[dtype, *dims](device)
-    device.enqueue_memset(result.buffer, fill_value)
-    device.synchronize()
-    return result^
+
+def full_dyn[
+    dtype: DType, rank: Int
+](
+    fill_value: Scalar[dtype],
+    *extents: Int,
+    ctx: Optional[DeviceContext] = None,
+) raises -> Dynamic[dtype, rank]:
+    """A new `fill_value`-filled tensor sized by `extents`; see `zeros_dyn`."""
+    return _filled(zeros_dyn[dtype, rank](*extents, ctx=ctx), fill_value)
 
 
 def empty[
     dtype: DType, *dims: Int
-](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:
     """A new tensor of the given compile-time shape, its contents unspecified.
 
     Unlike NumPy's `empty`, this zero-initializes rather than truly leaving
@@ -474,17 +618,27 @@ def empty[
     here. Callers that write every element before reading (the usual reason
     to reach for `empty` at all) pay nothing extra in practice.
     """
-    return Tensor[dtype, *dims](_context(ctx))
+    return Shaped[dtype, *dims](_context(ctx))
+
+
+def empty_dyn[
+    dtype: DType, rank: Int
+](*extents: Int, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
+    dtype, rank
+]:
+    """A new tensor sized by `extents`; see `empty` for why this
+    zero-initializes rather than leaving memory uninitialized."""
+    return zeros_dyn[dtype, rank](*extents, ctx=ctx)
 
 
 def eye[
     n: Int, dtype: DType = DType.float64
-](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, n, n]:
     """The `n`x`n` identity matrix."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = 1
-    return Tensor[dtype, n, n](_context(ctx), values^)
+    return Shaped[dtype, n, n](_context(ctx), values^)
 
 
 def linspace[
@@ -493,7 +647,7 @@ def linspace[
     start: Float64,
     stop: Float64,
     ctx: Optional[DeviceContext] = None,
-) raises -> Tensor[dtype, num]:
+) raises -> Shaped[dtype, num]:
     """`num` evenly spaced values from `start` to `stop`, inclusive of both.
 
     Matches `numpy.linspace`'s default `endpoint=True`. `num == 1` returns
@@ -516,7 +670,7 @@ def linspace[
         var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(lo + Scalar[dtype](i) * step)
-    return Tensor[dtype, num](_context(ctx), values^)
+    return Shaped[dtype, num](_context(ctx), values^)
 
 
 def logspace[
@@ -526,7 +680,7 @@ def logspace[
     stop: Float64,
     base: Float64 = 10,
     ctx: Optional[DeviceContext] = None,
-) raises -> Tensor[dtype, num]:
+) raises -> Shaped[dtype, num]:
     """`num` values evenly spaced on a log scale: `base**x` for `x` in
     `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults.
 
@@ -541,7 +695,7 @@ def logspace[
         var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(b ** (lo + Scalar[dtype](i) * step))
-    return Tensor[dtype, num](_context(ctx), values^)
+    return Shaped[dtype, num](_context(ctx), values^)
 
 
 def arange[
@@ -550,7 +704,7 @@ def arange[
     start: Float64 = 0,
     step: Float64 = 1,
     ctx: Optional[DeviceContext] = None,
-) raises -> Tensor[dtype, num]:
+) raises -> Shaped[dtype, num]:
     """`num` values starting at `start`, spaced by `step`.
 
     `numpy.arange` takes a `stop` and derives the count from it, which makes
@@ -564,45 +718,45 @@ def arange[
     var values = List[Scalar[dtype]](capacity=num)
     for i in range(num):
         values.append(first + Scalar[dtype](i) * by)
-    return Tensor[dtype, num](_context(ctx), values^)
+    return Shaped[dtype, num](_context(ctx), values^)
 
 
 def zeros_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
     """A new zero-filled tensor with `a`'s dtype, shape and device."""
-    return zeros[dtype, *dims](a.context())
+    return Tensor[dtype, LayoutType](a.context(), a.layout)
 
 
 def ones_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
     """A new one-filled tensor with `a`'s dtype, shape and device."""
-    return ones[dtype, *dims](a.context())
+    return full_like(a, 1)
 
 
 def full_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], fill_value: Scalar[dtype]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], fill_value: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """A new `fill_value`-filled tensor with `a`'s dtype, shape and device."""
-    return full[dtype, *dims](fill_value, ctx=a.context())
+    return _filled(zeros_like(a), fill_value)
 
 
 def empty_like[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
     """A new tensor with `a`'s dtype, shape and device; see `empty`'s own
     docstring for why this zero-initializes rather than leaving memory
     uninitialized.
     """
-    return empty[dtype, *dims](a.context())
+    return zeros_like(a)
 
 
 def transpose[
     dtype: DType, rows: Int, cols: Int
-](mut a: Tensor[dtype, rows, cols]) raises -> Tensor[dtype, cols, rows]:
+](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, cols, rows]:
     """An owned-copy transpose of a 2D tensor, on `a`'s own device.
 
     The permutation itself is `linalg.transpose` -- MAX's own kernel, which
@@ -623,7 +777,7 @@ def transpose[
     source, or to feed something that wants a plain `Tensor`).
     """
     var ctx = a.context()
-    var result = Tensor[dtype, cols, rows](ctx)
+    var result = Shaped[dtype, cols, rows](ctx)
     var src = a.view()
     var dst = result.view()
     var perms = List[Int]()
@@ -636,21 +790,21 @@ def transpose[
 
 def squeeze[
     dtype: DType, n: Int
-](a: Tensor[dtype, 1, n]) raises -> Tensor[dtype, n]:
+](a: Shaped[dtype, 1, n]) raises -> Shaped[dtype, n]:
     """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
-    return Tensor[dtype, n](a.context(), a.to_host())
+    return Shaped[dtype, n](a.context(), a.to_host())
 
 
 def squeeze[
     dtype: DType, n: Int
-](a: Tensor[dtype, n, 1]) raises -> Tensor[dtype, n]:
+](a: Shaped[dtype, n, 1]) raises -> Shaped[dtype, n]:
     """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
-    return Tensor[dtype, n](a.context(), a.to_host())
+    return Shaped[dtype, n](a.context(), a.to_host())
 
 
 def stack[
     dtype: DType, n: Int
-](a: Tensor[dtype, n], b: Tensor[dtype, n]) raises -> Tensor[dtype, 2, n]:
+](a: Shaped[dtype, n], b: Shaped[dtype, n]) raises -> Shaped[dtype, 2, n]:
     """Stack two same-shaped rank-1 tensors along a new leading axis
     (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
 
@@ -669,12 +823,12 @@ def stack[
         values.append(a_values[i])
     for i in range(n):
         values.append(b_values[i])
-    return Tensor[dtype, 2, n](a.context(), values^)
+    return Shaped[dtype, 2, n](a.context(), values^)
 
 
 def reshape[
     dtype: DType, n: Int, rows: Int, cols: Int
-](a: Tensor[dtype, n]) raises -> Tensor[dtype, rows, cols] where (
+](a: Shaped[dtype, n]) raises -> Shaped[dtype, rows, cols] where (
     rows * cols == n
 ):
     """A rank-2 copy of a rank-1 tensor, in row-major order.
@@ -692,22 +846,24 @@ def reshape[
     same shape for the same kind of reason. `ravel` is the inverse, and the
     two compose into any reshape this module can express.
     """
-    return Tensor[dtype, rows, cols](a.context(), a.to_host())
+    return Shaped[dtype, rows, cols](a.context(), a.to_host())
 
 
 def reshape[
     dtype: DType, n: Int, d0: Int, d1: Int, d2: Int
-](a: Tensor[dtype, n]) raises -> Tensor[dtype, d0, d1, d2] where (
+](a: Shaped[dtype, n]) raises -> Shaped[dtype, d0, d1, d2] where (
     d0 * d1 * d2 == n
 ):
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
-    return Tensor[dtype, d0, d1, d2](a.context(), a.to_host())
+    return Shaped[dtype, d0, d1, d2](a.context(), a.to_host())
 
 
 def ravel[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, _product[*dims]()]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Shaped[
+    dtype, LayoutType.static_product
+]:
     """A rank-1 copy in row-major order -- the inverse of `reshape`.
 
     `Tensor` owns its storage and Mojo will not let a field be moved out of
@@ -716,12 +872,12 @@ def ravel[
     reason; `TileTensor.reshape()` is the zero-copy view when the result
     does not need to outlive its source.
     """
-    return Tensor[dtype, _product[*dims]()](a.context(), a.to_host())
+    return Shaped[dtype, LayoutType.static_product](a.context(), a.to_host())
 
 
 def concatenate[
     dtype: DType, n: Int, m: Int
-](a: Tensor[dtype, n], b: Tensor[dtype, m]) raises -> Tensor[dtype, n + m]:
+](a: Shaped[dtype, n], b: Shaped[dtype, m]) raises -> Shaped[dtype, n + m]:
     """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
 
     Rank-1 only, for the same reason `stack` takes exactly two rank-1
@@ -744,13 +900,13 @@ def concatenate[
         values.append(a_values[i])
     for i in range(m):
         values.append(b_values[i])
-    return Tensor[dtype, n + m](a.context(), values^)
+    return Shaped[dtype, n + m](a.context(), values^)
 
 
 def split[
     dtype: DType, n: Int, at: Int
-](a: Tensor[dtype, n]) raises -> Tuple[
-    Tensor[dtype, at], Tensor[dtype, n - at]
+](a: Shaped[dtype, n]) raises -> Tuple[
+    Shaped[dtype, at], Shaped[dtype, n - at]
 ] where (at >= 0 and at <= n):
     """Cut a rank-1 tensor in two at comptime index `at`: elements
     `[0, at)` and `[at, n)`. The inverse of `concatenate`.
@@ -769,8 +925,8 @@ def split[
     for i in range(at, n):
         tail.append(values[i])
     return (
-        Tensor[dtype, at](ctx, head^),
-        Tensor[dtype, n - at](ctx, tail^),
+        Shaped[dtype, at](ctx, head^),
+        Shaped[dtype, n - at](ctx, tail^),
     )
 
 
@@ -780,7 +936,7 @@ def geomspace[
     start: Float64,
     stop: Float64,
     ctx: Optional[DeviceContext] = None,
-) raises -> Tensor[dtype, num] where dtype.is_floating_point():
+) raises -> Shaped[dtype, num] where dtype.is_floating_point():
     """`num` values spaced evenly on a geometric progression, endpoints
     included. `numpy.geomspace`.
 
@@ -798,12 +954,12 @@ def geomspace[
         for _ in range(num):
             values.append(current)
             current = current * Scalar[dtype](ratio)
-    return Tensor[dtype, num](_context(ctx), values^)
+    return Shaped[dtype, num](_context(ctx), values^)
 
 
 def identity[
     n: Int, dtype: DType = DType.float64
-](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, n, n]:
     """The `n`x`n` identity matrix. `numpy.identity`.
 
     Same result as `eye`; both names exist in NumPy and a caller reaching
@@ -814,7 +970,7 @@ def identity[
 
 def diag[
     dtype: DType, n: Int
-](a: Tensor[dtype, n]) raises -> Tensor[dtype, n, n]:
+](a: Shaped[dtype, n]) raises -> Shaped[dtype, n, n]:
     """A square matrix with `a` on its main diagonal. `numpy.diag`.
 
     The vector-to-matrix direction only; `diagonal` is the inverse.
@@ -823,73 +979,73 @@ def diag[
     var source = a.to_host()
     for i in range(n):
         values[i * n + i] = source[i]
-    return Tensor[dtype, n, n](a.context(), values^)
+    return Shaped[dtype, n, n](a.context(), values^)
 
 
 def diagonal[
     dtype: DType, n: Int
-](a: Tensor[dtype, n, n]) raises -> Tensor[dtype, n]:
+](a: Shaped[dtype, n, n]) raises -> Shaped[dtype, n]:
     """The main diagonal of a square matrix. `numpy.diagonal`."""
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(source[i * n + i])
-    return Tensor[dtype, n](a.context(), values^)
+    return Shaped[dtype, n](a.context(), values^)
 
 
 def diagflat[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, _product[*dims](), _product[*dims]()
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Shaped[
+    dtype, LayoutType.static_product, LayoutType.static_product
 ]:
     """`a` flattened onto the diagonal of a square matrix.
     `numpy.diagflat`."""
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = source[i]
-    return Tensor[dtype, n, n](a.context(), values^)
+    return Shaped[dtype, n, n](a.context(), values^)
 
 
 def tri[
     dtype: DType, n: Int
-](ctx: Optional[DeviceContext] = None) raises -> Tensor[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, n, n]:
     """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for r in range(n):
         for c in range(r + 1):
             values[r * n + c] = 1
-    return Tensor[dtype, n, n](_context(ctx), values^)
+    return Shaped[dtype, n, n](_context(ctx), values^)
 
 
 def tril[
     dtype: DType, n: Int
-](a: Tensor[dtype, n, n]) raises -> Tensor[dtype, n, n]:
+](a: Shaped[dtype, n, n]) raises -> Shaped[dtype, n, n]:
     """`a` with everything above the diagonal zeroed. `numpy.tril`."""
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for r in range(n):
         for c in range(r + 1):
             values[r * n + c] = source[r * n + c]
-    return Tensor[dtype, n, n](a.context(), values^)
+    return Shaped[dtype, n, n](a.context(), values^)
 
 
 def triu[
     dtype: DType, n: Int
-](a: Tensor[dtype, n, n]) raises -> Tensor[dtype, n, n]:
+](a: Shaped[dtype, n, n]) raises -> Shaped[dtype, n, n]:
     """`a` with everything below the diagonal zeroed. `numpy.triu`."""
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for r in range(n):
         for c in range(r, n):
             values[r * n + c] = source[r * n + c]
-    return Tensor[dtype, n, n](a.context(), values^)
+    return Shaped[dtype, n, n](a.context(), values^)
 
 
 def vander[
     dtype: DType, n: Int, cols: Int
-](a: Tensor[dtype, n]) raises -> Tensor[
+](a: Shaped[dtype, n]) raises -> Shaped[
     dtype, n, cols
 ] where dtype.is_floating_point():
     """The Vandermonde matrix of `a`: `out[i, j] = a[i] ** (cols - 1 - j)`.
@@ -901,13 +1057,13 @@ def vander[
         for j in range(cols):
             values[r * cols + (cols - 1 - j)] = power
             power = power * source[r]
-    return Tensor[dtype, n, cols](a.context(), values^)
+    return Shaped[dtype, n, cols](a.context(), values^)
 
 
 def meshgrid[
     dtype: DType, n: Int, m: Int
-](x: Tensor[dtype, n], y: Tensor[dtype, m]) raises -> Tuple[
-    Tensor[dtype, m, n], Tensor[dtype, m, n]
+](x: Shaped[dtype, n], y: Shaped[dtype, m]) raises -> Tuple[
+    Shaped[dtype, m, n], Shaped[dtype, m, n]
 ]:
     """Coordinate matrices from two coordinate vectors. `numpy.meshgrid`
     with its default `indexing="xy"`, so both outputs are `(m, n)`."""
@@ -921,23 +1077,23 @@ def meshgrid[
             yy[r * n + c] = ys[r]
     var ctx = x.context()
     return (
-        Tensor[dtype, m, n](ctx, xx^),
-        Tensor[dtype, m, n](ctx, yy^),
+        Shaped[dtype, m, n](ctx, xx^),
+        Shaped[dtype, m, n](ctx, yy^),
     )
 
 
-def flip[dtype: DType, n: Int](a: Tensor[dtype, n]) raises -> Tensor[dtype, n]:
+def flip[dtype: DType, n: Int](a: Shaped[dtype, n]) raises -> Shaped[dtype, n]:
     """A rank-1 tensor reversed. `numpy.flip` at `axis=0`."""
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(source[n - 1 - i])
-    return Tensor[dtype, n](a.context(), values^)
+    return Shaped[dtype, n](a.context(), values^)
 
 
 def copy[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
     """An independent copy of `a`, on `a`'s device. `numpy.copy`.
 
     `Tensor` is `Movable` and not `Copyable` on purpose -- a tensor is a
@@ -945,14 +1101,14 @@ def copy[
     that happens because a value was passed by value. This is that
     decision, spelled out.
     """
-    return Tensor[dtype, *dims](a.context(), a.to_host())
+    return Tensor[dtype, LayoutType](a.context(), a.layout, a.to_host())
 
 
 def vstack[
     dtype: DType, rows_a: Int, rows_b: Int, cols: Int
 ](
-    a: Tensor[dtype, rows_a, cols], b: Tensor[dtype, rows_b, cols]
-) raises -> Tensor[dtype, rows_a + rows_b, cols]:
+    a: Shaped[dtype, rows_a, cols], b: Shaped[dtype, rows_b, cols]
+) raises -> Shaped[dtype, rows_a + rows_b, cols]:
     """Two matrices joined along their rows. `numpy.vstack`.
 
     Row-major storage makes this the concatenating direction: the two
@@ -965,14 +1121,14 @@ def vstack[
         values.append(a_values[i])
     for i in range(rows_b * cols):
         values.append(b_values[i])
-    return Tensor[dtype, rows_a + rows_b, cols](a.context(), values^)
+    return Shaped[dtype, rows_a + rows_b, cols](a.context(), values^)
 
 
 def hstack[
     dtype: DType, rows: Int, cols_a: Int, cols_b: Int
 ](
-    a: Tensor[dtype, rows, cols_a], b: Tensor[dtype, rows, cols_b]
-) raises -> Tensor[dtype, rows, cols_a + cols_b]:
+    a: Shaped[dtype, rows, cols_a], b: Shaped[dtype, rows, cols_b]
+) raises -> Shaped[dtype, rows, cols_a + cols_b]:
     """Two matrices joined along their columns. `numpy.hstack`."""
     var a_values = a.to_host()
     var b_values = b.to_host()
@@ -984,15 +1140,18 @@ def hstack[
             values[r * (cols_a + cols_b) + cols_a + c] = b_values[
                 r * cols_b + c
             ]
-    return Tensor[dtype, rows, cols_a + cols_b](a.context(), values^)
+    return Shaped[dtype, rows, cols_a + cols_b](a.context(), values^)
 
 
 def _format_tensor[
-    dtype: DType, *dims: Int
+    dtype: DType, LayoutType: TensorLayout
 ](
-    a: Tensor[dtype, *dims], precision: Int, threshold: Int, edge_items: Int
+    a: Tensor[dtype, LayoutType],
+    precision: Int,
+    threshold: Int,
+    edge_items: Int,
 ) raises -> String:
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = a.size()
     var values = a.to_host()
     var out = String("[")
     if n <= threshold:
@@ -1033,7 +1192,7 @@ def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
 
     Rounding is only meaningful for a float; an integer or boolean tensor
     prints its elements as they are. Without the split, `print` on a
-    `Tensor[DType.int32, ...]` was a *compile* error rather than a missing
+    `Shaped[DType.int32, ...]` was a *compile* error rather than a missing
     feature, because `_round_to`'s `10.0 ** precision` requires a
     floating-point SIMD.
     """
@@ -1060,21 +1219,29 @@ def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
 
 
 def to_array[
-    T: FloatLike, dtype: DType, n: Int
-](a: Tensor[dtype, n]) raises -> Array[T, n]:
-    """A rank-1 `a`'s elements as an `Array` of `T`.
+    T: FloatLike, dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Array[T, LayoutType.static_product]:
+    """`a`'s elements as an `Array` of `T`, row-major.
 
-    The lift into the conformer layer: `numax.linalg`'s vectors,
-    `numax.signal`'s sequences and `numax.interpolate`'s nodes are all
-    `Array[T, n]`. `T` is whatever the caller wants the result computed at
-    -- `Plain` for a plain answer, `Dual` for a derivative, `Compensated`
+    The lift into the conformer layer: `numax.linalg`'s matrices and
+    vectors, `numax.signal`'s sequences and `numax.interpolate`'s nodes are
+    all `Array[T, n]`. `T` is whatever the caller wants the result computed
+    at -- `Plain` for a plain answer, `Dual` for a derivative, `Compensated`
     for precision -- and each element arrives through `T.constant`, so a
     `Dual` lifted this way carries a zero derivative until the caller seeds
     one.
 
-    Total in this direction, unlike `to_tensor`: every conformer can be
-    built from a `Float64`, but only `Plain` can be read back out to one.
+    One definition covers every rank, since an `Array` is flat and only the
+    element count matters: a rank-1 `n` and a square `n*n` both land where
+    `numax.linalg` expects them, and a rank-3 tensor lifts too.
+
+    The shape has to be compile-time -- an `Array`'s length is a parameter,
+    so there is nothing to read a run-time extent into. Name the shape with
+    `static_view` first.
     """
+    if not LayoutType.all_dims_known:
+        raise Error("shape is not compile-time; name it with static_view")
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     var out = Array[T, n](fill=T.constant(0.0))
     for i in range(n):
@@ -1082,49 +1249,26 @@ def to_array[
     return out^
 
 
-def to_array[
-    T: FloatLike, dtype: DType, n: Int
-](a: Tensor[dtype, n, n]) raises -> Array[T, n * n]:
-    """A square `a`'s elements as an `Array` of `T`, row-major.
-
-    The shape `numax.linalg` takes: every factorization, solve and norm
-    there is written against `Array[T, n * n]`. See the rank-1 overload
-    above for what `T` does.
-    """
-    var values = a.to_host()
-    var out = Array[T, n * n](fill=T.constant(0.0))
-    for i in range(n * n):
-        out[i] = T.constant(Float64(values[i]))
-    return out^
-
-
 def to_tensor[
-    dtype: DType, n: Int
+    dtype: DType, *dims: Int
 ](
-    a: Array[Plain[dtype], n], ctx: Optional[DeviceContext] = None
-) raises -> Tensor[dtype, n]:
-    """A rank-1 `Tensor` holding `a`'s elements.
+    a: Array[Plain[dtype], _LayoutOf[*dims].static_product],
+    ctx: Optional[DeviceContext] = None,
+) raises -> Shaped[dtype, *dims]:
+    """A `Tensor` of the named shape holding `a`'s elements, row-major.
 
     The way back down from the conformer layer, and `Plain`-only on
     purpose: `FloatLike` can build any conformer from a `Float64`
     (`T.constant`) but offers no way to read one back out, and there is no
     single right answer for what a `Dual` or an `Interval` would even mean
     as a tensor element. Take `.value` or `.lo`/`.hi` first, then lower.
+
+    The shape is named rather than inferred because an `Array` is flat: an
+    `Array[Plain[dtype], 4]` is as good a 2x2 as it is a rank-1 of four, and
+    only the caller knows which was meant.
     """
+    comptime n = _LayoutOf[*dims].static_product
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(a[i].v)
-    return Tensor[dtype, n](_context(ctx), values^)
-
-
-def to_tensor[
-    dtype: DType, n: Int
-](
-    a: Array[Plain[dtype], n * n], ctx: Optional[DeviceContext] = None
-) raises -> Tensor[dtype, n, n]:
-    """A square `Tensor` holding `a`'s elements, row-major. `Plain`-only,
-    for the reason the rank-1 overload above gives."""
-    var values = List[Scalar[dtype]](capacity=n * n)
-    for i in range(n * n):
-        values.append(a[i].v)
-    return Tensor[dtype, n, n](_context(ctx), values^)
+    return Shaped[dtype, *dims](_context(ctx), values^)

@@ -22,7 +22,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Compensated, Plain
-from numax.core.array import Tensor, full
+from numax.core.array import Shaped, Tensor, full
 from numax.core.numeric import FloatLike
 from numax.stats import (
     argmax,
@@ -43,13 +43,13 @@ from numax.stats import (
 comptime dtype = DType.float32
 
 
-def _fixed_array() raises -> Tensor[dtype, 6]:
+def _fixed_array() raises -> Shaped[dtype, 6]:
     var ctx = DeviceContext(api="cpu")
     var vals = [3.0, 1.0, 9.0, 2.0, 7.0, 2.0]
     var values = List[Scalar[dtype]](capacity=6)
     for i in range(6):
         values.append(Scalar[dtype](vals[i]))
-    return Tensor[dtype, 6](ctx, values^)
+    return Shaped[dtype, 6](ctx, values^)
 
 
 def test_sum_matches_hand_computed_total() raises:

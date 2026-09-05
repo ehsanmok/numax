@@ -42,12 +42,15 @@ from std.builtin.sort import sort as _std_sort
 from nn.argsort import argsort as _nn_argsort
 from std.collections import Array
 
-from .array import Tensor, _product
+from layout.tile_layout import TensorLayout
+from .array import Shaped, Tensor, _product
 
 
 def sort[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, _product[*dims]()]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Shaped[
+    dtype, LayoutType.static_product
+]:
     """A sorted rank-1 copy of `a`, ascending. `numpy.sort(a, axis=None)`.
 
     Stable, because `std.builtin.sort` is; for a plain numeric sort that
@@ -58,15 +61,15 @@ def sort[
     `axis=None` means. `numax.core.array.reshape` puts a shape back on if one
     is wanted.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     _std_sort(values)
-    return Tensor[dtype, n](a.context(), values^)
+    return Shaped[dtype, n](a.context(), values^)
 
 
 def argsort[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> List[Int]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> List[Int]:
     """The flat indices that would sort `a`, ascending.
     `numpy.argsort(a, axis=None)`.
 
@@ -78,15 +81,15 @@ def argsort[
 
     Returned as a `List[Int]` rather than a `Tensor`, because an index array
     is not a numeric tensor: nothing downstream wants to run a `FloatLike`
-    kernel over it, and giving it a `Tensor[int64, ...]` would invite exactly
+    kernel over it, and giving it a `Shaped[int64, ...]` would invite exactly
     that. The flattening is the `axis=None` contract every other routine in
     this module follows, and it is also what makes the input rank-1 the way
     `nn.argsort` requires.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var ctx = a.context()
-    var flat = Tensor[dtype, n](ctx, a.to_host())
-    var indices = Tensor[DType.int64, n](ctx)
+    var flat = Shaped[dtype, n](ctx, a.to_host())
+    var indices = Shaped[DType.int64, n](ctx)
     var flat_view = flat.view()
     var indices_view = indices.view()
     _nn_argsort(indices_view, flat_view)
@@ -100,7 +103,7 @@ def argsort[
 
 def searchsorted[
     dtype: DType, n: Int
-](sorted_values: Tensor[dtype, n], value: Scalar[dtype]) raises -> Int:
+](sorted_values: Shaped[dtype, n], value: Scalar[dtype]) raises -> Int:
     """The index where `value` would be inserted to keep `sorted_values`
     ascending. `numpy.searchsorted(a, v, side="left")`.
 
@@ -130,9 +133,9 @@ def searchsorted[
 
 
 def unique[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tuple[
-    Tensor[dtype, _product[*dims]()], Int
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tuple[
+    Shaped[dtype, LayoutType.static_product], Int
 ]:
     """The sorted distinct values of `a`, and how many there are.
 
@@ -147,29 +150,29 @@ def unique[
     right-sized but would drop out of the `Tensor` surface everything else
     in `numax.core.array` speaks.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     _std_sort(values)
     if n == 0:
-        return (Tensor[dtype, n](a.context(), values^), 0)
+        return (Shaped[dtype, n](a.context(), values^), 0)
 
     var count = 1
     for i in range(1, n):
         if values[i] != values[count - 1]:
             values[count] = values[i]
             count += 1
-    return (Tensor[dtype, n](a.context(), values^), count)
+    return (Shaped[dtype, n](a.context(), values^), count)
 
 
 def count_nonzero[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Int:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Int:
     """How many elements of `a` are not zero. `numpy.count_nonzero`.
 
     `-0.0` counts as zero (it compares equal to `0.0`), matching NumPy.
     NaN counts as nonzero, also matching NumPy, since `nan != 0`.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     var total = 0
     for i in range(n):
@@ -179,8 +182,8 @@ def count_nonzero[
 
 
 def any_nonzero[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Bool:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Bool:
     """Whether any element is nonzero. `numpy.any`.
 
     Named `any_nonzero` rather than `any` because `any` is a Mojo builtin;
@@ -190,7 +193,7 @@ def any_nonzero[
     Short-circuits, which is the point of having it rather than
     `count_nonzero(a) > 0`.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     for i in range(n):
         if values[i] != 0:
@@ -199,11 +202,11 @@ def any_nonzero[
 
 
 def all_nonzero[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Bool:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Bool:
     """Whether every element is nonzero. `numpy.all`, named for the same
     reason as `any_nonzero`. Short-circuits on the first zero."""
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     for i in range(n):
         if values[i] == 0:
@@ -212,8 +215,8 @@ def all_nonzero[
 
 
 def nonzero[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> List[Int]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> List[Int]:
     """The flat indices of the nonzero elements, ascending.
     `numpy.flatnonzero`.
 
@@ -222,7 +225,7 @@ def nonzero[
     be -- which is exactly the freedom `unique`'s `Tensor` return does not
     have.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var values = a.to_host()
     var indices = List[Int](capacity=n)
     for i in range(n):
@@ -232,10 +235,10 @@ def nonzero[
 
 
 def extract[
-    dtype: DType, *dims: Int
+    dtype: DType, LayoutType: TensorLayout
 ](
-    condition: Tensor[DType.bool, *dims], a: Tensor[dtype, *dims]
-) raises -> Tuple[Tensor[dtype, _product[*dims]()], Int]:
+    condition: Tensor[DType.bool, LayoutType], a: Tensor[dtype, LayoutType]
+) raises -> Tuple[Shaped[dtype, LayoutType.static_product], Int]:
     """The elements of `a` where `condition` is nonzero, and how many.
     `numpy.extract` / `a[mask]`.
 
@@ -244,13 +247,13 @@ def extract[
     Packed into the first `count` entries of a full-length tensor, on the
     same terms as `unique`: **read only the first `count`**.
 
-    `condition` is a `Tensor[DType.bool]` -- the type every comparison in
+    `condition` is a `Shaped[DType.bool]` -- the type every comparison in
     `numax.core.logic` already returns, so `extract(a > 0, a)` composes
     without a conversion in between. A tensor of values becomes a mask with
     `numax.core.ops.astype[DType.bool]`, which is nonzero-means-true and is
     the one place that rule now lives.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var mask = condition.to_host()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
@@ -259,16 +262,16 @@ def extract[
         if mask[i]:
             out[count] = values[i]
             count += 1
-    return (Tensor[dtype, n](a.context(), out^), count)
+    return (Shaped[dtype, n](a.context(), out^), count)
 
 
 def select[
-    dtype: DType, *dims: Int
+    dtype: DType, LayoutType: TensorLayout
 ](
-    condition: Tensor[DType.bool, *dims],
-    x: Tensor[dtype, *dims],
-    y: Tensor[dtype, *dims],
-) raises -> Tensor[dtype, *dims]:
+    condition: Tensor[DType.bool, LayoutType],
+    x: Tensor[dtype, LayoutType],
+    y: Tensor[dtype, LayoutType],
+) raises -> Tensor[dtype, LayoutType]:
     """Elementwise select: `x` where `condition` is true, `y` elsewhere.
     `numpy.where(cond, x, y)`.
 
@@ -291,11 +294,11 @@ def select[
     version reads more clearly at `Plain`. Reach for
     `numax.core.numeric.blend` when the selection has to happen inside a kernel.
     """
-    comptime n = _product[*dims]()
+    comptime n = LayoutType.static_product
     var mask = condition.to_host()
     var x_values = x.to_host()
     var y_values = y.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = x_values[i] if mask[i] else y_values[i]
-    return Tensor[dtype, *dims](x.context(), out^)
+    return Tensor[dtype, LayoutType](x.context(), condition.layout, out^)

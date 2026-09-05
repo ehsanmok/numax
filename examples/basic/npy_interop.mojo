@@ -34,7 +34,7 @@ literal to parse.
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Tensor
+from numax.core.array import Shaped, Tensor
 from numax.io import numpy
 
 comptime N_ROWS = 2
@@ -64,7 +64,7 @@ def main() raises:
     var storage = List[Scalar[DType.float32]](capacity=N_ROWS * N_COLS)
     for i in range(N_ROWS * N_COLS):
         storage.append(Scalar[DType.float32](Float64(i) * 0.5 - 1.0))
-    var xs = Tensor[DType.float32, N_ROWS, N_COLS](ctx, storage^)
+    var xs = Shaped[DType.float32, N_ROWS, N_COLS](ctx, storage^)
 
     var f32_path = String("/tmp/numax_example_f32.npy")
     numpy.save(xs, f32_path)
@@ -88,7 +88,7 @@ def main() raises:
     for i in range(4):
         f64_storage.append(Scalar[DType.float64](Float64(i) / 3.0))
     var f64_path = String("/tmp/numax_example_f64.npy")
-    numpy.save(Tensor[DType.float64, 4](ctx, f64_storage^), f64_path)
+    numpy.save(Shaped[DType.float64, 4](ctx, f64_storage^), f64_path)
     print("wrote", f64_path)
     print("  header:", _header_of(f64_path))
     var f64_back = numpy.load[DType.float64, 4](f64_path, ctx=ctx)
@@ -99,7 +99,7 @@ def main() raises:
     for i in range(4):
         i32_storage.append(Scalar[DType.int32](i * i))
     var i32_path = String("/tmp/numax_example_i32.npy")
-    numpy.save(Tensor[DType.int32, 2, 2](ctx, i32_storage^), i32_path)
+    numpy.save(Shaped[DType.int32, 2, 2](ctx, i32_storage^), i32_path)
     print("wrote", i32_path)
     print("  header:", _header_of(i32_path))
     var i32_back = numpy.load[DType.int32, 2, 2](i32_path, ctx=ctx)

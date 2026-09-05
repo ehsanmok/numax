@@ -14,7 +14,7 @@ from numax.core.tensor import map, reduce, reduce_axis   # the engine
 | `plain`, `dual`, `gradient`, `compensated`, `decimal`, `interval`, `complex` | The conformers: ordinary SIMD, forward-mode autodiff, multi-variable gradients, error-compensated arithmetic, exact base-10 fixed point, interval enclosures, complex over any of them |
 | `tensor` | `map`/`reduce`/`reduce_axis`/`reduce_rows`/`broadcast_op_rows` -- one `gpu: Bool` parameter picks CPU or GPU, comptime and runtime shapes under one name |
 | `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
-| `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Tensor[DType.bool]`, and sort/search/mask |
+| `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Shaped[DType.bool]`, and sort/search/mask |
 | `constants` | `pi` and `e` at any conformer |
 
 The conformers and `tensor` are tier 1: fixed iteration counts, no
@@ -23,6 +23,8 @@ per-lane branching, launchable inside a GPU thread. `ops`, `elementwise`,
 """
 
 from .array import (
+    Dynamic,
+    Shaped,
     Tensor,
     arange,
     concatenate,

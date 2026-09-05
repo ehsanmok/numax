@@ -17,7 +17,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core import Tensor, tanh
+from numax.core import Shaped, Tensor, tanh
 from numax import (
     abs,
     arccos,
@@ -58,12 +58,12 @@ from numax import (
 comptime dtype = DType.float64
 
 
-def _t[n: Int](values: List[Float64]) raises -> Tensor[dtype, n]:
+def _t[n: Int](values: List[Float64]) raises -> Shaped[dtype, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Tensor[dtype, n](ctx, elements^)
+    return Shaped[dtype, n](ctx, elements^)
 
 
 def test_exponentials_match_hand_computed_values() raises:
@@ -194,7 +194,7 @@ def test_clip_confines_to_the_interval() raises:
 
 def test_elementwise_preserves_rank() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Tensor[dtype, 2, 3](ctx)
+    var a = Shaped[dtype, 2, 3](ctx)
     var result = exp(a)
     assert_equal(result.num_elements, 6)
     assert_equal(result.rank, 2)

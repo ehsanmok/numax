@@ -264,10 +264,13 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit |
 | `np.random.default_rng(0)` | `Generator(seed=0)` | or `seed(0)` for the global stream |
 
-Two names to know, because they have no NumPy counterpart: `Tensor[dtype, *dims]`
-owns storage on a device and is what the array surface returns, while
+Two names to know, because they have no NumPy counterpart: `Tensor` owns
+storage on a device and is what the array surface returns, while
 `Array[T, n]` is a register-resident value generic over the `FloatLike`
-conformer, and is what `linalg`, `signal` and `interpolate` take.
+conformer, and is what `linalg`, `signal` and `interpolate` take. A
+`Tensor` carries its shape in its layout type, so `Shaped[dtype, *dims]`
+names one with the extents compiled in and `Dynamic[dtype, rank]` one with
+the extents supplied at run time.
 `to_array[T]` lifts, `to_tensor` lowers.
 
 ### One import
@@ -292,7 +295,7 @@ full flat surface, and `from numax.linalg import ...` is one subsystem.
 
 `f32`/`f64` are short for `DType.float32`/`.float64` and nothing else, so the
 same name works wherever a dtype belongs, across both layers:
-`linspace[5, f64](...)` and `Tensor[f64, 4, 4](ctx)` on the tensor side,
+`linspace[5, f64](...)` and `Shaped[f64, 4, 4](ctx)` on the tensor side,
 `Plain[f64]` and `Dual[Plain[f64]]` on the kernel side.
 
 `Plain[dtype, width]` wraps a `SIMD[dtype, width]`. Mojo declares conformance
@@ -327,7 +330,7 @@ var comp_var = variance(comp_list).value       # ~double precision, same code
 Only the context and the walk differ:
 
 ```mojo
-comptime T = Tensor[f32, 1024]
+comptime T = Shaped[f32, 1024]
 
 var cpu = DeviceContext(api="cpu")
 var xs = linspace[1024, f32](-2.0, 2.0, ctx=cpu)

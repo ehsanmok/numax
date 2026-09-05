@@ -57,36 +57,37 @@ from std.math import (
     trunc as _std_trunc,
 )
 
-from .array import Tensor, _product
+from layout.tile_layout import TensorLayout
+from .array import Shaped, Tensor, _product
 
 
 def _unary[
     dtype: DType,
-    *dims: Int,
+    LayoutType: TensorLayout,
     op: def(Scalar[dtype]) thin -> Scalar[dtype],
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
-    comptime n = _product[*dims]()
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+    var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op(values[i])
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
 
 
 def _binary[
     dtype: DType,
-    *dims: Int,
+    LayoutType: TensorLayout,
     op: def(Scalar[dtype], Scalar[dtype]) thin -> Scalar[dtype],
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
-    comptime n = _product[*dims]()
+    var n = a.size()
     var a_values = a.to_host()
     var b_values = b.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op(a_values[i], b_values[i])
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
 
 
 def _exp_op[
@@ -96,12 +97,12 @@ def _exp_op[
 
 
 def exp[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `e**x`."""
-    return _unary[dtype, *dims, op=_exp_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_exp_op[dtype]](a)
 
 
 def _exp2_op[
@@ -111,12 +112,12 @@ def _exp2_op[
 
 
 def exp2[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `2**x`."""
-    return _unary[dtype, *dims, op=_exp2_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_exp2_op[dtype]](a)
 
 
 def _expm1_op[
@@ -126,12 +127,12 @@ def _expm1_op[
 
 
 def expm1[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `e**x - 1`, accurate for small `x`."""
-    return _unary[dtype, *dims, op=_expm1_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_expm1_op[dtype]](a)
 
 
 def _log_op[
@@ -141,12 +142,12 @@ def _log_op[
 
 
 def log[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise natural logarithm."""
-    return _unary[dtype, *dims, op=_log_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_log_op[dtype]](a)
 
 
 def _log2_op[
@@ -156,12 +157,12 @@ def _log2_op[
 
 
 def log2[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise base-2 logarithm."""
-    return _unary[dtype, *dims, op=_log2_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_log2_op[dtype]](a)
 
 
 def _log10_op[
@@ -171,12 +172,12 @@ def _log10_op[
 
 
 def log10[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise base-10 logarithm."""
-    return _unary[dtype, *dims, op=_log10_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_log10_op[dtype]](a)
 
 
 def _log1p_op[
@@ -186,12 +187,12 @@ def _log1p_op[
 
 
 def log1p[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `log(1 + x)`, accurate for small `x`."""
-    return _unary[dtype, *dims, op=_log1p_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_log1p_op[dtype]](a)
 
 
 def _sqrt_op[
@@ -201,12 +202,12 @@ def _sqrt_op[
 
 
 def sqrt[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise square root."""
-    return _unary[dtype, *dims, op=_sqrt_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_sqrt_op[dtype]](a)
 
 
 def _rsqrt_op[
@@ -216,12 +217,12 @@ def _rsqrt_op[
 
 
 def rsqrt[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `1 / sqrt(x)`."""
-    return _unary[dtype, *dims, op=_rsqrt_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_rsqrt_op[dtype]](a)
 
 
 def _cbrt_op[
@@ -231,12 +232,12 @@ def _cbrt_op[
 
 
 def cbrt[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise cube root."""
-    return _unary[dtype, *dims, op=_cbrt_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_cbrt_op[dtype]](a)
 
 
 def _sin_op[
@@ -246,12 +247,12 @@ def _sin_op[
 
 
 def sin[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise sine."""
-    return _unary[dtype, *dims, op=_sin_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_sin_op[dtype]](a)
 
 
 def _cos_op[
@@ -261,12 +262,12 @@ def _cos_op[
 
 
 def cos[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise cosine."""
-    return _unary[dtype, *dims, op=_cos_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_cos_op[dtype]](a)
 
 
 def _tan_op[
@@ -276,12 +277,12 @@ def _tan_op[
 
 
 def tan[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise tangent."""
-    return _unary[dtype, *dims, op=_tan_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_tan_op[dtype]](a)
 
 
 def _arcsin_op[
@@ -291,12 +292,12 @@ def _arcsin_op[
 
 
 def arcsin[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise inverse sine. `numpy.arcsin`."""
-    return _unary[dtype, *dims, op=_arcsin_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_arcsin_op[dtype]](a)
 
 
 def _arccos_op[
@@ -306,12 +307,12 @@ def _arccos_op[
 
 
 def arccos[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise inverse cosine. `numpy.arccos`."""
-    return _unary[dtype, *dims, op=_arccos_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_arccos_op[dtype]](a)
 
 
 def _arctan_op[
@@ -321,12 +322,12 @@ def _arctan_op[
 
 
 def arctan[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise inverse tangent. `numpy.arctan`."""
-    return _unary[dtype, *dims, op=_arctan_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_arctan_op[dtype]](a)
 
 
 def _sinh_op[
@@ -336,12 +337,12 @@ def _sinh_op[
 
 
 def sinh[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise hyperbolic sine."""
-    return _unary[dtype, *dims, op=_sinh_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_sinh_op[dtype]](a)
 
 
 def _cosh_op[
@@ -351,12 +352,12 @@ def _cosh_op[
 
 
 def cosh[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise hyperbolic cosine."""
-    return _unary[dtype, *dims, op=_cosh_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_cosh_op[dtype]](a)
 
 
 def _tanh_op[
@@ -366,12 +367,12 @@ def _tanh_op[
 
 
 def tanh[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise hyperbolic tangent."""
-    return _unary[dtype, *dims, op=_tanh_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_tanh_op[dtype]](a)
 
 
 def _arcsinh_op[
@@ -381,12 +382,12 @@ def _arcsinh_op[
 
 
 def arcsinh[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise inverse hyperbolic sine. `numpy.arcsinh`."""
-    return _unary[dtype, *dims, op=_arcsinh_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_arcsinh_op[dtype]](a)
 
 
 def _arccosh_op[
@@ -396,12 +397,12 @@ def _arccosh_op[
 
 
 def arccosh[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise inverse hyperbolic cosine. `numpy.arccosh`."""
-    return _unary[dtype, *dims, op=_arccosh_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_arccosh_op[dtype]](a)
 
 
 def _arctanh_op[
@@ -411,12 +412,12 @@ def _arctanh_op[
 
 
 def arctanh[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise inverse hyperbolic tangent. `numpy.arctanh`."""
-    return _unary[dtype, *dims, op=_arctanh_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_arctanh_op[dtype]](a)
 
 
 def _floor_op[
@@ -426,12 +427,12 @@ def _floor_op[
 
 
 def floor[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise largest integer `<= x`."""
-    return _unary[dtype, *dims, op=_floor_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_floor_op[dtype]](a)
 
 
 def _ceil_op[
@@ -441,12 +442,12 @@ def _ceil_op[
 
 
 def ceil[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise smallest integer `>= x`."""
-    return _unary[dtype, *dims, op=_ceil_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_ceil_op[dtype]](a)
 
 
 def _trunc_op[
@@ -456,12 +457,12 @@ def _trunc_op[
 
 
 def trunc[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `x` rounded toward zero."""
-    return _unary[dtype, *dims, op=_trunc_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_trunc_op[dtype]](a)
 
 
 def _round_op[dtype: DType](x: Scalar[dtype]) -> Scalar[dtype]:
@@ -469,12 +470,12 @@ def _round_op[dtype: DType](x: Scalar[dtype]) -> Scalar[dtype]:
 
 
 def round[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `x` rounded to nearest, ties to even."""
-    return _unary[dtype, *dims, op=_round_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_round_op[dtype]](a)
 
 
 def _arctan2_op[
@@ -486,12 +487,12 @@ def _arctan2_op[
 
 
 def arctan2[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `atan2(a, b)`, quadrant-aware. `numpy.arctan2`."""
-    return _binary[dtype, *dims, op=_arctan2_op[dtype]](a, b)
+    return _binary[dtype, LayoutType, op=_arctan2_op[dtype]](a, b)
 
 
 def _hypot_op[
@@ -503,12 +504,12 @@ def _hypot_op[
 
 
 def hypot[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise `sqrt(a*a + b*b)` without intermediate overflow."""
-    return _binary[dtype, *dims, op=_hypot_op[dtype]](a, b)
+    return _binary[dtype, LayoutType, op=_hypot_op[dtype]](a, b)
 
 
 def _copysign_op[
@@ -520,12 +521,12 @@ def _copysign_op[
 
 
 def copysign[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise magnitude of `a` with the sign of `b`."""
-    return _binary[dtype, *dims, op=_copysign_op[dtype]](a, b)
+    return _binary[dtype, LayoutType, op=_copysign_op[dtype]](a, b)
 
 
 def _remainder_op[
@@ -537,12 +538,12 @@ def _remainder_op[
 
 
 def remainder[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """Elementwise IEEE remainder of `a` and `b`."""
-    return _binary[dtype, *dims, op=_remainder_op[dtype]](a, b)
+    return _binary[dtype, LayoutType, op=_remainder_op[dtype]](a, b)
 
 
 def _abs_op[dtype: DType](x: Scalar[dtype]) -> Scalar[dtype]:
@@ -552,8 +553,8 @@ def _abs_op[dtype: DType](x: Scalar[dtype]) -> Scalar[dtype]:
 
 
 def abs[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
     """Elementwise magnitude. `numpy.abs`.
 
     Defining `abs` here hides Mojo's builtin `abs` for the rest of this
@@ -561,7 +562,7 @@ def abs[
     caller who imports this name pays the same price in their own file,
     exactly as `from numpy import abs` does in Python.
     """
-    return _unary[dtype, *dims, op=_abs_op[dtype]](a)
+    return _unary[dtype, LayoutType, op=_abs_op[dtype]](a)
 
 
 def _maximum_op[
@@ -571,12 +572,12 @@ def _maximum_op[
 
 
 def maximum[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """Elementwise larger of the two. `numpy.maximum`."""
-    return _binary[dtype, *dims, op=_maximum_op[dtype]](a, b)
+    return _binary[dtype, LayoutType, op=_maximum_op[dtype]](a, b)
 
 
 def _minimum_op[
@@ -586,35 +587,35 @@ def _minimum_op[
 
 
 def minimum[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """Elementwise smaller of the two. `numpy.minimum`."""
-    return _binary[dtype, *dims, op=_minimum_op[dtype]](a, b)
+    return _binary[dtype, LayoutType, op=_minimum_op[dtype]](a, b)
 
 
 def clip[
-    dtype: DType, *dims: Int
+    dtype: DType, LayoutType: TensorLayout
 ](
-    a: Tensor[dtype, *dims], lo: Scalar[dtype], hi: Scalar[dtype]
-) raises -> Tensor[dtype, *dims]:
+    a: Tensor[dtype, LayoutType], lo: Scalar[dtype], hi: Scalar[dtype]
+) raises -> Tensor[dtype, LayoutType]:
     """Every element confined to `[lo, hi]`. `numpy.clip`.
 
     Bounds are runtime values, so this walks directly rather than composing
     `maximum`/`minimum` against two full tensors of the bounds.
     """
-    comptime n = _product[*dims]()
+    var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = min(max(values[i], lo), hi)
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
 
 
 def diff[
     dtype: DType, n: Int
-](a: Tensor[dtype, n]) raises -> Tensor[dtype, n - 1] where n >= 1:
+](a: Shaped[dtype, n]) raises -> Shaped[dtype, n - 1] where n >= 1:
     """First differences, `out[i] = a[i+1] - a[i]`. `numpy.diff`.
 
     Rank-1, and one element shorter than its input -- which is why the
@@ -625,12 +626,12 @@ def diff[
     var out = List[Scalar[dtype]](length=n - 1, fill=0)
     for i in range(n - 1):
         out[i] = values[i + 1] - values[i]
-    return Tensor[dtype, n - 1](a.context(), out^)
+    return Shaped[dtype, n - 1](a.context(), out^)
 
 
 def gradient[
     dtype: DType, n: Int
-](a: Tensor[dtype, n], spacing: Scalar[dtype] = 1) raises -> Tensor[
+](a: Shaped[dtype, n], spacing: Scalar[dtype] = 1) raises -> Shaped[
     dtype, n
 ] where (n >= 2):
     """Central differences interior, one-sided at the ends. `numpy.gradient`.
@@ -644,4 +645,4 @@ def gradient[
     out[n - 1] = (values[n - 1] - values[n - 2]) / spacing
     for i in range(1, n - 1):
         out[i] = (values[i + 1] - values[i - 1]) / (spacing + spacing)
-    return Tensor[dtype, n](a.context(), out^)
+    return Shaped[dtype, n](a.context(), out^)

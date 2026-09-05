@@ -25,7 +25,7 @@ so this is a local/manual example rather than a CI one -- the same reason
 from max.gpu.host import DeviceContext
 
 from numax import Plain, gaussian
-from numax.core.array import Tensor, linspace
+from numax.core.array import Shaped, Tensor, linspace
 from numax.core.tensor import map
 
 comptime dtype = DType.float32
@@ -33,7 +33,7 @@ comptime n = 1024
 comptime block_size = 256
 comptime num_blocks = (n + block_size - 1) // block_size
 
-comptime TensorType = Tensor[dtype, n]
+comptime TensorType = Shaped[dtype, n]
 comptime LayoutType = TensorType.LayoutType
 
 

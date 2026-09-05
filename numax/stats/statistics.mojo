@@ -52,21 +52,21 @@ tier-2 terms `docs/architecture.md` sets out.
 
 from std.math import sqrt as _sqrt
 
-from layout import TileTensor
-from layout.tile_layout import row_major
+from layout import Coord, TileTensor
+from layout.tile_layout import row_major, TensorLayout
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 
-from ..core.array import Tensor
+from ..core.array import Shaped, Tensor
 from ..core.numeric import FloatLike
 
 
 def sum[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The sum of every element of `xs`."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     var acc = Scalar[dtype](0)
     for i in range(n):
@@ -75,12 +75,12 @@ def sum[
 
 
 def prod[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The product of every element of `xs`."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     var acc = Scalar[dtype](1)
     for i in range(n):
@@ -89,12 +89,12 @@ def prod[
 
 
 def min[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The smallest element of `xs`. `xs` must have at least one element."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     var best = values[0]
     for i in range(1, n):
@@ -104,12 +104,12 @@ def min[
 
 
 def max[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The largest element of `xs`. `xs` must have at least one element."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     var best = values[0]
     for i in range(1, n):
@@ -119,8 +119,8 @@ def max[
 
 
 def mean[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The arithmetic mean of `xs`.
@@ -129,18 +129,18 @@ def mean[
     propagate through the division by a plain `Int` count, so there is no
     axis-1 win here the way there is for `variance`/`stddev`/`cumsum`.
     """
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     return sum(xs) / Scalar[dtype](n)
 
 
 def median[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The median of `xs` -- the average of the two middle elements when
     `xs` has an even count, matching NumPy's default."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     sort(values)
     if n % 2 == 1:
@@ -149,13 +149,13 @@ def median[
 
 
 def mode[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The most frequent value in `xs`; the smallest among ties, matching
     `scipy.stats.mode`'s convention."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     sort(values)
     var best_value = values[0]
@@ -175,13 +175,13 @@ def mode[
 
 
 def argmax[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> Int where dtype.is_floating_point():
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> Int where dtype.is_floating_point():
     """The flat index of the largest element of `xs`, via `nn.argmaxmin`
     (MAX-first: `numax` writes no comparison logic of its own here)."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
-    var flat = TileTensor(values, row_major[n]())
+    var flat = TileTensor(values, row_major(Coord(n)))
     var out_storage = List[Scalar[DType.int64]](length=1, fill=0)
     var out = TileTensor(out_storage, row_major[1]())
     _nn_argmax(flat, 0, out)
@@ -189,12 +189,12 @@ def argmax[
 
 
 def argmin[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims]) raises -> Int where dtype.is_floating_point():
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> Int where dtype.is_floating_point():
     """The flat index of the smallest element of `xs`, via `nn.argmaxmin`."""
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
-    var flat = TileTensor(values, row_major[n]())
+    var flat = TileTensor(values, row_major(Coord(n)))
     var out_storage = List[Scalar[DType.int64]](length=1, fill=0)
     var out = TileTensor(out_storage, row_major[1]())
     _nn_argmin(flat, 0, out)
@@ -203,7 +203,7 @@ def argmin[
 
 def cumprod[
     dtype: DType, n: Int
-](xs: Tensor[dtype, n]) raises -> Tensor[dtype, n]:
+](xs: Shaped[dtype, n]) raises -> Shaped[dtype, n]:
     """The running product of `xs`: `ys[i] = xs[0] * ... * xs[i]`."""
     var values = xs.to_host()
     var storage = List[Scalar[dtype]](capacity=n)
@@ -211,12 +211,12 @@ def cumprod[
     for i in range(n):
         acc = acc * values[i]
         storage.append(acc)
-    return Tensor[dtype, n](xs.context(), storage^)
+    return Shaped[dtype, n](xs.context(), storage^)
 
 
 def variance[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims], ddof: Int = 0) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The variance of every element of `xs`, `ddof` subtracted from the
@@ -226,7 +226,7 @@ def variance[
     The `List[T]` form below is the `FloatLike`-generic one -- call that at
     `Compensated` when the summation length is what threatens the result.
     """
-    comptime n = Tensor[dtype, *dims].num_elements
+    var n = xs.size()
     var values = xs.to_host()
     var total = Scalar[dtype](0)
     for i in range(n):
@@ -240,8 +240,8 @@ def variance[
 
 
 def stddev[
-    dtype: DType, *dims: Int
-](xs: Tensor[dtype, *dims], ddof: Int = 0) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The standard deviation of `xs`: `variance(xs, ddof)` square-rooted.
@@ -255,7 +255,7 @@ def stddev[
 
 def cumsum[
     dtype: DType, n: Int
-](xs: Tensor[dtype, n]) raises -> Tensor[dtype, n]:
+](xs: Shaped[dtype, n]) raises -> Shaped[dtype, n]:
     """The running sum of `xs`: `ys[i] = xs[0] + ... + xs[i]`. The
     counterpart of `cumprod`; the `List[T]` form below is the
     `FloatLike`-generic one."""
@@ -265,7 +265,7 @@ def cumsum[
     for i in range(n):
         acc = acc + values[i]
         storage.append(acc)
-    return Tensor[dtype, n](xs.context(), storage^)
+    return Shaped[dtype, n](xs.context(), storage^)
 
 
 def mean[T: FloatLike](xs: List[T]) -> T:

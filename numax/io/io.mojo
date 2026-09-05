@@ -33,7 +33,8 @@ from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Tensor, _context
+from layout.tile_layout import TensorLayout
+from ..core.array import Shaped, Tensor, _context
 
 
 comptime _MAGIC = "NMX1"
@@ -65,14 +66,14 @@ struct nmx:
 
     @staticmethod
     def save[
-        dtype: DType, *dims: Int
-    ](a: Tensor[dtype, *dims], path: String) raises:
+        dtype: DType, LayoutType: TensorLayout
+    ](a: Tensor[dtype, LayoutType], path: String) raises:
         """Write `a` to `path` in `numax`'s own binary tensor format.
 
         See this module's own docstring for the format and for why this isn't
         NumPy's `.npy`.
         """
-        comptime rank = dims.__len__()
+        comptime rank = LayoutType.rank
         var header = List[UInt8]()
         for c in _MAGIC.as_bytes():
             header.append(c)
@@ -82,14 +83,12 @@ struct nmx:
             header.append(c)
         header.append(UInt8(rank))
         comptime for i in range(rank):
-            _append_i64_le(header, Int64(dims[i]))
+            _append_i64_le(header, Int64(a.dim[i]()))
 
         var f = open(path, "w")
         f.write_bytes(Span(header))
 
-        comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
-            Scalar[dtype]
-        ]()
+        var nbytes = a.size() * size_of[Scalar[dtype]]()
         var values = a.to_host()
         var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
         var payload = Span[UInt8, origin_of(values)](
@@ -101,7 +100,7 @@ struct nmx:
     @staticmethod
     def load[
         dtype: DType, *dims: Int
-    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Tensor[
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Shaped[
         dtype, *dims
     ]:
         """Read a tensor written by `nmx.save`, onto `ctx`'s device.
@@ -150,7 +149,7 @@ struct nmx:
             if file_dim != dims[i]:
                 raise Error("numax.io.nmx.load: shape mismatch")
 
-        comptime nbytes = Tensor[dtype, *dims].num_elements * size_of[
+        comptime nbytes = Shaped[dtype, *dims].num_elements * size_of[
             Scalar[dtype]
         ]()
         if len(data) - offset != nbytes:
@@ -159,9 +158,9 @@ struct nmx:
             )
 
         var out_storage = List[Scalar[dtype]](
-            length=Tensor[dtype, *dims].num_elements, fill=0
+            length=Shaped[dtype, *dims].num_elements, fill=0
         )
         var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Tensor[dtype, *dims](_context(ctx), out_storage^)
+        return Shaped[dtype, *dims](_context(ctx), out_storage^)

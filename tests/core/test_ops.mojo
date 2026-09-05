@@ -10,7 +10,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Tensor, full, ones, zeros
+from numax.core.array import Shaped, Tensor, full, ones, zeros
 from numax.core.ops import (
     add,
     astype,
@@ -26,12 +26,12 @@ from numax.core.ops import (
 comptime dtype = DType.float64
 
 
-def _t[n: Int](values: List[Float64]) raises -> Tensor[dtype, n]:
+def _t[n: Int](values: List[Float64]) raises -> Shaped[dtype, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Tensor[dtype, n](ctx, elements^)
+    return Shaped[dtype, n](ctx, elements^)
 
 
 def test_add_and_subtract() raises:

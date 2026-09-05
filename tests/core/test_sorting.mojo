@@ -15,7 +15,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Tensor, zeros
+from numax.core.array import Shaped, Tensor, zeros
 from numax.core.sorting import (
     all_nonzero,
     any_nonzero,
@@ -32,20 +32,20 @@ from numax.core.sorting import (
 comptime dtype = DType.float64
 
 
-def mk[n: Int](values: List[Float64]) raises -> Tensor[dtype, n]:
+def mk[n: Int](values: List[Float64]) raises -> Shaped[dtype, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Tensor[dtype, n](ctx, elements^)
+    return Shaped[dtype, n](ctx, elements^)
 
 
-def mk_mask[n: Int](values: List[Bool]) raises -> Tensor[DType.bool, n]:
+def mk_mask[n: Int](values: List[Bool]) raises -> Shaped[DType.bool, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[DType.bool]](capacity=n)
     for i in range(n):
         elements.append(Scalar[DType.bool](values[i]))
-    return Tensor[DType.bool, n](ctx, elements^)
+    return Shaped[DType.bool, n](ctx, elements^)
 
 
 # ------------------------------------------------------------------
@@ -303,7 +303,7 @@ def test_select_preserves_the_input_shape() raises:
     var mask_values = List[Scalar[DType.bool]](capacity=4)
     for i in range(4):
         mask_values.append(Scalar[DType.bool](i % 2 == 1))
-    var mask = Tensor[DType.bool, 2, 2](ctx, mask_values^)
+    var mask = Shaped[DType.bool, 2, 2](ctx, mask_values^)
     var x = zeros[dtype, 2, 2](ctx)
     var y = zeros[dtype, 2, 2](ctx)
     for i in range(4):

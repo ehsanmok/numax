@@ -23,7 +23,7 @@ Nothing here is Python: `.npy` is a self-contained format.
 from max.gpu.host import DeviceContext
 
 from numax import Dual, Plain
-from numax.core.array import Tensor, to_array, to_tensor
+from numax.core.array import Shaped, Tensor, to_array, to_tensor
 from numax.io import numpy
 from numax.linalg import cholesky, det
 
@@ -40,7 +40,7 @@ def main() raises:
     var values = List[Scalar[dtype]](capacity=N * N)
     for v in entries:
         values.append(Scalar[dtype](v))
-    var a = Tensor[dtype, N, N](ctx, values^)
+    var a = Shaped[dtype, N, N](ctx, values^)
 
     var path = String("/tmp/numax_spd.npy")
     numpy.save(a, path)
@@ -54,7 +54,7 @@ def main() raises:
     var lower = cholesky[P, N](lifted)
 
     # --- 2. and back down to a tensor, which is what gets saved ----------
-    var factor = to_tensor(lower, ctx)
+    var factor = to_tensor[dtype, N, N](lower, ctx)
     print("cholesky:", factor)
 
     var factor_path = String("/tmp/numax_spd_chol.npy")

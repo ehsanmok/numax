@@ -16,7 +16,9 @@ compose instead of each needing its own copy of every kernel.
 **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory decides host or device memory: the
 same kernel, any accelerator, unmodified. Nothing else changes, and
-`.view()` yields the `TileTensor` every MAX kernel takes.
+`.view()` yields the `TileTensor` every MAX kernel takes. Its shape lives
+in its layout type, so `Shaped[f32, 2, 3]` and `Dynamic[f32, 2]` -- extents
+compiled in, extents supplied at run time -- are one type, not two.
 
 ```mojo
 from numax import Dual, FloatLike, Plain, f32
@@ -76,6 +78,8 @@ NumPy/SciPy, routes to MAX, or leaves out: `docs/parity.md`.
 # `Tensor` surface (creation, arithmetic, elementwise math, comparisons,
 # sorting) built over `TileTensor` -- `numax.core`.
 from .core.array import (
+    Dynamic,
+    Shaped,
     Tensor,
     arange,
     concatenate,

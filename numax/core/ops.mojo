@@ -16,36 +16,40 @@ that (`**` is elementwise, `numpy.linalg.matrix_power` is separate) is
 worth stating explicitly rather than implying.
 """
 
-from .array import Tensor, _product
+from layout.tile_layout import TensorLayout
+
+from .array import Tensor
 
 
 def _zip[
     dtype: DType,
-    *dims: Int,
+    LayoutType: TensorLayout,
     op: def(Scalar[dtype], Scalar[dtype]) thin -> Scalar[dtype],
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
-    comptime n = _product[*dims]()
+    var n = a.size()
     var a_values = a.to_host()
     var b_values = b.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op(a_values[i], b_values[i])
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
 
 
 def _zip_scalar[
     dtype: DType,
-    *dims: Int,
+    LayoutType: TensorLayout,
     op: def(Scalar[dtype], Scalar[dtype]) thin -> Scalar[dtype],
-](a: Tensor[dtype, *dims], b: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
-    comptime n = _product[*dims]()
+](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
+]:
+    var n = a.size()
     var a_values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op(a_values[i], b)
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
 
 
 def _add_op[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
@@ -83,120 +87,128 @@ def _pow_op[
 
 
 def add[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """`a + b`, elementwise. `numpy.add`."""
-    return _zip[dtype, *dims, op=_add_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_add_op[dtype]](a, b)
 
 
 def add[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
+]:
     """`a + b` with a scalar `b`."""
-    return _zip_scalar[dtype, *dims, op=_add_op[dtype]](a, b)
+    return _zip_scalar[dtype, LayoutType, op=_add_op[dtype]](a, b)
 
 
 def subtract[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """`a - b`, elementwise. `numpy.subtract`."""
-    return _zip[dtype, *dims, op=_sub_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_sub_op[dtype]](a, b)
 
 
 def subtract[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
+]:
     """`a - b` with a scalar `b`."""
-    return _zip_scalar[dtype, *dims, op=_sub_op[dtype]](a, b)
+    return _zip_scalar[dtype, LayoutType, op=_sub_op[dtype]](a, b)
 
 
 def multiply[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """`a * b`, elementwise. `numpy.multiply`."""
-    return _zip[dtype, *dims, op=_mul_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_mul_op[dtype]](a, b)
 
 
 def multiply[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
+]:
     """`a * b` with a scalar `b`."""
-    return _zip_scalar[dtype, *dims, op=_mul_op[dtype]](a, b)
+    return _zip_scalar[dtype, LayoutType, op=_mul_op[dtype]](a, b)
 
 
 def divide[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """`a / b`, elementwise. `numpy.divide`."""
-    return _zip[dtype, *dims, op=_div_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_div_op[dtype]](a, b)
 
 
 def divide[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Scalar[dtype]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
+]:
     """`a / b` with a scalar `b`."""
-    return _zip_scalar[dtype, *dims, op=_div_op[dtype]](a, b)
+    return _zip_scalar[dtype, LayoutType, op=_div_op[dtype]](a, b)
 
 
 def floor_divide[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """`a // b`, elementwise. `numpy.floor_divide`."""
-    return _zip[dtype, *dims, op=_floordiv_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_floordiv_op[dtype]](a, b)
 
 
 def mod[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ]:
     """`a % b`, elementwise. `numpy.mod`."""
-    return _zip[dtype, *dims, op=_mod_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_mod_op[dtype]](a, b)
 
 
 def power[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """`a ** b`, elementwise. `numpy.power`."""
-    return _zip[dtype, *dims, op=_pow_op[dtype]](a, b)
+    return _zip[dtype, LayoutType, op=_pow_op[dtype]](a, b)
 
 
 def power[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims], b: Scalar[dtype]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_floating_point():
     """`a ** b` with a scalar exponent."""
-    return _zip_scalar[dtype, *dims, op=_pow_op[dtype]](a, b)
+    return _zip_scalar[dtype, LayoutType, op=_pow_op[dtype]](a, b)
 
 
 def negative[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[dtype, *dims]:
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
     """`-a`, elementwise. `numpy.negative`."""
-    comptime n = _product[*dims]()
+    var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = -values[i]
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
 
 
 def astype[
-    target: DType, dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[target, *dims]:
+    target: DType, dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[target, LayoutType]:
     """`a` converted to `target`, elementwise. `numpy.astype`.
 
     Explicit, because numax has no dtype promotion: a binary operation
@@ -205,18 +217,18 @@ def astype[
     parameters turns a dtype mismatch into a surprise rather than an
     error.
     """
-    comptime n = _product[*dims]()
+    var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[target]](length=n, fill=0)
     for i in range(n):
         out[i] = values[i].cast[target]()
-    return Tensor[target, *dims](a.context(), out^)
+    return Tensor[target, LayoutType](a.context(), out^)
 
 
 def invert[
-    dtype: DType, *dims: Int
-](a: Tensor[dtype, *dims]) raises -> Tensor[
-    dtype, *dims
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
 ] where dtype.is_integral():
     """Bitwise NOT, elementwise. `numpy.invert`.
 
@@ -224,9 +236,9 @@ def invert[
     `numax.core.logic.logical_not`, which is a different operation on a
     different type rather than the same one spelled twice.
     """
-    comptime n = _product[*dims]()
+    var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = ~values[i]
-    return Tensor[dtype, *dims](a.context(), out^)
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)

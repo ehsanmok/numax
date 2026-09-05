@@ -15,21 +15,21 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax import Dual, Plain
-from numax.core.array import Tensor, eye, to_array, to_tensor
+from numax.core.array import Shaped, Tensor, eye, to_array, to_tensor
 from numax.linalg import cholesky, det
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]
 
 
-def _matrix() raises -> Tensor[dtype, 2, 2]:
+def _matrix() raises -> Shaped[dtype, 2, 2]:
     """`[[4, 2], [2, 3]]` -- symmetric positive definite, so it has a
     Cholesky factor and a determinant of 8."""
     var ctx = DeviceContext(api="cpu")
     var values = List[Scalar[dtype]](capacity=4)
     for v in [4.0, 2.0, 2.0, 3.0]:
         values.append(Scalar[dtype](v))
-    return Tensor[dtype, 2, 2](ctx, values^)
+    return Shaped[dtype, 2, 2](ctx, values^)
 
 
 def test_rank_1_round_trips() raises:
@@ -37,10 +37,10 @@ def test_rank_1_round_trips() raises:
     var values = List[Scalar[dtype]](capacity=3)
     for v in [1.5, -2.0, 0.25]:
         values.append(Scalar[dtype](v))
-    var xs = Tensor[dtype, 3](ctx, values^)
+    var xs = Shaped[dtype, 3](ctx, values^)
 
     var lifted = to_array[P](xs)
-    var back = to_tensor(lifted, ctx)
+    var back = to_tensor[dtype, 3](lifted, ctx)
     for i in range(3):
         assert_almost_equal(back[i], xs[i])
 
@@ -48,7 +48,7 @@ def test_rank_1_round_trips() raises:
 def test_rank_2_round_trips_row_major() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _matrix()
-    var back = to_tensor(to_array[P](a), ctx)
+    var back = to_tensor[dtype, 2, 2](to_array[P](a), ctx)
     for i in range(4):
         assert_almost_equal(back[i], a[i])
 
@@ -59,7 +59,7 @@ def test_a_tensor_can_be_factored_and_lowered_back() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _matrix()
     var lower = cholesky[P, 2](to_array[P](a))
-    var factor = to_tensor(lower, ctx)
+    var factor = to_tensor[dtype, 2, 2](lower, ctx)
 
     # L is lower triangular with L[0,0] = 2, and L @ L.T == A.
     assert_almost_equal(factor[0], Scalar[dtype](2.0))
@@ -95,14 +95,14 @@ def test_lifted_values_match_the_source_elements() raises:
 
 def test_from_view_round_trips_the_elements() raises:
     var a = _matrix()
-    var back = Tensor[dtype, 2, 2].from_view(a.view(), a.context())
+    var back = Shaped[dtype, 2, 2].from_view(a.view(), a.context())
     for i in range(4):
         assert_almost_equal(back[i], a[i])
 
 
 def test_from_view_copies_rather_than_aliases() raises:
     var a = _matrix()
-    var back = Tensor[dtype, 2, 2].from_view(a.view(), a.context())
+    var back = Shaped[dtype, 2, 2].from_view(a.view(), a.context())
     var v = a.view()
     v[0, 0] = 99.0
     assert_almost_equal(a[0], Scalar[dtype](99.0))

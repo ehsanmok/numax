@@ -230,7 +230,7 @@ survey of what MAX does ship.
   library.
 - **`numax.core.ops`, `numax.core.elementwise`, `numax.core.logic`** — arithmetic and
   operators on `Tensor`, the elementwise math surface, and comparisons
-  returning `Tensor[DType.bool]`. `Plain`-only, tier 2.
+  returning `Shaped[DType.bool]`. `Plain`-only, tier 2.
 - **`numax.stats`** — whole-tensor reductions, every one taking a `Tensor`,
   with `argmax`/`argmin` routed to `nn.argmaxmin`, and the distributions as
   nine `scipy.stats`-shaped namespaces (`norm.cdf`, `chi2.ppf`, ...). `mean`/`variance`/`stddev`/`cumsum` also have a
