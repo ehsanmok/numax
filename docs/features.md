@@ -200,6 +200,7 @@ roughly 8x8.
 | Pivoted (tier 2) | `lu_factor` and the `PivotedLU` it returns, whose `solve` and `det` get the answers the unpivoted routines cannot |
 | Norms | `norm` — `ord=fro` (default), `1` or `inf`, per `numpy.linalg.norm` — and `nrm2` |
 | Products | `dot`, `outer`, `matvec`, `matmul` |
+| BLAS-1 | `dot`, `nrm2`, `asum`, `axpy` -- MAX ships none of it, and no BLAS anywhere is generic over its scalar type |
 
 All in [`linalg/linalg.mojo`](../numax/linalg/linalg.mojo); every function's
 docstring records its own error behaviour and where MAX's kernel takes over.

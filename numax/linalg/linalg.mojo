@@ -817,6 +817,34 @@ def nrm2[T: FloatLike, n: Int](a: Array[T, n]) -> T:
     return dot[T, n](a, a).sqrt()
 
 
+def asum[T: FloatLike, n: Int](a: Array[T, n]) -> T:
+    """The sum of magnitudes `sum(|a[i]|)` -- BLAS-1 `asum`, and the vector
+    1-norm `norm` gives for a matrix.
+
+    Cannot overflow the way `nrm2` can, which is why a convergence check
+    that only needs a magnitude usually wants this one.
+    """
+    var total = T.constant(0.0)
+    for i in range(n):
+        total = total + a[i].abs()
+    return total^
+
+
+def axpy[
+    T: FloatLike, n: Int
+](alpha: T, x: Array[T, n], y: Array[T, n]) -> Array[T, n]:
+    """`alpha * x + y` -- BLAS-1 `axpy`.
+
+    Returns a new vector rather than updating `y` in place, since a
+    register-resident `Array` has no aliasing to avoid and an expression
+    reads better than a mutation at these sizes.
+    """
+    var out = _zeros[T, n]()
+    for i in range(n):
+        out[i] = alpha * x[i] + y[i]
+    return out^
+
+
 def outer[
     T: FloatLike, n: Int
 ](a: Array[T, n], b: Array[T, n]) -> Array[T, n * n]:

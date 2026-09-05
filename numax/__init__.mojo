@@ -249,6 +249,8 @@ from .linalg.linalg import (
     cholesky_solve,
     cond,
     det,
+    asum,
+    axpy,
     dot,
     eigh,
     eigvals,

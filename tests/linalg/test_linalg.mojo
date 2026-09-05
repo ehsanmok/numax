@@ -29,6 +29,8 @@ from numax.linalg import (
     lu_factor,
     matmul,
     cond,
+    asum,
+    axpy,
     dot,
     eigh,
     eigvals,
@@ -1082,6 +1084,24 @@ def test_eigvals_recovers_a_mixed_real_and_complex_spectrum() raises:
             complex_count += 1
     assert_equal(real_count, 1)
     assert_equal(complex_count, 2)
+
+
+def test_asum_and_axpy_agree_with_their_definitions() raises:
+    var x = Array[P, 3](fill=pv(0.0))
+    x[0] = pv(1.0)
+    x[1] = pv(-2.0)
+    x[2] = pv(3.0)
+    var y = Array[P, 3](fill=pv(0.0))
+    y[0] = pv(10.0)
+    y[1] = pv(20.0)
+    y[2] = pv(30.0)
+
+    assert_almost_equal(s(asum[P, 3](x)), 6.0, atol=1e-12)
+
+    var combined = axpy[P, 3](pv(2.0), x, y)
+    assert_almost_equal(s(combined[0]), 12.0, atol=1e-12)
+    assert_almost_equal(s(combined[1]), 16.0, atol=1e-12)
+    assert_almost_equal(s(combined[2]), 36.0, atol=1e-12)
 
 
 def main() raises:

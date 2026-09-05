@@ -194,6 +194,8 @@ from .special.beta import beta
 from .linalg.linalg import (
     cholesky,
     det,
+    asum,
+    axpy,
     dot,
     eigh,
     eigvals,

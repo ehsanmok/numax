@@ -13,8 +13,8 @@ from numax.linalg import cholesky, qr, solve, det, norm
 Factorizations (`cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`), solves
 (`solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, the
 substitutions), inverses (`inverse`, `pinv`), scalars (`det`, `trace`,
-`cond`, `slogdet_cholesky`), norms (`norm` at `fro`/`1`/`inf`, `nrm2`)
-and products (`dot`, `outer`, `matvec`,
+`cond`, `slogdet_cholesky`), norms (`norm` at `fro`/`1`/`inf`, `nrm2`, `asum`)
+and products (`dot`, `axpy`, `outer`, `matvec`,
 `matmul`). Tier 1, except `lu_factor` and the `PivotedLU` it returns:
 choosing a pivot by magnitude is a branch on data, which buys the
 matrices unpivoted `lu` cannot factor at the cost of the GPU.
@@ -26,6 +26,8 @@ from .linalg import (
     cholesky_solve,
     cond,
     det,
+    asum,
+    axpy,
     dot,
     eigh,
     eigvals,
