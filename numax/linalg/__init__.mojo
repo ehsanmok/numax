@@ -31,6 +31,7 @@ from .linalg import (
     inf,
     inverse,
     slogdet_cholesky,
+    lstsq,
     lu,
     matmul,
     matvec,

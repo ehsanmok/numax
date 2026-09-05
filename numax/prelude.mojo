@@ -198,6 +198,7 @@ from .linalg.linalg import (
     eigh,
     fro,
     inverse,
+    lstsq,
     lu,
     matmul,
     matvec,

@@ -255,6 +255,7 @@ from .linalg.linalg import (
     fro,
     inverse,
     slogdet_cholesky,
+    lstsq,
     lu,
     matmul,
     matvec,

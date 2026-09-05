@@ -1,5 +1,10 @@
 """Small dense linear algebra, `FloatLike`-generic and compile-time-sized.
 
+**This module is tier 1.** Every factorization here runs a fixed number of
+passes -- `n - 1` reflectors, `sweeps` Jacobi sweeps -- and selects
+branchlessly, so all of it launches inside a GPU thread. That is also what
+forecloses pivoting; see "Scope: no pivoting" below.
+
 MAX already ships `linalg.matmul` and `linalg.qr_factorization` over
 `TileTensor`, both fast and both CPU/GPU. Neither is what this module is
 for: they are monomorphic in a raw `dtype`, so a `Dual` cannot pass through
@@ -573,6 +578,89 @@ def qr[
             r[i * n + j] = T.constant(0.0)
 
     return (r^, q^)
+
+
+def lstsq[
+    T: FloatLike, m: Int, n: Int
+](a: Array[T, m * n], b: Array[T, m]) -> Array[T, n] where m >= n:
+    """The least-squares solution of the overdetermined `A x = b`: the `x`
+    minimizing `||A x - b||`. `numpy.linalg.lstsq`, first return value.
+
+    `A` is `m x n` row-major with `m >= n`, which is the overdetermined
+    case -- more equations than unknowns, the shape a fit has. An
+    underdetermined system has a solution space rather than a solution and
+    wants `pinv` instead.
+
+    Householder QR applied to `A` and to `b` together, then back
+    substitution on `R`. `Q` is never formed: each reflector is applied to
+    `b` as it is built, which is both cheaper and better conditioned than
+    the normal equations `A^T A x = A^T b` -- those square the condition
+    number and throw away half the significant digits of an ill-conditioned
+    fit.
+
+    Rank-deficient `A` is not detected. The diagonal of `R` is floored away
+    from zero so the back substitution stays finite rather than producing
+    NaN, but finite is not correct: a rank-deficient fit needs the
+    truncation `pinv` does, and detecting the rank means comparing against a
+    tolerance, which is a per-lane branch. Reach for `pinv` when the columns
+    might be dependent.
+
+    Returns only `x`. The residual is `||A x - b||`, which the caller can
+    form from `matvec` and `nrm2`, and the rank and singular values come
+    from `svd`.
+    """
+    var r = _zeros[T, m * n]()
+    for i in range(m * n):
+        r[i] = a[i].copy()
+    var y = _zeros[T, m]()
+    for i in range(m):
+        y[i] = b[i].copy()
+
+    for k in range(n):
+        var norm_sq = T.constant(0.0)
+        for i in range(k, m):
+            norm_sq = norm_sq + r[i * n + k] * r[i * n + k]
+        var alpha = norm_sq.sqrt().copysign(-r[k * n + k])
+
+        var v = _zeros[T, m]()
+        for i in range(k, m):
+            v[i] = r[i * n + k].copy()
+        v[k] = v[k] - alpha
+
+        var vv = T.constant(0.0)
+        for i in range(k, m):
+            vv = vv + v[i] * v[i]
+        var scale = T.constant(2.0) / guard_nonzero(
+            vv, T.constant(_PIVOT_FLOOR)
+        )
+
+        for j in range(k, n):
+            var vr = T.constant(0.0)
+            for i in range(k, m):
+                vr = vr + v[i] * r[i * n + j]
+            var factor = vr * scale
+            for i in range(k, m):
+                r[i * n + j] = r[i * n + j] - (factor * v[i])
+
+        # The same reflector on `b`, which is what makes forming `Q`
+        # unnecessary.
+        var vy = T.constant(0.0)
+        for i in range(k, m):
+            vy = vy + v[i] * y[i]
+        var factor_y = vy * scale
+        for i in range(k, m):
+            y[i] = y[i] - (factor_y * v[i])
+
+    # Back substitution on the leading n x n triangle of R. Rows n..m-1 of
+    # `y` are the residual and take no part in it.
+    var x = _zeros[T, n]()
+    for k in range(n):
+        var i = n - 1 - k
+        var total = y[i].copy()
+        for j in range(i + 1, n):
+            total = total - r[i * n + j] * x[j]
+        x[i] = total / guard_nonzero(r[i * n + i], T.constant(_PIVOT_FLOOR))
+    return x^
 
 
 def dot[T: FloatLike, n: Int](a: Array[T, n], b: Array[T, n]) -> T:

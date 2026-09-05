@@ -18,6 +18,7 @@ from numax.linalg import (
     det,
     forward_substitution,
     inverse,
+    lstsq,
     slogdet_cholesky,
     lu,
     matmul,
@@ -793,6 +794,86 @@ def test_eigh_is_differentiable_at_dual() raises:
     for i in range(3):
         derivative_sum += Float64(values[i].deriv.v)
     assert_almost_equal(derivative_sum, 1.0, atol=1e-9)
+
+
+def _fit_matrix() -> Array[P, 8]:
+    """A 4x2 design matrix for `y = c0 + c1*t` at `t = 0, 1, 2, 3`."""
+    var a = Array[P, 8](fill=P.constant(0.0))
+    for i in range(4):
+        a[i * 2] = P.constant(1.0)
+        a[i * 2 + 1] = P.constant(Float64(i))
+    return a^
+
+
+def test_lstsq_recovers_an_exactly_fitting_line() raises:
+    # Points on y = 2 + 3t exactly, so the least-squares fit is the line.
+    var a = _fit_matrix()
+    var b = Array[P, 4](fill=P.constant(0.0))
+    for i in range(4):
+        b[i] = P.constant(2.0 + 3.0 * Float64(i))
+
+    var x = lstsq[P, 4, 2](a, b)
+    assert_almost_equal(Float64(x[0].v), 2.0, atol=1e-10)
+    assert_almost_equal(Float64(x[1].v), 3.0, atol=1e-10)
+
+
+def test_lstsq_residual_is_orthogonal_to_the_columns() raises:
+    # The defining property of a least-squares solution: A.T @ (A x - b)
+    # is zero, whether or not the fit is exact. These points are not
+    # collinear, so the fit is a genuine compromise.
+    var a = _fit_matrix()
+    var b = Array[P, 4](fill=P.constant(0.0))
+    var noisy = [1.0, 4.0, 5.0, 11.0]
+    for i in range(4):
+        b[i] = P.constant(noisy[i])
+
+    var x = lstsq[P, 4, 2](a, b)
+    for j in range(2):
+        var projection = 0.0
+        for i in range(4):
+            var predicted = Float64(a[i * 2].v) * Float64(x[0].v) + Float64(
+                a[i * 2 + 1].v
+            ) * Float64(x[1].v)
+            projection += Float64(a[i * 2 + j].v) * (
+                predicted - Float64(b[i].v)
+            )
+        assert_almost_equal(projection, 0.0, atol=1e-10)
+
+
+def test_lstsq_at_a_square_system_is_the_solve() raises:
+    var a = Array[P, 4](fill=P.constant(0.0))
+    a[0] = P.constant(4.0)
+    a[1] = P.constant(1.0)
+    a[2] = P.constant(1.0)
+    a[3] = P.constant(3.0)
+    var b = Array[P, 2](fill=P.constant(0.0))
+    b[0] = P.constant(9.0)
+    b[1] = P.constant(11.0)
+
+    var by_lstsq = lstsq[P, 2, 2](a, b)
+    var by_solve = solve[P, 2](a, b)
+    for i in range(2):
+        assert_almost_equal(
+            Float64(by_lstsq[i].v), Float64(by_solve[i].v), atol=1e-10
+        )
+
+
+def test_lstsq_differentiates_through_the_fit() raises:
+    # d/db0 of the fitted intercept, for the 4-point evenly spaced design.
+    # The hat matrix's first row gives the closed form: the intercept is a
+    # fixed linear combination of the observations, so its derivative with
+    # respect to b[0] is that combination's first entry, 0.7.
+    var a = Array[D, 8](fill=D.constant(0.0))
+    for i in range(4):
+        a[i * 2] = D.constant(1.0)
+        a[i * 2 + 1] = D.constant(Float64(i))
+    var b = Array[D, 4](fill=D.constant(0.0))
+    for i in range(4):
+        b[i] = D.constant(Float64(i) + 1.0)
+    b[0] = D(P.constant(1.0), P.one())
+
+    var x = lstsq[D, 4, 2](a, b)
+    assert_almost_equal(Float64(x[0].deriv.v), 0.7, atol=1e-10)
 
 
 def main() raises:
