@@ -43,8 +43,8 @@ jobs:
       # against today -- so mojodoc is invoked as a CLI rather than
       # depended on via pixi. CI clones it as a sibling so the
       # MOJODOC_CLI path that pixi.toml's docs-build task expects
-      # resolves. See `.cursor/rules/design-v0.1.mdc` §7 and the
-      # comment above [feature.dev.dependencies] in pixi.toml.
+      # resolves. See the comment above [feature.dev.dependencies] in
+      # pixi.toml. Revisit when mojodoc's backend pin is bumped.
       - name: Clone mojodoc as a sibling checkout
         run: |
           git clone --depth 1 https://github.com/ehsanmok/mojodoc.git ../mojodoc
