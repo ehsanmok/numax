@@ -96,17 +96,20 @@ returns a dynamically-laid-out `TileTensor`. They are graph-operator kernels.
 
 ## What is still missing
 
-The array object itself. `Tensor` carries its shape at compile time, so
-anything whose extent depends on a value — `reshape` to a computed shape, a
-boolean mask, a right-sized `unique` — comes back as a full-length result plus
-a count. Strided views, general broadcasting, slicing and fancy indexing all
-wait on a runtime-shape owner, since a view over a slice is not row-major and
-every driver in `numax.core.tensor` requires that it is.
+General broadcasting between two arbitrary shapes, slicing as a first-class
+owned type, and fancy indexing. `broadcast_op_axis` broadcasts only in the
+direction that pairs with a reduction, which is what softmax and per-axis
+normalization need and less than NumPy does.
 
-What exists instead: `map`/`reduce` have runtime-shape overloads selected by a
-`where` clause that is the exact negation of the static one, so a
-`row_major(Coord(...))` tensor walks without `coalesce()` — CPU-only, because
-a GPU launch needs the extent in the type.
+What exists: `Tensor` carries its shape in its layout type, with each
+dimension independently compile-time or run-time, so an extent that depends
+on a value has somewhere to live — `unique`, `extract` and `take` return a
+right-sized tensor rather than a full-length one plus a count. Every walker
+in `numax.core.tensor` has a run-time-shape overload selected by a `where`
+clause that is the exact negation of the static one, and `map_strided` /
+`reduce_strided` walk a transposed or sliced view that is not row-major at
+all. The run-time paths are CPU-only, because a GPU launch needs the extent
+in the type.
 
 Also absent, each a decision: sparse matrices, iterative solvers, distributed
 execution, and dtype promotion. The first three are a different library's job;

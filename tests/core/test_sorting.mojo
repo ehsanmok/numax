@@ -25,6 +25,7 @@ from numax.core.sorting import (
     nonzero,
     searchsorted,
     sort,
+    take,
     unique,
     select,
 )
@@ -174,27 +175,27 @@ def test_unique_returns_sorted_distinct_values() raises:
     var ctx = DeviceContext(api="cpu")
     var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
     var result = unique(a)
-    assert_equal(result[1], 4)
+    assert_equal(result.size(), 4)
     var expected = [1.0, 3.0, 4.0, 5.0]
     for i in range(4):
-        assert_almost_equal(result[0][i], Scalar[dtype](expected[i]))
+        assert_almost_equal(result[i], Scalar[dtype](expected[i]))
 
 
 def test_unique_of_all_identical_values_is_one() raises:
     var ctx = DeviceContext(api="cpu")
     var a = mk[4]([7.0, 7.0, 7.0, 7.0])
     var result = unique(a)
-    assert_equal(result[1], 1)
-    assert_almost_equal(result[0][0], Scalar[dtype](7.0))
+    assert_equal(result.size(), 1)
+    assert_almost_equal(result[0], Scalar[dtype](7.0))
 
 
 def test_unique_of_all_distinct_values_keeps_them_all() raises:
     var ctx = DeviceContext(api="cpu")
     var a = mk[4]([4.0, 1.0, 3.0, 2.0])
     var result = unique(a)
-    assert_equal(result[1], 4)
+    assert_equal(result.size(), 4)
     for i in range(4):
-        assert_almost_equal(result[0][i], Scalar[dtype](Float64(i + 1)))
+        assert_almost_equal(result[i], Scalar[dtype](Float64(i + 1)))
 
 
 # ------------------------------------------------------------------
@@ -255,10 +256,10 @@ def test_extract_selects_where_the_mask_is_nonzero() raises:
     var mask = mk_mask[5]([False, True, False, True, True])
     var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
     var result = extract(mask, a)
-    assert_equal(result[1], 3)
-    assert_almost_equal(result[0][0], Scalar[dtype](1.0))
-    assert_almost_equal(result[0][1], Scalar[dtype](1.0))
-    assert_almost_equal(result[0][2], Scalar[dtype](5.0))
+    assert_equal(result.size(), 3)
+    assert_almost_equal(result[0], Scalar[dtype](1.0))
+    assert_almost_equal(result[1], Scalar[dtype](1.0))
+    assert_almost_equal(result[2], Scalar[dtype](5.0))
 
 
 def test_extract_with_an_all_true_mask_returns_everything() raises:
@@ -266,23 +267,23 @@ def test_extract_with_an_all_true_mask_returns_everything() raises:
     var mask = mk_mask[4]([True, True, True, True])
     var a = mk[4]([9.0, 8.0, 7.0, 6.0])
     var result = extract(mask, a)
-    assert_equal(result[1], 4)
+    assert_equal(result.size(), 4)
     for i in range(4):
-        assert_almost_equal(result[0][i], a[i])
+        assert_almost_equal(result[i], a[i])
 
 
 def test_extract_with_an_all_false_mask_returns_nothing() raises:
     var ctx = DeviceContext(api="cpu")
     var mask = mk_mask[4]([False, False, False, False])
     var a = mk[4]([9.0, 8.0, 7.0, 6.0])
-    assert_equal(extract(mask, a)[1], 0)
+    assert_equal(extract(mask, a).size(), 0)
 
 
 def test_extract_count_matches_the_masks_nonzero_count() raises:
     var ctx = DeviceContext(api="cpu")
     var mask = mk_mask[6]([True, False, True, False, True, False])
     var a = mk[6]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    assert_equal(extract(mask, a)[1], count_nonzero(mask))
+    assert_equal(extract(mask, a).size(), count_nonzero(mask))
 
 
 def test_select_selects_elementwise() raises:
@@ -323,9 +324,52 @@ def test_select_and_extract_agree_on_the_selected_values() raises:
     var a = mk[6]([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
     var extracted = extract(mask, a)
     var indices = nonzero(mask)
-    assert_equal(extracted[1], len(indices))
+    assert_equal(extracted.size(), len(indices))
     for i in range(len(indices)):
-        assert_almost_equal(extracted[0][i], a[indices[i]])
+        assert_almost_equal(extracted[i], a[indices[i]])
+
+
+def test_the_masking_family_returns_its_own_length() raises:
+    # The reason these are run-time-shaped: the result of a mask is only as
+    # long as the data says, and a caller reads that off the tensor rather
+    # than carrying a separate count.
+    var ctx = DeviceContext(api="cpu")
+    var a = mk[6]([3.0, 3.0, 1.0, 0.0, 1.0, 0.0])
+    assert_equal(unique(a).size(), 3)
+    assert_equal(
+        extract(mk_mask[6]([True, True, True, True, True, True]), a).size(), 6
+    )
+    assert_equal(take(a, nonzero(a)).size(), count_nonzero(a))
+
+
+def test_take_reads_the_index_lists_the_module_already_returns() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
+
+    # take + argsort is the sorted copy.
+    var by_take = take(a, argsort(a))
+    var sorted_a = sort(a)
+    for i in range(5):
+        assert_almost_equal(by_take[i], sorted_a[i])
+
+    # take + nonzero is the nonzero values, which is also extract's answer.
+    var b = mk[5]([0.0, 2.0, 0.0, 4.0, 6.0])
+    var by_index = take(b, nonzero(b))
+    var by_mask = extract(mk_mask[5]([False, True, False, True, True]), b)
+    assert_equal(by_index.size(), by_mask.size())
+    for i in range(by_index.size()):
+        assert_almost_equal(by_index[i], by_mask[i])
+
+
+def test_take_rejects_an_out_of_range_index() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = mk[3]([1.0, 2.0, 3.0])
+    var raised = False
+    try:
+        _ = take(a, [0, 3])
+    except:
+        raised = True
+    assert_true(raised)
 
 
 def main() raises:

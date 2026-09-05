@@ -27,6 +27,7 @@ from .array import (
     Shaped,
     Tensor,
     arange,
+    asarray,
     concatenate,
     copy,
     diag,
@@ -173,6 +174,7 @@ from .sorting import (
     nonzero,
     searchsorted,
     sort,
+    take,
     unique,
     select,
 )

@@ -331,13 +331,16 @@ row-major tensor, but the surface above it is not uniformly rank-generic yet:
 - The SciPy-shaped algorithms are fixed-size `Array` kernels: `linalg` is
   matrices, `fft2` a square transform, `rk4_system` an `n`-component state,
   while `quad`, `solve_ivp`, the splines and the distributions are 1-D.
-- There is no broadcasting, no strided views, no slicing or fancy indexing.
-  Those wait on a runtime-shape owner, since a view over a slice is not
-  row-major and every driver in `numax.core.tensor` requires that it is.
+- There is no general broadcasting between two arbitrary shapes and no fancy
+  indexing. `broadcast_op_axis` broadcasts only in the direction that pairs
+  with a reduction.
 
-Anything whose extent depends on a value — `reshape` to a computed shape, a
-boolean mask, a right-sized `unique` — comes back as a full-length result plus
-a count.
+An extent that depends on a value has somewhere to live: each dimension of a
+`Tensor` is independently compile-time or run-time, so `unique`, `extract` and
+`take` return a right-sized result. A transposed or sliced view is walked by
+`map_strided` / `reduce_strided`, which address elements through their own
+strides; the run-time and strided paths are CPU-only, because a GPU launch
+needs the extent in the type.
 
 ## Accuracy
 

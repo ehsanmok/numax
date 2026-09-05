@@ -553,6 +553,25 @@ def zeros_dyn[
     )
 
 
+def asarray[
+    dtype: DType
+](
+    var values: List[Scalar[dtype]], ctx: Optional[DeviceContext] = None
+) raises -> Dynamic[dtype, 1]:
+    """A rank-1 tensor holding `values`, as long as `values` is.
+
+    The constructor for data whose length is a run-time fact.
+    `Shaped[dtype, n](ctx, values)` needs `n` in the type, so anything
+    producing a count instead of a constant -- a boolean mask, `unique`, a
+    file read -- had no way to hand back a right-sized tensor. This does,
+    and it is what those functions return.
+    """
+    var n = len(values)
+    var result = Dynamic[dtype, 1](_context(ctx), row_major(_dyn_shape[1](n)))
+    result.copy_from_host(values)
+    return result^
+
+
 def ones[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:

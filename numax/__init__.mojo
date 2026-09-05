@@ -82,6 +82,7 @@ from .core.array import (
     Shaped,
     Tensor,
     arange,
+    asarray,
     concatenate,
     copy,
     diag,
@@ -206,6 +207,7 @@ from .core.sorting import (
     nonzero,
     searchsorted,
     sort,
+    take,
     unique,
     select,
 )

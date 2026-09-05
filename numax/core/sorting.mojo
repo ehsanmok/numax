@@ -28,6 +28,14 @@ functions here are built on, since these walks run on a host copy of the
 tensor's elements (`Tensor.to_host`) and that is
 exactly what `sort` wants.
 
+## Results whose length the data decides
+
+`unique`, `extract` and `take` return a run-time-shaped rank-1 tensor, sized
+to what they actually produced. That is the whole reason a `Tensor`'s extents
+need not be compile-time: these three have no length until the values are
+read. `sort` and `select` keep their input's shape, since theirs does not
+depend on the values at all.
+
 ## Flat, not axis-wise
 
 Every function here treats its input as flat row-major, matching
@@ -43,7 +51,7 @@ from nn.argsort import argsort as _nn_argsort
 from std.collections import Array
 
 from layout.tile_layout import TensorLayout
-from .array import Shaped, Tensor, _product
+from .array import Dynamic, Shaped, Tensor, asarray, _product
 
 
 def sort[
@@ -134,34 +142,25 @@ def searchsorted[
 
 def unique[
     dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Tuple[
-    Shaped[dtype, LayoutType.static_product], Int
-]:
-    """The sorted distinct values of `a`, and how many there are.
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 1]:
+    """The sorted distinct values of `a`. `numpy.unique`.
 
-    `numpy.unique` returns a right-sized array; a comptime-shaped `Tensor`
-    cannot, since the count depends on the values. So the tensor comes back
-    at full length with the distinct values packed into its first `count`
-    entries and the tail left as whatever the duplicates were. **Read only
-    the first `count`.**
-
-    That is the honest shape for this constraint rather than the pretty
-    one. The alternative -- returning a `List[Scalar[dtype]]` -- would be
-    right-sized but would drop out of the `Tensor` surface everything else
-    in `numax.core.array` speaks.
+    Right-sized: the result holds exactly as many elements as there are
+    distinct values, which is a count only the data knows. That is what a
+    run-time-shaped tensor is for, and `unique(a).size()` is the answer to
+    "how many" rather than a second return value the caller has to carry.
     """
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var values = a.to_host()
     _std_sort(values)
-    if n == 0:
-        return (Shaped[dtype, n](a.context(), values^), 0)
 
-    var count = 1
-    for i in range(1, n):
-        if values[i] != values[count - 1]:
+    var count = 0
+    for i in range(n):
+        if count == 0 or values[i] != values[count - 1]:
             values[count] = values[i]
             count += 1
-    return (Shaped[dtype, n](a.context(), values^), count)
+    values.resize(count, fill=0)
+    return asarray(values^, a.context())
 
 
 def count_nonzero[
@@ -172,7 +171,7 @@ def count_nonzero[
     `-0.0` counts as zero (it compares equal to `0.0`), matching NumPy.
     NaN counts as nonzero, also matching NumPy, since `nan != 0`.
     """
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var values = a.to_host()
     var total = 0
     for i in range(n):
@@ -193,7 +192,7 @@ def any_nonzero[
     Short-circuits, which is the point of having it rather than
     `count_nonzero(a) > 0`.
     """
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var values = a.to_host()
     for i in range(n):
         if values[i] != 0:
@@ -206,7 +205,7 @@ def all_nonzero[
 ](a: Tensor[dtype, LayoutType]) raises -> Bool:
     """Whether every element is nonzero. `numpy.all`, named for the same
     reason as `any_nonzero`. Short-circuits on the first zero."""
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var values = a.to_host()
     for i in range(n):
         if values[i] == 0:
@@ -225,7 +224,7 @@ def nonzero[
     be -- which is exactly the freedom `unique`'s `Tensor` return does not
     have.
     """
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var values = a.to_host()
     var indices = List[Int](capacity=n)
     for i in range(n):
@@ -238,31 +237,54 @@ def extract[
     dtype: DType, LayoutType: TensorLayout
 ](
     condition: Tensor[DType.bool, LayoutType], a: Tensor[dtype, LayoutType]
-) raises -> Tuple[Shaped[dtype, LayoutType.static_product], Int]:
-    """The elements of `a` where `condition` is nonzero, and how many.
-    `numpy.extract` / `a[mask]`.
+) raises -> Dynamic[dtype, 1]:
+    """The elements of `a` where `condition` is nonzero. `numpy.extract`,
+    which is what `a[mask]` means in NumPy.
 
-    Boolean masking -- the operation nothing in `numax` could express
-    before, because its output length depends on the mask's *values*.
-    Packed into the first `count` entries of a full-length tensor, on the
-    same terms as `unique`: **read only the first `count`**.
+    Boolean masking: the result's length depends on the mask's *values*, so
+    it comes back run-time-shaped and right-sized.
 
-    `condition` is a `Shaped[DType.bool]` -- the type every comparison in
-    `numax.core.logic` already returns, so `extract(a > 0, a)` composes
-    without a conversion in between. A tensor of values becomes a mask with
-    `numax.core.ops.astype[DType.bool]`, which is nonzero-means-true and is
-    the one place that rule now lives.
+    `condition` is a bool tensor over the same layout -- the type every
+    comparison in `numax.core.logic` already returns, so `extract(a > 0, a)`
+    composes without a conversion in between. A tensor of values becomes a
+    mask with `numax.core.ops.astype[DType.bool]`, which is
+    nonzero-means-true and is the one place that rule now lives.
     """
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var mask = condition.to_host()
     var values = a.to_host()
-    var out = List[Scalar[dtype]](length=n, fill=0)
-    var count = 0
+    var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         if mask[i]:
-            out[count] = values[i]
-            count += 1
-    return (Shaped[dtype, n](a.context(), out^), count)
+            out.append(values[i])
+    return asarray(out^, a.context())
+
+
+def take[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], indices: List[Int]) raises -> Dynamic[dtype, 1]:
+    """The elements of `a` at `indices`, in the order given. `numpy.take`.
+
+    The consumer for the index lists `nonzero` and `argsort` return, which
+    otherwise had nothing to feed: `take(a, nonzero(a))` is the nonzero
+    values and `take(a, argsort(a))` is the sorted copy, both right-sized
+    without the caller reassembling a tensor by hand.
+
+    Indices are flat and row-major, matching `numpy.take` with no `axis`.
+    Out of range raises rather than wrapping, since a silent wrap turns an
+    indexing bug into wrong numbers.
+    """
+    var n = a.size()
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](capacity=len(indices))
+    for i in range(len(indices)):
+        var idx = indices[i]
+        if idx < 0 or idx >= n:
+            raise Error(
+                "take: index ", idx, " is outside a tensor of ", n, " elements"
+            )
+        out.append(values[idx])
+    return asarray(out^, a.context())
 
 
 def select[

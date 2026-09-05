@@ -45,6 +45,7 @@ from .core.array import (
     Shaped,
     Tensor,
     arange,
+    asarray,
     concatenate,
     copy,
     diag,
@@ -156,6 +157,7 @@ from .core.sorting import (
     searchsorted,
     select,
     sort,
+    take,
     unique,
 )
 
