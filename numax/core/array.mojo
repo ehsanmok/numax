@@ -1060,6 +1060,98 @@ def split_dyn[
     return (asarray(head^, ctx), asarray(tail^, ctx))
 
 
+def stack_dyn[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, 2
+]:
+    """Stack two same-length tensors along a new leading axis, flattening
+    each: `(2, size)`.
+
+    The run-time-shaped `stack`. Where `stack` needs both inputs to be rank
+    1 with the same extent in their types, this takes any two layouts and
+    checks the lengths agree at run time.
+    """
+    if a.size() != b.size():
+        raise Error(
+            "stack_dyn: lengths ", a.size(), " and ", b.size(), " differ"
+        )
+    var values = a.to_host()
+    var b_values = b.to_host()
+    for i in range(len(b_values)):
+        values.append(b_values[i])
+    var result = Dynamic[dtype, 2](
+        a.context(), row_major(_dyn_shape[2](2, a.size()))
+    )
+    result.copy_from_host(values)
+    return result^
+
+
+def broadcast_to[
+    dtype: DType, LayoutType: TensorLayout, rank: Int
+](a: Tensor[dtype, LayoutType], *extents: Int) raises -> Dynamic[dtype, rank]:
+    """`a` stretched to the given shape, following NumPy's rules.
+
+    Shapes are aligned from the right; an axis of extent 1 repeats to fill
+    the target, an axis matching the target passes through, and any other
+    mismatch raises. Missing leading axes are treated as extent 1, so a
+    `(3,)` broadcasts to `(2, 3)`.
+
+    This materializes rather than returning a stride-0 view: MAX has no
+    `broadcast_to`, and a view would borrow from a tensor this module does
+    not own, the same reason `slice` copies. `numax.core.tensor`'s
+    `broadcast_op_axis` is the route that avoids the copy where the
+    broadcast only exists to be consumed by an elementwise op.
+    """
+    comptime src_rank = LayoutType.rank
+    if rank < src_rank:
+        raise Error(
+            "broadcast_to: cannot drop axes, ",
+            src_rank,
+            " does not fit rank ",
+            rank,
+        )
+
+    var count = 1
+    for d in range(rank):
+        if extents[d] < 0:
+            raise Error("broadcast_to: axis ", d, " has a negative extent")
+        count *= extents[d]
+
+    # Right-aligned: source axis `d - offset` lines up with target axis `d`.
+    var offset = rank - src_rank
+    for d in range(offset, rank):
+        var have = a.dim_at(d - offset)
+        if have != 1 and have != extents[d]:
+            raise Error(
+                "broadcast_to: axis ",
+                d,
+                " of extent ",
+                have,
+                " does not stretch to ",
+                extents[d],
+            )
+
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](capacity=count)
+    for flat in range(count):
+        var rem = flat
+        var src = 0
+        for k in range(rank):
+            var d = rank - 1 - k
+            var c = rem % extents[d]
+            rem //= extents[d]
+            if d >= offset and a.dim_at(d - offset) != 1:
+                src += c * a.stride_at(d - offset)
+        out.append(values[src])
+
+    var result = Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape[rank](*extents))
+    )
+    result.copy_from_host(out)
+    return result^
+
+
 def ravel[
     dtype: DType, LayoutType: TensorLayout
 ](a: Tensor[dtype, LayoutType]) raises -> Shaped[

@@ -20,6 +20,7 @@ from max.gpu.host import DeviceContext
 from numax.core.array import (
     Dynamic,
     Shaped,
+    broadcast_to,
     concatenate_dyn,
     empty_dyn,
     full_dyn,
@@ -27,6 +28,7 @@ from numax.core.array import (
     reshape_dyn,
     slice,
     split_dyn,
+    stack_dyn,
     zeros_dyn,
     zeros_like,
 )
@@ -230,6 +232,84 @@ def test_dim_at_and_stride_at_read_a_computed_axis() raises:
     for d in range(3):
         assert_equal(a.dim_at(d), extents[d])
         assert_equal(a.stride_at(d), strides[d])
+
+
+def test_stack_dyn_pairs_two_run_time_lengths() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros_dyn[dtype, 1](3, ctx=ctx)
+    var b = zeros_dyn[dtype, 1](3, ctx=ctx)
+    for i in range(3):
+        a[i] = Scalar[dtype](i + 1)
+        b[i] = Scalar[dtype](10 * (i + 1))
+
+    var s = stack_dyn(a, b)
+    assert_equal(s.dim_at(0), 2)
+    assert_equal(s.dim_at(1), 3)
+    for i in range(3):
+        assert_almost_equal(s[i], a[i])
+        assert_almost_equal(s[3 + i], b[i])
+
+
+def test_stack_dyn_rejects_mismatched_lengths() raises:
+    var ctx = DeviceContext(api="cpu")
+    var raised = False
+    try:
+        _ = stack_dyn(
+            zeros_dyn[dtype, 1](3, ctx=ctx), zeros_dyn[dtype, 1](4, ctx=ctx)
+        )
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_broadcast_to_repeats_a_length_one_axis() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros_dyn[dtype, 2](3, 1, ctx=ctx)
+    for i in range(3):
+        a[i] = Scalar[dtype](i + 1)
+
+    var wide = broadcast_to[rank=2](a, 3, 4)
+    assert_equal(wide.dim_at(0), 3)
+    assert_equal(wide.dim_at(1), 4)
+    for r in range(3):
+        for c in range(4):
+            assert_almost_equal(wide[r * 4 + c], a[r])
+
+
+def test_broadcast_to_prepends_missing_axes() raises:
+    # A rank-1 input aligns with the *trailing* axes, so (3,) fills each
+    # row of a (2, 3) rather than each column.
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros_dyn[dtype, 1](3, ctx=ctx)
+    for i in range(3):
+        a[i] = Scalar[dtype](i + 1)
+
+    var grid = broadcast_to[rank=2](a, 2, 3)
+    for r in range(2):
+        for c in range(3):
+            assert_almost_equal(grid[r * 3 + c], a[c])
+
+
+def test_broadcast_to_rejects_a_mismatched_axis() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros_dyn[dtype, 1](3, ctx=ctx)
+    var raised = False
+    try:
+        _ = broadcast_to[rank=1](a, 4)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_broadcast_to_leaves_a_matching_shape_alone() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
+    for i in range(6):
+        a[i] = Scalar[dtype](i + 1)
+
+    var same = broadcast_to[rank=2](a, 2, 3)
+    for i in range(6):
+        assert_almost_equal(same[i], a[i])
 
 
 def main() raises:
