@@ -1,5 +1,9 @@
 """NumPy-named statistics, composed from `numax.core.tensor` and `FloatLike`.
 
+**This module is tier 2.** Every reduction here walks a host copy.
+`numax.core.tensor`'s `reduce` and `reduce_axis` are the GPU-launchable
+primitives underneath the same operations.
+
 `docs/parity.md` picks statistics as a genuine `numax` gap with a
 selective axis-1 lift: MAX ships no `mean`/`var`/`std`/`median`/`mode` at
 all (verified directly -- `max.algorithm.functional` exports only

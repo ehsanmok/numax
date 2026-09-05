@@ -1,5 +1,10 @@
 """Double-double compensated arithmetic: a value plus its rounding error.
 
+**This module is tier 1.** The transcendentals are fixed-length series and
+fixed-count Newton refinements rather than converge-to-tolerance loops, for
+exactly this reason; the cost is accuracy at the extremes of a domain,
+documented per method.
+
 An ordinary float discards the bits below its own precision on every
 operation. `Compensated` recovers them: every operation here is an
 error-free transformation (`two_sum`, `two_prod`, built on `fma`) that

@@ -1,5 +1,10 @@
 """Probability densities, cumulative distributions, and quantiles.
 
+**This module is tier 1.** The CDFs are changes of variable over
+`gammainc`/`betainc`/`erfc`, and each quantile runs its own fixed-iteration
+Newton loop against the analytic density rather than iterating to a
+tolerance.
+
 Nine namespaces, spelled the way `scipy.stats` spells them -- `norm`,
 `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` -- each
 carrying `.pdf` (or `.pmf`), `.cdf` and `.ppf`:

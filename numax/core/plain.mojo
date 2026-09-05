@@ -1,5 +1,9 @@
 """Ordinary SIMD, wrapped so it can conform to `FloatLike`.
 
+**This module is tier 1.** Every method is a fixed amount of straight-line
+work on a SIMD register, so a kernel instantiated at `Plain` launches
+inside a GPU thread unmodified.
+
 Mojo can't retroactively add a trait to a type from outside its defining
 module, so a bare `SIMD` can't conform to `FloatLike` directly -- `Plain` is
 the thin wrapper that lets it. Instantiating a `FloatLike` kernel with `Plain`

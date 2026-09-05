@@ -1,5 +1,13 @@
 """Drive any `FloatLike` kernel across a `TileTensor`, on CPU or GPU.
 
+**This module is the tier boundary itself**, so it declares per function
+rather than once: `map`, `reduce`, `reduce_rows`, `reduce_axis` and
+`broadcast_op_axis` at a compile-time shape carry the tier-1 guarantee and
+take `gpu=True`; their runtime-shape overloads, `map_strided`,
+`reduce_strided` and `map_threaded` are host-only, since a shape the
+compiler cannot see cannot become a kernel signature. A tier-1 *kernel*
+stays tier 1 whichever of these walks it.
+
 `numax`'s kernels (`gaussian`, `sigmoid`, `erf`, ...) are written once against
 `FloatLike` and get plain SIMD, autodiff, or extra precision for free by the
 type they're called with. That composability was, until now, only wired up

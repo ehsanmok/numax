@@ -1,5 +1,7 @@
 """Mathematical constants, at `Float64` and at any `FloatLike`.
 
+**This module is tier 1.** Two constants and their `FloatLike` lifts.
+
 `pi` and `e` only. Physical constants are deliberately absent: a numerics
 library is not a units library, and a caller who needs the speed of light
 needs a whole table with units attached rather than one value without.

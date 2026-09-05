@@ -1,5 +1,9 @@
 """Legendre polynomials, `P_n(x)`, via their three-term recurrence.
 
+**This module is tier 1.** The recurrence runs `n` times where `n` is the
+degree -- a scalar identical in every lane and every thread, not a
+function of the data.
+
 Unlike every other special function in `numax`, there's no approximation
 here to trade accuracy against: `P_n` *is* a polynomial, and Bonnet's
 recurrence

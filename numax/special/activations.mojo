@@ -1,5 +1,9 @@
 """Activations: a small vectorized kernel library, generic over `FloatLike`.
 
+**This module is tier 1**, except `softmax`, which says so in its own
+docstring: one output element needs its whole row, which a per-element
+kernel cannot express, so it is `Plain`-only host orchestration.
+
 Every function below is written once, against the trait, and gets three
 meanings for free from whatever type it's called with: plain SIMD, a value
 paired with its derivative (`Dual`), or a value carried to roughly double
@@ -145,7 +149,12 @@ def softmax[
         Storage=PointerStorage[element_width=1],
     ],
 ) where dtype.is_floating_point():
-    """Row-wise softmax over a 2D tensor: CPU-side.
+    """**Tier 2.** Row-wise softmax over a 2D tensor: CPU-side.
+
+    Tier 2 because one output element needs its whole row, which a
+    per-element kernel cannot express -- this is a sequence of walks, not a
+    kernel, and orchestrating it on a device means launching each in turn
+    (`examples/intermediate/softmax.mojo` does exactly that).
 
     `ys[r, :] = exp(xs[r, :] - max(xs[r, :])) / sum(exp(xs[r, :] -
     max(xs[r, :])))` -- the usual numerically-stable formulation (subtracting

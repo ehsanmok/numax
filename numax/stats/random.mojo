@@ -1,5 +1,8 @@
 """Random sampling into `numax.core.array.Tensor`, `Plain`-only, over the host RNG.
 
+**This module is tier 2.** The generators are host-side and fill a tensor
+through its host path; `std.random` is what backs them.
+
 `docs/parity.md` picks random sampling as a genuine `numax` gap:
 without it, `examples/advanced/ode.mojo`'s GPU ensemble (which needs
 initial conditions) and any Gaussian-process-shaped example reach for a

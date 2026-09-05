@@ -1,5 +1,9 @@
 """Forward-mode automatic differentiation: value paired with derivative.
 
+**This module is tier 1.** Each operation is its `Inner`'s operation plus
+the chain rule -- fixed work, no branching -- so differentiating a kernel
+costs it nothing in launchability.
+
 `Dual[Inner: FloatLike]` wraps *any* `FloatLike` type in its `value`/`deriv`
 fields, not just a raw `SIMD` pair -- which is what lets it nest. Seeding a
 plain `Dual[Plain[dtype, width]]` with `deriv = 1` gets a first derivative,

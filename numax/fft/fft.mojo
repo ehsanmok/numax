@@ -1,5 +1,9 @@
 """Radix-2 Cooley-Tukey FFT over `Complex[Inner]`, at a compile-time size.
 
+**This module is tier 1.** The transform size is a compile-time parameter,
+so every loop bound is known and the whole butterfly launches inside a GPU
+thread.
+
 The transform is `X[k] = sum_j x[j] * exp(-2*pi*i*j*k/n)` -- the standard
 sign convention, matching NumPy's `fft` and SciPy's.
 

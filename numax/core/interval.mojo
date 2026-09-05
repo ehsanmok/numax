@@ -1,5 +1,9 @@
 """`Interval[Inner]` -- a value known only to lie between two bounds.
 
+**This module is tier 1.** Every bound is computed with fixed work, and
+the three-way `copysign` cases are arithmetic blends rather than branches
+-- see `abs` and `copysign` below.
+
 Every operation maps a set of possible inputs to a set of possible outputs,
 so running an existing kernel at `Interval` answers "what range can this
 produce over that range of inputs" in one call, instead of sampling and

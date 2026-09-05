@@ -1,5 +1,10 @@
 """Gap-only NumPy-named creation and manipulation surface over `TileTensor`.
 
+**This module is tier 2.** Every manipulation here walks a host copy of the
+elements, and several of them raise on a shape the compiler cannot check.
+The tensor itself is tier-agnostic -- it is storage -- but these functions
+are host-side. `numax.core.tensor` holds the GPU-launchable walks.
+
 `docs/parity.md` picks array creation/manipulation as a genuine
 `numax` gap: MAX's `layout` package ships `TileTensor` itself (slicing,
 tiling, reshaping, coalescing) but no NumPy-named *factory* functions --

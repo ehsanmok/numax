@@ -2,6 +2,10 @@
 `E(m)` (parameterized by `m = k^2`, following `std`'s and A&S's own
 convention -- not the modulus `k` itself).
 
+**This module is tier 1.** `m1` is floored at a small positive epsilon
+before it reaches `ln`, branchlessly, which is what keeps both functions
+finite at their shared singular point.
+
 Both are Abramowitz & Stegun 17.3.34/17.3.36's polynomial-plus-log
 ("Hastings") approximations in `m1 = 1 - m`, each accurate to ~2e-8. Neither
 is in `std.math` or MAX's accelerator library at all, so there's nothing to

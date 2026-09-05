@@ -1,5 +1,9 @@
 """The gamma family: `gamma`, `lgamma`, and the incomplete gamma functions.
 
+**This module is tier 1.** Reflection across `x = 0.5` is a `0`/`1`
+indicator built from `copysign`, and `gammainc`'s series runs a fixed 100
+terms with no convergence test.
+
 Every kernel here uses a **fixed** number of terms or iterations rather than
 a data-dependent convergence check: a GPU thread can't branch per-lane on
 "has this series converged yet" the way a scalar loop could (every lane in

@@ -9,6 +9,9 @@ the elementwise math, the comparisons, the constants, the seam to the
 `Array` layer, and the entry points of `numax.special`, `numax.linalg`,
 `numax.stats` and `numax.io` that a program reaches for first.
 
+This module declares no tier of its own -- it re-exports, and each name
+carries the tier of the module that defines it.
+
 **What is deliberately not here.** `numax.stats`'s `sum`, `prod`, `min`,
 `max`, and `numax.core`'s `abs`, `all`, `any`, `round` and `copysign` all
 share a name with a Mojo builtin. A module-level definition *replaces* that

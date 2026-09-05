@@ -1,6 +1,10 @@
 """The Lambert W function: the principal branch (`lambertw`, `x >= -1/e`)
 and the other real branch (`lambertw_m1`, `-1/e <= x < 0`).
 
+**This module is tier 1.** Both branches run a fixed 20 or 30 Halley
+iterations rather than iterating to a tolerance, and `lambertw_m1`'s two
+seeds are blended branchlessly.
+
 Both branches solve the same equation, `w*exp(w) = x`, which has one real
 solution for `x > 0` and two for `x` in `[-1/e, 0)` -- `lambertw` is the one
 that's `>= -1`, continuous with `x >= 0`'s single solution; `lambertw_m1` is

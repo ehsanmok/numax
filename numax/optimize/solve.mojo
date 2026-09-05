@@ -1,5 +1,10 @@
 """Root finders where the caller supplies only `f`.
 
+**This module is tier 1.** Every solver here runs a fixed iteration count
+and returns whatever it has reached. `numax.optimize.optimize` holds the
+converge-to-tolerance siblings, which are tier 2; the two are alternatives,
+not replacements.
+
 `newton` needs `f'`, and `halley` needs `f'` and `f''`. Every other library
 makes that the caller's problem -- hand in a second (and third) function,
 or accept a finite-difference approximation and the step-size tuning that

@@ -1,5 +1,9 @@
 """Bessel functions of the first and second kind, orders zero and one.
 
+**This module is tier 1.** The near/far split is a `0`/`1` blend built from
+`copysign` rather than a branch, and the far branch's argument is clamped
+so both sides are finite everywhere -- both sides are always evaluated.
+
 `std.math` ships full-domain `j0`/`j1`/`y0`/`y1`, but -- same story as
 `numax.special.gamma`'s docstring -- they're CPU-only libm calls, rejected outright
 inside a GPU kernel. (On this platform's libm, the `float32` symbols for

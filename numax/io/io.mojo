@@ -1,5 +1,7 @@
 """Binary save/load and configurable printing for `numax.core.array.Tensor`.
 
+**This module is tier 2.** File I/O, host-side by definition.
+
 `docs/parity.md` picks tensor I/O as a genuine `numax` gap: MAX ships
 no binary `TileTensor` I/O at all (verified by direct probe -- there is no
 `layout`-level save/load, and `max.algorithm.functional` exports only

@@ -1,5 +1,9 @@
 """Multi-variable forward-mode automatic differentiation.
 
+**This module is tier 1.** Each operation is the `Dual` rule run once per
+gradient component, over a loop whose bound is the compile-time `n_vars`
+and identical in every lane.
+
 `Dual[Inner]` tracks one derivative -- fine for a kernel of a single
 variable, or differentiated one variable at a time by calling it `n_vars`
 times with a different seed each call. `Gradient[Inner, n_vars]` tracks all

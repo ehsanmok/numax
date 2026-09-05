@@ -1,5 +1,11 @@
 """The trait every numeric kernel in `numax` is written against.
 
+**This module defines tier 1.** `FloatLike` is the trait a tier-1 kernel is
+written against, and the branchless selection helpers here (`max_of`,
+`min_of`, `ge_indicator`, `blend`) are how such a kernel picks between two
+values per lane without branching. `docs/architecture.md`'s "Two tiers" has
+the boundary; every module in numax declares which side it is on.
+
 A kernel bounded on `FloatLike` names no SIMD width, no dtype, and no
 instruction set -- only the handful of operations it actually needs. The
 _type_ it gets called with then decides what you get out of it: plain SIMD

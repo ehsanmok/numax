@@ -110,14 +110,23 @@ and declares which one every function is in:
 | **Tier 1** | `FloatLike`-generic | fixed count, no per-lane branching | launches inside a GPU thread unmodified |
 | **Tier 2** | `Plain`-only, host | may loop to a tolerance, may branch on data | none about GPU |
 
-Everything shipping today is tier 1 -- the special functions, `rk4`,
-`dopri5` (fixed-step), `gauss_legendre`, `lambertw`'s fixed 20 Halley
-iterations, `Compensated.ln()`'s 3 fixed Newton refinements, `gammainc`'s
-fixed 100-term series, `numax.optimize`'s fixed-iteration `newton`/`halley`/
-`bisection`. `numax.stats.median` and `mode` are the nearest thing to
-an exception, and they are not one: they reach MAX's own sort, which has
-data-dependent control flow, from `Plain`-only code. The rule governs what
-numax writes *inside the trait*.
+Every module declares its tier in its own docstring, so the split is
+readable from the source rather than inferred. Tier 1 is the conformers,
+the special functions, the FFT, `rk4`, `dopri5` (fixed-step),
+`gauss_legendre`, the distributions, and `numax.optimize.solve`'s
+fixed-iteration `newton`/`halley`/`bisection`. Tier 2 is the NumPy-named
+surface over `Tensor` -- the elementwise math, the comparisons, sorting,
+the statistics reductions, the array manipulations and file I/O -- plus
+`numax.optimize.optimize` and `numax.integrate.integrate`, which converge
+to a tolerance. `numax.core.tensor` is the boundary itself and declares per
+function: a compile-time shape carries the guarantee and takes `gpu=True`,
+a run-time one cannot, since a shape the compiler cannot see cannot become
+a kernel signature.
+
+`numax.stats.median` and `mode` are the nearest thing to an exception, and
+they are not one: they reach MAX's own sort, which has data-dependent
+control flow, from `Plain`-only code. The rule governs what numax writes
+*inside the trait*.
 
 Three rules govern the boundary. The tier is **declared**, in the module
 docstring and in the function's own, so a reader at a call site never has

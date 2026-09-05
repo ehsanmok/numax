@@ -1,5 +1,9 @@
 """Hermite, Laguerre, and Chebyshev polynomials.
 
+**This module is tier 1**, on the same terms as `numax.special.legendre`:
+each recurrence runs for the requested degree, which is a parameter rather
+than a property of the values.
+
 The other classical orthogonal families next to `numax.special.legendre`, which
 keeps its own file because `numax.integrate` depends on it specifically
 (Gauss-Legendre nodes are roots of `P_n`). All four are the same algorithm

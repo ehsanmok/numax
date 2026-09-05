@@ -1,5 +1,9 @@
 """A base-10 fixed-point `FloatLike` conformer: exact decimal arithmetic.
 
+**This module is tier 1.** `exp` is a fixed 30-term series and `ln` and
+`sqrt` are fixed-count Newton refinements, the same trade the other
+conformers make.
+
 `Decimal[width, scale]` stores a value as an integer scaled by `10^scale`
 (`SIMD[DType.int64, width]`) -- the same representation `decimo`-style
 projects use for base-10 exactness a binary `float` can't offer: `0.1 + 0.2`

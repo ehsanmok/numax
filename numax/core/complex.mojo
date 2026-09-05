@@ -4,6 +4,10 @@ uses (`Complex[Dual[Plain[...]]]` differentiates a complex-valued kernel
 the same way `Dual[Plain[...]]` differentiates a real one, with no changes
 to the kernel itself).
 
+**This module is tier 1.** `erf` is a fixed 40-term series and `_atan2` a
+fixed-degree polynomial with a branchless quadrant correction, so a
+complex-valued kernel launches like any other.
+
 Most of `FloatLike`'s contract has an unambiguous complex-analytic
 extension (`+`, `-`, `*`, `/`, `exp`, `sin`, `cos` -- all standard, `sin`/
 `cos` via `exp` alone, since `FloatLike` has no `sinh`/`cosh` of its own and

@@ -1,6 +1,11 @@
 """The Beta family: `beta(a,b)` and the regularized incomplete beta
 `betainc(x,a,b)`.
 
+**This module is tier 1.** The continued fraction runs a fixed 100
+iterations with no convergence test, and its two branches are blended with
+each argument clamped to the side where that branch is selected, since the
+discarded one can be infinite and `0 * inf` is NaN.
+
 `beta` is a one-liner over `lgamma` -- `B(a,b) = Gamma(a)Gamma(b)/Gamma(a+b)`
 computed in log space so the individual Gammas can't overflow before their
 ratio comes back down.

@@ -1,5 +1,7 @@
 """The error function and its complement.
 
+**This module is tier 1.** Two forwarding calls to the trait method.
+
 `erf`/`erfc` are `FloatLike` trait methods (see `numax.core.numeric`), not
 freestanding formulas, so each conformer can supply whatever's fastest or
 most precise for it: `Plain` delegates straight to `std.math.erf`/`erfc`
