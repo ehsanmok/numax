@@ -29,13 +29,19 @@ Two things this is deliberately not:
   `comptime for` over `n/2` entries, so compile time and register pressure
   both grow with `n`. This is sized for the transforms that appear *inside*
   a per-element kernel -- 16, 64, 256 points -- not for a 4-million-point
-  spectrogram. The environment's `_cufft` binding covers that case on CUDA
-  hardware, and nothing covers it on Metal.
-- **Not radix-4, split-radix, or real-input-specialized.** A real-input
-  transform of length `n` can be done as a complex transform of length
-  `n/2`, and radix-4 halves the number of twiddle multiplies; neither is
-  implemented, and both are ordinary continuations of what's here rather
-  than redesigns.
+  spectrogram. Nothing in the environment covers that case either: MAX
+  ships exactly one transform, `nn.irfft`, which is inverse-only,
+  last-axis-only and NVIDIA-only (a thin wrapper over the private `_cufft`
+  package). There is no forward FFT anywhere in MAX, and nothing at all on
+  Metal or AMD, so this module is the portable path rather than a
+  small-size fallback in front of a large-size one.
+- **Not radix-4 or split-radix, and `rfft` is not a specialized
+  algorithm.** `rfft` embeds the real input as complex and truncates the
+  result, which does about twice the arithmetic the standard
+  half-length-plus-post-pass trick would; radix-4 halves the number of
+  twiddle multiplies. Both are ordinary continuations of what's here
+  rather than redesigns, and at register-resident sizes neither is worth
+  a second code path.
 """
 
 from std.collections import Array

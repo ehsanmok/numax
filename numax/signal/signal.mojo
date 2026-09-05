@@ -1,4 +1,4 @@
-"""Linear convolution, correlation, and window functions.
+"""Linear convolution, correlation, filtering, and window functions.
 
 **Tier 1.** Everything here has a fixed shape and a fixed amount of work
 determined at compile time, no branching per SIMD lane, so it runs inside a
@@ -38,7 +38,7 @@ zero means.
 from std.collections import Array
 from std.math import cos as _cos_f64, pi as _PI
 
-from ..core.numeric import FloatLike
+from ..core.numeric import FloatLike, guard_nonzero
 
 
 comptime full = 0
@@ -192,3 +192,85 @@ def apply_window[
     for i in range(n):
         out[i] = x[i] * w[i]
     return out^
+
+
+def lfilter[
+    T: FloatLike, n: Int, nb: Int, na: Int
+](b: Array[T, nb], a: Array[T, na], x: Array[T, n]) -> Array[T, n]:
+    """Apply the difference equation `a[0]*y[i] = sum(b[j]*x[i-j]) -
+    sum(a[j]*y[i-j])`. `scipy.signal.lfilter`.
+
+    This is what `convolve` cannot express. A convolution is the `na == 1`
+    case -- output depends on the input alone -- while a recursive filter
+    feeds its own past output back, which is how an infinite impulse
+    response fits in a handful of coefficients. A one-pole lowpass is
+    `b = [alpha]`, `a = [1, alpha - 1]`, and no finite convolution kernel
+    equals it.
+
+    Still tier 1: the recursion runs exactly `n` times over compile-time
+    lengths, and the initial state is zero rather than a data-dependent
+    warm-up. Every lane of a SIMD `T` filters its own signal with the same
+    coefficients.
+
+    `a[0]` is divided by rather than assumed to be 1, matching SciPy. It is
+    floored away from zero, so a caller who passes `a[0] = 0` gets a finite
+    answer instead of NaN -- and a wrong one, since that is not a filter.
+
+    `zi`/`zf` initial and final state are not supported, so filtering a
+    signal in blocks restarts the recursion at each block boundary. Filter
+    the whole sequence in one call, or accept the transient.
+    """
+    var out = Array[T, n](fill=T.constant(0.0))
+    var lead = guard_nonzero(a[0], T.constant(1e-30))
+
+    for i in range(n):
+        var total = T.constant(0.0)
+        for j in range(nb):
+            if j <= i:
+                total = total + b[j] * x[i - j]
+        for j in range(1, na):
+            if j <= i:
+                total = total - a[j] * out[i - j]
+        out[i] = total / lead
+    return out^
+
+
+def firwin[T: FloatLike, n: Int](cutoff: Float64) -> Array[T, n]:
+    """A lowpass FIR filter of `n` taps by the window method.
+    `scipy.signal.firwin`, with the default Hamming window.
+
+    `cutoff` is in the same units SciPy uses: a fraction of the Nyquist
+    frequency, so `0.25` passes the lower quarter of the representable
+    band. The taps are a sinc -- the ideal brick wall's impulse response --
+    truncated to `n` points and tapered by a Hamming window, then scaled
+    for unit gain at DC so a constant input passes through unchanged.
+
+    An odd `n` puts a tap at the sinc's center and gives a filter with no
+    fractional-sample delay, which is why filter designs are usually
+    specified that way. An even `n` works and delays by half a sample.
+
+    Windowing is what makes this usable at all: truncating a sinc without
+    it leaves Gibbs ringing that no amount of extra taps removes, since the
+    overshoot converges to a fixed fraction rather than to zero.
+
+    Only lowpass. Highpass, bandpass and bandstop are the same taps
+    combined differently (a spectral inversion, or a difference of two
+    lowpass designs), which is a continuation rather than a redesign.
+    """
+    var window = hamming[T, n]()
+    var center = Float64(n - 1) / 2.0
+
+    var taps = Array[T, n](fill=T.constant(0.0))
+    var total = T.constant(0.0)
+    for i in range(n):
+        var offset = cutoff * (Float64(i) - center)
+        # sinc(0) is 1, and the floored denominator delivers exactly that:
+        # `sin(eps)/eps` rounds to 1 rather than dividing by zero.
+        var angle = guard_nonzero(T.constant(_PI * offset), T.constant(1e-30))
+        taps[i] = angle.sin() / angle * window[i]
+        total = total + taps[i]
+
+    var gain = guard_nonzero(total, T.constant(1e-30))
+    for i in range(n):
+        taps[i] = taps[i] / gain
+    return taps^

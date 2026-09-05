@@ -57,7 +57,7 @@ is safe; its own docstring lists them and where to reach them.
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`, `fftfreq`, `fftshift`/`ifftshift`, circular convolution |
-| `numax.signal` | `convolve`, `correlate`, Hann/Hamming/Blackman windows |
+| `numax.signal` | `convolve`, `correlate`, `lfilter`, `firwin`, Hann/Hamming/Blackman windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), and numax's own `NMX1` `nmx.save`/`nmx.load`. Printing is `print(a)`, since `Tensor` is `Writable` |
 
@@ -338,8 +338,10 @@ from .signal.signal import (
     blackman,
     convolve,
     correlate,
+    firwin,
     hamming,
     hann,
+    lfilter,
 )
 
 # Statistics, distributions, sampling -- `numax.stats`.

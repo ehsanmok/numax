@@ -279,6 +279,7 @@ conformer. MAX ships no forward FFT to route to.
 |---|---|
 | `convolve` (`mode=full`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
 | `hann`, `hamming`, `blackman`, `apply_window` | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
+| `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
 
 Tier 1; `numax.fft.circular_convolve` is the transform-domain route.
 
