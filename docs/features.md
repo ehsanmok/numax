@@ -88,9 +88,10 @@ conformer-generic kernel is built from: `max_of`, `min_of`, `blend`,
 
 ## The two tiers
 
-Every subpackage's docstring declares its tier, and tier 1 never calls
-tier 2. Labelling each individual module is still in progress: 12 of the 38
-modules carry the line today.
+Every module declares its tier in its own docstring, and tier 1 never calls
+tier 2. Where both make sense the library ships both, cross-referenced: a
+fixed-iteration `newton` and a converge-to-tolerance `newton_tol` are
+siblings rather than replacements.
 
 | Tier | Rule | Who |
 |---|---|---|
@@ -130,7 +131,9 @@ segfaults a host read.
 | Area | Surface | Where |
 |---|---|---|
 | Creation | `zeros`, `ones`, `full`, `empty`, `eye`, `identity`, `arange`, `linspace`, `logspace`, `geomspace`, `meshgrid`, `copy`, and the `*_like` forms (`zeros_like`, `ones_like`, `full_like`, `empty_like`) — every one takes its `DeviceContext` last and optional, so `zeros[f32, 2, 3]()` allocates on the host and `zeros[f32, 2, 3](gpu)` on a device | [`core/array.mojo`](../numax/core/array.mojo), [`array_creation.mojo`](../examples/basic/array_creation.mojo) |
+| Creation at a computed shape | `zeros_dyn`, `ones_dyn`, `full_dyn`, `empty_dyn` — rank in the type, extents as arguments (`zeros_dyn[f32, 2](r, c)`) — and `asarray`, which takes a `List` and is as long as the list is | [`core/array.mojo`](../numax/core/array.mojo) |
 | Manipulation | `reshape`, `ravel`, `transpose`, `squeeze`, `flip`, `stack`, `vstack`, `hstack`, `concatenate`, `split` | [`core/array.mojo`](../numax/core/array.mojo) |
+| Manipulation at a computed shape | `reshape_dyn`, `slice` (basic slicing at any rank), `broadcast_to` (NumPy's rules, right-aligned), `concatenate_dyn`, `split_dyn`, `stack_dyn` — all copy into compact storage rather than returning a view, since MAX has no stride-0 broadcast view and a view would borrow from a tensor these do not own | [`core/array.mojo`](../numax/core/array.mojo) |
 | Indexing | `a[i]` flat on any rank, `a[r, c]` on a rank-2 tensor; `.view()[i, j, k]` is the general form. On a GPU each access stages its own host mapping — take one `to_host()` and index that instead | [`core/array.mojo`](../numax/core/array.mojo) |
 | Printing | `print(a)` — `Tensor` conforms to `Writable`; `a.format(precision=8, threshold=..., edge_items=...)` is the same output with the defaults overridden | [`core/array.mojo`](../numax/core/array.mojo) |
 | Conversion | `to_array`, `to_tensor` — the seam between `Tensor` (shape and device) and `Array[T, n]` (the `FloatLike` conformer layer `numax.linalg`, `numax.signal` and `numax.interpolate` take). Lifting works at any conformer; lowering is `Plain`-only, since `FloatLike` can build a value from a `Float64` but not read one back | [`core/array.mojo`](../numax/core/array.mojo), [`npy_to_cholesky.mojo`](../examples/intermediate/npy_to_cholesky.mojo) |
@@ -138,7 +141,7 @@ segfaults a host read.
 | Arithmetic and operators | `add`, `subtract`, `multiply`, `divide`, `power`, `mod`, `floor_divide`, `negative`, `invert`, `astype` — tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion | [`core/ops.mojo`](../numax/core/ops.mojo) |
 | Elementwise math | `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `rsqrt`, `cbrt`, `abs`, `sin`, `cos`, `tan`, `sinh`, `cosh`, `tanh`, `floor`, `ceil`, `trunc`, `round`, `copysign`, `arcsin`, `arccos`, `arctan`, `arctan2`, `arcsinh`, `arccosh`, `arctanh`, `hypot`, `maximum`, `minimum`, `clip`, `remainder`, `diff`, `gradient` | [`core/elementwise.mojo`](../numax/core/elementwise.mojo) |
 | Comparison and logic | `equal`, `not_equal`, `less`, `less_equal`, `greater`, `greater_equal`, `isclose`, `allclose`, `array_equal`, `isnan`, `isinf`, `isfinite`, `isposinf`, `isneginf`, `logical_and`, `logical_or`, `logical_not`, `logical_xor`, `all`, `any` — truth is a `Shaped[DType.bool]`, and `select`/`extract` take exactly that, so comparisons compose straight into a mask | [`core/logic.mojo`](../numax/core/logic.mojo) |
-| Sorting, searching, masking | `sort`, `argsort`, `searchsorted`, `unique`, `nonzero`, `count_nonzero`, `all_nonzero`, `any_nonzero`, `extract`, `select` | [`core/sorting.mojo`](../numax/core/sorting.mojo) |
+| Sorting, searching, masking | `sort`, `argsort`, `searchsorted`, `unique`, `nonzero`, `count_nonzero`, `all_nonzero`, `any_nonzero`, `extract`, `select`, `take` — `take` consumes what `nonzero` and `argsort` return, so `take(a, argsort(a))` is the sorted copy | [`core/sorting.mojo`](../numax/core/sorting.mojo) |
 
 `argsort` routes into MAX's `nn.argsort` and `argmin`/`argmax` into
 `nn.argmaxmin`; the rest walk a host copy, where `std.builtin.sort` is the
@@ -288,6 +291,7 @@ Tier 1; `numax.fft.circular_convolve` is the transform-domain route.
 | Area | Surface | Where |
 |---|---|---|
 | Reductions | `sum`, `prod`, `mean`, `median`, `mode`, `min`, `max`, `argmin`, `argmax`, `cumsum`, `cumprod`, `variance`, `stddev` — every one takes a `Tensor` and covers all of it; `mean`, `variance`, `stddev` and `cumsum` also have a `FloatLike`-generic `List[T]` form | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
+| Reductions along one axis | `sum_axis`, `prod_axis`, `min_axis`, `max_axis`, `mean_axis` — `numpy.sum(a, axis=k)` and friends, at any rank above 1. The axis is a compile-time parameter and drops from the result, whose remaining extents are run-time values | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
 | Distributions | Nine `scipy.stats`-shaped namespaces — `norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` — each with `.pdf` (or `.pmf`), `.cdf` and, where defined, `.ppf`. Reached as `numax.stats.norm.cdf(...)`; not re-exported at the root, where `gamma` and `beta` are the special functions | [`stats/distributions.mojo`](../numax/stats/distributions.mojo) |
 | Sampling | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` — a named stream, so two generators built from one seed agree and neither is disturbed by what else touched the global RNG (`numpy.random.Generator`'s shape) | [`stats/random.mojo`](../numax/stats/random.mojo) |
 
@@ -308,13 +312,18 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 | Surface | Where |
 |---|---|
 | `numpy.load` — read a `.npy` file `numpy.save` wrote, straight into a `Tensor`. No Python and no NumPy involved: `.npy` is a self-contained binary format, so this is a header parse plus a payload copy in the default `mojo` + `max` environment | [`io/npy.mojo`](../numax/io/npy.mojo), [`npy_interop.mojo`](../examples/basic/npy_interop.mojo) |
+| `numpy.load_dyn` — the same read for a file whose shape you learn from the file: extents go into the layout, so the result is a `Dynamic` at the rank you named | [`io/npy.mojo`](../numax/io/npy.mojo), [`test_npy.mojo`](../tests/io/test_npy.mojo) |
 | `numpy.save` — write a `.npy` file `numpy.load` opens. Byte-identical to what `numpy.save` would have written for the same array: NumPy's key order, its `, }` terminator, its 64-byte header alignment | [`io/npy.mojo`](../numax/io/npy.mojo), [`test_npy.mojo`](../tests/io/test_npy.mojo) |
 | `nmx.save`, `nmx.load` — numax's own `NMX1` binary format: little-endian, dtype/rank/shape in the header and checked on load. The better choice between numax programs, since it carries the dtype name in full and has no Python literal to parse | [`io/io.mojo`](../numax/io/io.mojo) |
 
 
-Both loads are *typed*: `dtype` and `dims` are compile-time parameters the
-caller supplies, matching every other `numax.core.array` factory, and the load
-raises if the file disagrees rather than inferring a shape from it.
+`numpy.load` and `nmx.load` are *typed*: `dtype` and `dims` are compile-time
+parameters the caller supplies, matching every other `numax.core.array`
+factory, and the load raises if the file disagrees rather than inferring a
+shape from it. `numpy.load_dyn[dtype, rank]` is the other way round, for a
+file whose extents you do not know in advance: it reads them from the header
+into the layout and hands back a `Dynamic`. The rank still has to be right,
+since it is the tensor's type.
 
 `numpy.load` rejects, with a message naming the fix: `fortran_order: True`
 (column-major, so the payload order is not numax's), a big-endian `descr` like
@@ -334,8 +343,10 @@ Tier 2, `Plain`-only, host-side.
 Rank is a compile-time variadic and `map`/`reduce` coalesce any contiguous
 row-major tensor, but the surface above it is not uniformly rank-generic yet:
 
-- `numax.stats` reduces over every element and has no `axis=`; axis-wise
-  folding is `numax.core.tensor.reduce_axis`/`reduce_rows`.
+- `numax.stats`'s `median`, `mode`, `argmin`, `argmax`, `cumsum` and
+  `cumprod` cover every element with no `axis=`; the five that do take one
+  are `sum_axis`, `prod_axis`, `min_axis`, `max_axis` and `mean_axis`, and
+  `numax.core.tensor.reduce_axis` folds an arbitrary `combine` the same way.
 - `numax.core.sorting` flattens.
 - `transpose` is 2-D; `concatenate`/`split`/`stack` are rank-1; `reshape`
   targets rank 2 or 3.

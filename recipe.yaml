@@ -40,12 +40,19 @@ requirements:
 about:
   homepage: https://github.com/ehsanmok/numax
   license: Apache-2.0 WITH LLVM-exception
-  summary: A composable numeric-type trait for Mojo -- SIMD, autodiff, and extra precision from one kernel body.
+  summary: Numerical computing for Mojo on MAX -- special functions, linear algebra, quadrature, ODEs, FFTs and statistics, each kernel written once.
   description: |
-    numax lets you write a numeric kernel once, against a trait (FloatLike),
-    and get plain SIMD, forward-mode autodiff (Dual), extra precision
-    (Compensated), or exact decimal arithmetic (Decimal) for free by the
-    type you call it with. Includes a vectorized special-function library
-    (erf, gamma, Bessel, Lambert W, activations, softmax) built on that
-    trait, and numax.core.tensor to drive any of it across MAX's TileTensor on
-    CPU or GPU.
+    numax is a numerical computing library for Mojo built on MAX: special
+    functions, dense linear algebra, quadrature, ODE solvers, FFTs,
+    distributions, statistics, interpolation, signal processing, and a
+    NumPy-named array surface with .npy interchange.
+
+    Every kernel is written once against a trait (FloatLike), so the type
+    you call it with decides what comes back: a value (Plain), a derivative
+    (Dual), a full gradient (Gradient), extra precision (Compensated),
+    exact base-10 fixed point (Decimal), a complex result (Complex), or an
+    interval bound (Interval). They nest, so a Hessian or a holomorphic
+    derivative needs no separate implementation. Tensors own MAX
+    DeviceBuffers and carry their shape in their layout type, with extents
+    either compiled in or supplied at run time, so numax.core.tensor drives
+    any of it across MAX's TileTensor on CPU or GPU.

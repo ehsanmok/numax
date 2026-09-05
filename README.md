@@ -48,7 +48,10 @@ arithmetic. It works on every function in the library.
   of every kernel.
 - **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
   `DeviceContext` you pass a factory decides host or device memory. Nothing else
-  changes, and `.view()` yields the `TileTensor` every MAX kernel takes.
+  changes, and `.view()` yields the `TileTensor` every MAX kernel takes. Its
+  shape lives in its layout type, so `Shaped[f32, 2, 3]` with the extents
+  compiled in and `Dynamic[f32, 2]` with the extents supplied at run time are
+  one type, not two.
 - **NumPy and SciPy's ground.** Special functions, dense linear algebra,
   quadrature, ODE solvers, FFTs, distributions, statistics, interpolation,
   signal and a NumPy-named array surface, plus `.npy` read/write, so a
@@ -241,25 +244,35 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 
 | NumPy / SciPy | νMAX | Note |
 |---|---|---|
-| `np.zeros((2, 3))` | `zeros[f64, 2, 3]()` | shape is a compile-time parameter |
+| `np.zeros((2, 3))` | `zeros[f64, 2, 3]()` | extents in the type, checked at compile time |
+| `np.zeros((r, c))` for computed `r`, `c` | `zeros_dyn[f64, 2](r, c)` | extents as ordinary arguments |
 | `np.linspace(0, 1, 5)` | `linspace[5](0, 1)` | count first, `dtype` defaults to `f64` |
 | `np.linspace(0, 1, 5, dtype=np.float32)` | `linspace[5, f32](0, 1)` | |
 | `np.arange(5)`, `np.eye(3)` | `arange[5]()`, `eye[3]()` | `arange` takes a count, not a `stop` |
 | `np.zeros_like(a)` | `zeros_like(a)` | derived shapes inherit `a`'s device |
-| `a.reshape(2, 3)` | `reshape[f64, 6, 2, 3](a)` | source and target extents both named |
+| `a.reshape(2, 3)` | `reshape[f64, 6, 2, 3](a)`, or `reshape_dyn[rank=2](a, r, c)` | the second takes a shape you computed |
+| `a[1:3, :]`, `np.broadcast_to(a, (2, 3))` | `slice(a, [1, 0], [3, cols])`, `broadcast_to[rank=2](a, 2, 3)` | both copy rather than returning a view |
+| `a[a > 0]`, `np.take(a, idx)` | `extract(greater(a, zeros_like(a)), a)`, `take(a, idx)` | the result is sized by the data, so it comes back `Dynamic` |
 | `a + b`, `np.exp(a)`, `np.sort(a)` | `a + b`, `exp(a)`, `sort(a)` | |
 | `a.astype(np.float32)` | `astype[f32](a)` | explicit: there is no dtype promotion |
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
+| `a.sum(axis=1)`, `a.mean(axis=1)` | `sum_axis[axis=1](a)`, `mean_axis[axis=1](a)` | one axis drops, the rest survive |
 | `np.linalg.solve(A, b)` | `solve[P, n](A, b)` | over `Array[T, n*n]`, so it differentiates |
 | `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr`, `svd`, `eigh` | |
+| `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` | no symmetry assumed; `lstsq` factors instead of forming the normal equations |
+| `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |
 | `scipy.integrate.solve_ivp` | `solve_ivp`, or `rk4` for fixed steps | |
+| `solve_ivp(method="BDF")` | `solve_ivp_stiff` | implicit, so the step size follows accuracy rather than stability |
 | `scipy.interpolate.CubicSpline` | `CubicSpline[T, n]` | built once, `__call__` evaluates |
 | `scipy.optimize.brentq` / `minimize` | `brentq[f](a, b)` / `bfgs[n, f](x0)` | `bfgs` needs no `jac` |
+| `minimize(method="Nelder-Mead")` | `nelder_mead[n, f](x0)` | compares values only, for objectives with kinks |
+| `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
 | `np.fft.fft`, `np.fft.rfft` | `fft[T, log2n]`, `rfft` | length is `2^log2n`, over `Array[Complex[T], n]` |
+| `scipy.signal.lfilter` / `firwin` | `lfilter`, `firwin` | a recursion `convolve` cannot express, and taps to run through it |
 | `np.save` / `np.load` | `numpy.save` / `numpy.load` | real `.npy`, readable by NumPy |
 | `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit |
 | `np.random.default_rng(0)` | `Generator(seed=0)` | or `seed(0)` for the global stream |
@@ -402,6 +415,28 @@ Full index: [`examples/README.md`](examples/README.md). `pixi run examples-cpu`
 skips the GPU ones; `pixi run examples` includes them. All seven conformers,
 with what each one returns and where it lives:
 [`docs/features.md`](docs/features.md#the-trait-and-its-conformers).
+
+## The two tiers
+
+Some algorithms can run inside a GPU thread and some cannot, so every module
+says which it is rather than leaving you to read the body.
+
+Tier 1 runs a fixed number of iterations and never branches per lane, which is
+what makes it launchable on a GPU and callable at any conformer. That covers
+the conformers themselves, the tensor engine, `special`, `linalg`,
+`interpolate`, `fft`, `signal`, and the fixed-step half of `optimize` and
+`integrate`. Per-lane choices are arithmetic blends built from `copysign`
+rather than `if`, because the lanes of one SIMD value can disagree about which
+branch they want.
+
+Tier 2 is free to loop until it converges and to branch on the data it sees. It
+is `Plain`-only and host-side: `ops`, `elementwise`, `logic`, `sorting`, `io`,
+the tensor reductions in `stats`, the converge-to-tolerance minimizers in
+`optimize`, and the adaptive `quad`/`solve_ivp` in `integrate`.
+
+Tier 1 never calls tier 2, so a kernel you can launch stays launchable. Where
+both make sense the library ships both: `newton` at a fixed iteration count and
+`newton_tol` to a tolerance are siblings, and each docstring names the other.
 
 ## Performance
 
