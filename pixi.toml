@@ -195,6 +195,7 @@ test-interval = "mojo -I . tests/core/test_interval.mojo"
 test-prelude = "mojo -I . tests/test_prelude.mojo"
 test-array = "mojo -I . tests/core/test_array.mojo"
 test-bridge = "mojo -I . tests/core/test_bridge.mojo"
+test-dynamic = "mojo -I . tests/core/test_dynamic.mojo"
 test-statistics = "mojo -I . tests/stats/test_statistics.mojo"
 test-sorting = "mojo -I . tests/core/test_sorting.mojo"
 test-io = "mojo -I . tests/io/test_io.mojo"
@@ -242,6 +243,7 @@ tests = { depends-on = [
     "test-prelude",
     "test-array",
     "test-bridge",
+"test-dynamic",
     "test-statistics",
     "test-sorting",
     "test-io",
