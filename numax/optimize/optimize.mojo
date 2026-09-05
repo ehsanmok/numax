@@ -406,6 +406,186 @@ def bfgs[
     return MinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
 
 
+def nelder_mead[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](
+    x0: Array[Float64, n_vars],
+    tol: Float64 = 1e-10,
+    max_iter: Int = 1000,
+) -> MinimizeResult[n_vars]:
+    """Minimize `f` by the Nelder-Mead simplex method.
+    `scipy.optimize.minimize(method="Nelder-Mead")`.
+
+    `bfgs` is the better choice whenever the objective is smooth, since it
+    has the exact gradient available and this deliberately ignores it. What
+    this is for is the objective that has a gradient *and should not be
+    trusted*: numax's own branchless kernels are built from `max_of`,
+    `min_of` and `copysign` blends, which have kinks, and a derivative at a
+    kink points somewhere a line search will not go. A simplex only ever
+    compares function values, so a kink is not a special case for it.
+
+    The standard coefficients: reflect by 1, expand by 2, contract by 0.5,
+    shrink by 0.5. The initial simplex perturbs each coordinate by 5% of
+    itself, or by a small absolute step where the coordinate is zero, which
+    is what SciPy does and matters more than it looks -- a simplex badly
+    scaled against the problem spends its first several iterations only
+    fixing its own shape.
+
+    Convergence is the spread of function values across the simplex,
+    `max(f) - min(f) < tol`. That is the honest test for a method with no
+    derivative to look at, and it is why `tol` here is not comparable to
+    `bfgs`'s gradient tolerance.
+
+    `MinimizeResult.grad_norm` is still filled in, by one extra evaluation
+    at `Gradient` after the loop. Nelder-Mead does not use it, but a
+    caller deserves to know how flat the point it stopped at actually is --
+    a large gradient norm at a converged simplex means the simplex
+    collapsed rather than found anything.
+    """
+    comptime n_points = n_vars + 1
+
+    var points = Array[Float64, n_points * n_vars](fill=0)
+    var values = Array[Float64, n_points](fill=0)
+
+    for j in range(n_vars):
+        points[j] = x0[j]
+    for i in range(1, n_points):
+        for j in range(n_vars):
+            points[i * n_vars + j] = x0[j]
+        var coordinate = x0[i - 1]
+        points[i * n_vars + (i - 1)] = (
+            coordinate * 1.05 if coordinate != 0 else 0.00025
+        )
+
+    for i in range(n_points):
+        values[i] = _evaluate[n_vars, f](points, i)
+
+    var iteration = 0
+    var converged = False
+    for step in range(max_iter):
+        iteration = step
+
+        # Insertion sort: `n_points` is small and the simplex is nearly
+        # sorted already after the first pass.
+        for i in range(1, n_points):
+            var j = i
+            while j > 0 and values[j - 1] > values[j]:
+                var swap_value = values[j - 1]
+                values[j - 1] = values[j]
+                values[j] = swap_value
+                for k in range(n_vars):
+                    var swap_point = points[(j - 1) * n_vars + k]
+                    points[(j - 1) * n_vars + k] = points[j * n_vars + k]
+                    points[j * n_vars + k] = swap_point
+                j -= 1
+
+        if values[n_points - 1] - values[0] < tol:
+            converged = True
+            break
+
+        # Centroid of everything but the worst point.
+        var centroid = Array[Float64, n_vars](fill=0)
+        for i in range(n_points - 1):
+            for j in range(n_vars):
+                centroid[j] += points[i * n_vars + j] / Float64(n_vars)
+
+        var reflected = Array[Float64, n_vars](fill=0)
+        for j in range(n_vars):
+            reflected[j] = (
+                centroid[j] + centroid[j] - points[(n_points - 1) * n_vars + j]
+            )
+        var reflected_value = _evaluate_at[n_vars, f](reflected)
+
+        if reflected_value < values[0]:
+            var expanded = Array[Float64, n_vars](fill=0)
+            for j in range(n_vars):
+                expanded[j] = centroid[j] + 2 * (reflected[j] - centroid[j])
+            var expanded_value = _evaluate_at[n_vars, f](expanded)
+            if expanded_value < reflected_value:
+                _replace_worst[n_vars, n_points](points, expanded)
+                values[n_points - 1] = expanded_value
+            else:
+                _replace_worst[n_vars, n_points](points, reflected)
+                values[n_points - 1] = reflected_value
+            continue
+
+        if reflected_value < values[n_points - 2]:
+            _replace_worst[n_vars, n_points](points, reflected)
+            values[n_points - 1] = reflected_value
+            continue
+
+        # Contract toward whichever of the reflection and the worst point
+        # is better, which is what keeps a contraction from stepping the
+        # wrong way across a valley.
+        var toward_reflection = reflected_value < values[n_points - 1]
+        var contracted = Array[Float64, n_vars](fill=0)
+        for j in range(n_vars):
+            var target = reflected[j] if toward_reflection else points[
+                (n_points - 1) * n_vars + j
+            ]
+            contracted[j] = centroid[j] + 0.5 * (target - centroid[j])
+        var contracted_value = _evaluate_at[n_vars, f](contracted)
+
+        if contracted_value < min(reflected_value, values[n_points - 1]):
+            _replace_worst[n_vars, n_points](points, contracted)
+            values[n_points - 1] = contracted_value
+            continue
+
+        # Nothing helped: shrink the whole simplex toward the best point.
+        for i in range(1, n_points):
+            for j in range(n_vars):
+                points[i * n_vars + j] = points[j] + 0.5 * (
+                    points[i * n_vars + j] - points[j]
+                )
+            values[i] = _evaluate[n_vars, f](points, i)
+
+    var best = Array[Float64, n_vars](fill=0)
+    for j in range(n_vars):
+        best[j] = points[j]
+
+    var seeded = Array[Gradient[_P, n_vars], n_vars](
+        fill=Gradient[_P, n_vars].constant(0.0)
+    )
+    for i in range(n_vars):
+        seeded[i] = Gradient[_P, n_vars].variable(_P(best[i]), i)
+    var evaluated = f[Gradient[_P, n_vars]](seeded^)
+    var grad_norm: Float64 = 0
+    for i in range(n_vars):
+        grad_norm = max(grad_norm, abs(evaluated.grad[i].v))
+
+    return MinimizeResult[n_vars](
+        best^, values[0], grad_norm, iteration, converged
+    )
+
+
+def _evaluate_at[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](x: Array[Float64, n_vars]) -> Float64:
+    var as_plain = Array[_P, n_vars](fill=_P.constant(0.0))
+    for i in range(n_vars):
+        as_plain[i] = _P(x[i])
+    return f[_P](as_plain^).v
+
+
+def _evaluate[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](points: Array[Float64, (n_vars + 1) * n_vars], row: Int) -> Float64:
+    var as_plain = Array[_P, n_vars](fill=_P.constant(0.0))
+    for i in range(n_vars):
+        as_plain[i] = _P(points[row * n_vars + i])
+    return f[_P](as_plain^).v
+
+
+def _replace_worst[
+    n_vars: Int, n_points: Int
+](mut points: Array[Float64, n_points * n_vars], x: Array[Float64, n_vars]):
+    for j in range(n_vars):
+        points[(n_points - 1) * n_vars + j] = x[j]
+
+
 def _lm_step[
     n_params: Int, n_resid: Int
 ](

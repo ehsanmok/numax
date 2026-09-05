@@ -12,7 +12,14 @@ from std.math import cos as cos_f64, exp as exp_f64, pi, sin as sin_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Gradient, Plain
-from numax.optimize import bfgs, brentq, curve_fit, least_squares, newton_tol
+from numax.optimize import (
+    bfgs,
+    brentq,
+    curve_fit,
+    least_squares,
+    nelder_mead,
+    newton_tol,
+)
 
 comptime P = Plain[DType.float64, 1]
 
@@ -423,6 +430,67 @@ def test_the_fitted_jacobian_is_exact_where_a_difference_is_not() raises:
     assert_true(ad_error < 1e-15)
     assert_true(difference_error > 1e-9)
     assert_true(difference_error > ad_error * 1e6)
+
+
+def kinked[U: FloatLike](v: Array[U, 2]) -> U:
+    """`|x - 1| + |y + 2|`, built the branchless way numax's own kernels
+    are: minimum 0 at (1, -2), and a gradient that is misleading at every
+    kink."""
+    return (v[0] - U.one()).abs() + (v[1] + U.constant(2.0)).abs()
+
+
+def test_nelder_mead_minimizes_rosenbrock() raises:
+    var start = Array[Float64, 2](fill=0)
+    start[0] = -1.2
+    start[1] = 1.0
+
+    var result = nelder_mead[2, rosenbrock](start)
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 1.0, atol=1e-4)
+    assert_almost_equal(result.x[1], 1.0, atol=1e-4)
+
+
+def test_nelder_mead_minimizes_a_quadratic_bowl() raises:
+    var start = Array[Float64, 3](fill=0)
+
+    var result = nelder_mead[3, quadratic_bowl](start)
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 1.0, atol=1e-4)
+    assert_almost_equal(result.x[1], -2.0, atol=1e-4)
+    assert_almost_equal(result.x[2], 3.0, atol=1e-4)
+
+
+def test_nelder_mead_handles_the_kinks_that_defeat_a_gradient() raises:
+    # The objective is not differentiable at its own minimum, so a method
+    # that trusts the gradient has nothing useful to follow there.
+    var start = Array[Float64, 2](fill=0)
+    start[0] = 3.0
+    start[1] = 3.0
+
+    var result = nelder_mead[2, kinked](start)
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 1.0, atol=1e-4)
+    assert_almost_equal(result.x[1], -2.0, atol=1e-4)
+    assert_true(result.f_x < 1e-4)
+
+
+def test_nelder_mead_reports_the_gradient_it_did_not_use() raises:
+    # A smooth objective converged properly leaves a small gradient, which
+    # is the diagnostic the extra evaluation after the loop exists for.
+    var start = Array[Float64, 3](fill=0)
+    var result = nelder_mead[3, quadratic_bowl](start)
+    assert_true(result.grad_norm < 1e-3)
+
+
+def test_nelder_mead_and_bfgs_land_on_the_same_minimum() raises:
+    var start = Array[Float64, 2](fill=0)
+    start[0] = -1.2
+    start[1] = 1.0
+
+    var simplex = nelder_mead[2, rosenbrock](start)
+    var quasi_newton = bfgs[2, rosenbrock](start)
+    assert_almost_equal(simplex.x[0], quasi_newton.x[0], atol=1e-3)
+    assert_almost_equal(simplex.x[1], quasi_newton.x[1], atol=1e-3)
 
 
 def main() raises:

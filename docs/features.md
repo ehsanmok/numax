@@ -218,6 +218,7 @@ Two halves, split by whether the iteration count is known up front.
 | `newton_tol`, `brentq` — scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
 | `bfgs` — quasi-Newton minimization to a tolerance, returning `MinimizeResult` | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
 | `least_squares`, `curve_fit` — Levenberg-Marquardt, the second with the data as a runtime argument | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
+| `nelder_mead` — derivative-free simplex, for objectives whose gradient exists but should not be trusted | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
 
 The objective is an ordinary `FloatLike` kernel, so `bfgs` evaluates it at
 `Gradient` and gets every partial derivative *exactly* — there is no `jac`

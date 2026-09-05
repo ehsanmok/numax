@@ -11,7 +11,11 @@ from numax.optimize import newton, brentq, bfgs
 
 The objective is an ordinary `FloatLike` kernel, so `bfgs` evaluates it
 at `Gradient` and gets every partial derivative exactly -- there is no
-`jac` argument to pass.
+`jac` argument to pass. `least_squares` and `curve_fit` get the whole
+Jacobian the same way, from one call per iteration rather than the
+`n_params + 1` a finite difference would cost. `nelder_mead` ignores the
+derivative on purpose, for objectives built from branchless blends whose
+kinks make it misleading.
 """
 
 from .optimize import (
@@ -21,6 +25,7 @@ from .optimize import (
     brentq,
     curve_fit,
     least_squares,
+    nelder_mead,
     newton_tol,
 )
 from .solve import bisection, halley, newton
