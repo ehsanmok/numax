@@ -104,22 +104,40 @@ what makes a `FloatLike` kernel a fused kernel by construction. Two inputs
 is simply the point where the operation cannot be expressed inside a
 single `step` at all, because it needs a second buffer to read from.
 
-`map` and `reduce` accept a `TileTensor` of *any* rank -- they call
-`TileTensor.coalesce()` internally before doing their rank-1 walk, so a
-caller with a genuinely multi-dimensional tensor doesn't need to flatten it
-first. This only works for contiguous, statically-shaped storage (the same
-requirement `coalesce()` itself has: `all_dims_known and is_row_major`),
-enforced with a `where` clause on both functions so a non-coalescible
-tensor (a dynamic shape, or a non-contiguous slice) fails to compile with a
-clear message rather than misbehaving at runtime. `reduce_rows`/
-`broadcast_op_rows` stay genuinely 2D -- the row-wise contract doesn't
-generalize to "coalesce and forget the shape" the way elementwise `map`
-does, so they're unaffected by this.
+Every function here accepts a `TileTensor` of *any* rank, and how it gets
+from that rank down to a walk is what separates the three groups below.
+
+* **Statically shaped and row-major.** `TileTensor.coalesce()` flattens it,
+  which is the only form that can be launched on a GPU (the thread count
+  has to come from the type) and the only one that vectorizes. Everything
+  with a `gpu` parameter is in this group, and a `where` clause
+  (`all_dims_known and is_row_major`, exactly `coalesce()`'s own
+  requirement) keeps anything else out at compile time.
+* **Row-major with run-time extents.** `map`, `map_to`, `zip_to`,
+  `map_threaded`, `reduce`, `reduce_axis` and `broadcast_op_axis` each have
+  a second overload under the *same name*, selected by a `where` clause
+  that is the exact negation, so the two can never be ambiguous. They
+  flatten by constructing a rank-1 layout over the same pointer rather than
+  by `coalesce()` -- the same addresses in the same order, without needing
+  to prove the shape first. No `gpu` parameter, for the reason above.
+  `reduce_rows`/`broadcast_op_rows` need no second overload at all: they
+  index by coordinate and never flatten, so they already accept either.
+* **Not row-major at all** -- a transposed view, or a slice with gaps in
+  it. `map_strided` and `reduce_strided` address each element through its
+  own strides, so they assume nothing about contiguity, and they are
+  generic over `Storage` because a sliced view does not carry the storage
+  type the tensor it came from did. Scalar, and one integer division per
+  axis per element; compact the view with a copy first if it is walked more
+  than once.
+
+numax gains no second tensor type from any of this. The argument is a
+`TileTensor` throughout, which is what every MAX kernel already takes, and
+the distinction lives in the layout -- which is where MAX put it.
 """
 
 from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout, row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import PointerStorage, TensorStorage
 from max.algorithm.functional import elementwise
 from max.gpu import AddressSpace, barrier
 from max.gpu.host import DeviceContext
@@ -1224,4 +1242,412 @@ def reduce[
     var total = init
     for i in range(n):
         total = combine(total, xs_flat.load[1](Coord(i)))
+    return total
+
+
+def map_to[
+    in_dtype: DType,
+    out_dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[in_dtype, w]) thin -> SIMD[out_dtype, w],
+    width: Int = 1,
+](
+    xs: TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        out_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    not TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].all_dims_known
+    and TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+):
+    """`map_to` for a runtime-shaped tensor -- the dtype-changing walk a
+    predicate needs, at a shape the compiler cannot see. No `gpu`
+    parameter, for the reason the runtime `map` gives."""
+    var n = xs.num_elements()
+    var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var ys_flat = TileTensor(ys.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var vec_n = (n // width) * width
+    var i = 0
+    while i < vec_n:
+        ys_flat.store[width](
+            Coord(i), step[width](xs_flat.load[width](Coord(i)))
+        )
+        i += width
+    for j in range(vec_n, n):
+        ys_flat.store[1](Coord(j), step[1](xs_flat.load[1](Coord(j))))
+
+
+def zip_to[
+    in_dtype: DType,
+    out_dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[in_dtype, w], SIMD[in_dtype, w]) thin -> SIMD[
+        out_dtype, w
+    ],
+    width: Int = 1,
+](
+    lhs: TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    rhs: TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        out_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    not TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].all_dims_known
+    and TileTensor[
+        in_dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+):
+    """`zip_to` for runtime-shaped tensors: two inputs, one output, and a
+    `step` free to change dtype -- what an elementwise comparison needs."""
+    var n = lhs.num_elements()
+    var lhs_flat = TileTensor(lhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var rhs_flat = TileTensor(rhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var ys_flat = TileTensor(ys.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var vec_n = (n // width) * width
+    var i = 0
+    while i < vec_n:
+        ys_flat.store[width](
+            Coord(i),
+            step[width](
+                lhs_flat.load[width](Coord(i)), rhs_flat.load[width](Coord(i))
+            ),
+        )
+        i += width
+    for j in range(vec_n, n):
+        ys_flat.store[1](
+            Coord(j),
+            step[1](lhs_flat.load[1](Coord(j)), rhs_flat.load[1](Coord(j))),
+        )
+
+
+def map_threaded[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    width: Int = 1,
+](
+    xs: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ctx: DeviceContext,
+) raises where (
+    not TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+):
+    """`map_threaded` for a runtime-shaped tensor.
+
+    The thread count comes from the element count either way, and that is a
+    run-time value on both paths -- so unlike the GPU launch, threading has
+    nothing to lose here. Same CPU-context requirement and same
+    denormal-flushing caveat as the static overload.
+    """
+    var n = xs.num_elements()
+    var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var ys_flat = TileTensor(ys.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+
+    def body[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {imm xs_flat, imm ys_flat}:
+        ys_flat.store[w](coord, step[w](xs_flat.load[w](coord)))
+
+    elementwise[simd_width=width, target="cpu"](body, Coord(n), ctx)
+
+
+def reduce_axis[
+    dtype: DType,
+    XsLayout: TensorLayout,
+    OutLayout: TensorLayout,
+    combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
+    axis: Int,
+](
+    xs: TileTensor[
+        dtype,
+        XsLayout,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    dst: TileTensor[
+        dtype,
+        OutLayout,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    init: SIMD[dtype, 1],
+) where (
+    not TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+    and TileTensor[
+        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+    and axis >= 0
+    and axis
+    < TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].rank
+):
+    """`reduce_axis` for a runtime-shaped tensor.
+
+    The `outer`/`length`/`inner` split the static overload describes is
+    arithmetic over extents, not over types, so it carries across unchanged
+    -- `rank` and `axis` are still compile-time, and only the extents they
+    multiply are read at run time.
+    """
+    comptime rank = type_of(xs).rank
+
+    var length = Int(xs.dim[axis]())
+    var outer = 1
+    comptime for d in range(axis):
+        outer *= Int(xs.dim[d]())
+    var inner = 1
+    comptime for d in range(axis + 1, rank):
+        inner *= Int(xs.dim[d]())
+
+    var n = xs.num_elements()
+    var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var dst_flat = TileTensor(
+        dst.ptr_at_offset(Coord(0)), row_major(Coord(outer * inner))
+    )
+
+    for o in range(outer):
+        for i in range(inner):
+            var acc = init
+            for k in range(length):
+                acc = combine(
+                    acc, xs_flat.load[1](Coord((o * length + k) * inner + i))
+                )
+            dst_flat.store[1](Coord(o * inner + i), acc)
+
+
+def broadcast_op_axis[
+    dtype: DType,
+    XsLayout: TensorLayout,
+    ValuesLayout: TensorLayout,
+    combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
+    axis: Int,
+](
+    xs: TileTensor[
+        dtype,
+        XsLayout,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    values: TileTensor[
+        dtype,
+        ValuesLayout,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        dtype,
+        XsLayout,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+) where (
+    not TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+    and TileTensor[
+        dtype,
+        ValuesLayout,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+    and axis >= 0
+    and axis
+    < TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].rank
+):
+    """`broadcast_op_axis` for a runtime-shaped tensor -- the inverse of the
+    runtime `reduce_axis`, so the two compose the same way their static
+    counterparts do."""
+    comptime rank = type_of(xs).rank
+
+    var length = Int(xs.dim[axis]())
+    var outer = 1
+    comptime for d in range(axis):
+        outer *= Int(xs.dim[d]())
+    var inner = 1
+    comptime for d in range(axis + 1, rank):
+        inner *= Int(xs.dim[d]())
+
+    var n = xs.num_elements()
+    var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var ys_flat = TileTensor(ys.ptr_at_offset(Coord(0)), row_major(Coord(n)))
+    var values_flat = TileTensor(
+        values.ptr_at_offset(Coord(0)), row_major(Coord(outer * inner))
+    )
+
+    for o in range(outer):
+        for i in range(inner):
+            var value = values_flat.load[1](Coord(o * inner + i))
+            for k in range(length):
+                var idx = (o * length + k) * inner + i
+                ys_flat.store[1](
+                    Coord(idx), combine(xs_flat.load[1](Coord(idx)), value)
+                )
+
+
+# ------------------------------------------------------------------
+# Strided views
+#
+# Both families above walk memory linearly, which is only meaningful when
+# the elements are contiguous in the order the shape implies. A transposed
+# view or a sliced one is neither: `a.T` reorders the strides without moving
+# a byte, and `a[1:3]` leaves gaps between rows. `is_row_major` is what
+# separates the two cases, and it is false for exactly these.
+#
+# The two functions below take that case. They address each element through
+# its own coordinates -- `offset = sum_d coord[d] * stride[d]`, with the
+# coordinates recovered from a linear counter by dividing through the
+# extents -- so no assumption about contiguity is made anywhere. Rank is
+# compile-time, so the per-axis arithmetic unrolls; extents and strides may
+# be either.
+#
+# They are also generic over `Storage`, which the linear walkers are not: a
+# view produced by `slice` carries a different storage type than the tensor
+# it came from, so pinning `PointerStorage` would reject the very inputs
+# these exist for. And input and output layouts are independent, since the
+# useful direction is reading a strided view into compact storage.
+#
+# The cost is one integer division per axis per element, against a pointer
+# bump. Compact the view with a copy first if the same data is walked more
+# than once.
+# ------------------------------------------------------------------
+
+
+def map_strided[
+    dtype: DType,
+    XsLayout: TensorLayout,
+    XsStorage: TensorStorage,
+    YsLayout: TensorLayout,
+    YsStorage: TensorStorage,
+    step: def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w],
+](
+    xs: TileTensor[dtype, XsLayout, MutAnyOrigin, Storage=XsStorage],
+    ys: TileTensor[dtype, YsLayout, MutAnyOrigin, Storage=YsStorage],
+) where (
+    TileTensor[dtype, XsLayout, MutAnyOrigin, Storage=XsStorage].rank
+    == TileTensor[dtype, YsLayout, MutAnyOrigin, Storage=YsStorage].rank
+):
+    """`ys[c] = step(xs[c])` at every coordinate `c`, whatever the strides.
+
+    The general elementwise walk: `map` when both tensors are row-major,
+    this when either is not. `xs` and `ys` need matching extents but not
+    matching strides, which is what makes "read a transposed view into a
+    compact buffer" a single call.
+
+    Scalar only. A strided view has no contiguous run to fill a SIMD
+    register from in general, and the one case that does -- a slice whose
+    innermost axis is intact -- is not worth a second code path when a
+    `copy` into row-major storage hands the whole vectorized family back.
+    """
+    comptime rank = type_of(xs).rank
+    var n = xs.num_elements()
+    var xs_ptr = xs.ptr_at_offset(Coord(0))
+    var ys_ptr = ys.ptr_at_offset(Coord(0))
+    for flat in range(n):
+        var rem = flat
+        var xs_off = 0
+        var ys_off = 0
+        comptime for k in range(rank):
+            comptime d = rank - 1 - k
+            var extent = Int(xs.dim[d]())
+            var c = rem % extent
+            rem //= extent
+            xs_off += c * Int(xs.layout.stride[d]().value())
+            ys_off += c * Int(ys.layout.stride[d]().value())
+        ys_ptr[unsafe_offset=ys_off] = step[1](xs_ptr[unsafe_offset=xs_off])
+
+
+def reduce_strided[
+    dtype: DType,
+    XsLayout: TensorLayout,
+    XsStorage: TensorStorage,
+    combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
+](
+    xs: TileTensor[dtype, XsLayout, MutAnyOrigin, Storage=XsStorage],
+    init: SIMD[dtype, 1],
+) -> SIMD[dtype, 1]:
+    """Fold every element of a strided view down to one value.
+
+    Visits coordinates in row-major order, so this agrees element for
+    element -- and therefore bit for bit -- with `reduce` over a compacted
+    copy of the same view, for a `combine` that is not associative as well
+    as one that is.
+    """
+    comptime rank = type_of(xs).rank
+    var n = xs.num_elements()
+    var xs_ptr = xs.ptr_at_offset(Coord(0))
+    var total = init
+    for flat in range(n):
+        var rem = flat
+        var xs_off = 0
+        comptime for k in range(rank):
+            comptime d = rank - 1 - k
+            var extent = Int(xs.dim[d]())
+            var c = rem % extent
+            rem //= extent
+            xs_off += c * Int(xs.layout.stride[d]().value())
+        total = combine(total, xs_ptr[unsafe_offset=xs_off])
     return total
