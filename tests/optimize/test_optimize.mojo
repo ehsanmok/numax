@@ -12,7 +12,7 @@ from std.math import cos as cos_f64, exp as exp_f64, pi, sin as sin_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Gradient, Plain
-from numax.optimize import bfgs, brentq, newton_tol
+from numax.optimize import bfgs, brentq, curve_fit, least_squares, newton_tol
 
 comptime P = Plain[DType.float64, 1]
 
@@ -296,6 +296,133 @@ def test_bfgs_objective_is_the_same_function_evaluated_three_ways() raises:
     assert_almost_equal(
         Float64(evaluated_dual.deriv.v), Float64(evaluated_grad.grad[0].v)
     )
+
+
+def rosenbrock_residuals[U: FloatLike](v: Array[U, 2]) -> Array[U, 2]:
+    """Rosenbrock as a residual vector: `[1 - x, 10*(y - x*x)]`, whose sum
+    of squares is the usual objective."""
+    var out = Array[U, 2](fill=U.constant(0.0))
+    out[0] = U.one() - v[0]
+    out[1] = U.constant(10.0) * (v[1] - v[0] * v[0])
+    return out^
+
+
+def line_residuals[U: FloatLike](p: Array[U, 2]) -> Array[U, 4]:
+    """`p[0] + p[1]*x - y` at four points lying exactly on `2 + 3x`, so the
+    minimum is zero and the parameters are recoverable exactly."""
+    var out = Array[U, 4](fill=U.constant(0.0))
+    for i in range(4):
+        var x = U.constant(Float64(i))
+        out[i] = p[0] + p[1] * x - U.constant(2.0 + 3.0 * Float64(i))
+    return out^
+
+
+def decay[U: FloatLike](x: U, p: Array[U, 2]) -> U:
+    """`p[0] * exp(-p[1] * x)`: two parameters, nonlinear in the second."""
+    return p[0] * (-(p[1] * x)).exp()
+
+
+def line_model[U: FloatLike](x: U, p: Array[U, 2]) -> U:
+    return p[0] + p[1] * x
+
+
+def test_least_squares_finds_the_rosenbrock_minimum() raises:
+    var start = Array[Float64, 2](fill=0)
+    start[0] = -1.2
+    start[1] = 1.0
+
+    var result = least_squares[2, 2, rosenbrock_residuals](start)
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 1.0, atol=1e-8)
+    assert_almost_equal(result.x[1], 1.0, atol=1e-8)
+    assert_almost_equal(result.f_x, 0.0, atol=1e-16)
+
+
+def test_least_squares_recovers_an_exactly_fitting_line() raises:
+    var start = Array[Float64, 2](fill=0)
+
+    var result = least_squares[2, 4, line_residuals](start)
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 2.0, atol=1e-9)
+    assert_almost_equal(result.x[1], 3.0, atol=1e-9)
+
+
+def test_curve_fit_recovers_the_parameters_of_exact_data() raises:
+    var xdata = Array[Float64, 6](fill=0)
+    var ydata = Array[Float64, 6](fill=0)
+    for i in range(6):
+        xdata[i] = Float64(i) * 0.5
+        ydata[i] = 2.5 * exp_f64(-0.75 * xdata[i])
+
+    var start = Array[Float64, 2](fill=1.0)
+    var result = curve_fit[2, 6, decay](xdata, ydata, start)
+
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 2.5, atol=1e-8)
+    assert_almost_equal(result.x[1], 0.75, atol=1e-8)
+
+
+def test_curve_fit_averages_the_noise_it_cannot_fit() raises:
+    # Perturbations orthogonal to both `1` and `x`, so they are invisible
+    # to the projection: the fit cannot pass through the points, and the
+    # least-squares answer is still the underlying line exactly.
+    var xdata = Array[Float64, 4](fill=0)
+    var ydata = Array[Float64, 4](fill=0)
+    var offsets = [0.1, -0.1, -0.1, 0.1]
+    for i in range(4):
+        xdata[i] = Float64(i)
+        ydata[i] = 2.0 + 3.0 * Float64(i) + offsets[i]
+
+    var start = Array[Float64, 2](fill=0)
+    var result = curve_fit[2, 4, line_model](xdata, ydata, start)
+
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 2.0, atol=1e-8)
+    assert_almost_equal(result.x[1], 3.0, atol=1e-8)
+    assert_true(result.f_x > 0.0)
+
+
+def test_curve_fit_and_least_squares_agree_on_the_same_problem() raises:
+    var xdata = Array[Float64, 4](fill=0)
+    var ydata = Array[Float64, 4](fill=0)
+    for i in range(4):
+        xdata[i] = Float64(i)
+        ydata[i] = 2.0 + 3.0 * Float64(i)
+
+    var start = Array[Float64, 2](fill=0)
+    var fitted = curve_fit[2, 4, line_model](xdata, ydata, start)
+    var solved = least_squares[2, 4, line_residuals](start)
+
+    assert_almost_equal(fitted.x[0], solved.x[0], atol=1e-9)
+    assert_almost_equal(fitted.x[1], solved.x[1], atol=1e-9)
+
+
+def test_the_fitted_jacobian_is_exact_where_a_difference_is_not() raises:
+    # d/dp1 of `p0 * exp(-p1 * x)` is `-x * p0 * exp(-p1 * x)`. The AD
+    # value is the closed form to the last bit; the best a forward
+    # difference manages is around sqrt(eps).
+    var p = Array[Gradient[P, 2], 2](fill=Gradient[P, 2].constant(0.0))
+    p[0] = Gradient[P, 2].variable(P(2.5), 0)
+    p[1] = Gradient[P, 2].variable(P(0.75), 1)
+    var evaluated = decay[Gradient[P, 2]](Gradient[P, 2].constant(1.5), p^)
+
+    var exact = -1.5 * 2.5 * exp_f64(-0.75 * 1.5)
+    var ad_error = abs(Float64(evaluated.grad[1].v) - exact)
+
+    var h = 1e-8
+    var plain = Array[P, 2](fill=P.constant(0.0))
+    plain[0] = P(2.5)
+    plain[1] = P(0.75)
+    var base = Float64(decay[P](P(1.5), plain.copy()).v)
+    plain[1] = P(0.75 + h)
+    var shifted = Float64(decay[P](P(1.5), plain^).v)
+    var difference_error = abs((shifted - base) / h - exact)
+
+    # Both routes call the same `exp`, so the AD result differs from the
+    # closed form only by the rounding of one multiply.
+    assert_true(ad_error < 1e-15)
+    assert_true(difference_error > 1e-9)
+    assert_true(difference_error > ad_error * 1e6)
 
 
 def main() raises:

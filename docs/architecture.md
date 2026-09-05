@@ -45,7 +45,9 @@ Dependencies run one way: `core` depends on nothing else in `numax`, every
 other subpackage depends on `core`, and the few cross-subpackage edges are
 deliberate (`stats` uses `special`'s incomplete gamma and beta,
 `integrate` uses `special`'s Legendre roots and `optimize`'s Newton solver,
-`interpolate` uses `linalg`'s tridiagonal solve).
+`interpolate` uses `linalg`'s tridiagonal solve, and `optimize` uses
+`linalg`'s Cholesky for the damped normal equations a least-squares step
+solves).
 
 ## The trait: `FloatLike`
 

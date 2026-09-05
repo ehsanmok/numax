@@ -19,6 +19,8 @@ from .optimize import (
     OptimizeResult,
     bfgs,
     brentq,
+    curve_fit,
+    least_squares,
     newton_tol,
 )
 from .solve import bisection, halley, newton

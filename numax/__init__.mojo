@@ -281,6 +281,8 @@ from .optimize.optimize import (
     OptimizeResult,
     bfgs,
     brentq,
+    curve_fit,
+    least_squares,
     newton_tol,
 )
 from .optimize.solve import bisection, halley, newton

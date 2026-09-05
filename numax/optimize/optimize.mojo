@@ -62,6 +62,7 @@ from ..core.dual import Dual
 from ..core.gradient import Gradient
 from ..core.numeric import FloatLike
 from ..core.plain import Plain
+from ..linalg.linalg import cholesky, cholesky_solve
 
 # The conformer every driver here evaluates `f` at. Fixed to float64 on
 # purpose, and not a parameter, for two reasons. Convergence work belongs at
@@ -403,3 +404,254 @@ def bfgs[
                 h[i * n_vars + j] = updated
 
     return MinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
+
+
+def _lm_step[
+    n_params: Int, n_resid: Int
+](
+    jacobian: Array[Float64, n_resid * n_params],
+    residual: Array[Float64, n_resid],
+    damping: Float64,
+) -> Array[Float64, n_params]:
+    """The Levenberg-Marquardt step: solve `(J.T J + damping * diag(J.T J))
+    d = -J.T r`.
+
+    The damping is applied as a multiple of each diagonal entry rather than
+    of the identity, which makes the step invariant to rescaling a
+    parameter -- fitting a rate in seconds and in milliseconds then takes
+    the same path. A small absolute term is added as well, since a
+    parameter the residuals do not depend on at all has a zero diagonal
+    that no multiple of itself can lift.
+    """
+    var normal = Array[_P, n_params * n_params](fill=_P.constant(0.0))
+    var gradient = Array[_P, n_params](fill=_P.constant(0.0))
+
+    for i in range(n_params):
+        for j in range(n_params):
+            var total: Float64 = 0
+            for k in range(n_resid):
+                total += jacobian[k * n_params + i] * jacobian[k * n_params + j]
+            normal[i * n_params + j] = _P(total)
+        var slope: Float64 = 0
+        for k in range(n_resid):
+            slope += jacobian[k * n_params + i] * residual[k]
+        gradient[i] = _P(-slope)
+
+    for i in range(n_params):
+        var diagonal = normal[i * n_params + i].v
+        normal[i * n_params + i] = _P(diagonal * (1 + damping) + 1e-12)
+
+    # Positive definite by construction once damped, so Cholesky needs no
+    # pivoting and the unpivoted factorization is exact for it.
+    var factor = cholesky[_P, n_params](normal)
+    var step = cholesky_solve[_P, n_params](factor, gradient)
+
+    var out = Array[Float64, n_params](fill=0)
+    for i in range(n_params):
+        out[i] = step[i].v
+    return out^
+
+
+def least_squares[
+    n_params: Int,
+    n_resid: Int,
+    residuals: def[U: FloatLike](Array[U, n_params]) thin -> Array[U, n_resid],
+](
+    x0: Array[Float64, n_params],
+    tol: Float64 = 1e-10,
+    max_iter: Int = 100,
+) -> MinimizeResult[n_params]:
+    """Minimize `sum(residuals(x)**2) / 2` by Levenberg-Marquardt.
+    `scipy.optimize.least_squares`.
+
+    **The Jacobian is exact, and it costs one evaluation.** `residuals` is
+    called at `Gradient[_P, n_params]`, so every residual comes back
+    carrying all `n_params` of its partial derivatives -- the entire
+    `n_resid x n_params` Jacobian from a single call, by the chain rule.
+    SciPy's default is a forward difference costing `n_params + 1` calls
+    and capping accuracy near `sqrt(eps)`; there is no step size here to
+    choose and nothing to trade off.
+
+    Levenberg-Marquardt interpolates between Gauss-Newton and gradient
+    descent by damping the normal equations. A step that reduces the cost
+    is accepted and the damping is relaxed, moving toward Gauss-Newton's
+    quadratic convergence; a step that does not is rejected and the damping
+    raised, shortening the step toward the gradient direction. That is what
+    makes it converge from a poor starting point where plain Gauss-Newton
+    diverges.
+
+    Convergence is `max|J.T r| < tol`, the same first-order condition
+    `bfgs` uses, reported in `MinimizeResult.grad_norm`. `f_x` is the cost
+    `sum(r**2) / 2`, matching what SciPy reports rather than the raw sum.
+
+    Bounds, robust loss functions and a sparse Jacobian are all out of
+    scope. Bounds in particular would need an active-set or trust-region
+    treatment rather than a clamp, since clamping an LM step silently
+    breaks the step's own model of the cost.
+    """
+    var x = x0.copy()
+    var cost: Float64 = 0
+    var grad_norm: Float64 = 0
+    var damping: Float64 = 1e-3
+
+    for iteration in range(max_iter):
+        var seeded = Array[Gradient[_P, n_params], n_params](
+            fill=Gradient[_P, n_params].constant(0.0)
+        )
+        for i in range(n_params):
+            seeded[i] = Gradient[_P, n_params].variable(_P(x[i]), i)
+        var evaluated = residuals[Gradient[_P, n_params]](seeded^)
+
+        var residual = Array[Float64, n_resid](fill=0)
+        var jacobian = Array[Float64, n_resid * n_params](fill=0)
+        cost = 0
+        for k in range(n_resid):
+            residual[k] = evaluated[k].value.v
+            cost += residual[k] * residual[k]
+            for j in range(n_params):
+                jacobian[k * n_params + j] = evaluated[k].grad[j].v
+        cost = cost / 2
+
+        grad_norm = 0
+        for j in range(n_params):
+            var slope: Float64 = 0
+            for k in range(n_resid):
+                slope += jacobian[k * n_params + j] * residual[k]
+            grad_norm = max(grad_norm, abs(slope))
+        if grad_norm < tol:
+            return MinimizeResult[n_params](
+                x^, cost, grad_norm, iteration, True
+            )
+
+        var accepted = False
+        var candidate = Array[Float64, n_params](fill=0)
+        for _ in range(30):
+            var step = _lm_step[n_params, n_resid](jacobian, residual, damping)
+            for i in range(n_params):
+                candidate[i] = x[i] + step[i]
+
+            var as_plain = Array[_P, n_params](fill=_P.constant(0.0))
+            for i in range(n_params):
+                as_plain[i] = _P(candidate[i])
+            var trial = residuals[_P](as_plain^)
+            var trial_cost: Float64 = 0
+            for k in range(n_resid):
+                trial_cost += trial[k].v * trial[k].v
+            trial_cost = trial_cost / 2
+
+            if trial_cost < cost:
+                accepted = True
+                damping = max(damping / 3, 1e-12)
+                break
+            damping = damping * 3
+        if not accepted:
+            return MinimizeResult[n_params](
+                x^, cost, grad_norm, iteration + 1, False
+            )
+
+        for i in range(n_params):
+            x[i] = candidate[i]
+
+    return MinimizeResult[n_params](x^, cost, grad_norm, max_iter, False)
+
+
+def curve_fit[
+    n_params: Int,
+    n_points: Int,
+    model: def[U: FloatLike](U, Array[U, n_params]) thin -> U,
+](
+    xdata: Array[Float64, n_points],
+    ydata: Array[Float64, n_points],
+    p0: Array[Float64, n_params],
+    tol: Float64 = 1e-10,
+    max_iter: Int = 100,
+) -> MinimizeResult[n_params]:
+    """Fit `model(x, params)` to `(xdata, ydata)` by least squares.
+    `scipy.optimize.curve_fit`, first return value.
+
+    The residuals are `model(x_i, p) - y_i`, so this is `least_squares` for
+    the case that motivates it, with the data supplied at run time. It is a
+    separate function rather than a wrapper because `least_squares` takes
+    its residuals as a compile-time parameter, which a non-capturing
+    function cannot reach runtime data through; here the data is an
+    argument to the fit and the model never has to see it.
+
+    `model` is an ordinary `FloatLike` kernel -- the same one that
+    evaluates the fitted curve afterward at `Plain` -- and this evaluates
+    it at `Gradient` to get the exact Jacobian in one call per point. The
+    `x` argument is passed as a constant, so only the parameters carry
+    derivatives.
+
+    The parameter covariance SciPy returns second is not computed. It is
+    `(J.T J)^-1` scaled by the residual variance, which needs an
+    assumption about the noise that belongs to the caller's problem rather
+    than to the fit.
+    """
+    var p = p0.copy()
+    var cost: Float64 = 0
+    var grad_norm: Float64 = 0
+    var damping: Float64 = 1e-3
+
+    for iteration in range(max_iter):
+        var seeded = Array[Gradient[_P, n_params], n_params](
+            fill=Gradient[_P, n_params].constant(0.0)
+        )
+        for i in range(n_params):
+            seeded[i] = Gradient[_P, n_params].variable(_P(p[i]), i)
+
+        var residual = Array[Float64, n_points](fill=0)
+        var jacobian = Array[Float64, n_points * n_params](fill=0)
+        cost = 0
+        for k in range(n_points):
+            var predicted = model[Gradient[_P, n_params]](
+                Gradient[_P, n_params].constant(xdata[k]), seeded.copy()
+            )
+            residual[k] = predicted.value.v - ydata[k]
+            cost += residual[k] * residual[k]
+            for j in range(n_params):
+                jacobian[k * n_params + j] = predicted.grad[j].v
+        cost = cost / 2
+
+        grad_norm = 0
+        for j in range(n_params):
+            var slope: Float64 = 0
+            for k in range(n_points):
+                slope += jacobian[k * n_params + j] * residual[k]
+            grad_norm = max(grad_norm, abs(slope))
+        if grad_norm < tol:
+            return MinimizeResult[n_params](
+                p^, cost, grad_norm, iteration, True
+            )
+
+        var accepted = False
+        var candidate = Array[Float64, n_params](fill=0)
+        for _ in range(30):
+            var step = _lm_step[n_params, n_points](jacobian, residual, damping)
+            for i in range(n_params):
+                candidate[i] = p[i] + step[i]
+
+            var as_plain = Array[_P, n_params](fill=_P.constant(0.0))
+            for i in range(n_params):
+                as_plain[i] = _P(candidate[i])
+            var trial_cost: Float64 = 0
+            for k in range(n_points):
+                var difference = (
+                    model[_P](_P(xdata[k]), as_plain.copy()).v - ydata[k]
+                )
+                trial_cost += difference * difference
+            trial_cost = trial_cost / 2
+
+            if trial_cost < cost:
+                accepted = True
+                damping = max(damping / 3, 1e-12)
+                break
+            damping = damping * 3
+        if not accepted:
+            return MinimizeResult[n_params](
+                p^, cost, grad_norm, iteration + 1, False
+            )
+
+        for i in range(n_params):
+            p[i] = candidate[i]
+
+    return MinimizeResult[n_params](p^, cost, grad_norm, max_iter, False)

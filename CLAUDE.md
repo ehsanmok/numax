@@ -135,7 +135,8 @@ Subpackages mirror NumPy/SciPy names: `core`, `linalg`, `optimize`,
 `core` depends on nothing else in numax; every other subpackage depends on
 `core`. The few cross-subpackage edges are deliberate: `stats` → `special`
 (incomplete gamma/beta), `integrate` → `special` (Legendre roots) and
-`optimize` (Newton), `interpolate` → `linalg` (tridiagonal solve).
+`optimize` (Newton), `interpolate` → `linalg` (tridiagonal solve),
+`optimize` → `linalg` (Cholesky, for the least-squares normal equations).
 
 Each subpackage re-exports its public surface and `numax/__init__.mojo`
 re-exports all of them, so `from numax import ...` is flat and

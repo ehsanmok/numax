@@ -217,10 +217,13 @@ Two halves, split by whether the iteration count is known up front.
 | `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/solve.mojo`](../numax/optimize/solve.mojo) |
 | `newton_tol`, `brentq` — scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
 | `bfgs` — quasi-Newton minimization to a tolerance, returning `MinimizeResult` | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
+| `least_squares`, `curve_fit` — Levenberg-Marquardt, the second with the data as a runtime argument | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
 
 The objective is an ordinary `FloatLike` kernel, so `bfgs` evaluates it at
 `Gradient` and gets every partial derivative *exactly* — there is no `jac`
-argument to pass. A central difference cannot beat about `ε^(2/3)` relative
+argument to pass. `least_squares` and `curve_fit` get the entire Jacobian
+from one call per iteration for the same reason, where a forward difference
+would cost `n_params + 1`. A central difference cannot beat about `ε^(2/3)` relative
 accuracy; AD has neither the truncation nor the cancellation term.
 
 > Run it: `pixi run example-optimize` ·
