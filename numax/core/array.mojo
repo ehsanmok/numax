@@ -80,14 +80,15 @@ unchanged and a derived tensor can never silently land on the wrong device.
 `nn` does ship `arange`, `reshape`, `concat`, `split`, `slice`, `tile`,
 `broadcast`, `cumsum`, `argsort` and `argmax`/`argmin` over `TileTensor`,
 but they are graph-operator kernels, not array functions: `nn.arange`
-returns one SIMD vector for a given index rather than filling a tensor,
-`nn.concat` wants a pre-sized output tensor plus a `DeviceContext`, and
-`nn.reshape` returns a *dynamically*-laid-out `TileTensor` that fails
-`numax.core.tensor`'s `all_dims_known` clause. So the four below are written
-against this module's own comptime-shaped `Tensor` instead. The ones still
-not wrapped -- `slice`, `tile`, `broadcast`, `cumsum`, `argsort` -- are
-either genuinely better reached through `nn`/`numax.stats` or wait on
-the runtime-shape array; `numax.stats.argmax`/`argmin` already route
+returns one SIMD vector for a given index rather than filling a tensor, and
+`nn.concat` wants a pre-sized output tensor plus a `DeviceContext`. So the
+four below are written against this module's own `Tensor` instead.
+
+Their outputs are consumable, which they were not while every shape here
+was compile-time: `nn.reshape` returns a `TileTensor` whose extents are
+run-time values and whose strides are not the row-major pattern a static
+walk requires, and `numax.core.tensor.map_strided` walks exactly that (see
+`tests/core/test_bridge.mojo`). `numax.stats.argmax`/`argmin` already route
 into `nn.argmaxmin`.
 
 **Manipulation scope, stated plainly.** `TileTensor.transpose()` already
@@ -304,6 +305,28 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
             for i in range(layout.size()):
                 host[i] = values[i]
 
+    def __init__(
+        out self,
+        var buffer: DeviceBuffer[Self.dtype],
+        layout: Self.LayoutType,
+        host_addressable: Bool,
+    ):
+        """Take ownership of an existing buffer and describe it with
+        `layout`.
+
+        The retyping constructor, which is what `dynamic` and `static_view`
+        hand the buffer to: the elements do not move, only the type saying
+        what shape they are. `DeviceBuffer` is a reference-counted handle,
+        so this shares the allocation rather than copying it, and both
+        callers consume their source so only one tensor is left holding it.
+
+        Unchecked: both callers have already established that
+        `layout.size()` matches the buffer.
+        """
+        self.buffer = buffer^
+        self.layout = layout
+        self.host_addressable = host_addressable
+
     def context(self) raises -> DeviceContext:
         """The device this tensor's storage lives on.
 
@@ -397,6 +420,64 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
         for i in range(n):
             values.append(src[unsafe_offset=i])
         return Self(device, v.layout, values^)
+
+    def dynamic(var self) raises -> Dynamic[Self.dtype, Self.rank]:
+        """The same storage, with the shape moved out of the type and into
+        the value.
+
+        The S-to-R direction, and it costs nothing: the buffer is handed
+        over rather than copied, and the extents this reads out of the
+        compile-time layout are the ones the run-time layout then carries.
+        Consumes `self`, since a `Tensor` owns its buffer and two tensors
+        cannot own one.
+
+        What it buys is a single type for a variable that is sometimes one
+        shape and sometimes another, at the price of the `where` clauses a
+        static shape satisfies -- no GPU launch, no `coalesce`. Going back
+        is `static_view`.
+        """
+        var extents = List[Int](capacity=Self.rank)
+        for d in range(Self.rank):
+            extents.append(self.dim_at(d))
+        return Dynamic[Self.dtype, Self.rank](
+            self.buffer,
+            row_major(_dyn_shape_from[Self.rank](extents)),
+            self.host_addressable,
+        )
+
+    def static_view[
+        *dims: Int
+    ](var self) raises -> Shaped[Self.dtype, *dims] where (
+        _LayoutOf[*dims].rank == Self.rank
+    ):
+        """The same storage at a compile-time shape, checked once.
+
+        The R-to-S direction: a run-time extent becomes a compile-time fact
+        by asserting it, which is the only way that crossing can happen.
+        The check is one comparison per axis and raises on a mismatch
+        rather than reading past the end of the buffer; past it the result
+        is an ordinary static tensor, GPU launch and all.
+
+        Consumes `self` for the same reason `dynamic` does. Naming a shape
+        the tensor does not have is a run-time error, not a compile-time
+        one -- that is the whole point, since the compiler is exactly what
+        cannot see the extent being checked.
+        """
+        comptime for i in range(Self.rank):
+            if self.dim_at(i) != dims[i]:
+                raise Error(
+                    "static_view: axis ",
+                    i,
+                    " is ",
+                    self.dim_at(i),
+                    ", not ",
+                    dims[i],
+                )
+        return Shaped[Self.dtype, *dims](
+            self.buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            self.host_addressable,
+        )
 
     def to_host(self) raises -> List[Scalar[Self.dtype]]:
         """A host copy of every element, row-major.
@@ -1529,11 +1610,11 @@ def to_array[
     `numax.linalg` expects them, and a rank-3 tensor lifts too.
 
     The shape has to be compile-time -- an `Array`'s length is a parameter,
-    so there is nothing to read a run-time extent into. Name the shape with
-    `static_view` first.
+    so there is nothing to read a run-time extent into. A run-time-shaped
+    tensor does not raise here, it fails to compile: its `static_product`
+    is negative and an `Array` of negative length is rejected outright.
+    Name the shape with `static_view` first.
     """
-    if not LayoutType.all_dims_known:
-        raise Error("shape is not compile-time; name it with static_view")
     comptime n = LayoutType.static_product
     var values = a.to_host()
     var out = Array[T, n](fill=T.constant(0.0))

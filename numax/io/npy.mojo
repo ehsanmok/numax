@@ -48,8 +48,8 @@ from std.sys.info import size_of
 
 from max.gpu.host import DeviceContext
 
-from layout.tile_layout import TensorLayout
-from ..core.array import Shaped, Tensor, _context
+from layout.tile_layout import TensorLayout, row_major
+from ..core.array import Dynamic, Shaped, Tensor, _context, _dyn_shape_from
 
 
 # The magic's first byte is 0x93, which is not valid UTF-8 on its own: a
@@ -135,6 +135,130 @@ def _shape_literal[
     return out^
 
 
+def _read_npy[
+    dtype: DType
+](path: String, mut dims: List[Int]) raises -> List[Scalar[dtype]]:
+    """A `.npy` file's shape and its elements, row-major.
+
+    Everything both `numpy.load` overloads do before they differ: the
+    header is parsed and validated, the file's extents are written into
+    `dims`, and the payload is read at whatever length the header says. One
+    of them then checks those extents against the shape the caller named;
+    the other keeps them.
+
+    Raises if the file's `descr` names a different dtype, if it is
+    Fortran-ordered or big-endian, if the payload length disagrees with the
+    header, or if it is not an `.npy` file at all -- a `.npz` archive lands
+    here as bad magic bytes, since it is a zip container.
+    """
+    var f = open(path, "r")
+    var data = f.read_bytes()
+    f.close()
+
+    var magic = _magic_bytes()
+    if len(data) < 10:
+        raise Error("numax.io.numpy.load: file too short to be a .npy file")
+    for i in range(len(magic)):
+        if data[i] != magic[i]:
+            raise Error(
+                "numax.io.numpy.load: bad magic bytes -- not a .npy file. A"
+                " .npz archive is a zip container, not an .npy file: unzip"
+                " it, or re-save each array with numpy.save"
+            )
+
+    var major = Int(data[6])
+    if major != 1 and major != 2:
+        raise Error(
+            "numax.io.numpy.load: unsupported .npy format version -- only"
+            " the 1.x and 2.x headers are understood"
+        )
+
+    # 1.x stores the header length as a little-endian `UInt16`, 2.x as a
+    # `UInt32`; the dict text that follows is identical.
+    var header_len: Int
+    var header_start: Int
+    if major == 1:
+        header_len = Int(data[8]) | (Int(data[9]) << 8)
+        header_start = 10
+    else:
+        if len(data) < 12:
+            raise Error("numax.io.numpy.load: truncated .npy 2.x header")
+        header_len = (
+            Int(data[8])
+            | (Int(data[9]) << 8)
+            | (Int(data[10]) << 16)
+            | (Int(data[11]) << 24)
+        )
+        header_start = 12
+    if len(data) < header_start + header_len:
+        raise Error("numax.io.numpy.load: truncated .npy header")
+
+    var header = String(
+        StringSlice(
+            unsafe_from_utf8=Span(data)[
+                header_start : header_start + header_len
+            ]
+        )
+    )
+
+    comptime expected_descr = _descr[dtype]()
+    if expected_descr == "":
+        raise Error(
+            String(
+                "numax.io.numpy.load: ",
+                dtype,
+                " has no NumPy dtype, so no .npy file can hold it",
+            )
+        )
+    var file_descr = _dict_value(header, "descr")
+    if not _descr_matches(file_descr, expected_descr):
+        if file_descr.startswith(">"):
+            raise Error(
+                String(
+                    "numax.io.numpy.load: big-endian .npy (descr '",
+                    file_descr,
+                    (
+                        "') -- nothing in numax byte-swaps; re-save it"
+                        " native with"
+                        " arr.astype(arr.dtype.newbyteorder('<'))"
+                    ),
+                )
+            )
+        raise Error(
+            String(
+                "numax.io.numpy.load: dtype mismatch -- the file holds '",
+                file_descr,
+                "' but '",
+                expected_descr,
+                "' was requested",
+            )
+        )
+
+    if _dict_value(header, "fortran_order") != "False":
+        raise Error(
+            "numax.io.numpy.load: Fortran-ordered .npy -- numax tensors are"
+            " row-major; re-save with numpy.ascontiguousarray(arr)"
+        )
+
+    dims = _parse_shape(_dict_value(header, "shape"))
+    var count = 1
+    for i in range(len(dims)):
+        count *= dims[i]
+
+    var offset = header_start + header_len
+    var nbytes = count * size_of[Scalar[dtype]]()
+    if len(data) - offset != nbytes:
+        raise Error(
+            "numax.io.numpy.load: payload size doesn't match the header"
+        )
+
+    var values = List[Scalar[dtype]](length=count, fill=0)
+    var dst_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
+    for i in range(nbytes):
+        dst_ptr[unsafe_offset=i] = data[offset + i]
+    return values^
+
+
 struct numpy:
     """NumPy `.npy` interchange, namespaced so the format is the namespace.
 
@@ -218,109 +342,20 @@ struct numpy:
     ](path: String, ctx: Optional[DeviceContext] = None) raises -> Shaped[
         dtype, *dims
     ]:
-        """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s device.
+        """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s
+        device, at the shape the caller names.
 
-        Raises if the file's `descr` names a different dtype, if its `shape`
-        doesn't match `dims` exactly, if it is Fortran-ordered or big-endian,
-        if the payload length disagrees with the header, or if it is not an
-        `.npy` file at all -- a `.npz` archive lands here as bad magic bytes,
-        since it is a zip container.
+        Raises if the file's shape doesn't match `dims` exactly, and for
+        every reason `_read_npy` does. `load_dyn` below is the overload
+        that takes the file's own shape instead.
 
         The `DeviceContext` is what every `numax.core.array` root factory
-        takes, for the same reason: the bytes have to land on a device, and the
-        file does not name one.
+        takes, for the same reason: the bytes have to land on a device, and
+        the file does not name one.
         """
-        var f = open(path, "r")
-        var data = f.read_bytes()
-        f.close()
-
-        var magic = _magic_bytes()
-        if len(data) < 10:
-            raise Error("numax.io.numpy.load: file too short to be a .npy file")
-        for i in range(len(magic)):
-            if data[i] != magic[i]:
-                raise Error(
-                    "numax.io.numpy.load: bad magic bytes -- not a .npy file. A"
-                    " .npz archive is a zip container, not an .npy file: unzip"
-                    " it, or re-save each array with numpy.save"
-                )
-
-        var major = Int(data[6])
-        if major != 1 and major != 2:
-            raise Error(
-                "numax.io.numpy.load: unsupported .npy format version -- only"
-                " the 1.x and 2.x headers are understood"
-            )
-
-        # 1.x stores the header length as a little-endian `UInt16`, 2.x as a
-        # `UInt32`; the dict text that follows is identical.
-        var header_len: Int
-        var header_start: Int
-        if major == 1:
-            header_len = Int(data[8]) | (Int(data[9]) << 8)
-            header_start = 10
-        else:
-            if len(data) < 12:
-                raise Error("numax.io.numpy.load: truncated .npy 2.x header")
-            header_len = (
-                Int(data[8])
-                | (Int(data[9]) << 8)
-                | (Int(data[10]) << 16)
-                | (Int(data[11]) << 24)
-            )
-            header_start = 12
-        if len(data) < header_start + header_len:
-            raise Error("numax.io.numpy.load: truncated .npy header")
-
-        var header = String(
-            StringSlice(
-                unsafe_from_utf8=Span(data)[
-                    header_start : header_start + header_len
-                ]
-            )
-        )
-
-        comptime expected_descr = _descr[dtype]()
-        if expected_descr == "":
-            raise Error(
-                String(
-                    "numax.io.numpy.load: ",
-                    dtype,
-                    " has no NumPy dtype, so no .npy file can hold it",
-                )
-            )
-        var file_descr = _dict_value(header, "descr")
-        if not _descr_matches(file_descr, expected_descr):
-            if file_descr.startswith(">"):
-                raise Error(
-                    String(
-                        "numax.io.numpy.load: big-endian .npy (descr '",
-                        file_descr,
-                        (
-                            "') -- nothing in numax byte-swaps; re-save it"
-                            " native with"
-                            " arr.astype(arr.dtype.newbyteorder('<'))"
-                        ),
-                    )
-                )
-            raise Error(
-                String(
-                    "numax.io.numpy.load: dtype mismatch -- the file holds '",
-                    file_descr,
-                    "' but '",
-                    expected_descr,
-                    "' was requested",
-                )
-            )
-
-        if _dict_value(header, "fortran_order") != "False":
-            raise Error(
-                "numax.io.numpy.load: Fortran-ordered .npy -- numax tensors are"
-                " row-major; re-save with numpy.ascontiguousarray(arr)"
-            )
-
+        var file_dims = List[Int]()
+        var values = _read_npy[dtype](path, file_dims)
         comptime rank = dims.__len__()
-        var file_dims = _parse_shape(_dict_value(header, "shape"))
         if len(file_dims) != rank:
             raise Error(
                 String(
@@ -331,27 +366,49 @@ struct numpy:
                     " was requested",
                 )
             )
-
         comptime for i in range(rank):
             if file_dims[i] != dims[i]:
                 raise Error("numax.io.numpy.load: shape mismatch")
+        return Shaped[dtype, *dims](_context(ctx), values^)
 
-        var offset = header_start + header_len
-        comptime nbytes = Shaped[dtype, *dims].num_elements * size_of[
-            Scalar[dtype]
-        ]()
-        if len(data) - offset != nbytes:
+    @staticmethod
+    def load_dyn[
+        dtype: DType, rank: Int
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
+        dtype, rank
+    ]:
+        """Read a NumPy `.npy` file at whatever shape the file says.
+
+        The header carries the extents, so a caller who does not already
+        know them does not have to: this reads them out and the result
+        carries them at run time. `load` above is the one to reach for when
+        the shape is known and should be checked -- there a wrong file is
+        an error at the call, here it is whatever the file happened to
+        hold.
+
+        Only the rank is named, because a tensor's rank is compile-time
+        even when its extents are not. A file of a different rank raises.
+        """
+        var file_dims = List[Int]()
+        var values = _read_npy[dtype](path, file_dims)
+        if len(file_dims) != rank:
             raise Error(
-                "numax.io.numpy.load: payload size doesn't match the header"
+                String(
+                    (
+                        "numax.io.numpy.load_dyn: rank mismatch -- the file is"
+                        " rank "
+                    ),
+                    len(file_dims),
+                    ", rank ",
+                    rank,
+                    " was requested",
+                )
             )
-
-        var out_storage = List[Scalar[dtype]](
-            length=Shaped[dtype, *dims].num_elements, fill=0
+        var result = Dynamic[dtype, rank](
+            _context(ctx), row_major(_dyn_shape_from[rank](file_dims))
         )
-        var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
-        for i in range(nbytes):
-            dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Shaped[dtype, *dims](_context(ctx), out_storage^)
+        result.copy_from_host(values)
+        return result^
 
 
 def _descr_matches(file_descr: String, expected: String) -> Bool:

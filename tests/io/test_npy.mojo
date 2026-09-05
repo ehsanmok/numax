@@ -270,5 +270,40 @@ def test_numpy_load_raises_on_a_non_npy_file() raises:
     assert_true(raised, "expected a non-.npy file to raise")
 
 
+def test_load_dyn_takes_the_shape_from_the_file() raises:
+    # The shape is in the header, so a caller who does not know it does not
+    # have to name it -- only the rank, which is compile-time either way.
+    var ctx = DeviceContext(api="cpu")
+    var storage = List[Scalar[DType.float32]](capacity=6)
+    for i in range(6):
+        storage.append(Scalar[DType.float32](Float64(i) * 0.25))
+    var xs = Shaped[DType.float32, 2, 3](ctx, storage^)
+
+    var path = String(_TMP, "_infer.npy")
+    numpy.save(xs, path)
+    var loaded = numpy.load_dyn[DType.float32, 2](path, ctx=ctx)
+
+    assert_equal(loaded.dim_at(0), 2)
+    assert_equal(loaded.dim_at(1), 3)
+    var original = xs.to_host()
+    var values = loaded.to_host()
+    for i in range(6):
+        assert_equal(Int(values[i].to_bits()), Int(original[i].to_bits()))
+
+
+def test_load_dyn_raises_on_a_rank_the_file_does_not_have() raises:
+    var ctx = DeviceContext(api="cpu")
+    var xs = Shaped[DType.float32, 4](ctx)
+    var path = String(_TMP, "_infer_rank.npy")
+    numpy.save(xs, path)
+
+    var raised = False
+    try:
+        _ = numpy.load_dyn[DType.float32, 2](path, ctx=ctx)
+    except:
+        raised = True
+    assert_true(raised)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
