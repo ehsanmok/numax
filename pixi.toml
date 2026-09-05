@@ -198,6 +198,7 @@ test-bridge = "mojo -I . tests/core/test_bridge.mojo"
 test-dynamic = "mojo -I . tests/core/test_dynamic.mojo"
 test-engine = "mojo -I . tests/core/test_engine.mojo"
 test-statistics = "mojo -I . tests/stats/test_statistics.mojo"
+test-statistics-axis = "mojo -I . tests/stats/test_statistics_axis.mojo"
 test-sorting = "mojo -I . tests/core/test_sorting.mojo"
 test-io = "mojo -I . tests/io/test_io.mojo"
 test-npy = "mojo -I . tests/io/test_npy.mojo"
@@ -247,6 +248,7 @@ tests = { depends-on = [
 "test-dynamic",
 "test-engine",
     "test-statistics",
+    "test-statistics-axis",
     "test-sorting",
     "test-io",
     "test-npy",

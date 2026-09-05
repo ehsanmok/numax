@@ -40,9 +40,21 @@ an "invalid redefinition of 'std'". The `FloatLike`-generic variance and
 standard deviation are named `variance` and `stddev` here for exactly
 these two reasons.
 
+## Axis-wise reductions
+
+`sum`, `prod`, `min`, `max` and `mean` each have an `_axis` sibling folding
+one axis instead of the whole tensor, which is `numpy.sum(a, axis=k)`. The
+axis is a compile-time parameter because the result's *rank* depends on it
+(`rank - 1`, the reduced axis dropped, matching NumPy's default
+`keepdims=False`), and rank is compile-time throughout this library. The
+extents are not: the result comes back run-time-shaped, since they are read
+from the input rather than named.
+
+`numax.core.tensor.reduce_axis` is the same fold one layer down, over a
+`TileTensor` a caller allocated the output for, and it launches on a GPU
+where these do not.
+
 **Explicitly out of scope**, matching this module's own gap-only mandate:
-axis-keyword reductions (`numax.core.tensor.reduce_axis`/`broadcast_op_axis`
-already provide the primitive directly for a caller that needs one), and
 sorting, which now lives in `numax.core.sorting` as a tier-2 module (`sort`,
 `argsort`, `searchsorted`, `unique`, plus the counting and masking family).
 `List.sort()` is still what `median`/`mode` reach for internally; what
@@ -56,8 +68,151 @@ from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 
-from ..core.array import Shaped, Tensor
+from ..core.array import Dynamic, Shaped, Tensor, _dyn_shape_from
 from ..core.numeric import FloatLike
+
+
+def _fold_axis[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    axis: Int,
+    combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
+](xs: Tensor[dtype, LayoutType], init: Scalar[dtype]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
+    """Fold `xs` along `axis` with `combine`, dropping that axis.
+
+    A row-major tensor splits around any axis into `outer` (the extents
+    before it, multiplied), `length` (the axis), and `inner` (the extents
+    after it), so element `(o, k, i)` is at flat index `(o*length +
+    k)*inner + i` and one flat walk covers every rank and axis.
+    """
+    comptime rank = LayoutType.rank
+    var length = xs.dim_at(axis)
+    var outer = 1
+    for d in range(axis):
+        outer *= xs.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, rank):
+        inner *= xs.dim_at(d)
+
+    var values = xs.to_host()
+    var out = List[Scalar[dtype]](capacity=outer * inner)
+    for o in range(outer):
+        for i in range(inner):
+            var acc = init
+            for k in range(length):
+                acc = combine(acc, values[(o * length + k) * inner + i])
+            out.append(acc)
+
+    var extents = List[Int](capacity=rank - 1)
+    for d in range(rank):
+        if d != axis:
+            extents.append(xs.dim_at(d))
+    var result = Dynamic[dtype, rank - 1](
+        xs.context(), row_major(_dyn_shape_from[rank - 1](extents))
+    )
+    result.copy_from_host(out)
+    return result^
+
+
+def _add[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
+    return a + b
+
+
+def _mul[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
+    return a * b
+
+
+def _smaller[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
+    return a if a < b else b
+
+
+def _larger[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
+    return a if a > b else b
+
+
+def sum_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """`xs` summed along `axis`. `numpy.sum(a, axis=k)`."""
+    return _fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
+
+
+def prod_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """`xs` multiplied along `axis`. `numpy.prod(a, axis=k)`."""
+    return _fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
+
+
+def min_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """The smallest element along `axis`. `numpy.min(a, axis=k)`.
+
+    Seeded with positive infinity, so an axis of length zero yields
+    infinity rather than reading an element that is not there.
+    """
+    return _fold_axis[axis=axis, combine=_smaller[dtype]](
+        xs, Scalar[dtype].MAX_FINITE
+    )
+
+
+def max_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """The largest element along `axis`. `numpy.max(a, axis=k)`. Seeded the
+    mirror of `min_axis`."""
+    return _fold_axis[axis=axis, combine=_larger[dtype]](
+        xs, Scalar[dtype].MIN_FINITE
+    )
+
+
+def mean_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """The arithmetic mean along `axis`. `numpy.mean(a, axis=k)`."""
+    var totals = sum_axis[axis=axis](xs)
+    var length = Scalar[dtype](xs.dim_at(axis))
+    for i in range(totals.size()):
+        totals[i] = totals[i] / length
+    return totals^
 
 
 def sum[
