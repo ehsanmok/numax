@@ -21,6 +21,8 @@ explicit choice.
 The nine `scipy.stats` distribution namespaces are not here either:
 `gamma` and `beta` would collide with the special functions of those names.
 Reach for them as `numax.stats.norm`, `numax.stats.chi2`, and so on.
+`numax.core.array.slice` stays out on the same principle, since `slice` is
+what a reader expects to mean Mojo's own slicing.
 
 Import the subpackage instead when you want everything: `from numax import
 ...` is the full flat surface, and `from numax.linalg import ...` is one
@@ -47,15 +49,18 @@ from .core.array import (
     arange,
     asarray,
     concatenate,
+    concatenate_dyn,
     copy,
     diag,
     diagflat,
     diagonal,
     empty,
+    empty_dyn,
     empty_like,
     eye,
     flip,
     full,
+    full_dyn,
     full_like,
     geomspace,
     hstack,
@@ -64,10 +69,13 @@ from .core.array import (
     logspace,
     meshgrid,
     ones,
+    ones_dyn,
     ones_like,
     ravel,
     reshape,
+    reshape_dyn,
     split,
+    split_dyn,
     squeeze,
     stack,
     to_array,
@@ -79,6 +87,7 @@ from .core.array import (
     vander,
     vstack,
     zeros,
+    zeros_dyn,
     zeros_like,
 )
 

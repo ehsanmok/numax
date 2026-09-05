@@ -168,6 +168,19 @@ def _dyn_shape[rank: Int](*extents: Int) -> DynamicCoord[DType.int64, rank]:
     return shape
 
 
+def _dyn_shape_from[
+    rank: Int
+](extents: List[Int]) -> DynamicCoord[DType.int64, rank]:
+    """`_dyn_shape` for extents held in a list rather than a pack, which is
+    what a rank-generic computation produces."""
+    var shape = DynamicCoord[DType.int64, rank]()
+    comptime for i in range(rank):
+        shape[i] = rebind[DynamicCoord[DType.int64, rank].element_types[i]](
+            Scalar[DType.int64](extents[i])
+        )
+    return shape
+
+
 struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
     """An owned `DeviceBuffer` paired with a row-major layout.
 
@@ -311,6 +324,33 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
     def dim[i: Int](self) -> Int:
         """The extent of axis `i`."""
         return Int(self.layout.shape[i]().value())
+
+    def dim_at(self, axis: Int) -> Int:
+        """The extent of `axis`, chosen at run time.
+
+        `dim` takes its axis as a parameter, which is what a caller writing
+        `a.dim[0]()` wants and what a loop over a computed axis cannot use.
+        This walks the compile-time axis list and picks one, so an axis
+        outside the rank returns `0` rather than failing to compile.
+        """
+        var extent = 0
+        comptime for i in range(Self.rank):
+            if i == axis:
+                extent = self.dim[i]()
+        return extent
+
+    def stride_at(self, axis: Int) -> Int:
+        """The stride of `axis` in elements, chosen at run time.
+
+        The distance in memory between neighbours along `axis`. Row-major
+        for every tensor this module builds, but read from the layout
+        rather than assumed, so it stays correct for a layout that is not.
+        """
+        var stride = 0
+        comptime for i in range(Self.rank):
+            if i == axis:
+                stride = Int(self.layout.stride[i]().value())
+        return stride
 
     def view(mut self) -> TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin]:
         """A `TileTensor` view over this tensor's storage.
@@ -876,6 +916,148 @@ def reshape[
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
     return Shaped[dtype, d0, d1, d2](a.context(), a.to_host())
+
+
+def reshape_dyn[
+    dtype: DType, LayoutType: TensorLayout, rank: Int
+](a: Tensor[dtype, LayoutType], *extents: Int) raises -> Dynamic[dtype, rank]:
+    """A copy of `a` at the given shape, in row-major order, at any rank.
+
+    What the comptime `reshape` overloads above cannot do: the target shape
+    is a run-time value, so it can be computed -- `reshape_dyn[rank=2](a, n
+    // cols, cols)` -- rather than spelled as a literal. It also takes any
+    input rank, where those take rank 1.
+
+    The element count is checked here and raises on a mismatch, which is
+    the price of a shape the compiler cannot see. Prefer `reshape` when the
+    shape is a constant: there the same check is a `where` clause and the
+    mismatch is a compile error.
+    """
+    var wanted = 1
+    for i in range(rank):
+        wanted *= extents[i]
+    if wanted != a.size():
+        raise Error(
+            "reshape_dyn: a shape of ",
+            wanted,
+            " elements does not fit ",
+            a.size(),
+        )
+    var result = Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape[rank](*extents))
+    )
+    result.copy_from_host(a.to_host())
+    return result^
+
+
+def slice[
+    dtype: DType, LayoutType: TensorLayout
+](
+    a: Tensor[dtype, LayoutType], starts: List[Int], stops: List[Int]
+) raises -> Dynamic[dtype, LayoutType.rank]:
+    """The sub-box `a[starts[0]:stops[0], starts[1]:stops[1], ...]`.
+
+    Basic slicing, at any rank, with bounds read at run time -- so the
+    result's extents are run-time values too, which is why it comes back
+    `Dynamic`. Half-open, like NumPy and like Mojo's own ranges.
+
+    This copies into compact storage rather than returning a view. A view
+    is expressible -- `TileTensor.slice` produces one, and
+    `numax.core.tensor.map_strided` walks it -- but it would borrow from a
+    tensor this module does not own, and every other result here is owned.
+    Reach for the view directly when the copy is the expensive part.
+
+    Bounds are checked, and a `stop` below its `start` raises rather than
+    quietly producing an empty axis, since that is far more often a bug
+    than an intent.
+    """
+    comptime rank = LayoutType.rank
+    if len(starts) != rank or len(stops) != rank:
+        raise Error("slice: expected ", rank, " bounds per side")
+
+    var extents = List[Int](capacity=rank)
+    var count = 1
+    for d in range(rank):
+        if starts[d] < 0 or stops[d] > a.dim_at(d) or stops[d] < starts[d]:
+            raise Error(
+                "slice: axis ",
+                d,
+                " bounds [",
+                starts[d],
+                ", ",
+                stops[d],
+                ") do not fit an extent of ",
+                a.dim_at(d),
+            )
+        extents.append(stops[d] - starts[d])
+        count *= extents[d]
+
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](capacity=count)
+    for flat in range(count):
+        # Walk the result in row-major order, converting each coordinate
+        # back into a flat index of the source.
+        var rem = flat
+        var src = 0
+        for k in range(rank):
+            var d = rank - 1 - k
+            var c = rem % extents[d]
+            rem //= extents[d]
+            src += (starts[d] + c) * a.stride_at(d)
+        out.append(values[src])
+
+    var result = Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents))
+    )
+    result.copy_from_host(out)
+    return result^
+
+
+def concatenate_dyn[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, 1
+]:
+    """Join two tensors end to end as one flat tensor.
+
+    The run-time-shaped `concatenate`: the two inputs need not have the
+    same layout type, and the result's length is their combined size rather
+    than a sum the compiler has to see. Reach for `concatenate` when both
+    lengths are constants and the result's should be too.
+    """
+    var values = a.to_host()
+    var b_values = b.to_host()
+    for i in range(len(b_values)):
+        values.append(b_values[i])
+    return asarray(values^, a.context())
+
+
+def split_dyn[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], at: Int) raises -> Tuple[
+    Dynamic[dtype, 1], Dynamic[dtype, 1]
+]:
+    """Cut a tensor in two at a run-time index: elements `[0, at)` and
+    `[at, size())`, both flat. The inverse of `concatenate_dyn`.
+
+    `split` needs `at` as a parameter because both output lengths are part
+    of their types; here they are not, so the cut point is an ordinary
+    argument and can be computed.
+    """
+    var n = a.size()
+    if at < 0 or at > n:
+        raise Error(
+            "split_dyn: cannot cut at ", at, " in a tensor of ", n, " elements"
+        )
+    var values = a.to_host()
+    var head = List[Scalar[dtype]](capacity=at)
+    for i in range(at):
+        head.append(values[i])
+    var tail = List[Scalar[dtype]](capacity=n - at)
+    for i in range(at, n):
+        tail.append(values[i])
+    var ctx = a.context()
+    return (asarray(head^, ctx), asarray(tail^, ctx))
 
 
 def ravel[
