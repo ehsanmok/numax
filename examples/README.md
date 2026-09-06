@@ -47,11 +47,12 @@ GPU + ensembles -- needs the actual hardware.
 | [gaussian_gpu.mojo](advanced/gaussian_gpu.mojo) | The same kernel and types as `basic/gaussian.mojo` run on GPU via `numax.core.tensor.map[gpu=True]`, no code changes versus the CPU example. |
 | [ode.mojo](advanced/ode.mojo) | 1024 ODE trajectories, one GPU thread each, with solution sensitivities from the same integrator. |
 | [unified_tensor_gpu.mojo](advanced/unified_tensor_gpu.mojo) | One `numax.core.array.Tensor` type on both devices: the `DeviceContext` handed to the factory decides host or accelerator, `.view()` is the same `TileTensor` either way, and the two results agree to within one float32 ulp. |
+| [quantum_well.mojo](advanced/quantum_well.mojo) | One discretized Schrodinger operator, four answers from one `FloatLike` function: the ground-state energy, `dE0/dw` by Hellmann-Feynman at `Dual`, the frequency that hits a target energy via `newton`, and a 256-well sweep with the whole 24x24 `eigh` inside a single GPU thread, matching CPU exactly. |
 
 ## GPU note
 
-`gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`, `random_ensemble.mojo` and
-`unified_tensor_gpu.mojo` launch GPU kernels alongside their CPU paths.
+`gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`, `random_ensemble.mojo`,
+`unified_tensor_gpu.mojo` and `quantum_well.mojo` launch GPU kernels alongside their CPU paths.
 They need a real GPU -- Metal or CUDA, whichever `DeviceContext` finds --
 and no GitHub-hosted runner has either, so they're a local-only check;
 `pixi run examples-cpu` skips them, `pixi run examples` includes them.

@@ -281,6 +281,7 @@ example-optimize = "mojo -I . examples/advanced/optimize.mojo"
 example-random-ensemble = "mojo -I . examples/intermediate/random_ensemble.mojo"
 example-wave-packet = "mojo -I . examples/intermediate/wave_packet.mojo"
 example-interference = "mojo -I . examples/intermediate/interference.mojo"
+example-quantum-well = "mojo -I . examples/advanced/quantum_well.mojo"
 examples = { depends-on = [
     "examples-cpu",
     "example-softmax",
@@ -288,8 +289,9 @@ examples = { depends-on = [
     "example-random-ensemble",
     "example-unified-tensor-gpu",
     "example-gaussian-gpu",
+    "example-quantum-well",
 ] }
-# The five GPU examples, compiled but not run, to catch a call that no longer
+# The six GPU examples, compiled but not run, to catch a call that no longer
 # matches its signature -- which is exactly what went unnoticed while
 # `examples` ran nowhere in CI.
 #
@@ -312,12 +314,13 @@ mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/ad
 mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/ode.mojo &&
 mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/intermediate/softmax.mojo &&
 mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/intermediate/random_ensemble.mojo &&
+mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/quantum_well.mojo &&
 rm -f /tmp/numax-build-check
 """ }
 # Every example except `gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`,
-# `random_ensemble.mojo` and `unified_tensor_gpu.mojo`, which launch GPU
-# kernels alongside their CPU paths -- this is what CI runs, on GPU-less
-# runners, alongside `examples-gpu-build` for the other five.
+# `random_ensemble.mojo`, `unified_tensor_gpu.mojo` and `quantum_well.mojo`,
+# which launch GPU kernels alongside their CPU paths -- this is what CI runs,
+# on GPU-less runners, alongside `examples-gpu-build` for the other six.
 examples-cpu = { depends-on = [
     "example-gaussian",
     "example-array-creation",
