@@ -198,15 +198,14 @@ comparison against a `numax` `step`, which is one fused kernel already.
 
 What this machine says, and where it differs from the M3 Pro above:
 
-- **numax matches a hand-written CUDA kernel and leads `torch.compile` by
-  ~10%.** At 67M amortized: 61,653 against CuPy's `ElementwiseKernel` at
-  61,051 and `cupy.fuse()` at 61,166, with `torch.compile` at 56,245. The
-  first three sit within 1% of each other at 82% of the card's peak, which
-  is the roofline being reached rather than one implementation beating
-  another — the claim worth making is that the generic `FloatLike` path
-  costs nothing against CUDA C written by hand for this expression. On
-  Metal numax and `torch.compile` were a tie, so the 10% lead is this
-  device's, not a general claim.
+- **numax is at parity with a hand-written CUDA kernel, and leads
+  `torch.compile` by ~10%.** At 67M amortized: 61,653 against CuPy's
+  `ElementwiseKernel` at 61,051 and `cupy.fuse()` at 61,166, with
+  `torch.compile` at 56,245. The first three sit within 1% of each other at
+  82% of the card's peak, which is the roofline — parity, not a win, and
+  the point is that a generic `FloatLike` kernel gives up nothing to CUDA C
+  written by hand for this expression. On Metal numax and `torch.compile`
+  were a tie, so the 10% lead is this device's, not a general claim.
 - **CuPy measures the fusion argument directly.** Its eager path is 20,375
   and its fused path 61,166, a ratio of 3.002 against the three passes the
   unfused expression makes. A numax kernel has no eager column to lose,

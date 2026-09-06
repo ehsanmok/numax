@@ -21,21 +21,80 @@ written in [Mojo](https://mojolang.org) against MAX's `TileTensor` and kernel
 infrastructure. Data lives in a MAX `DeviceBuffer`, so the `DeviceContext` you
 pass decides host or device: the same kernel, any accelerator, unmodified.
 
+Here is what that buys you. Take the
+[quantum harmonic oscillator](https://en.wikipedia.org/wiki/Quantum_harmonic_oscillator),
+whose stationary states solve the time-independent Schrödinger equation
+
+$$-\tfrac{1}{2}\psi'' + \tfrac{1}{2}\omega^2 x^2 \psi = E\psi,$$
+
+in units where $\hbar = m = 1$, giving a ground-state energy $E_0 = \omega/2$.
+Discretized on a grid of $n$ points, the left-hand side is a symmetric matrix
+and $E_0$ is its lowest eigenvalue, so the whole physics problem is one call to
+`eigh`:
+
 ```mojo
-from numax import Dual, FloatLike, Plain, f32
+from max.gpu.host import DeviceContext
+from numax.core.numeric import min_of
+from numax.core.tensor import map
+from numax.prelude import *
 
-def g[T: FloatLike](x: T) -> T:              # written once, no `dtype`
-    return (-(x * x)).exp()
+comptime P = Plain[f64]
+comptime n = 24                                     # grid points over [-4, 4]
+comptime dx = 8.0 / (n - 1)
+comptime kinetic = 1.0 / (dx * dx)
+comptime Sweep = Shaped[f64, 256].LayoutType
 
-def main():
-    print(g(Plain[f32](0.5)))                # 0.7788008  -- just the value
-    var d = g(Dual[Plain[f32]].seed(0.5))    # derivative seeded to 1
-    print(d)                                 # Dual(0.7788008, -0.7788008)
+# Written once against `FloatLike`: no dtype, no device, no derivative rule.
+def ground_energy[T: FloatLike](w: T) -> T:
+    var H = zeros[T, n * n]()
+    var x = T.constant(-4.0)
+    for i in range(n):
+        H[i * n + i] = T.constant(kinetic) + w * w * x * x / T.constant(2.0)
+        if i + 1 < n:
+            H[i * n + i + 1] = T.constant(-0.5 * kinetic)
+            H[(i + 1) * n + i] = T.constant(-0.5 * kinetic)
+        x = x + T.constant(dx)
+
+    var energies = eigh[T, n](H)[0].copy()          # eigh leaves them unsorted
+    var lowest = energies[0].copy()
+    for i in range(1, n):
+        lowest = min_of(lowest, energies[i])        # branchless, so Dual sees through it
+    return lowest^
+
+def detuning[T: FloatLike](w: T) -> T:
+    return ground_energy(w) - T.one()
+
+def step[w: Int](ws: SIMD[f64, w]) -> SIMD[f64, w]:
+    return ground_energy(Plain[f64, w](ws)).v
+
+def main() raises:
+    print(ground_energy(P.constant(1.0)))           # 0.4962  the grid's ground state
+    print(ground_energy(Dual[P].seed(1.0)).deriv)   # 0.4923  dE0/dw, no perturbation theory
+    print(newton[f=detuning](P.constant(1.0)))      # 2.0317  the w that puts E0 at 1
+
+    var gpu = DeviceContext()                       # CUDA or Metal, whichever is there
+    var ws = linspace[256, f64](0.5, 2.0, ctx=gpu)  # a Tensor, in device memory
+    var es = zeros[f64, 256](gpu)
+    gpu.enqueue_function[map[LayoutType=Sweep, step=step, gpu=True]](
+        ws.view(), es.view(), grid_dim=4, block_dim=64
+    )                                               # 256 wells, one eigensolve per thread
+    gpu.synchronize()
+    print(es.to_host()[255])                        # 0.9846  bit-identical to the CPU path
 ```
 
-That is forward-mode automatic differentiation: $g(x)$ and
-$g'(x) = -2xe^{-x^2}$ from one call, by the chain rule built into `Dual`'s
-arithmetic. It works on every function in the library.
+One function, four answers. At `Plain` it is the ground-state energy. At `Dual`
+it also returns $dE_0/d\omega$, which is the Hellmann-Feynman theorem arriving
+without perturbation theory being written anywhere. Handed to `newton` it runs
+backwards, finding the frequency that puts the ground state at a chosen energy
+from a derivative the caller never supplied. Handed to `map`, the entire 24x24
+eigensolve runs inside a single GPU thread, 256 wells at once, and matches the
+host path bit for bit.
+
+The percent or so between these numbers and the continuum ($E_0 = \omega/2$, so
+$0.5$ and $2.0$) is the 24-point grid, not the library. The derivative is exact
+for the discretized operator, and inherits that same offset.
+[`examples/advanced/quantum_well.mojo`](examples/advanced/quantum_well.mojo)
+runs the whole thing, CPU and GPU side by side.
 
 ## Why νMAX
 
@@ -51,16 +110,19 @@ arithmetic. It works on every function in the library.
   changes, and `.view()` yields the `TileTensor` every MAX kernel takes. Its
   shape lives in its layout type, so `Shaped[f32, 2, 3]` with the extents
   compiled in and `Dynamic[f32, 2]` with the extents supplied at run time are
-  one type, not two.
+  one type, not two. `Array[T, n]` is the register-resident half that carries
+  the algorithms; [the section below](#start-with-tensor-cross-to-array-for-algorithms)
+  is the map between them.
 - **NumPy and SciPy's ground.** Special functions, dense linear algebra,
   quadrature, ODE solvers, FFTs, distributions, statistics, interpolation,
   signal and a NumPy-named array surface, plus `.npy` read/write, so a
   program ported from NumPy can ingest the files it already has and hand
   results back the same way. Full inventory in
   [`docs/features.md`](docs/features.md).
-- **Fast, and measured, per processor.** On an A10G's GPU, 60,955 M elem/s
-  against `torch.compile`'s 53,607, at ~83% of the card's bandwidth spec. On
-  its CPU, 0.998x a hand-written raw-SIMD loop and 4.5x NumPy. CPU and GPU
+- **Fast, and measured, per processor.** On an A10G's GPU, 61,013 M elem/s
+  against a hand-written CUDA kernel's 60,352 and `torch.compile`'s 53,670,
+  at ~82% of the card's bandwidth spec. On its CPU, 0.998x a hand-written
+  raw-SIMD loop and 4.3x NumPy. CPU and GPU
   numbers are never mixed into one comparison; see
   [`docs/performance.md`](docs/performance.md).
 - **Accurate on purpose.** Every approximation documents an error bound, and
@@ -89,6 +151,78 @@ which supplies the `-I .` for you. The named tasks (`pixi run example-npy-intero
 already do.
 
 ## Getting started
+
+### Start with `Tensor`, cross to `Array` for algorithms
+
+`Tensor` is the array you use. It owns its memory, its shape lives in its
+type, and the `DeviceContext` you hand a factory decides whether that memory
+sits on the host or on a GPU.
+
+```mojo
+from numax.prelude import *
+from numax.stats import sum                         # shadows a builtin, so not in the prelude
+
+def main() raises:
+    var a = ones[f64, 2, 3]()                       # extents compiled in
+    print(a + a)                                    # [[2.0, 2.0, 2.0],
+                                                    #  [2.0, 2.0, 2.0]]
+    print(mean(a), sum[axis=1](a))                  # 1.0 [3.0, 3.0]
+
+    var rows = 3                                    # a count computed at run time
+    var b = zeros_dyn[f64, 2](rows, 3)              # same type, extents as arguments
+
+    var on_gpu = zeros[f32, 1024](ctx=DeviceContext())   # same code, device memory
+```
+
+`Shaped[f64, 2, 3]` and `Dynamic[f64, 2]` are one struct at two layouts. The
+first has its extents in the type, which is what a GPU launch and the
+algorithm layer both need; the second carries them as values, which is what
+makes a shape read from a file expressible at all. `.dynamic()` and
+`.static_view[2, 3]()` move between the two without copying, and the second
+raises if the extents it asserts are not the ones there.
+
+Everything NumPy has a name for works on `Tensor`: creation, elementwise
+math, reductions along an axis, sorting, masking, reshaping, `.npy` files.
+
+`Array[T, n]` is the other array type, and it is not a smaller `Tensor`. It
+is a value in registers whose element count is part of its type, generic over
+the `FloatLike` conformer rather than over a `DType`. That is what makes a
+Cholesky differentiate at `Dual` and run inside one GPU thread, one matrix
+per SIMD lane, so it is what every algorithm takes: `linalg`, `fft`,
+`signal`, `interpolate`, and the fixed-step kernels in `optimize` and
+`integrate`. NumPy gets away with one array type because it needs neither
+property.
+
+`TileTensor` is MAX's borrowed view, a pointer and a layout that own nothing.
+`.view()` hands one to a kernel and that is the only place it appears; you do
+not build one yourself.
+
+| | Owns its memory | Shape | Where you meet it |
+|---|---|---|---|
+| `Tensor` (`Shaped`, `Dynamic`) | yes, a MAX `DeviceBuffer` | in the layout type, compile time or run time per dimension | every NumPy-named call |
+| `TileTensor` | no, it borrows | from the tensor it views | `.view()`, at a kernel boundary |
+| `Array[T, n]` | it *is* the value, in registers | `n` at compile time | every SciPy-named algorithm |
+
+Crossing is explicit in both directions:
+
+```mojo
+comptime P = Plain[f64]
+
+var m = eye[3, f64]()                  # Tensor, 3x3
+var lifted = to_array[P](m)            # Array[P, 9], row-major
+var chol = cholesky[P, 3](lifted)      # algorithms live here
+var back = to_tensor[f64, 3, 3](chol)  # Tensor again
+
+var direct = solve[P, 3](eye[P, 3](), ones[P, 3]())   # no tensor to lift
+```
+
+So `Tensor` alone does not cover everything, and the boundary has two limits
+worth knowing early. A `Dynamic` tensor cannot lift until it names a shape,
+since `n` is a compile-time parameter. And `n`
+unrolls: a 64x64 Cholesky takes about a minute to compile, a 128x128 one does
+not finish, so the algorithm layer suits the small fixed-size problems that
+appear inside a kernel rather than a large matrix read off disk. Large
+run-time-sized decompositions are the gap this version leaves open.
 
 ### Coming from NumPy and SciPy
 
@@ -257,7 +391,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `a + b`, `np.exp(a)`, `np.sort(a)` | `a + b`, `exp(a)`, `sort(a)` | |
 | `a.astype(np.float32)` | `astype[f32](a)` | explicit: there is no dtype promotion |
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
-| `a.sum(axis=1)`, `a.mean(axis=1)` | `sum_axis[axis=1](a)`, `mean_axis[axis=1](a)` | one axis drops, the rest survive |
+| `a.sum(axis=1)`, `a.mean(axis=1)` | `sum[axis=1](a)`, `mean[axis=1](a)` | same name as the whole-tensor form; one axis drops, the rest survive |
 | `np.linalg.solve(A, b)` | `solve[P, n](A, b)` | over `Array[T, n*n]`, so it differentiates |
 | `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr`, `svd`, `eigh` | |
 | `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` | no symmetry assumed; `lstsq` factors instead of forming the normal equations |
@@ -278,16 +412,11 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit |
 | `np.random.default_rng(0)` | `Generator(seed=0)` | or `seed(0)` for the global stream |
 
-Two names to know, because they have no NumPy counterpart: `Tensor` owns
-storage on a device and is what the array surface returns, while
-`Array[T, n]` is a register-resident value generic over the `FloatLike`
-conformer, and is what `linalg`, `signal` and `interpolate` take. A
-`Tensor` carries its shape in its layout type, so `Shaped[dtype, *dims]`
-names one with the extents compiled in and `Dynamic[dtype, rank]` one with
-the extents supplied at run time.
-`to_array[T]` lifts, `to_tensor` lowers, and `zeros`/`ones`/`full`/`eye`
-each have a conformer-shaped form (`eye[P, 3]()`) that builds an `Array`
-directly when there is no tensor to lift.
+Rows that read `[f64, ...]` return a `Tensor` and rows that read `[P, ...]`
+return an `Array`, which is the split the section above lays out.
+`zeros`/`ones`/`full`/`eye` are spelled the same on both sides, so the first
+parameter is what picks: a `DType` builds a tensor, a conformer builds an
+array.
 
 ### One import
 
@@ -312,7 +441,10 @@ full flat surface, and `from numax.linalg import ...` is one subsystem.
 `f32`/`f64` are short for `DType.float32`/`.float64` and nothing else, so the
 same name works wherever a dtype belongs, across both layers:
 `linspace[5, f64](...)` and `Shaped[f64, 4, 4](ctx)` on the tensor side,
-`Plain[f64]` and `Dual[Plain[f64]]` on the kernel side.
+`Plain[f64]` and `Dual[Plain[f64]]` on the kernel side. Every MAX dtype has
+one: `f16`, `bf16`, the five `f8e*` variants, `i8` through `u64`, and `bool`.
+The kernel layer needs a floating-point dtype, so the integer names belong to
+tensors, where storage and comparison results live.
 
 `Plain[dtype, width]` wraps a `SIMD[dtype, width]`. Mojo declares conformance
 where a type is defined, so a bare `SIMD` cannot conform to `FloatLike`, and
@@ -370,8 +502,9 @@ and `Compensated` kernels launch on a GPU thread unmodified too.
 
 ### Exact gradients into an optimizer
 
-The objective is an ordinary `FloatLike` kernel, so BFGS evaluates it at
-`Gradient` and gets every $\partial f / \partial x_i$ *exactly*:
+The objective is an ordinary `FloatLike` kernel taking the two-variable point
+as an `Array` (a value in registers, per the map above), so BFGS evaluates it
+at `Gradient` and gets every $\partial f / \partial x_i$ *exactly*:
 
 ```mojo
 def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
@@ -451,20 +584,27 @@ implementations running on the same processor.
 
 **GPU, 67M elements, one sync per call:**
 
-| Device | numax | torch.compile | torch eager | MLX |
-|---|---|---|---|---|
-| NVIDIA A10G (CUDA 13) | **60,955** | 53,607 | 19,814 | n/a |
-| Apple M3 Pro (Metal) | **14,465** | 13,831 | 4,807 | 4,866 |
+| Device | numax | CuPy kernel | torch.compile | torch eager | MLX |
+|---|---|---|---|---|---|
+| NVIDIA A10G (CUDA 12.8) | **61,013** | 60,352 | 53,670 | 19,803 | n/a |
+| Apple M3 Pro (Metal) | **14,465** | n/a | 13,831 | 4,807 | 4,866 |
 
-Amortizing the sync over ten launches instead: 61,537 vs. `torch.compile`'s
-56,141 on the A10G, 15,755 vs. 14,380 on the M3 Pro. MLX is macOS-only, hence
-the gap in the first row.
+Amortizing the sync over ten launches instead: 61,653 for numax against
+61,051 for CuPy and 56,245 for `torch.compile` on the A10G, 15,755 vs. 14,380
+on the M3 Pro. CuPy is CUDA-only and MLX macOS-only, hence the two gaps.
+
+CuPy's column is a hand-written `cupy.ElementwiseKernel` — CUDA C for this
+one expression. numax is at parity with it, from a kernel that names no
+device and no dtype, both pinned at 82% of the card's bandwidth. CuPy's
+*eager* path measures 20,375, the 3x cost of leaving `exp(-(x*x))` unfused;
+numax has no such column, because a `FloatLike` kernel is already fused
+before the walk begins.
 
 **CPU, 67M elements:**
 
 | Host | numax `map_threaded` | numax `map` (1 thread) | torch.compile | torch eager | Rust `thermite` | NumPy |
 |---|---|---|---|---|---|---|
-| AMD EPYC (the A10G's host) | **8,527** | 1,394 | 1,833 | 401 | 1,326 (AVX2) | 313 |
+| AMD EPYC (the A10G's host) | **8,733** | 1,367 | 1,880 | 468 | 1,329 (AVX2) | 316 |
 | Apple M3 Pro | **9,026** | 2,347 | 4,046 | 1,935 | 1,632 (NEON) | 493 |
 
 MLX's CPU path measures 1,954 on the M3 Pro (it has no CUDA build, so no EPYC
@@ -476,8 +616,8 @@ row).
   489.16, so the `exp` is free.
 - **Fusing two passes into one composed `step` is worth 1.99x** on the GPU at
   every size tested, and 1.26-1.58x on the CPU.
-- **The serial CPU walk matches hand-written Rust SIMD** (1,394 vs.
-  `thermite`'s 1,326 on the EPYC host) and is 4.5x NumPy. The `FloatLike`
+- **The serial CPU walk matches hand-written Rust SIMD** (1,367 vs.
+  `thermite`'s 1,329 on the EPYC host) and is 4.3x NumPy. The `FloatLike`
   abstraction costs 0.998x a raw-SIMD loop.
 - **The threaded CPU path is noisy.** Repeat runs on the EPYC host move by a
   factor of two at the same size, so read it as a range rather than a point.

@@ -322,13 +322,13 @@ construction.
 
 What this says, and what it does not:
 
-- **`numax`'s `map` reaches a hand-written CUDA kernel's throughput.** At
-  67M amortized it is 61,653 M elem/s against `ElementwiseKernel`'s 61,051
-  and `cupy.fuse()`'s 61,166 — 493 GB/s, **82% of this device's peak**.
-  Three implementations landing within 1% of each other at 82% of peak is
-  the roofline being hit, not one of them being better; the useful claim is
-  that the generic `FloatLike` path costs nothing against CUDA C written by
-  hand for this expression.
+- **`numax`'s `map` is at parity with a hand-written CUDA kernel.** At 67M
+  amortized it is 61,653 M elem/s against `ElementwiseKernel`'s 61,051 and
+  `cupy.fuse()`'s 61,166 — 493 GB/s, **82% of this device's peak**. Three
+  implementations within 1% of each other at 82% of peak is the roofline,
+  so the claim is parity rather than a win: a generic `FloatLike` kernel,
+  carrying autodiff and device independence, costs nothing against CUDA C
+  written by hand for this one expression.
 - **The fusion argument is visible directly rather than inferred.** CuPy
   eager sits at 20,375 and its fused form at 61,166 — a ratio of 3.002
   against the three passes the expression makes unfused. This is the

@@ -71,6 +71,11 @@ decides what a call returns.
 | `Complex[Inner]` | Complex over any other conformer; `Complex[Dual[...]]` differentiates holomorphically | [`core/complex.mojo`](../numax/core/complex.mojo), [`complex.mojo`](../examples/basic/complex.mojo) |
 | `Interval[Inner]` | An enclosure of every `f(x)` for `x` in `[lo, hi]`, including tight `sin`/`cos` over an interval | [`core/interval.mojo`](../numax/core/interval.mojo) |
 
+Every conformer is `Writable`, so `print(d)` shows a `Dual` as its value and
+derivative, an `Interval` as `[lo, hi]`, a `Complex` as `a + bi` — no `.v` to
+reach the raw `SIMD` first. `.v` stays for the cases that want it: arithmetic
+on the raw vector, and returning one from a `map` `step`.
+
 `f32` and `f64` are `DType.float32` and `DType.float64`, exported so one name
 serves both layers: `linspace[5, f64](...)` where a dtype belongs, `Plain[f64]`
 where a conformer does. `Plain`'s `width` defaults to 1, so `Plain[f64]` is the
