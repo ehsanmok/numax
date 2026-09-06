@@ -13,8 +13,9 @@ from numax.stats import mean, variance, norm, uniform, seed
 Every reduction takes a `Tensor` and covers every element.
 `mean`/`variance`/`stddev`/`cumsum` also have a `FloatLike`-generic form
 over `List[T]`, so calling them at `Compensated` recovers the precision a
-long float32 summation loses. Reductions cover every element -- there is
-no `axis=` yet; `numax.core.tensor.reduce_axis` is the axis-wise route.
+long float32 summation loses. `sum`, `prod`, `min`, `max` and `mean` each
+carry a second overload folding one axis -- `sum(a)` and `sum[axis=k](a)`,
+matching `numpy.sum(a)` and `numpy.sum(a, axis=k)`.
 No `Random[FloatLike]` conformer: sampling is not differentiable, so the
 trait contract does not fit.
 
@@ -49,17 +50,12 @@ from .statistics import (
     cumprod,
     cumsum,
     max,
-    max_axis,
     mean,
-    mean_axis,
     median,
     min,
-    min_axis,
     mode,
     prod,
-    prod_axis,
     stddev,
     sum,
-    sum_axis,
     variance,
 )

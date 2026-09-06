@@ -385,18 +385,13 @@ from .stats.statistics import (
     cumprod,
     cumsum,
     max,
-    max_axis,
     mean,
-    mean_axis,
     median,
     min,
-    min_axis,
     mode,
     prod,
-    prod_axis,
     stddev,
     sum,
-    sum_axis,
     variance,
 )
 

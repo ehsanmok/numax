@@ -291,7 +291,7 @@ Tier 1; `numax.fft.circular_convolve` is the transform-domain route.
 | Area | Surface | Where |
 |---|---|---|
 | Reductions | `sum`, `prod`, `mean`, `median`, `mode`, `min`, `max`, `argmin`, `argmax`, `cumsum`, `cumprod`, `variance`, `stddev` — every one takes a `Tensor` and covers all of it; `mean`, `variance`, `stddev` and `cumsum` also have a `FloatLike`-generic `List[T]` form | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
-| Reductions along one axis | `sum_axis`, `prod_axis`, `min_axis`, `max_axis`, `mean_axis` — `numpy.sum(a, axis=k)` and friends, at any rank above 1. The axis is a compile-time parameter and drops from the result, whose remaining extents are run-time values | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
+| Reductions along one axis | `sum[axis=k](a)`, and the same second overload on `prod`, `min`, `max` and `mean` — `numpy.sum(a, axis=k)` and friends, at any rank above 1. The axis is a compile-time parameter and drops from the result, whose remaining extents are run-time values | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |
 | Distributions | Nine `scipy.stats`-shaped namespaces — `norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` — each with `.pdf` (or `.pmf`), `.cdf` and, where defined, `.ppf`. Reached as `numax.stats.norm.cdf(...)`; not re-exported at the root, where `gamma` and `beta` are the special functions | [`stats/distributions.mojo`](../numax/stats/distributions.mojo) |
 | Sampling | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` — a named stream, so two generators built from one seed agree and neither is disturbed by what else touched the global RNG (`numpy.random.Generator`'s shape) | [`stats/random.mojo`](../numax/stats/random.mojo) |
 
@@ -345,8 +345,10 @@ row-major tensor, but the surface above it is not uniformly rank-generic yet:
 
 - `numax.stats`'s `median`, `mode`, `argmin`, `argmax`, `cumsum` and
   `cumprod` cover every element with no `axis=`; the five that do take one
-  are `sum_axis`, `prod_axis`, `min_axis`, `max_axis` and `mean_axis`, and
-  `numax.core.tensor.reduce_axis` folds an arbitrary `combine` the same way.
+  are `sum`, `prod`, `min`, `max` and `mean`, each through a second
+  overload of its own name (`sum(a)` folds everything, `sum[axis=k](a)`
+  folds one axis), and `numax.core.tensor.reduce_axis` folds an arbitrary
+  `combine` the same way.
 - `numax.core.sorting` flattens.
 - `transpose` is 2-D; `concatenate`/`split`/`stack` are rank-1; `reshape`
   targets rank 2 or 3.

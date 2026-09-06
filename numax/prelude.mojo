@@ -241,15 +241,10 @@ from .stats.statistics import (
     argmin,
     cumprod,
     cumsum,
-    max_axis,
     mean,
-    mean_axis,
     median,
-    min_axis,
     mode,
-    prod_axis,
     stddev,
-    sum_axis,
     variance,
 )
 from .stats.random import (

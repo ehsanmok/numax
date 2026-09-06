@@ -46,9 +46,14 @@ these two reasons.
 
 ## Axis-wise reductions
 
-`sum`, `prod`, `min`, `max` and `mean` each have an `_axis` sibling folding
-one axis instead of the whole tensor, which is `numpy.sum(a, axis=k)`. The
-axis is a compile-time parameter because the result's *rank* depends on it
+`sum`, `prod`, `min`, `max` and `mean` each have a second overload folding
+one axis instead of the whole tensor: `sum(a)` is `numpy.sum(a)` and
+`sum[axis=k](a)` is `numpy.sum(a, axis=k)`. One name carries both because
+the axis form's extra parameter is what tells them apart -- a call naming
+no axis cannot reach the folding overload, and a call naming one cannot
+reach the whole-tensor overload.
+
+The axis is a compile-time parameter because the result's *rank* depends on it
 (`rank - 1`, the reduced axis dropped, matching NumPy's default
 `keepdims=False`), and rank is compile-time throughout this library. The
 extents are not: the result comes back run-time-shaped, since they are read
@@ -136,7 +141,7 @@ def _larger[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
     return a if a > b else b
 
 
-def sum_axis[
+def sum[
     dtype: DType, LayoutType: TensorLayout, axis: Int
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
@@ -150,7 +155,7 @@ def sum_axis[
     return _fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
 
 
-def prod_axis[
+def prod[
     dtype: DType, LayoutType: TensorLayout, axis: Int
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
@@ -164,7 +169,7 @@ def prod_axis[
     return _fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
 
 
-def min_axis[
+def min[
     dtype: DType, LayoutType: TensorLayout, axis: Int
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
@@ -184,7 +189,7 @@ def min_axis[
     )
 
 
-def max_axis[
+def max[
     dtype: DType, LayoutType: TensorLayout, axis: Int
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
@@ -195,13 +200,13 @@ def max_axis[
     and LayoutType.rank > 1
 ):
     """The largest element along `axis`. `numpy.max(a, axis=k)`. Seeded the
-    mirror of `min_axis`."""
+    mirror of `min`'s."""
     return _fold_axis[axis=axis, combine=_larger[dtype]](
         xs, Scalar[dtype].MIN_FINITE
     )
 
 
-def mean_axis[
+def mean[
     dtype: DType, LayoutType: TensorLayout, axis: Int
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
@@ -212,7 +217,7 @@ def mean_axis[
     and LayoutType.rank > 1
 ):
     """The arithmetic mean along `axis`. `numpy.mean(a, axis=k)`."""
-    var totals = sum_axis[axis=axis](xs)
+    var totals = sum[axis=axis](xs)
     var length = Scalar[dtype](xs.dim_at(axis))
     for i in range(totals.size()):
         totals[i] = totals[i] / length
