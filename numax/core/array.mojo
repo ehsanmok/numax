@@ -786,6 +786,45 @@ def eye[
     return Shaped[dtype, n, n](_context(ctx), values^)
 
 
+def zeros[T: FloatLike, n: Int]() -> Array[T, n]:
+    """`n` zeros as an `Array`, the storage `numax.linalg` and
+    `numax.fft` take.
+
+    The conformer-shaped sibling of the tensor factory above. Those return
+    a `Tensor`, which the algorithm layer cannot take: a kernel that has to
+    run inside a GPU thread or differentiate at `Dual` needs registers and
+    a compile-time count, which is what `Array[T, n]` is. Without these,
+    building an identity to solve against read
+    `to_array[P](eye[3]())` -- a tensor built and immediately copied.
+
+    A matrix is `n*n` elements row-major, so `zeros[P, 3 * 3]()` is a 3x3.
+    """
+    return Array[T, n](fill=T.constant(0.0))
+
+
+def ones[T: FloatLike, n: Int]() -> Array[T, n]:
+    """`n` ones as an `Array`. See `zeros` above for why this sits beside
+    the tensor factory of the same name."""
+    return Array[T, n](fill=T.one())
+
+
+def full[T: FloatLike, n: Int](fill_value: Float64) -> Array[T, n]:
+    """`n` copies of `fill_value` as an `Array`. See `zeros` above."""
+    return Array[T, n](fill=T.constant(fill_value))
+
+
+def eye[T: FloatLike, n: Int]() -> Array[T, n * n]:
+    """The `n`x`n` identity as an `Array`, row-major.
+
+    `eye[P, 3]()` is what `numax.linalg.solve`, `cholesky` and `inverse`
+    take directly, where the tensor `eye[3]()` needs a `to_array` first.
+    """
+    var values = Array[T, n * n](fill=T.constant(0.0))
+    for i in range(n):
+        values[i * n + i] = T.one()
+    return values^
+
+
 def linspace[
     num: Int, dtype: DType = DType.float64
 ](

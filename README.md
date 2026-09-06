@@ -139,8 +139,8 @@ print(np.linalg.norm(A))
 ```mojo
 comptime P = Plain[f64]
 
-var A = to_array[P](eye[3]())
-var b = Array[P, 3](fill=P.constant(1.0))
+var A = eye[P, 3]()
+var b = ones[P, 3]()
 print(solve[P, 3](A, b)[0])
 print(det[P, 3](A))
 print(norm[P, 3](A))
@@ -250,6 +250,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.linspace(0, 1, 5, dtype=np.float32)` | `linspace[5, f32](0, 1)` | |
 | `np.arange(5)`, `np.eye(3)` | `arange[5]()`, `eye[3]()` | `arange` takes a count, not a `stop` |
 | `np.zeros_like(a)` | `zeros_like(a)` | derived shapes inherit `a`'s device |
+| `np.eye(3)` to hand to `linalg` | `eye[P, 3]()` | same names at the conformer layer, returning `Array` |
 | `a.reshape(2, 3)` | `reshape[f64, 6, 2, 3](a)`, or `reshape_dyn[rank=2](a, r, c)` | the second takes a shape you computed |
 | `a[1:3, :]`, `np.broadcast_to(a, (2, 3))` | `slice(a, [1, 0], [3, cols])`, `broadcast_to[rank=2](a, 2, 3)` | both copy rather than returning a view |
 | `a[a > 0]`, `np.take(a, idx)` | `extract(greater(a, zeros_like(a)), a)`, `take(a, idx)` | the result is sized by the data, so it comes back `Dynamic` |
@@ -284,7 +285,9 @@ conformer, and is what `linalg`, `signal` and `interpolate` take. A
 `Tensor` carries its shape in its layout type, so `Shaped[dtype, *dims]`
 names one with the extents compiled in and `Dynamic[dtype, rank]` one with
 the extents supplied at run time.
-`to_array[T]` lifts, `to_tensor` lowers.
+`to_array[T]` lifts, `to_tensor` lowers, and `zeros`/`ones`/`full`/`eye`
+each have a conformer-shaped form (`eye[P, 3]()`) that builds an `Array`
+directly when there is no tensor to lift.
 
 ### One import
 

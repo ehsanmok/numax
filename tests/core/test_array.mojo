@@ -12,6 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.array import (
+    to_array,
     Shaped,
     Tensor,
     arange,
@@ -35,7 +36,10 @@ from numax.core.array import (
     zeros_like,
 )
 
+from numax.core.plain import Plain
+
 comptime dtype = DType.float32
+comptime P = Plain[DType.float64, 1]
 
 
 def test_zeros_has_the_requested_shape_and_content() raises:
@@ -331,6 +335,40 @@ def test_rank_2_indexing_agrees_with_the_view() raises:
     for r in range(3):
         for c in range(2):
             assert_almost_equal(m[r, c], v[r, c])
+
+
+# ------------------------------------------------------------------
+# The same factory names at the conformer layer
+# ------------------------------------------------------------------
+
+
+def test_array_factories_fill_what_they_say() raises:
+    var z = zeros[P, 3]()
+    var o = ones[P, 3]()
+    var f = full[P, 3](2.5)
+    for i in range(3):
+        assert_almost_equal(z[i].v, 0.0)
+        assert_almost_equal(o[i].v, 1.0)
+        assert_almost_equal(f[i].v, 2.5)
+
+
+def test_array_eye_agrees_with_lifting_the_tensor_one() raises:
+    # The two spellings of the same identity: the conformer factory exists
+    # so a caller reaching for `numax.linalg` does not have to build a
+    # tensor and immediately copy it out again.
+    var direct = eye[P, 3]()
+    var lifted = to_array[P](eye[3](DeviceContext(api="cpu")))
+    for i in range(9):
+        assert_almost_equal(direct[i].v, lifted[i].v)
+
+
+def test_the_tensor_factories_still_resolve() raises:
+    # The conformer overloads share their names with the tensor ones, so
+    # this fails if adding them shadowed rather than overloaded.
+    var ctx = DeviceContext(api="cpu")
+    assert_equal(zeros[dtype, 4](ctx).size(), 4)
+    assert_equal(ones[dtype, 2, 3](ctx).size(), 6)
+    assert_equal(eye[3](ctx).size(), 9)
 
 
 def main() raises:
