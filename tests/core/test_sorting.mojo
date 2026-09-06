@@ -15,7 +15,8 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Shaped, Tensor, zeros
+from numax.core.array import Shaped, Tensor, asarray, diagflat, ravel, zeros
+from numax.core.logic import greater
 from numax.core.sorting import (
     all_nonzero,
     any_nonzero,
@@ -370,6 +371,78 @@ def test_take_rejects_an_out_of_range_index() raises:
     except:
         raised = True
     assert_true(raised)
+
+
+# ------------------------------------------------------------------
+# Run-time shapes crossing back into the flattening routines
+# ------------------------------------------------------------------
+
+
+def test_sort_takes_what_a_mask_produced() raises:
+    # The composition that reaches `sort` with run-time extents: `extract`
+    # cannot know its own length until it reads the values.
+    var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
+    var kept = extract(mk_mask[5]([True, False, True, False, True]), a)
+    var out = sort(kept)
+
+    assert_equal(out.size(), 3)
+    assert_almost_equal(out[0], 3.0)
+    assert_almost_equal(out[1], 4.0)
+    assert_almost_equal(out[2], 5.0)
+
+
+def test_sort_agrees_across_the_two_shapes() raises:
+    var elements = List[Scalar[dtype]](capacity=5)
+    for i in range(5):
+        elements.append(Scalar[dtype]([3.0, 1.0, 4.0, 1.0, 5.0][i]))
+
+    var fixed = sort(mk[5]([3.0, 1.0, 4.0, 1.0, 5.0]))
+    var dynamic = sort(asarray(elements^, DeviceContext(api="cpu")))
+
+    assert_equal(fixed.size(), dynamic.size())
+    for i in range(5):
+        assert_almost_equal(fixed[i], dynamic[i])
+
+
+def test_argsort_and_take_compose_at_a_run_time_shape() raises:
+    var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
+    var kept = extract(mk_mask[5]([False, True, True, True, False]), a)
+    var ordered = take(kept, argsort(kept))
+
+    assert_equal(ordered.size(), 3)
+    assert_almost_equal(ordered[0], 1.0)
+    assert_almost_equal(ordered[1], 1.0)
+    assert_almost_equal(ordered[2], 4.0)
+
+
+def test_select_runs_at_a_run_time_shape() raises:
+    var a = mk[4]([1.0, 2.0, 3.0, 4.0])
+    var x = extract(mk_mask[4]([True, True, False, False]), a)
+    var y = extract(mk_mask[4]([False, False, True, True]), a)
+
+    # A run-time-shaped mask has to come from a comparison: the zero-fill
+    # constructor every other factory routes through is unavailable at
+    # `DType.bool`.
+    var mask = greater(x, y)
+
+    var picked = select(mask, x, y)
+    assert_equal(picked.size(), 2)
+    assert_almost_equal(picked[0], 3.0)
+    assert_almost_equal(picked[1], 4.0)
+
+
+def test_ravel_and_diagflat_keep_a_run_time_length() raises:
+    var a = mk[4]([1.0, 2.0, 3.0, 4.0])
+    var kept = extract(mk_mask[4]([True, False, True, True]), a)
+
+    assert_equal(ravel(kept).size(), 3)
+
+    var square = diagflat(kept)
+    assert_equal(square.size(), 9)
+    assert_almost_equal(square[0], 1.0)
+    assert_almost_equal(square[4], 3.0)
+    assert_almost_equal(square[8], 4.0)
+    assert_almost_equal(square[1], 0.0)
 
 
 def main() raises:

@@ -1242,7 +1242,7 @@ def ravel[
     dtype: DType, LayoutType: TensorLayout
 ](a: Tensor[dtype, LayoutType]) raises -> Shaped[
     dtype, LayoutType.static_product
-]:
+] where LayoutType.all_dims_known:
     """A rank-1 copy in row-major order -- the inverse of `reshape`.
 
     `Tensor` owns its storage and Mojo will not let a field be moved out of
@@ -1250,8 +1250,23 @@ def ravel[
     retypes in place. Every manipulation in this module copies for the same
     reason; `TileTensor.reshape()` is the zero-copy view when the result
     does not need to outlive its source.
+
+    The overload below flattens a tensor whose extents are run-time values.
     """
     return Shaped[dtype, LayoutType.static_product](a.context(), a.to_host())
+
+
+def ravel[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, 1
+] where not LayoutType.all_dims_known:
+    """A rank-1 copy in row-major order, for a run-time shape.
+
+    Same copy as the overload above; the result's length is a run-time
+    value because the input's is.
+    """
+    return asarray(a.to_host(), a.context())
 
 
 def concatenate[
@@ -1376,15 +1391,35 @@ def diagflat[
     dtype: DType, LayoutType: TensorLayout
 ](a: Tensor[dtype, LayoutType]) raises -> Shaped[
     dtype, LayoutType.static_product, LayoutType.static_product
-]:
+] where LayoutType.all_dims_known:
     """`a` flattened onto the diagonal of a square matrix.
-    `numpy.diagflat`."""
+    `numpy.diagflat`.
+
+    The overload below takes a tensor whose extents are run-time values.
+    """
     comptime n = LayoutType.static_product
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = source[i]
     return Shaped[dtype, n, n](a.context(), values^)
+
+
+def diagflat[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, 2
+] where not LayoutType.all_dims_known:
+    """`a` flattened onto the diagonal of a square matrix, for a run-time
+    shape. `numpy.diagflat`."""
+    var source = a.to_host()
+    var n = len(source)
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        values[i * n + i] = source[i]
+    var result = Dynamic[dtype, 2](a.context(), row_major(_dyn_shape[2](n, n)))
+    result.copy_from_host(values)
+    return result^
 
 
 def tri[

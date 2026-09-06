@@ -50,15 +50,15 @@ from std.builtin.sort import sort as _std_sort
 from nn.argsort import argsort as _nn_argsort
 from std.collections import Array
 
-from layout.tile_layout import TensorLayout
-from .array import Dynamic, Shaped, Tensor, asarray, _product
+from layout.tile_layout import TensorLayout, row_major
+from .array import Dynamic, Shaped, Tensor, asarray, _dyn_shape, _product
 
 
 def sort[
     dtype: DType, LayoutType: TensorLayout
 ](a: Tensor[dtype, LayoutType]) raises -> Shaped[
     dtype, LayoutType.static_product
-]:
+] where LayoutType.all_dims_known:
     """A sorted rank-1 copy of `a`, ascending. `numpy.sort(a, axis=None)`.
 
     Stable, because `std.builtin.sort` is; for a plain numeric sort that
@@ -68,11 +68,29 @@ def sort[
     Returns rank-1 regardless of the input's rank, which is what
     `axis=None` means. `numax.core.array.reshape` puts a shape back on if one
     is wanted.
+
+    The overload below takes a tensor whose extents are run-time values
+    and returns one, so `sort(extract(mask, a))` works.
     """
     comptime n = LayoutType.static_product
     var values = a.to_host()
     _std_sort(values)
     return Shaped[dtype, n](a.context(), values^)
+
+
+def sort[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, 1
+] where not LayoutType.all_dims_known:
+    """A sorted rank-1 copy of `a`, ascending, for a run-time shape.
+
+    Same sort as the overload above; the result's length is a run-time
+    value because the input's is.
+    """
+    var values = a.to_host()
+    _std_sort(values)
+    return asarray(values^, a.context())
 
 
 def argsort[
@@ -93,11 +111,15 @@ def argsort[
     that. The flattening is the `axis=None` contract every other routine in
     this module follows, and it is also what makes the input rank-1 the way
     `nn.argsort` requires.
+
+    The scratch tensors are built at the input's run-time length rather
+    than from its type, so a tensor whose extents are run-time values
+    sorts the same way a compile-time-shaped one does.
     """
-    comptime n = LayoutType.static_product
+    var n = a.size()
     var ctx = a.context()
-    var flat = Shaped[dtype, n](ctx, a.to_host())
-    var indices = Shaped[DType.int64, n](ctx)
+    var flat = asarray(a.to_host(), ctx)
+    var indices = Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](n)))
     var flat_view = flat.view()
     var indices_view = indices.view()
     _nn_argsort(indices_view, flat_view)
@@ -316,7 +338,7 @@ def select[
     version reads more clearly at `Plain`. Reach for
     `numax.core.numeric.blend` when the selection has to happen inside a kernel.
     """
-    comptime n = LayoutType.static_product
+    var n = x.size()
     var mask = condition.to_host()
     var x_values = x.to_host()
     var y_values = y.to_host()
