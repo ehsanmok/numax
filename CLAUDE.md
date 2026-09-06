@@ -29,7 +29,7 @@ pixi run -e dev docs-build        # mojodoc → target/doc/
 ```
 
 Cross-language baselines live in separate environments so the default install
-stays lean: `pixi run -e bench-python bench-numpy|bench-torch|bench-mlx`,
+stays lean: `pixi run -e bench-python bench-numpy|bench-torch|bench-mlx|bench-cupy`,
 `pixi run -e bench-rust bench-thermite`, and
 `pixi run -e bench-python accuracy-gen` to regenerate
 `bench/accuracy/reference_data.mojo`.

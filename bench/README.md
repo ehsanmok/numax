@@ -60,7 +60,7 @@ This keeps the comparison to one narrow, well-defined kernel on purpose —
 it's a statement about elementwise-`exp` throughput on this machine, not a
 general verdict on any of these libraries.
 
-## The baselines, and why these four
+## The baselines, and why these five
 
 - **NumPy** (`numpy/gaussian.py`, `pixi run bench-numpy`) — the default
   reference point for anyone doing numerical work in Python. CPU-only;
@@ -71,6 +71,12 @@ general verdict on any of these libraries.
   `stream=mx.cpu`/`stream=mx.gpu` switch, running on the same GPU `numax`
   targets via `DeviceContext`. Metal on macOS; on Linux it needs an
   explicit CUDA backend wheel, which `pixi.toml` selects per platform.
+- **CuPy** (`cupy/gaussian.py`, `pixi run bench-cupy`) — NumPy's API on
+  CUDA, and the closest thing to a native NVIDIA counterpart to what
+  `numax`'s GPU path does. CUDA-only, so it appears in the NVIDIA results
+  below and nowhere else, the mirror of MLX's macOS-only position. Three
+  columns, since "CuPy" is not one number: eager, `cupy.fuse()`d, and a
+  hand-written `cupy.ElementwiseKernel`.
 - **PyTorch** (`torch/gaussian.py`, `pixi run bench-torch`) — eager and
   `torch.compile`'d, on CPU and on whichever GPU torch can see (CUDA, else
   MPS — the same device as above). `torch.compile`
@@ -96,17 +102,20 @@ pixi run bench-roofline  # numax, bandwidth diagnosis (needs a GPU)
 pixi run bench-numpy     # NumPy, CPU
 pixi run bench-mlx       # MLX, CPU + GPU (macOS only)
 pixi run bench-torch     # PyTorch, eager + compile, CPU + CUDA/MPS
+pixi run bench-cupy      # CuPy, eager + fused + raw kernel (Linux/CUDA only)
 pixi run bench-thermite  # Rust thermite, CPU (NEON or AVX2)
 ```
 
 Each `pixi run bench-*` task above resolves and installs whatever that
 baseline needs the first time it's run (a Python interpreter plus
-NumPy/MLX/PyTorch for the first three, a Rust toolchain for the last) into
+NumPy/MLX/PyTorch/CuPy for the Python ones, a Rust toolchain for the last) into
 its own pixi environment, cached in `.pixi/` like every other environment
 in this repo -- there's no separate setup step. `bench-mlx` is declared only
 on the macOS target, so it does not appear at all on Linux: MLX's Linux
 backend is an opt-in wheel whose name pins a CUDA major version, and a pin
-that is only correct on one machine is worse than no baseline.
+that is only correct on one machine is worse than no baseline. `bench-cupy`
+is declared only on `linux-64` for the same reason in reverse -- CuPy ships
+one wheel per CUDA major version and no macOS build at all.
 
 ## Results
 
@@ -115,11 +124,11 @@ memory bandwidth), macOS 25.5.0, `mojo`/`max` per `pixi.toml`, NumPy 2.5.2,
 MLX (Metal GPU device), PyTorch 2.13.0, `thermite` 0.2.1 (NEON backend). All
 throughput in millions of elements/sec — higher is better.
 
-These are one machine's numbers. Every benchmark here also runs on
-Linux/x86_64 with a CUDA GPU (`thermite` picks its AVX2 backend, PyTorch its
-CUDA one; MLX is macOS-only); the figures differ, the conclusions below about
-*where the time goes* are the ones worth carrying across hardware, and
-where they have been re-checked on CUDA that is said explicitly.
+These are one machine's numbers. The same sweep on Linux/x86_64 with an
+NVIDIA A10G is in [its own section below](#the-same-sweep-on-nvidia), which
+is also where CuPy appears; the figures differ by roughly 4x on the GPU, and
+the conclusions about *where the time goes* are the ones that carried across
+both.
 
 ### Read the roofline first
 
@@ -258,6 +267,99 @@ amortized, i.e. ±3%, which is the same order as its margin over
 `torch.compile` — hence "tie" rather than "wins". Below 1M the per-call
 numbers are far worse: 64K moved by up to 2x between runs on the same
 machine, so treat that row as an order of magnitude, not a measurement.
+
+### The same sweep on NVIDIA
+
+Everything above is Metal. This section re-measures it on Linux/x86_64 with
+a CUDA GPU, which is where **CuPy** joins the set: it is CUDA-only, so it
+cannot appear in the Metal tables, exactly as MLX cannot appear here.
+
+NVIDIA A10G (24GB GDDR6, 600 GB/s), 64 CPU cores, driver 580.126, CUDA
+12.8, CuPy 14.2.0, NumPy 2.5.2, PyTorch 2.13.0+cu130, `thermite` 0.2 (AVX2,
+`X86V3` backend). The roofline for this device is 600 GB/s ÷ 8 bytes =
+**75,000 M elem/s**, so read every GPU number against that, not against the
+Metal tables above.
+
+CuPy gets three columns because "CuPy" is not one number. **eager** is
+`cupy.exp(-(x * x))` as written, three kernels and two temporaries;
+**fused** is the same expression under `cupy.fuse()`, one kernel; **kernel**
+is a hand-written `cupy.ElementwiseKernel`. That last one is the honest
+comparison for `numax`, whose `step` is a single fused kernel by
+construction.
+
+**GPU (same CUDA device), amortized sync:**
+
+| n | numax | CuPy kernel | CuPy fused | CuPy eager | torch compile | torch eager |
+|---|---|---|---|---|---|---|
+| 65,536 | 17,852 | 6,731 | 6,020 | 1,849 | 1,224 | 2,277 |
+| 262,144 | 70,374 | 27,579 | 24,635 | 8,421 | 3,963 | 9,203 |
+| 1,048,576 | 68,789 | 52,428 | 52,776 | 18,207 | 18,213 | 25,360 |
+| 4,194,304 | 58,753 | 57,718 | 57,403 | 19,476 | 51,489 | 19,301 |
+| 16,777,216 | 60,913 | 60,127 | 60,168 | 20,155 | 55,153 | 19,757 |
+| 67,108,864 | 61,653 | 61,051 | 61,166 | 20,375 | 56,245 | 19,905 |
+
+**GPU (same CUDA device), per-call sync:**
+
+| n | numax | CuPy kernel | CuPy fused | CuPy eager | torch compile | torch eager |
+|---|---|---|---|---|---|---|
+| 65,536 | 7,317 | 4,523 | 4,193 | 1,639 | 950 | 1,603 |
+| 262,144 | 27,417 | 16,896 | 15,777 | 5,088 | 3,399 | 3,920 |
+| 1,048,576 | 48,203 | 33,905 | 31,192 | 14,930 | 12,929 | 19,437 |
+| 4,194,304 | 52,077 | 50,073 | 49,426 | 17,725 | 31,945 | 17,436 |
+| 16,777,216 | 59,016 | 57,712 | 57,679 | 19,824 | 47,108 | 19,452 |
+| 67,108,864 | 61,013 | 60,352 | 60,213 | 20,239 | 53,670 | 19,803 |
+
+**CPU-only (64 cores):**
+
+| n | numax `map` | numax `map_threaded` | thermite (AVX2) | NumPy | torch eager | torch compile |
+|---|---|---|---|---|---|---|
+| 65,536 | 1,732 | 2,228 | 1,349 | 283 | 630 | 770 |
+| 262,144 | 1,793 | 6,929 | 1,367 | 283 | 681 | 1,796 |
+| 1,048,576 | 1,812 | 10,797 | 1,366 | 401 | 953 | 8,059 |
+| 4,194,304 | 1,730 | 6,125 | 1,342 | 357 | 973 | 13,756 |
+| 16,777,216 | 1,720 | 13,167 | 1,332 | 307 | 380 | 1,619 |
+| 67,108,864 | 1,367 | 8,733 | 1,329 | 316 | 468 | 1,880 |
+
+What this says, and what it does not:
+
+- **`numax`'s `map` reaches a hand-written CUDA kernel's throughput.** At
+  67M amortized it is 61,653 M elem/s against `ElementwiseKernel`'s 61,051
+  and `cupy.fuse()`'s 61,166 — 493 GB/s, **82% of this device's peak**.
+  Three implementations landing within 1% of each other at 82% of peak is
+  the roofline being hit, not one of them being better; the useful claim is
+  that the generic `FloatLike` path costs nothing against CUDA C written by
+  hand for this expression.
+- **The fusion argument is visible directly rather than inferred.** CuPy
+  eager sits at 20,375 and its fused form at 61,166 — a ratio of 3.002
+  against the three passes the expression makes unfused. This is the
+  measurement the Metal section had to infer from PyTorch's numbers and got
+  wrong once. A `numax` kernel never has an eager column to lose, because
+  composition happens inside `step` before any tensor walk.
+- **`torch.compile` trails by about 9%** at the top end (56,245 amortized,
+  75% of peak) and needs 4M elements before its compiled kernel beats its
+  own eager path at all. Below that, Inductor's launch overhead costs more
+  than the fusion saves.
+- **Below 1M, the amortized GPU numbers are cache, not DRAM.** `numax` reads
+  70,374 M elem/s at 262K, which is 563 GB/s and would be 94% of a peak the
+  DRAM cannot sustain — a 1MB buffer fits in the A10G's 6MB L2, so those
+  rows measure a different memory system than the 67M row. Compare rows
+  down a column, not across the size sweep.
+- **On CPU the threading result holds and `torch.compile` does not.**
+  `map_threaded` is 5-8x serial `map` above 256K, and beats every other CPU
+  column at 16M and 67M. `torch.compile`'s CPU path wins the middle of the
+  sweep (13,756 at 4M) and then collapses to 1,619 at 16M. Both are noisy
+  enough that the ordering in any single row is worth less than the shape:
+  the CPU numbers here are one to two orders of magnitude below the GPU
+  ones, which is the difference between 64 cores and an A10G.
+- **Run-to-run spread at 67M is ~0.2%** on this device, an order of
+  magnitude tighter than the ±3% seen on the M3 Pro: repeats read 61,653
+  then 61,525 for `numax`, 61,166 then 61,067 for `cupy.fuse()`. That is
+  what makes a sub-1% ordering worth reporting at all here, and it still is
+  not worth calling a win.
+- **`numax` serial CPU runs 1.0-1.3x `thermite`'s AVX2 backend**, narrowing
+  to a tie at 67M where both are DRAM-bound, against the 1.4-1.8x measured
+  on the M3 Pro's NEON backend. Same caveat as there: different `exp` approximations, in-place vs.
+  separate output buffer, and a runtime ISA check on every `thermite` call.
 
 ## Fusion: chaining two `map`s vs composing inside `step`
 

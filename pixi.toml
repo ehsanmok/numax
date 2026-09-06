@@ -81,6 +81,17 @@ mlx = ">=0.30"
 [feature.bench-python.target.osx-arm64-mac14.tasks]
 bench-mlx = { cmd = "python3 gaussian.py", cwd = "bench/mlx" }
 
+# CuPy is CUDA-only and, like MLX's Linux backend, ships one wheel per CUDA
+# major version rather than resolving the host's. `cupy-cuda12x` matches the
+# CUDA 12 toolkits current drivers carry; a CUDA 13 host wants
+# `cupy-cuda13x` instead. x86_64 only here, which is where the NVIDIA
+# comparison in bench/README.md was measured.
+[feature.bench-python.target.linux-64-glibc235.pypi-dependencies]
+cupy-cuda12x = ">=13"
+
+[feature.bench-python.target.linux-64-glibc235.tasks]
+bench-cupy = { cmd = "python3 gaussian.py", cwd = "bench/cupy" }
+
 [feature.bench-python.tasks]
 bench-numpy = { cmd = "python3 gaussian.py", cwd = "bench/numpy" }
 bench-torch = { cmd = "python3 gaussian.py", cwd = "bench/torch" }
