@@ -70,13 +70,13 @@ def main() raises:
     var plain_v = Array[P, 2](fill=P.constant(0.0))
     plain_v[0] = P.constant(0.5)
     plain_v[1] = P.constant(0.5)
-    print("Plain     f(0.5, 0.5)      =", Float64(rosenbrock[P](plain_v^).v))
+    print("Plain     f(0.5, 0.5)      =", rosenbrock[P](plain_v^))
 
     var dual_v = Array[Dual[P], 2](fill=Dual[P].constant(0.0))
     dual_v[0] = Dual[P](P.constant(0.5), P.one())
     dual_v[1] = Dual[P].constant(0.5)
     var d = rosenbrock[Dual[P]](dual_v^)
-    print("Dual      df/dx            =", Float64(d.deriv.v))
+    print("Dual      df/dx            =", d.deriv)
 
     var grad_v = Array[G, 2](fill=G.constant(0.0))
     grad_v[0] = G.variable(0.5, 0)
@@ -84,8 +84,8 @@ def main() raises:
     var g = rosenbrock[G](grad_v^)
     print(
         "Gradient  [df/dx, df/dy]   =",
-        Float64(g.grad[0].v),
-        Float64(g.grad[1].v),
+        g.grad[0],
+        g.grad[1],
     )
     print("           (analytic: -51.0, 50.0)")
     print()
@@ -95,7 +95,7 @@ def main() raises:
 
     # Tier 1: fixed 20 Newton steps, GPU-launchable, no convergence test.
     var tier1 = newton[P, cos_minus_x](P.constant(0.5))
-    print("numax.optimize.newton  (tier 1, fixed 20 steps) =", Float64(tier1.v))
+    print("numax.optimize.newton  (tier 1, fixed 20 steps) =", tier1)
 
     # Tier 2: the same mathematics, iterating until the step is tiny, and
     # reporting whether it got there.

@@ -124,8 +124,8 @@ def main() raises:
     print("Sensitivity of the far-field phase to the slit separation:")
     var at_plain = fringe_phase(P(separation))
     var at_dual = fringe_phase(Dual[P](P(separation), P(1.0)))
-    print("  phase difference        =", at_plain.v, "rad")
-    print("  d(phase)/d(separation)  =", at_dual.deriv.v, "rad per unit")
+    print("  phase difference        =", at_plain, "rad")
+    print("  d(phase)/d(separation)  =", at_dual.deriv, "rad per unit")
     print()
     print("Move the sources by 1%, and the fringe phase moves by")
     print(

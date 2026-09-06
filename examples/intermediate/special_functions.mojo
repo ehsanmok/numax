@@ -47,24 +47,24 @@ def main():
             "x=",
             x_raw,
             " gamma=",
-            g.value.v,
+            g.value,
             " gamma'=",
-            g.deriv.v,
+            g.deriv,
             " lgamma=",
-            lg.value.v,
+            lg.value,
         )
 
     print("--- gammainc(a, x): regularized lower incomplete gamma ---")
     var a = Plain[dtype, width].constant(2)
     for x_raw in [0.5, 1.0, 3.0, 10.0]:
         var x = Plain[dtype, width].constant(x_raw)
-        print("a=2 x=", x_raw, " P(a,x)=", gammainc(a, x).v)
+        print("a=2 x=", x_raw, " P(a,x)=", gammainc(a, x))
 
     var neg_a = Plain[dtype, width].constant(-0.5)
     var x_for_neg_a = Plain[dtype, width].constant(2.0)
     print(
         "a=-0.5 (now valid too) x=2.0  P(a,x)=",
-        gammainc(neg_a, x_for_neg_a).v,
+        gammainc(neg_a, x_for_neg_a),
     )
 
     print(
@@ -73,12 +73,12 @@ def main():
     )
     for x_raw in [0.0, 1.0, 2.0, 2.4048, 3.0, 5.0, 10.0, 20.0]:
         var x = Plain[dtype, width].constant(x_raw)
-        print("x=", x_raw, " J0(x)=", j0(x).v, " J1(x)=", j1(x).v)
+        print("x=", x_raw, " J0(x)=", j0(x), " J1(x)=", j1(x))
 
     print("--- bessel Y0/Y1 (x > 0) ---")
     for x_raw in [0.5, 1.0, 2.0, 5.0, 10.0, 20.0]:
         var x = Plain[dtype, width].constant(x_raw)
-        print("x=", x_raw, " Y0(x)=", y0(x).v, " Y1(x)=", y1(x).v)
+        print("x=", x_raw, " Y0(x)=", y0(x), " Y1(x)=", y1(x))
 
     print(
         "--- lambertw, W0 branch (now valid down to the branch point"
@@ -94,9 +94,9 @@ def main():
             "x=",
             x_raw,
             " W(x)=",
-            w.value.v,
+            w.value,
             " W'(x)=",
-            w.deriv.v,
+            w.deriv,
             " check w*exp(w)=",
             w.value.v * exp(w.value.v),
         )
@@ -112,7 +112,7 @@ def main():
             "x=",
             x_raw,
             " W_-1(x)=",
-            w.value.v,
+            w.value,
             " check w*exp(w)=",
             w.value.v * exp(w.value.v),
         )
@@ -129,9 +129,9 @@ def main():
             "m=",
             m_raw,
             " K(m)=",
-            k.value.v,
+            k.value,
             " E(m)=",
-            e.value.v,
+            e.value,
             " E'(m)=",
-            e.deriv.v,
+            e.deriv,
         )

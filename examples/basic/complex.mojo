@@ -32,26 +32,19 @@ def main():
     print("--- Complex[Plain]: ordinary complex arithmetic ---")
     var a = c(3.0, 4.0)
     var b = c(1.0, -2.0)
-    print("a =", a.re.v, "+", a.im.v, "i")
-    print("b =", b.re.v, "+", b.im.v, "i")
-    print("a+b =", (a + b).re.v, "+", (a + b).im.v, "i")
-    print("a*b =", (a * b).re.v, "+", (a * b).im.v, "i")
-    print("a/b =", (a / b).re.v, "+", (a / b).im.v, "i")
-    print("|a| =", a.abs().re.v, " (a real number, embedded as Complex)")
+    print("a =", a)
+    print("b =", b)
+    print("a+b =", a + b)
+    print("a*b =", a * b)
+    print("a/b =", a / b)
+    print("|a| =", a.abs(), " (a real number, embedded as Complex)")
 
     print("--- exp/ln/sin/cos, the complex-analytic extensions ---")
-    print("exp(a) =", a.exp().re.v, "+", a.exp().im.v, "i")
-    print("ln(a)  =", a.ln().re.v, "+", a.ln().im.v, "i")
-    print("sin(a) =", a.sin().re.v, "+", a.sin().im.v, "i")
-    print("cos(a) =", a.cos().re.v, "+", a.cos().im.v, "i")
-    var round_trip = a.ln().exp()
-    print(
-        "ln(a).exp() =",
-        round_trip.re.v,
-        "+",
-        round_trip.im.v,
-        "i  (check: recovers a)",
-    )
+    print("exp(a) =", a.exp())
+    print("ln(a)  =", a.ln())
+    print("sin(a) =", a.sin())
+    print("cos(a) =", a.cos())
+    print("ln(a).exp() =", a.ln().exp(), " (check: recovers a)")
 
     print("--- Complex[Dual[Plain]]: holomorphic derivatives for free ---")
     print("d/dz[z^2] at z = 3+4i should be 2z = 6+8i")
@@ -67,12 +60,12 @@ def main():
     var w = z * z
     print(
         "z^2 =",
-        w.re.value.v,
+        w.re.value,
         "+",
-        w.im.value.v,
+        w.im.value,
         "i   d(z^2)/dz =",
-        w.re.deriv.v,
+        w.re.deriv,
         "+",
-        w.im.deriv.v,
+        w.im.deriv,
         "i",
     )

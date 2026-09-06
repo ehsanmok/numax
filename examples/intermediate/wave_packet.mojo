@@ -145,12 +145,12 @@ def main() raises:
     var at_dual = second_moment(Dual[P](P(sigma), P(1.0)))
     print(
         "  <x^2>            =",
-        at_plain.v,
+        at_plain,
         " (analytic:",
         sigma * sigma / 2.0,
         ")",
     )
-    print("  d<x^2>/d(sigma)  =", at_dual.deriv.v, " (analytic:", sigma, ")")
+    print("  d<x^2>/d(sigma)  =", at_dual.deriv, " (analytic:", sigma, ")")
     print()
     print("The derivative came from the same body as the value -- one kernel,")
     print("called at Dual instead of Plain. No second formula, no tape.")
