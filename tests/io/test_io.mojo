@@ -6,7 +6,9 @@ rank, or shape mismatch against what the caller requests). `Tensor.format`
 is checked against frozen expected strings via `_format_tensor` (the
 helper it's built on, which returns the formatted `String` instead of
 printing it directly) for a small array and an array over `threshold`
-(exercising the `edge_items` truncation).
+(exercising the `edge_items` truncation), and for the nesting a rank above
+1 gets: one row per line, a blank line between the blocks of a rank-3
+tensor, and truncation applied per axis rather than to the flat buffer.
 """
 
 from std.testing import (
@@ -18,7 +20,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Shaped, Tensor, full
+from numax.core.array import Shaped, Tensor, full, zeros
 from numax.io import nmx
 
 comptime dtype = DType.float32
@@ -154,6 +156,35 @@ def test_format_truncates_arrays_over_threshold() raises:
 def test_print_matches_format_defaults() raises:
     var xs = _fixed_1d()
     assert_equal(String(xs), xs.format())
+
+
+def _ramp[*dims: Int]() raises -> Shaped[dtype, *dims]:
+    var a = zeros[dtype, *dims](DeviceContext(api="cpu"))
+    for i in range(a.size()):
+        a[i] = Scalar[dtype](i)
+    return a^
+
+
+def test_a_matrix_prints_one_row_per_line() raises:
+    var a = _ramp[2, 3]()
+    assert_equal(String(a), "[[0.0, 1.0, 2.0],\n [3.0, 4.0, 5.0]]")
+
+
+def test_a_rank_three_tensor_separates_its_blocks() raises:
+    var a = _ramp[2, 2, 2]()
+    assert_equal(
+        String(a),
+        "[[[0.0, 1.0],\n  [2.0, 3.0]],\n\n [[4.0, 5.0],\n  [6.0, 7.0]]]",
+    )
+
+
+def test_truncation_applies_to_every_axis_that_is_long_enough() raises:
+    var a = _ramp[2, 9]()
+    # The rows are short enough in count to survive, the columns are not.
+    assert_equal(
+        a.format(threshold=10, edge_items=2),
+        "[[0.0, 1.0, ..., 7.0, 8.0],\n [9.0, 10.0, ..., 16.0, 17.0]]",
+    )
 
 
 def main() raises:

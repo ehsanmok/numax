@@ -553,11 +553,14 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
         defaults are wrong -- `print(a.format(precision=8))`.
 
         Every element is printed with `precision` digits after the decimal
-        point. Past `threshold` elements only the first and last
-        `edge_items` are shown with a `...` between them, the same
-        truncation NumPy's default printer applies. NumPy's line-wrapping
-        (`linewidth`) is not reproduced: this is one flat, comma-separated
-        line.
+        point. Brackets nest by shape, so a matrix prints one row per line
+        and the 2-D blocks of a rank-3 tensor are separated by a blank one.
+        Past `threshold` elements every axis longer than `2 * edge_items`
+        shows only that many entries from each end with a `...` between
+        them, the same truncation NumPy's default printer applies.
+
+        NumPy's line-wrapping (`linewidth`) is not reproduced: a row is one
+        line however long it is.
         """
         return _format_tensor(self, precision, threshold, edge_items)
 
@@ -1596,6 +1599,71 @@ def hstack[
     return Shaped[dtype, rows, cols_a + cols_b](a.context(), values^)
 
 
+def _format_axis[
+    dtype: DType
+](
+    values: List[Scalar[dtype]],
+    extents: List[Int],
+    strides: List[Int],
+    rank: Int,
+    axis: Int,
+    offset: Int,
+    precision: Int,
+    edge_items: Int,
+    truncate: Bool,
+) -> String:
+    """One axis of `_format_tensor` below, recursing into the next.
+
+    `values` is row-major, so an element's position is `offset` plus the
+    index along this axis times `strides[axis]`, and the innermost axis
+    reads elements while every outer one reads sub-blocks.
+
+    Separators follow NumPy: a comma, then `rank - 1 - axis` newlines, so
+    rows of a matrix sit on consecutive lines and the 2-D blocks of a
+    rank-3 tensor are separated by a blank one. The indent that follows
+    lines each nested bracket up under the one that opened it.
+    """
+    if axis == rank:
+        return _format_one(values[offset], precision)
+
+    var extent = extents[axis]
+    var stride = strides[axis]
+    var elide = truncate and extent > 2 * edge_items
+
+    var separator = String(",")
+    for _ in range(rank - 1 - axis):
+        separator += "\n"
+    if rank - 1 - axis == 0:
+        separator += " "
+    else:
+        for _ in range(axis + 1):
+            separator += " "
+
+    var out = String("[")
+    var first = True
+    for i in range(extent):
+        if elide and i == edge_items:
+            out += separator + "..."
+        if elide and i >= edge_items and i < extent - edge_items:
+            continue
+        if not first:
+            out += separator
+        first = False
+        out += _format_axis(
+            values,
+            extents,
+            strides,
+            rank,
+            axis + 1,
+            offset + i * stride,
+            precision,
+            edge_items,
+            truncate,
+        )
+    out += "]"
+    return out^
+
+
 def _format_tensor[
     dtype: DType, LayoutType: TensorLayout
 ](
@@ -1604,24 +1672,28 @@ def _format_tensor[
     threshold: Int,
     edge_items: Int,
 ) raises -> String:
-    var n = a.size()
-    var values = a.to_host()
-    var out = String("[")
-    if n <= threshold:
-        for i in range(n):
-            out += _format_one(values[i], precision)
-            if i != n - 1:
-                out += ", "
-    else:
-        for i in range(edge_items):
-            out += _format_one(values[i], precision)
-            out += ", "
-        out += "..."
-        for i in range(n - edge_items, n):
-            out += ", "
-            out += _format_one(values[i], precision)
-    out += "]"
-    return out^
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank)
+    for d in range(rank):
+        extents.append(a.dim_at(d))
+
+    # Row-major strides over the *shape*, not the layout: `to_host` has
+    # already flattened whatever strides the tensor itself carried.
+    var strides = List[Int](length=rank, fill=1)
+    for d in range(rank - 2, -1, -1):
+        strides[d] = strides[d + 1] * extents[d + 1]
+
+    return _format_axis(
+        a.to_host(),
+        extents,
+        strides,
+        rank,
+        0,
+        0,
+        precision,
+        edge_items,
+        a.size() > threshold,
+    )
 
 
 def _round_to[dtype: DType](x: Scalar[dtype], precision: Int) -> Scalar[dtype]:
