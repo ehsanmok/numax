@@ -27,12 +27,10 @@ expected to produce different individual trajectories from the same seed
 value, not identical ones.
 """
 
-from layout import TileTensor
-from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 from std.random import Random
 
-from numax import Plain
+from numax import Plain, Shaped
 from numax.core.numeric import FloatLike
 from numax.integrate import rk4
 from numax.stats import seed, uniform
@@ -89,54 +87,52 @@ def main() raises:
     var cpu = DeviceContext(api="cpu")
     var y0_cpu = uniform[dtype, n](-2, 2, ctx=cpu)
 
-    comptime layout = row_major[n]()
-    var yt_storage = List[Scalar[dtype]](length=n, fill=0)
-    var yt_cpu = TileTensor(yt_storage.unsafe_ptr(), layout)
-    map[step=trajectory_step](y0_cpu.view(), yt_cpu)
+    comptime Ensemble = Shaped[dtype, n]
+    var yt_cpu = Ensemble(cpu)
+    map[step=trajectory_step](y0_cpu.view(), yt_cpu.view())
 
     print("CPU ensemble:", n, "trajectories, initial conditions ~ U(-2, 2)")
     print("  sample mean of y0:  ", sample_mean(y0_cpu.to_host()))
-    print("  sample mean of y(1):", sample_mean(yt_storage))
+    print("  sample mean of y(1):", sample_mean(yt_cpu.to_host()))
     print()
 
     # --- GPU: std.random.philox draws the initial conditions on-device ---
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 
-    var idx_buf = ctx.enqueue_create_buffer[dtype](n)
-    var y0_buf = ctx.enqueue_create_buffer[dtype](n)
-    var yt_buf = ctx.enqueue_create_buffer[dtype](n)
-    with idx_buf.map_to_host() as h:
-        for i in range(n):
-            h[i] = Scalar[dtype](i)
+    var flat_indices = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        flat_indices.append(Scalar[dtype](i))
+    var idx_tensor = Ensemble(ctx)
+    # One staged write for the whole buffer; `idx_tensor[i] = ...` would map
+    # the device to the host once per element.
+    idx_tensor.copy_from_host(flat_indices)
 
-    var idx_tensor = TileTensor(idx_buf, layout)
-    var y0_gpu = TileTensor(y0_buf, layout)
-    var yt_gpu = TileTensor(yt_buf, layout)
+    var y0_gpu = Ensemble(ctx)
+    var yt_gpu = Ensemble(ctx)
 
     comptime block_size = 256
     comptime num_blocks = (n + block_size - 1) // block_size
 
     ctx.enqueue_function[
         map[
-            LayoutType=type_of(layout),
+            LayoutType=Ensemble.LayoutType,
             step=gpu_initial_condition_step,
             gpu=True,
         ]
-    ](idx_tensor, y0_gpu, grid_dim=num_blocks, block_dim=block_size)
+    ](
+        idx_tensor.view(),
+        y0_gpu.view(),
+        grid_dim=num_blocks,
+        block_dim=block_size,
+    )
     ctx.enqueue_function[
-        map[LayoutType=type_of(layout), step=trajectory_step, gpu=True]
-    ](y0_gpu, yt_gpu, grid_dim=num_blocks, block_dim=block_size)
+        map[LayoutType=Ensemble.LayoutType, step=trajectory_step, gpu=True]
+    ](y0_gpu.view(), yt_gpu.view(), grid_dim=num_blocks, block_dim=block_size)
     ctx.synchronize()
 
-    var y0_gpu_host = List[Scalar[dtype]](length=n, fill=0)
-    var yt_gpu_host = List[Scalar[dtype]](length=n, fill=0)
-    with y0_buf.map_to_host() as h0:
-        for i in range(n):
-            y0_gpu_host[i] = h0[i]
-    with yt_buf.map_to_host() as h1:
-        for i in range(n):
-            yt_gpu_host[i] = h1[i]
+    var y0_gpu_host = y0_gpu.to_host()
+    var yt_gpu_host = yt_gpu.to_host()
 
     print("GPU ensemble:", n, "trajectories, initial conditions ~ U(-2, 2)")
     print("  sample mean of y0:  ", sample_mean(y0_gpu_host))

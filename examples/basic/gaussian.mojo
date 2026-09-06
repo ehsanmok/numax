@@ -10,18 +10,17 @@ gets three different things out, with no change to `gaussian` itself:
 plain `float32` SIMD, the value plus its derivative (`Dual`), and the value
 carried to roughly double precision (`Compensated`).
 
-The walk over the 4096 points is `numax.core.tensor.map`, driving `gaussian`
-over a `TileTensor` (from MAX's `layout` package) at the CPU's native SIMD
-width, with a scalar tail for whatever doesn't divide evenly -- the same
-`TileTensor`-based approach `examples/gaussian_gpu.mojo` uses on the GPU.
+The 4096 points live in a `Tensor`, which owns its storage. The walk is
+`numax.core.tensor.map`, and what it takes is `.view()`: the `TileTensor`
+MAX kernels speak, here driven at the CPU's native SIMD width with a scalar
+tail for whatever doesn't divide evenly. `examples/gaussian_gpu.mojo` hands
+the same view to the same `map` on a GPU.
 """
 
-from layout import TileTensor
-from layout.tile_layout import row_major
 from std.math import exp
 from std.sys.info import simd_width_of
 
-from numax import Compensated, Dual, Plain, gaussian
+from numax import Compensated, Dual, Plain, gaussian, zeros
 from numax.core.tensor import map
 
 comptime dtype = DType.float32
@@ -52,34 +51,31 @@ def gaussian_compensated_error_step[
 
 
 def main() raises:
-    comptime layout = row_major[n]()
-
-    var xs_storage = List[Scalar[dtype]](capacity=n)
+    var xs = zeros[dtype, n]()
     for i in range(n):
-        xs_storage.append(Scalar[dtype](i) * 0.001 - 2.0)
-    var xs = TileTensor(xs_storage, layout)
+        xs[i] = Scalar[dtype](i) * 0.001 - 2.0
 
-    var ys_storage = List[Scalar[dtype]](length=n, fill=0)
-    var dydx_storage = List[Scalar[dtype]](length=n, fill=0)
-    var precise_values_storage = List[Scalar[dtype]](length=n, fill=0)
-    var precise_errors_storage = List[Scalar[dtype]](length=n, fill=0)
-    var ys = TileTensor(ys_storage, layout)
-    var dydx = TileTensor(dydx_storage, layout)
-    var precise_values = TileTensor(precise_values_storage, layout)
-    var precise_errors = TileTensor(precise_errors_storage, layout)
+    var ys = zeros[dtype, n]()
+    var dydx = zeros[dtype, n]()
+    var precise_values = zeros[dtype, n]()
+    var precise_errors = zeros[dtype, n]()
 
     # 1. Plain SIMD, at the CPU's native width.
-    map[width=width, step=gaussian_step](xs, ys)
+    map[width=width, step=gaussian_step](xs.view(), ys.view())
 
     # 2. The same function, differentiated.
-    map[width=width, step=gaussian_deriv_step](xs, dydx)
+    map[width=width, step=gaussian_deriv_step](xs.view(), dydx.view())
 
     # 3. The same function again, at extra precision.
-    map[width=width, step=gaussian_compensated_value_step](xs, precise_values)
-    map[width=width, step=gaussian_compensated_error_step](xs, precise_errors)
+    map[width=width, step=gaussian_compensated_value_step](
+        xs.view(), precise_values.view()
+    )
+    map[width=width, step=gaussian_compensated_error_step](
+        xs.view(), precise_errors.view()
+    )
 
     for idx in [0, n // 4, n // 2, n - 1]:
-        var x0 = Float64(xs_storage[idx])
+        var x0 = Float64(xs[idx])
         var expected_y = exp(-(x0 * x0))
         var expected_d = -2.0 * x0 * expected_y
         print(
@@ -100,7 +96,7 @@ def main() raises:
     var max_err_plain = Float64(0)
     var max_err_compensated = Float64(0)
     for idx in range(n):
-        var x0 = Float64(xs_storage[idx])
+        var x0 = Float64(xs[idx])
         var reference = exp(-(x0 * x0))
         max_err_plain = max(max_err_plain, abs(Float64(ys[idx]) - reference))
         max_err_compensated = max(

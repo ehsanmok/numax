@@ -1,4 +1,4 @@
-"""Row-wise softmax over a 2D `TileTensor`, on CPU and GPU.
+"""Row-wise softmax over a 2D `Tensor`, on CPU and GPU.
 
 Unlike `gaussian`/`sigmoid`/`erf`, `softmax` isn't a single `FloatLike`
 kernel `map`ped elementwise -- each output element needs its whole row (the
@@ -11,12 +11,10 @@ hand-launched here on GPU (the same `reduce_rows`/`broadcast_op_rows`, with
 rather than a single function call.
 """
 
-from layout import Coord, TileTensor
-from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 from std.math import exp
 
-from numax import Plain, softmax
+from numax import Plain, Shaped, softmax
 from numax.core.tensor import (
     add_combine,
     broadcast_op_rows,
@@ -64,46 +62,33 @@ def check_rows_sum_to_one(label: String, storage: List[Scalar[dtype]]) raises:
 
 
 def main() raises:
-    comptime layout2d = row_major[rows, cols]()
-    comptime layout1d = row_major[rows]()
+    comptime Rows = Shaped[dtype, rows, cols]
+    comptime PerRow = Shaped[dtype, rows]
 
     # --- CPU, via `numax.special.activations.softmax` ---
+    var cpu = DeviceContext(api="cpu")
     var xs_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
     fill_inputs(xs_storage)
-    var xs = TileTensor(xs_storage, layout2d)
+    var xs = Rows(cpu, xs_storage.copy())
 
-    var tmp_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
-    var tmp = TileTensor(tmp_storage, layout2d)
-    var ys_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
-    var ys = TileTensor(ys_storage, layout2d)
-    var row_max_storage = List[Scalar[dtype]](length=rows, fill=0)
-    var row_max = TileTensor(row_max_storage, layout1d)
-    var row_sum_storage = List[Scalar[dtype]](length=rows, fill=0)
-    var row_sum = TileTensor(row_sum_storage, layout1d)
+    var tmp = Rows(cpu)
+    var ys = Rows(cpu)
+    var row_max = PerRow(cpu)
+    var row_sum = PerRow(cpu)
 
-    softmax(xs, tmp, ys, row_max, row_sum)
-    check_rows_sum_to_one("CPU  softmax:", ys_storage)
-    print("CPU  row 1 (large-value row), last column:", ys[Coord(1, cols - 1)])
+    softmax(xs.view(), tmp.view(), ys.view(), row_max.view(), row_sum.view())
+    check_rows_sum_to_one("CPU  softmax:", ys.to_host())
+    print("CPU  row 1 (large-value row), last column:", ys[1, cols - 1])
 
     # --- GPU, hand-launched from the same four primitives `softmax` uses ---
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 
-    var xs_buf = ctx.enqueue_create_buffer[dtype](rows * cols)
-    var tmp_buf = ctx.enqueue_create_buffer[dtype](rows * cols)
-    var ys_buf = ctx.enqueue_create_buffer[dtype](rows * cols)
-    var row_max_buf = ctx.enqueue_create_buffer[dtype](rows)
-    var row_sum_buf = ctx.enqueue_create_buffer[dtype](rows)
-
-    with xs_buf.map_to_host() as h:
-        for i in range(rows * cols):
-            h[i] = xs_storage[i]
-
-    var xs_gpu = TileTensor(xs_buf, layout2d)
-    var tmp_gpu = TileTensor(tmp_buf, layout2d)
-    var ys_gpu = TileTensor(ys_buf, layout2d)
-    var row_max_gpu = TileTensor(row_max_buf, layout1d)
-    var row_sum_gpu = TileTensor(row_sum_buf, layout1d)
+    var xs_gpu = Rows(ctx, xs_storage.copy())
+    var tmp_gpu = Rows(ctx)
+    var ys_gpu = Rows(ctx)
+    var row_max_gpu = PerRow(ctx)
+    var row_sum_gpu = PerRow(ctx)
 
     comptime row_block = 32
     comptime row_blocks = (rows + row_block - 1) // row_block
@@ -112,14 +97,14 @@ def main() raises:
 
     ctx.enqueue_function[
         reduce_rows[
-            RowsLayout=type_of(layout2d),
-            OutLayout=type_of(layout1d),
+            RowsLayout=Rows.LayoutType,
+            OutLayout=PerRow.LayoutType,
             combine=max_combine[dtype],
             gpu=True,
         ]
     ](
-        xs_gpu,
-        row_max_gpu,
+        xs_gpu.view(),
+        row_max_gpu.view(),
         SIMD[dtype, 1](-1e30),
         grid_dim=row_blocks,
         block_dim=row_block,
@@ -127,29 +112,29 @@ def main() raises:
 
     ctx.enqueue_function[
         broadcast_op_rows[
-            RowsLayout=type_of(layout2d),
-            ValuesLayout=type_of(layout1d),
+            RowsLayout=Rows.LayoutType,
+            ValuesLayout=PerRow.LayoutType,
             combine=sub_exp_combine,
             gpu=True,
         ]
     ](
-        xs_gpu,
-        row_max_gpu,
-        tmp_gpu,
+        xs_gpu.view(),
+        row_max_gpu.view(),
+        tmp_gpu.view(),
         grid_dim=elem_blocks,
         block_dim=elem_block,
     )
 
     ctx.enqueue_function[
         reduce_rows[
-            RowsLayout=type_of(layout2d),
-            OutLayout=type_of(layout1d),
+            RowsLayout=Rows.LayoutType,
+            OutLayout=PerRow.LayoutType,
             combine=add_combine[dtype],
             gpu=True,
         ]
     ](
-        tmp_gpu,
-        row_sum_gpu,
+        tmp_gpu.view(),
+        row_sum_gpu.view(),
         SIMD[dtype, 1](0),
         grid_dim=row_blocks,
         block_dim=row_block,
@@ -157,33 +142,28 @@ def main() raises:
 
     ctx.enqueue_function[
         broadcast_op_rows[
-            RowsLayout=type_of(layout2d),
-            ValuesLayout=type_of(layout1d),
+            RowsLayout=Rows.LayoutType,
+            ValuesLayout=PerRow.LayoutType,
             combine=div_combine,
             gpu=True,
         ]
     ](
-        tmp_gpu,
-        row_sum_gpu,
-        ys_gpu,
+        tmp_gpu.view(),
+        row_sum_gpu.view(),
+        ys_gpu.view(),
         grid_dim=elem_blocks,
         block_dim=elem_block,
     )
     ctx.synchronize()
 
-    with ys_buf.map_to_host() as ys_h:
-        var ys_gpu_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
-        for i in range(rows * cols):
-            ys_gpu_storage[i] = ys_h[i]
-        check_rows_sum_to_one("GPU  softmax:", ys_gpu_storage)
-        print(
-            "GPU  row 1 (large-value row), last column:",
-            ys_h[1 * cols + (cols - 1)],
-        )
+    var ys_gpu_host = ys_gpu.to_host()
+    check_rows_sum_to_one("GPU  softmax:", ys_gpu_host)
+    print("GPU  row 1 (large-value row), last column:", ys_gpu[1, cols - 1])
 
-        var max_diff = Float64(0)
-        for i in range(rows * cols):
-            max_diff = max(
-                max_diff, abs(Float64(ys_h[i]) - Float64(ys_storage[i]))
-            )
-        print("max |GPU - CPU| softmax difference =", max_diff)
+    var ys_cpu_host = ys.to_host()
+    var max_diff = Float64(0)
+    for i in range(rows * cols):
+        max_diff = max(
+            max_diff, abs(Float64(ys_gpu_host[i]) - Float64(ys_cpu_host[i]))
+        )
+    print("max |GPU - CPU| softmax difference =", max_diff)

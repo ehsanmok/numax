@@ -7,8 +7,9 @@ usable as a `map` kernel body, so an ensemble of initial conditions
 parallelizes the obvious way -- one thread, one trajectory, integrated to
 completion independently.
 
-The same `step` function runs on both paths here. The CPU version walks a
-`TileTensor` at native SIMD width, so each vector lane is a separate
+The same `step` function runs on both paths here. Storage is a `Tensor` on
+either device, and `.view()` is what the kernel takes: the CPU version walks
+that view at native SIMD width, so each vector lane is a separate
 trajectory; the GPU version launches one thread per element. Neither needed
 anything written twice, and the two agree to within float32 rounding.
 
@@ -20,12 +21,10 @@ finite difference.
 Run with: `pixi run example-ode` (needs a GPU; the CPU half runs anywhere).
 """
 
-from layout import TileTensor
-from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 from std.math import exp as exp_f64
 
-from numax import Dual, FloatLike, Plain
+from numax import Dual, FloatLike, Plain, Shaped
 from numax.integrate import rk4
 from numax.core.tensor import map
 
@@ -69,61 +68,63 @@ def main() raises:
     print("ensemble:", n, "trajectories,", num_steps, "RK4 steps each")
     print()
 
-    comptime layout = row_major[n]()
-
-    var y0_buf = ctx.enqueue_create_buffer[dtype](n)
-    var yt_buf = ctx.enqueue_create_buffer[dtype](n)
-    var dydy0_buf = ctx.enqueue_create_buffer[dtype](n)
+    comptime Ensemble = Shaped[dtype, n]
 
     # Initial conditions spread across [-2, 2].
-    with y0_buf.map_to_host() as h:
-        for i in range(n):
-            h[i] = Scalar[dtype](i) * (4.0 / Scalar[dtype](n)) - 2.0
+    var host_y0 = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        host_y0.append(Scalar[dtype](i) * (4.0 / Scalar[dtype](n)) - 2.0)
 
-    var y0 = TileTensor(y0_buf, layout)
-    var yt = TileTensor(yt_buf, layout)
-    var dydy0 = TileTensor(dydy0_buf, layout)
+    var y0 = Ensemble(ctx, host_y0.copy())
+    var yt = Ensemble(ctx)
+    var dydy0 = Ensemble(ctx)
 
     comptime block_size = 256
     comptime num_blocks = (n + block_size - 1) // block_size
 
     ctx.enqueue_function[
-        map[LayoutType=type_of(layout), step=trajectory_step, gpu=True]
-    ](y0, yt, grid_dim=num_blocks, block_dim=block_size)
+        map[
+            LayoutType=Ensemble.LayoutType,
+            step=trajectory_step,
+            gpu=True,
+        ]
+    ](y0.view(), yt.view(), grid_dim=num_blocks, block_dim=block_size)
     ctx.enqueue_function[
-        map[LayoutType=type_of(layout), step=sensitivity_step, gpu=True]
-    ](y0, dydy0, grid_dim=num_blocks, block_dim=block_size)
+        map[
+            LayoutType=Ensemble.LayoutType,
+            step=sensitivity_step,
+            gpu=True,
+        ]
+    ](y0.view(), dydy0.view(), grid_dim=num_blocks, block_dim=block_size)
     ctx.synchronize()
 
     # The same kernel on CPU, at native SIMD width.
-    var host_y0 = List[Scalar[dtype]](capacity=n)
-    var host_yt = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        host_y0.append(Scalar[dtype](i) * (4.0 / Scalar[dtype](n)) - 2.0)
-        host_yt.append(0)
-    var cpu_in = TileTensor(host_y0.unsafe_ptr(), layout)
-    var cpu_out = TileTensor(host_yt.unsafe_ptr(), layout)
-    map[step=trajectory_step](cpu_in, cpu_out)
+    var cpu = DeviceContext(api="cpu")
+    var cpu_in = Ensemble(cpu, host_y0.copy())
+    var cpu_out = Ensemble(cpu)
+    map[step=trajectory_step](cpu_in.view(), cpu_out.view())
+
+    var gpu_yt = yt.to_host()
+    var gpu_s = dydy0.to_host()
+    var host_yt = cpu_out.to_host()
 
     var worst = Float64(0.0)
-    with yt_buf.map_to_host() as gpu_yt:
-        for i in range(n):
-            var diff = abs(Float64(gpu_yt[i]) - Float64(host_yt[i]))
-            if diff > worst:
-                worst = diff
-        print("     y0        y(1) gpu     y(1) cpu    dy(1)/dy0")
-        with dydy0_buf.map_to_host() as gpu_s:
-            for i in range(0, n, n // 8):
-                print(
-                    "  ",
-                    host_y0[i],
-                    "  ",
-                    gpu_yt[i],
-                    "  ",
-                    host_yt[i],
-                    "  ",
-                    gpu_s[i],
-                )
+    for i in range(n):
+        var diff = abs(Float64(gpu_yt[i]) - Float64(host_yt[i]))
+        if diff > worst:
+            worst = diff
+    print("     y0        y(1) gpu     y(1) cpu    dy(1)/dy0")
+    for i in range(0, n, n // 8):
+        print(
+            "  ",
+            host_y0[i],
+            "  ",
+            gpu_yt[i],
+            "  ",
+            host_yt[i],
+            "  ",
+            gpu_s[i],
+        )
     print()
     print("worst gpu-vs-cpu difference:", worst)
 
