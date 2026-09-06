@@ -1,4 +1,4 @@
-"""From a `.npy` file to a Cholesky factor and back, in one program.
+"""From a NumPy array to a Cholesky factor and back, in one program.
 
 This is the composition numax could not express before `to_array` and
 `to_tensor`. Two array types live here for good reasons -- `Tensor` owns
@@ -7,24 +7,39 @@ and generic over the `FloatLike` conformer, which is what makes
 `numax.linalg` differentiable and GPU-launchable -- but a program that
 loads data and factors it has to cross between them.
 
-The steps:
+The data comes from NumPy itself, called from Mojo through `std.python`,
+so this is the handoff a real caller has rather than a matrix typed into
+the source:
 
-1. Write a symmetric positive-definite matrix as `.npy`, the way a NumPy
-   program would have handed it over.
+1. Build a symmetric positive-definite matrix with `numpy`, and `np.save`
+   it the way the program upstream of yours would have.
 2. Read it back with `numax.io.numpy.load`.
-3. `to_array` it into the conformer layer and factor it with `cholesky`.
-4. `to_tensor` the factor back and save it as `.npy` for NumPy to read.
+3. `to_array` it into the conformer layer and factor it with `cholesky`,
+   checking the result against `np.linalg.cholesky` entry by entry.
+4. `to_tensor` the factor back, save it, and have NumPy load it -- so the
+   round trip is closed at both ends rather than asserted.
 5. Do step 3 again at `Dual`, seeding one entry, to get `d(det)/dA[0,0]`
-   out of the same factorization code.
+   out of the same factorization code. This is the step NumPy has no
+   answer for: it factors numbers, and numax factors whatever conforms.
 
-Nothing here is Python: `.npy` is a self-contained format.
+The file is the bridge because it has to be. The pinned MAX ships no
+in-memory NumPy conversion (there is no `layout/numpy` module in 26.5), so
+an array crosses as bytes on disk.
+
+Only this example needs Python. `numax.io.numpy` parses `.npy` itself, so
+a program that reads a file someone else wrote pulls in nothing -- the
+interpreter here is what plays the part of that someone else. It comes
+from the environment MAX already installs, which is why numax declares no
+NumPy dependency of its own.
 """
+
+from std.python import Python
 
 from max.gpu.host import DeviceContext
 
 from numax import Dual, Plain
-from numax.core.array import Shaped, Tensor, to_array, to_tensor
-from numax.io import numpy
+from numax.core.array import Tensor, to_array, to_tensor
+from numax.io import numpy  # numax's .npy reader; `np` below is NumPy itself
 from numax.linalg import cholesky, det
 
 comptime dtype = DType.float64
@@ -34,42 +49,45 @@ comptime N = 3
 
 def main() raises:
     var ctx = DeviceContext(api="cpu")
+    var np = Python.import_module("numpy")
 
-    # A well-conditioned symmetric positive-definite matrix.
-    var entries = [4.0, 2.0, 0.6, 2.0, 5.0, 1.2, 0.6, 1.2, 3.0]
-    var values = List[Scalar[dtype]](capacity=N * N)
-    for v in entries:
-        values.append(Scalar[dtype](v))
-    var a = Shaped[dtype, N, N](ctx, values^)
-
+    # --- 1. NumPy's array, NumPy's file ----------------------------------
+    var a = np.array(
+        [[4.0, 2.0, 0.6], [2.0, 5.0, 1.2], [0.6, 1.2, 3.0]], dtype="float64"
+    )
     var path = String("/tmp/numax_spd.npy")
-    numpy.save(a, path)
-    print("wrote", path)
+    np.save(path, a)
+    print("numpy wrote", path)
+    print(a)
 
-    # --- 1. back off disk, into the conformer layer ----------------------
+    # --- 2. back off disk, into the conformer layer ----------------------
     var loaded = numpy.load[dtype, N, N](path, ctx=ctx)
-    print("loaded:  ", loaded)
+    print("numax loaded:")
+    print(loaded)
 
     var lifted = to_array[P](loaded)
     var lower = cholesky[P, N](lifted)
 
-    # --- 2. and back down to a tensor, which is what gets saved ----------
+    # --- 3. and back down to a tensor, which is what gets saved ----------
     var factor = to_tensor[dtype, N, N](lower, ctx)
-    print("cholesky:", factor)
+    print("cholesky:")
+    print(factor)
 
     var factor_path = String("/tmp/numax_spd_chol.npy")
     numpy.save(factor, factor_path)
-    print("wrote", factor_path, "-- numpy.load opens it")
 
-    # L @ L.T should reproduce A; check the corner that is easiest to read.
-    var l = factor.to_host()
-    print("  L[0,0]**2 =", l[0] * l[0], "and A[0,0] =", a[0])
+    # NumPy reads what numax wrote, and agrees with its own factorization.
+    var reference = np.linalg.cholesky(a)
+    var reloaded = np.load(factor_path)
+    print("numpy reloaded numax's factor, max |difference| vs its own:")
+    print(np.abs(np.subtract(reloaded, reference)).max())
 
-    # --- 3. the same lift at Dual, for a derivative ----------------------
+    # --- 4. the same lift at Dual, for a derivative ----------------------
     # `to_array` lifts through `T.constant`, so every derivative starts at
     # zero and the caller seeds the one it wants. Seeding A[0,0] gives
     # d(det A)/dA[0,0], which is the cofactor of that entry.
     var seeded = to_array[Dual[P]](loaded)
-    seeded[0] = Dual[P](P.constant(entries[0]), P.one())
+    var a00 = seeded[0].value.copy()
+    seeded[0] = Dual[P](a00^, P.one())
     var d = det[Dual[P], N](seeded)
-    print("det A =", d.value.v, "  d(det A)/dA[0,0] =", d.deriv.v)
+    print("det A =", d.value, "  d(det A)/dA[0,0] =", d.deriv)
