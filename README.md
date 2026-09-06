@@ -28,9 +28,9 @@ def g[T: FloatLike](x: T) -> T:              # written once, no `dtype`
     return (-(x * x)).exp()
 
 def main():
-    print(g(Plain[f32](0.5)).v)              # 0.7788008  -- just the value
+    print(g(Plain[f32](0.5)))                # 0.7788008  -- just the value
     var d = g(Dual[Plain[f32]].seed(0.5))    # derivative seeded to 1
-    print(d.value.v, d.deriv.v)              # 0.7788008 -0.7788008
+    print(d)                                 # Dual(0.7788008, -0.7788008)
 ```
 
 That is forward-mode automatic differentiation: $g(x)$ and
@@ -141,9 +141,9 @@ comptime P = Plain[f64]
 
 var A = to_array[P](eye[3]())
 var b = Array[P, 3](fill=P.constant(1.0))
-print(solve[P, 3](A, b)[0].v)
-print(det[P, 3](A).v)
-print(norm[P, 3](A).v)
+print(solve[P, 3](A, b)[0])
+print(det[P, 3](A))
+print(norm[P, 3](A))
 ```
 
 </td></tr>
@@ -170,9 +170,9 @@ def f[U: FloatLike](x: U) -> U:
 def g[U: FloatLike](t: U, y: U) -> U:
     return -y
 
-print(gauss_legendre[P, f, 16](P.constant(0.0), P.one()).v)
-print(gamma(P.constant(5.0)).v, erf(P.one()).v)
-print(rk4[P, g](P.constant(0.0), P.one(), P.constant(0.1)).v)
+print(gauss_legendre[P, f, 16](P.constant(0.0), P.one()))
+print(gamma(P.constant(5.0)), erf(P.one()))
+print(rk4[P, g](P.constant(0.0), P.one(), P.constant(0.1)))
 ```
 
 </td></tr>
@@ -196,7 +196,7 @@ from numax.stats import norm, sum
 
 var xs = linspace[5](0.0, 1.0)
 print(sum(xs))
-print(norm.cdf(P.constant(1.96), P.constant(0.0), P.one()).v)
+print(norm.cdf(P.constant(1.96), P.constant(0.0), P.one()))
 print(sort(xs))
 print(argsort(xs))
 ```
@@ -228,8 +228,8 @@ def f[U: FloatLike](x: U) -> U:
     return (-(x * x)).exp()
 
 var d = f(Dual[P].seed(0.5))
-print(d.value.v, d.deriv.v)
-# 0.7788007830714049 -0.7788007830714049
+print(d)
+# Dual(0.7788007830714049, -0.7788007830714049)
 ```
 
 </td></tr>
@@ -317,8 +317,9 @@ where a type is defined, so a bare `SIMD` cannot conform to `FloatLike`, and
 kernel runs at `Plain` unless you ask for something else, and it compiles away.
 `pixi run bench` measures `map` over a `Plain` kernel at **0.998x a
 hand-written raw-SIMD loop**, `max |raw - numax| = 0.0`. `width` defaults to 1,
-so `Plain[f64]` is the scalar. `.v` unwraps a `Plain`; `Dual` exposes
-`.value`/`.deriv`.
+so `Plain[f64]` is the scalar. Every conformer prints, so `print(x)` is
+enough to see a result; `.v` reaches the raw `SIMD` when that is what you
+want, and `Dual` exposes `.value`/`.deriv`.
 
 > **Run it:** `pixi run example-gaussian` ·
 > [`examples/basic/gaussian.mojo`](examples/basic/gaussian.mojo)
@@ -329,7 +330,7 @@ Sum a million nearly-equal `float32` values and the running total stops seeing
 the next one. Swap the type, not the algorithm:
 
 ```mojo
-var plain_var = variance(plain_list).v         # float32 accumulation
+var plain_var = variance(plain_list)           # float32 accumulation
 var comp_var = variance(comp_list).value       # ~double precision, same code
 ```
 

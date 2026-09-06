@@ -132,11 +132,22 @@ def _atan2[T: FloatLike](y: T, x: T) -> T:
 
 
 @fieldwise_init
-struct Complex[Inner: FloatLike](Copyable, FloatLike, Movable):
-    """A complex number, `re + i*im`, over any `FloatLike` base type."""
+struct Complex[Inner: FloatLike](
+    Copyable, FloatLike, Movable, Writable where conforms_to(Inner, Writable)
+):
+    """A complex number, `re + i*im`, over any `FloatLike` base type.
+
+    Conforms to `Writable` when `Inner` does, so `print(z)` writes
+    `re + im*i`.
+    """
 
     var re: Self.Inner
     var im: Self.Inner
+
+    def write_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.Inner, Writable):
+        writer.write(self.re, " + ", self.im, "i")
 
     @staticmethod
     def i() -> Self:

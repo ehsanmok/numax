@@ -42,11 +42,19 @@ def _pow10[n: Int]() -> Int64:
 
 @fieldwise_init
 struct Decimal[width: Int, scale: Int](
-    Copyable, Deinitable, FloatLike, Movable
+    Copyable, Deinitable, FloatLike, Movable, Writable
 ):
-    """`raw` is the value times `10^scale`, stored exactly as an integer."""
+    """`raw` is the value times `10^scale`, stored exactly as an integer.
+
+    Conforms to `Writable` through `to_float64`, so `print(x)` shows the
+    number rather than its scaled integer. `raw` is still the field to
+    assert against when exactness is what is under test.
+    """
 
     var raw: SIMD[DType.int64, Self.width]
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(self.to_float64())
 
     @staticmethod
     def one() -> Self:

@@ -24,11 +24,22 @@ from .numeric import FloatLike
 
 
 @fieldwise_init
-struct Dual[Inner: FloatLike](Copyable, FloatLike, Movable):
-    """`value` is `f(x)`, `deriv` is `df/dx` at the same point."""
+struct Dual[Inner: FloatLike](
+    Copyable, FloatLike, Movable, Writable where conforms_to(Inner, Writable)
+):
+    """`value` is `f(x)`, `deriv` is `df/dx` at the same point.
+
+    Conforms to `Writable` when `Inner` does, so `print(d)` writes both
+    components: `Dual(f(x), f'(x))`.
+    """
 
     var value: Self.Inner
     var deriv: Self.Inner
+
+    def write_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.Inner, Writable):
+        writer.write("Dual(", self.value, ", ", self.deriv, ")")
 
     @staticmethod
     def one() -> Self:

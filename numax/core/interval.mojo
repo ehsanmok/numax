@@ -101,11 +101,22 @@ def _period_contains[T: FloatLike](lo: T, hi: T, phase: T) -> T:
 
 
 @fieldwise_init
-struct Interval[Inner: FloatLike](Copyable, FloatLike, Movable):
-    """A closed interval `[lo, hi]` over any other `FloatLike` type."""
+struct Interval[Inner: FloatLike](
+    Copyable, FloatLike, Movable, Writable where conforms_to(Inner, Writable)
+):
+    """A closed interval `[lo, hi]` over any other `FloatLike` type.
+
+    Conforms to `Writable` when `Inner` does, so `print(x)` writes
+    `[lo, hi]`.
+    """
 
     var lo: Self.Inner
     var hi: Self.Inner
+
+    def write_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.Inner, Writable):
+        writer.write("[", self.lo, ", ", self.hi, "]")
 
     @staticmethod
     def degenerate(value: Self.Inner) -> Self:

@@ -29,11 +29,18 @@ from .numeric import FloatLike
 
 @fieldwise_init
 struct Plain[dtype: DType, width: Int = 1](
-    Copyable, FloatLike where dtype.is_floating_point(), Movable
+    Copyable, FloatLike where dtype.is_floating_point(), Movable, Writable
 ):
-    """A `SIMD[dtype, width]` value, viewed as a `FloatLike`."""
+    """A `SIMD[dtype, width]` value, viewed as a `FloatLike`.
+
+    Conforms to `Writable`, so `print(x)` writes the number and `x.v` is
+    needed only when the raw `SIMD` is what the caller actually wants.
+    """
 
     var v: SIMD[Self.dtype, Self.width]
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(self.v)
 
     @staticmethod
     def one() -> Self:

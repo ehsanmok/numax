@@ -34,13 +34,28 @@ def _zero_grad[T: FloatLike, n_vars: Int]() -> Array[T, n_vars]:
 
 
 @fieldwise_init
-struct Gradient[Inner: FloatLike, n_vars: Int](Copyable, FloatLike, Movable):
+struct Gradient[Inner: FloatLike, n_vars: Int](
+    Copyable, FloatLike, Movable, Writable where conforms_to(Inner, Writable)
+):
     """`value` is `f(x_0, ..., x_{n_vars-1})`; `grad[i]` is `df/dx_i` at the
     same point.
+
+    Conforms to `Writable` when `Inner` does, so `print(g)` writes the
+    value and every partial derivative.
     """
 
     var value: Self.Inner
     var grad: Array[Self.Inner, Self.n_vars]
+
+    def write_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.Inner, Writable):
+        writer.write("Gradient(", self.value, ", [")
+        for i in range(Self.n_vars):
+            if i > 0:
+                writer.write(", ")
+            writer.write(self.grad[i])
+        writer.write("])")
 
     @staticmethod
     def variable(var value: Self.Inner, index: Int) -> Self:

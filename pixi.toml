@@ -163,6 +163,7 @@ bench-rust = { features = ["bench-rust"], no-default-feature = true }
 run = { cmd = "mojo -I . {{ file }}", args = ["file"] }
 
 test-dual = "mojo -I . tests/core/test_dual.mojo"
+test-format = "mojo -I . tests/core/test_format.mojo"
 test-compensated = "mojo -I . tests/core/test_compensated.mojo"
 test-special = "mojo -I . tests/special/test_special.mojo"
 test-tensor = "mojo -I . tests/core/test_tensor.mojo"
@@ -213,6 +214,7 @@ test-constants = "mojo -I . tests/core/test_constants.mojo"
 # one line to add in one place; pixi runs them in the order given.
 tests = { depends-on = [
     "test-dual",
+    "test-format",
     "test-compensated",
     "test-special",
     "test-tensor",

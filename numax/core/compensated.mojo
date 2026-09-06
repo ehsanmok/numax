@@ -53,11 +53,20 @@ struct Compensated[dtype: DType, width: Int](
     FloatLike where dtype.is_floating_point(),
     ImplicitlyCopyable,
     Movable,
+    Writable,
 ):
-    """`value` is the rounded result; `error` is what rounding it discarded."""
+    """`value` is the rounded result; `error` is what rounding it discarded.
+
+    Conforms to `Writable`, which writes both components: the sum is the
+    number, and printing only `value` would hide the precision this type
+    exists to carry.
+    """
 
     var value: SIMD[Self.dtype, Self.width]
     var error: SIMD[Self.dtype, Self.width]
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(self.value, " + ", self.error)
 
     @staticmethod
     def one() -> Self:
