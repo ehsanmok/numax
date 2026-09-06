@@ -34,7 +34,27 @@ subsystem.
 
 # The trait and its conformers.
 from .core.numeric import FloatLike
-from .core.plain import Plain, f32, f64
+from .core.plain import Plain
+from .core.dtypes import (
+    bf16,
+    bool,
+    f8e3m4,
+    f8e4m3fn,
+    f8e4m3fnuz,
+    f8e5m2,
+    f8e5m2fnuz,
+    f16,
+    f32,
+    f64,
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    u64,
+)
 from .core.dual import Dual
 from .core.gradient import Gradient
 from .core.compensated import Compensated

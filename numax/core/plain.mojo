@@ -99,17 +99,3 @@ struct Plain[dtype: DType, width: Int = 1](
 
     def trunc(self) -> Self where Self.dtype.is_floating_point():
         return Self(trunc(self.v))
-
-
-comptime f32 = DType.float32
-"""`DType.float32`, spelled short.
-
-A dtype, not a conformer -- the same name works at every layer, which is the
-point: `linspace[5, f32](...)` and `Shaped[f32, 4, 4](ctx)` on the tensor
-side, `Plain[f32]` and `Dual[Plain[f32]]` on the kernel side. `Plain`'s
-`width` defaults to 1, so `Plain[f32]` is the single-lane scalar; name
-`Plain[f32, 8]` for a vector width.
-"""
-
-comptime f64 = DType.float64
-"""`DType.float64`. See `f32` above."""

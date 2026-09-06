@@ -161,7 +161,27 @@ from .ops import (
     power,
     subtract,
 )
-from .plain import Plain, f32, f64
+from .plain import Plain
+from .dtypes import (
+    bf16,
+    bool,
+    f8e3m4,
+    f8e4m3fn,
+    f8e4m3fnuz,
+    f8e5m2,
+    f8e5m2fnuz,
+    f16,
+    f32,
+    f64,
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    u64,
+)
 from .tensor import (
     add_combine,
     broadcast_op_axis,

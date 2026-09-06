@@ -4,13 +4,34 @@ Every creation routine is checked for shape (`num_elements`) and content;
 `*_like` is checked to match its source's dtype/shape; the manipulation
 functions (`transpose`, `squeeze`, `stack`, `reshape`, `ravel`,
 `concatenate`, `split`) are checked against a hand-computed expected
-result, not just "it runs".
+result, not just "it runs". The `DType` aliases are checked against the
+`DType` each is meant to name, since a mistyped one is otherwise silent.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
+from numax.core.dtypes import (
+    bf16,
+    bool,
+    f8e3m4,
+    f8e4m3fn,
+    f8e4m3fnuz,
+    f8e5m2,
+    f8e5m2fnuz,
+    f16,
+    f32,
+    f64,
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    u64,
+)
 from numax.core.array import (
     to_array,
     Shaped,
@@ -369,6 +390,30 @@ def test_the_tensor_factories_still_resolve() raises:
     assert_equal(zeros[dtype, 4](ctx).size(), 4)
     assert_equal(ones[dtype, 2, 3](ctx).size(), 6)
     assert_equal(eye[3](ctx).size(), 9)
+
+
+def test_every_dtype_alias_names_the_dtype_it_looks_like() raises:
+    # Spelled out rather than derived: a typo in one alias is exactly what
+    # this catches, and deriving the expected side from the same table
+    # would reproduce the typo.
+    assert_equal(f16, DType.float16)
+    assert_equal(bf16, DType.bfloat16)
+    assert_equal(f32, DType.float32)
+    assert_equal(f64, DType.float64)
+    assert_equal(f8e3m4, DType.float8_e3m4)
+    assert_equal(f8e4m3fn, DType.float8_e4m3fn)
+    assert_equal(f8e4m3fnuz, DType.float8_e4m3fnuz)
+    assert_equal(f8e5m2, DType.float8_e5m2)
+    assert_equal(f8e5m2fnuz, DType.float8_e5m2fnuz)
+    assert_equal(i8, DType.int8)
+    assert_equal(i16, DType.int16)
+    assert_equal(i32, DType.int32)
+    assert_equal(i64, DType.int64)
+    assert_equal(u8, DType.uint8)
+    assert_equal(u16, DType.uint16)
+    assert_equal(u32, DType.uint32)
+    assert_equal(u64, DType.uint64)
+    assert_equal(bool, DType.bool)
 
 
 def main() raises:
