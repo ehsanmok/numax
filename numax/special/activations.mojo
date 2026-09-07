@@ -2,7 +2,7 @@
 
 **This module is tier 1**, except `softmax`, which says so in its own
 docstring: one output element needs its whole row, which a per-element
-kernel cannot express, so it is `Plain`-only host orchestration.
+kernel cannot express, so it is `Plain`-only and host-side.
 
 Every function below is written once, against the trait, and gets three
 meanings for free from whatever type it's called with: plain SIMD, a value
@@ -25,23 +25,18 @@ exports: it is the one a kernel calls, and `gelu` below is built from it.
 
 `softmax`, at the bottom, is the exception: it isn't purely elementwise (it
 needs a whole row of a tensor to compute one output element), so it isn't
-`FloatLike`-generic like everything above it -- it's a small orchestration
-function over `Plain` `SIMD` values, built from `numax.core.tensor`'s `reduce_rows`
-and `broadcast_op_rows`.
+`FloatLike`-generic like everything above it. It is also the one function
+here numax does not implement -- it hands the tensors to MAX's `nn.softmax`,
+for the reason its own docstring gives.
 """
 
 from layout import TileTensor
 from layout.tile_layout import TensorLayout
 from layout.tile_tensor import PointerStorage
+from nn.softmax import softmax as nn_softmax
+from std.sys.info import simd_width_of
 
 from ..core.numeric import FloatLike
-from ..core.plain import Plain
-from ..core.tensor import (
-    add_combine,
-    broadcast_op_rows,
-    max_combine,
-    reduce_rows,
-)
 
 
 def gaussian[T: FloatLike](x: T) -> T:
@@ -96,35 +91,11 @@ def gelu[T: FloatLike](x: T) -> T:
     return (x * (T.one() + tanh(inner))) / T.constant(2.0)
 
 
-def _sub_exp_combine[
-    dtype: DType
-](a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[
-    dtype, 1
-] where dtype.is_floating_point():
-    # exp(a - b), fused into one pass so `softmax` doesn't need a separate,
-    # in-place elementwise `exp` step (which `map` can't express anyway --
-    # its `xs`/`ys` parameters may not alias the same buffer).
-    return (Plain[dtype](a) - Plain[dtype](b)).exp().v
-
-
-def _div_combine[
-    dtype: DType
-](a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[dtype, 1]:
-    return (Plain[dtype](a) / Plain[dtype](b)).v
-
-
 def softmax[
     dtype: DType,
     RowsLayout: TensorLayout,
-    RowValuesLayout: TensorLayout,
 ](
     xs: TileTensor[
-        dtype,
-        RowsLayout,
-        MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
-    ],
-    tmp: TileTensor[
         dtype,
         RowsLayout,
         MutAnyOrigin,
@@ -136,43 +107,32 @@ def softmax[
         MutAnyOrigin,
         Storage=PointerStorage[element_width=1],
     ],
-    row_max: TileTensor[
-        dtype,
-        RowValuesLayout,
-        MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
-    ],
-    row_sum: TileTensor[
-        dtype,
-        RowValuesLayout,
-        MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
-    ],
-) where dtype.is_floating_point():
-    """**Tier 2.** Row-wise softmax over a 2D tensor: CPU-side.
-
-    Tier 2 because one output element needs its whole row, which a
-    per-element kernel cannot express -- this is a sequence of walks, not a
-    kernel, and orchestrating it on a device means launching each in turn
-    (`examples/intermediate/softmax.mojo` does exactly that).
+    axis: Int = Int(RowsLayout.rank) - 1,
+) raises where dtype.is_floating_point():
+    """**Tier 2.** Softmax along `axis`, delegated to MAX's `nn.softmax`.
 
     `ys[r, :] = exp(xs[r, :] - max(xs[r, :])) / sum(exp(xs[r, :] -
-    max(xs[r, :])))` -- the usual numerically-stable formulation (subtracting
-    each row's max before exponentiating keeps every input to `exp` `<= 0`,
-    so it can't overflow).
+    max(xs[r, :])))` -- the numerically stable formulation, subtracting each
+    row's max so every input to `exp` is `<= 0` and cannot overflow. `axis`
+    defaults to the last, which is the row-wise case.
 
-    `tmp` (same shape as `xs`) and `row_max`/`row_sum` (one element per row)
-    are caller-provided scratch space -- `numax.core.tensor`'s primitives never
-    allocate on their own, and `map`/`broadcast_op_rows` can't write their
-    output back into the same buffer they read from, so the exp-and-shift
-    step needs a separate destination from both `xs` and the final `ys`.
+    numax writes none of that. MAX ships softmax as a `rowwise` kernel with
+    `ReduceMax` and `ReduceSum` monoids and a fused normalizing write, and
+    re-implementing it here would be the defect the MAX-first gate exists to
+    catch -- as it was: this used to be four passes built from
+    `numax.core.tensor.reduce_rows` and `broadcast_op_rows`, with three
+    caller-provided scratch buffers, none of which are needed now.
 
-    Built entirely from `numax.core.tensor.reduce_rows` and
-    `numax.core.tensor.broadcast_op_rows`: a per-row max, a fused
-    subtract-and-`exp` broadcast into `tmp`, a per-row sum of `tmp`, then a
-    divide broadcast into `ys`.
+    Tier 2 because MAX's target-parameterized entry point is out of reach at
+    the pin, so this is the host one. `.cursor/rules/max-feedback.mdc` has
+    the detail: the overload taking a `target` also takes its input as a
+    fused closure in a *compile-time* parameter, whose implicit `__origins__`
+    the compiler cannot infer across the module boundary, and there is no
+    keyword to bind it by hand. The overload numax can call takes tensors and
+    has no `target`. So a device-resident softmax is still hand-launched from
+    `numax.core.tensor`'s primitives -- `examples/intermediate/softmax.mojo`
+    shows both, and checks them against each other.
     """
-    reduce_rows[combine=max_combine[dtype]](xs, row_max, SIMD[dtype, 1](-1e30))
-    broadcast_op_rows[combine=_sub_exp_combine[dtype]](xs, row_max, tmp)
-    reduce_rows[combine=add_combine[dtype]](tmp, row_sum, SIMD[dtype, 1](0))
-    broadcast_op_rows[combine=_div_combine[dtype]](tmp, row_sum, ys)
+    nn_softmax[dtype, simd_width_of[dtype](), Int(RowsLayout.rank)](
+        xs, ys, axis
+    )

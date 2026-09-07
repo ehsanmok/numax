@@ -1,14 +1,19 @@
 """Row-wise softmax over a 2D `Tensor`, on CPU and GPU.
 
 Unlike `gaussian`/`sigmoid`/`erf`, `softmax` isn't a single `FloatLike`
-kernel `map`ped elementwise -- each output element needs its whole row (the
-row's max, for numerical stability, and the row's sum of exponentials), so
-it's an orchestration of `numax.core.tensor`'s reduction and broadcast primitives
-instead: `numax.special.activations.softmax` on CPU (via `reduce_rows`/
-`broadcast_op_rows`, `gpu=False`), and the same four-step recipe
-hand-launched here on GPU (the same `reduce_rows`/`broadcast_op_rows`, with
-`gpu=True`), since a GPU orchestration is a sequence of kernel launches
-rather than a single function call.
+kernel `map`ped elementwise -- each output element needs its whole row: the
+row's max, for numerical stability, and the row's sum of exponentials.
+
+So the two halves of this example reach it differently, and the contrast is
+the point. On CPU, `numax.special.activations.softmax` hands the tensors to
+MAX's `nn.softmax` and numax computes nothing itself. On GPU that entry
+point is out of reach at the pinned toolchain -- the overload that takes a
+`target` also takes its input as a compile-time closure parameter whose
+origins cannot be inferred from outside MAX's own module -- so the same
+four-step recipe is hand-launched below from `numax.core.tensor`'s
+`reduce_rows` and `broadcast_op_rows` with `gpu=True`, one kernel launch per
+step. The last check compares the two, which is what says the hand-launched
+version is the same softmax rather than merely a plausible one.
 """
 
 from max.gpu.host import DeviceContext
@@ -71,16 +76,13 @@ def main() raises:
     fill_inputs(xs_storage)
     var xs = Rows(cpu, xs_storage.copy())
 
-    var tmp = Rows(cpu)
     var ys = Rows(cpu)
-    var row_max = PerRow(cpu)
-    var row_sum = PerRow(cpu)
 
-    softmax(xs.view(), tmp.view(), ys.view(), row_max.view(), row_sum.view())
+    softmax(xs.view(), ys.view())
     check_rows_sum_to_one("CPU  softmax:", ys.to_host())
     print("CPU  row 1 (large-value row), last column:", ys[1, cols - 1])
 
-    # --- GPU, hand-launched from the same four primitives `softmax` uses ---
+    # --- GPU, hand-launched from `numax.core.tensor`'s primitives ---
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 

@@ -68,7 +68,6 @@ def test_softmax_rows_sum_to_one_and_match_reference() raises:
     comptime rows = 2
     comptime cols = 4
     comptime layout2d = row_major[rows, cols]()
-    comptime layout1d = row_major[rows]()
 
     var xs_storage: List[Scalar[dtype]] = [
         1.0,
@@ -81,16 +80,10 @@ def test_softmax_rows_sum_to_one_and_match_reference() raises:
         1000.0,
     ]
     var xs = TileTensor(xs_storage, layout2d)
-    var tmp_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
-    var tmp = TileTensor(tmp_storage, layout2d)
     var ys_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
     var ys = TileTensor(ys_storage, layout2d)
-    var row_max_storage = List[Scalar[dtype]](length=rows, fill=0)
-    var row_max = TileTensor(row_max_storage, layout1d)
-    var row_sum_storage = List[Scalar[dtype]](length=rows, fill=0)
-    var row_sum = TileTensor(row_sum_storage, layout1d)
 
-    softmax(xs, tmp, ys, row_max, row_sum)
+    softmax(xs, ys)
 
     for r in range(rows):
         var total = SIMD[dtype, 1](0)

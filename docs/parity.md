@@ -35,6 +35,7 @@ Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
 | Shape ops | `reshape`, `slice`, `concat`, `split`, `tile`, `broadcast`, `pad`, `arange` | `nn` |
 | Indexing | `gather`, `scatter_nd`, `index_tensor`, `arg_nonzero` | `nn` |
 | Ordering | `argsort` (rank-1), `top_k`; host `sort`/`partition` | `nn`, `std.builtin.sort` |
+| ML primitives | `softmax`/`logsoftmax`, `layer_norm`/`group_norm`/`rms_norm`, convolution, pooling | `nn` |
 | GPU | `DeviceContext`, buffers, streams, `GPUInfo` | `max.gpu.host` |
 | RNG | `seed`, `rand`, `randn`, Philox `Random`/`NormalRandom` | `std.random` |
 | Scalar math | `exp`, `log`, trig, `pow`, `sqrt`, `hypot`, **`erf` `erfc` `gamma` `lgamma` `j0` `j1` `y0` `y1`**, `floor`/`ceil`/`trunc` | `std.math` |
@@ -108,8 +109,17 @@ keyword and `std` is the standard library's package (hence `variance`,
 
 A separate complex array type — `Complex` composes into every kernel already.
 A `Backend` trait — the `gpu: Bool` parameter on `numax.core.tensor.map` covers the
-same ground with no dispatch. ML primitives — `nn` ships softmax,
-normalization, convolution and pooling, tuned, on both backends.
+same ground with no dispatch. ML primitives beyond `softmax` — `nn` ships
+normalization, convolution and pooling, tuned, on both backends, and numax has
+no reason to name them.
+
+`softmax` is the one numax does name, because a NumPy/SciPy-shaped library is
+expected to have it: `numax.special.activations.softmax` is a delegation, MAX's
+`nn.softmax` with numax's tensors passed straight through. Only the CPU
+overload is reachable at the pin, for the `input_fn`-origins reason
+`.cursor/rules/max-feedback.mdc` records; a device-resident softmax is still
+hand-launched from `numax.core.tensor`'s row primitives, which is what
+`examples/intermediate/softmax.mojo` shows.
 
 MAX's `nn` versions of `arange`/`reshape`/`concat`/`split` were checked and are
 not usable as array functions: `nn.arange` returns one SIMD vector for an
