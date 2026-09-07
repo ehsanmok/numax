@@ -21,6 +21,33 @@ picks by argument type. `to_tensor`/`to_array` cross between them.
 from numax.linalg import cholesky, qr, solve, det, norm, matmul
 ```
 
+## Layout
+
+Flat surface, one module per operation family -- the shape `scipy.linalg`
+uses, where `scipy.linalg.lu` is the public name and `_decomp_lu` is where
+it lives. Import from `numax.linalg` and never think about the split; the
+modules matter when reading or extending.
+
+| Module | Holds | SciPy counterpart |
+| --- | --- | --- |
+| `blas` | `matmul`, `matvec`, `batched_matmul`, `dot`, `nrm2`, `asum`, `axpy`, `outer` | `scipy.linalg.blas`, `numpy.linalg.matmul` |
+| `triangular` | `forward_substitution`, `back_substitution`, `tridiagonal_solve` | `solve_triangular`, `solve_banded` |
+| `cholesky` | `cholesky`, `cholesky_solve`, `slogdet_cholesky` | `_decomp_cholesky` |
+| `lu` | `lu`, `lu_factor`, `PivotedLU`, `TensorLU`, `det` | `_decomp_lu` |
+| `qr` | `qr`, `lstsq` | `_decomp_qr` |
+| `eigen` | `eigh`, `eigvals`, `svd` | `_decomp`, `_decomp_svd` |
+| `basic` | `solve`, `inverse`, `pinv` | `_basic` |
+| `misc` | `norm`, `cond`, `trace`, `fro`, `inf` | `_misc` |
+
+A name lives in exactly one module, because Mojo deprecates importing one
+name from two of them. That is what decides the split: `matmul`, `matvec`,
+`cholesky`, `lu_factor` and `solve` each carry both an `Array` and a
+`Tensor` overload, so the tiers of an operation are neighbours in one file
+rather than being separated into an "array module" and a "tensor module".
+`common` holds the private helpers and exports nothing.
+
+## What is where, by tier
+
 Over `Array`: factorizations (`cholesky`, `lu`, `qr`, `eigh`, `eigvals`,
 `svd`), solves (`solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, the
 substitutions), inverses (`inverse`, `pinv`), scalars (`det`, `trace`,
@@ -35,39 +62,43 @@ Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
 reusable `TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that
 chooses MAX's target and a `block` size that tunes the panel.
 `tril`/`triu` are `numax.core`'s, also MAX-backed.
+
+`gpu` is a compile-time parameter rather than a look at `ctx.api()`
+because MAX's `target` is a `StaticString`: deciding it at run time would
+compile the GPU kernels into every CPU-only build. `map` and `reduce` in
+`numax.core.tensor` take the same parameter for the same reason. The
+`Tensor` overloads also take their operands mutably even though they only
+read them -- `view()` hands back a `TileTensor` that can write, and a
+mutable view cannot be built from an immutable binding.
+
+## Not here yet
+
+`qr`, `svd`, `eigh`, `cholesky_solve` have no `Tensor` overload, so past
+the crossover in `docs/performance.md` they are genuinely missing rather
+than one import away. MAX's own `linalg.qr_factorization` does not close
+that gap: it is on the older `LayoutTensor`, and numax's interop is
+`TileTensor` only. `tridiagonal_solve` will stay `Array`-only -- Thomas is
+already linear and has nothing to hand a GEMM.
 """
 
-from .linalg import (
-    back_substitution,
-    cholesky,
-    cholesky_solve,
-    cond,
-    det,
+from .basic import inverse, pinv, solve
+from .blas import (
     asum,
     axpy,
+    batched_matmul,
     dot,
-    eigh,
-    eigvals,
-    forward_substitution,
-    fro,
-    inf,
-    inverse,
-    slogdet_cholesky,
-    lstsq,
-    lu,
-    lu_factor,
-    PivotedLU,
-    TensorLU,
     matmul,
     matvec,
-    norm,
     nrm2,
     outer,
-    pinv,
-    qr,
-    solve,
-    svd,
-    trace,
+)
+from .cholesky import cholesky, cholesky_solve, slogdet_cholesky
+from .eigen import eigh, eigvals, svd
+from .lu import PivotedLU, TensorLU, det, lu, lu_factor
+from .misc import cond, fro, inf, norm, trace
+from .qr import lstsq, qr
+from .triangular import (
+    back_substitution,
+    forward_substitution,
     tridiagonal_solve,
-    batched_matmul,
 )

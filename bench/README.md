@@ -497,7 +497,7 @@ reason isn't performance:
   `Compensated`, or a `Complex`. Differentiating a matmul is the entire
   reason `numax`'s exists.
 
-The practical guidance, now in `numax/linalg/linalg.mojo`'s docstring as well: if
+The practical guidance, now in `numax/linalg/blas.mojo`'s docstring as well: if
 your entries are plain `dtype` and your matrix is bigger than about 8x8,
 call `max.linalg.matmul` directly — `numax` deliberately does not wrap it,
 since a pass-through adding no capability would just be a second name for

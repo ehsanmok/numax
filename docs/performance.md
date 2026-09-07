@@ -257,7 +257,7 @@ writeup.
 
 ## Cross the tiers past N (dense linalg)
 
-`numax/linalg/linalg.mojo`'s `Array[T, n*n]` tier keeps its matrices in
+`numax.linalg`'s `Array[T, n*n]` tier keeps its matrices in
 registers -- a compile-time size that keeps them GPU-launchable (one matrix
 per SIMD lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual`
 or `Compensated`, at the cost of both compile time and register pressure

@@ -183,6 +183,18 @@ re-exports all of them, so `from numax import ...` is flat and
 three places: its module, its subpackage `__init__.mojo`, and (if it belongs to
 the common surface) `numax/prelude.mojo`.
 
+**One owning module per name**, which is what decides how a subpackage is cut
+into modules. Mojo 1.0 warns on `importing 'x' from multiple modules is
+deprecated`, so a name with several overloads is defined once and overloaded
+there. Modules are therefore per operation family, never per tier:
+`numax/linalg/` is `blas`, `triangular`, `cholesky`, `lu`, `qr`, `eigen`,
+`basic`, `misc` and a private `common` — the shape `scipy.linalg` uses behind
+its flat namespace — because `matmul`, `matvec`, `cholesky`, `lu_factor` and
+`solve` each carry both an `Array` and a `Tensor` overload, and an "array
+module" beside a "tensor module" would define all five twice. The two tiers of
+an operation are neighbours in one file. Check `rg "def <name>" numax/` before
+adding a name that sounds generic.
+
 **The root docstring and the README say the same thing.** `numax/__init__.mojo`
 opens with the library's pitch — what numax is, the two axes, the subpackage
 table — and the README says it again for a reader who never opens the source.

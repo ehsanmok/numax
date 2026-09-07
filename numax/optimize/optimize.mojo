@@ -62,7 +62,7 @@ from ..core.dual import Dual
 from ..core.gradient import Gradient
 from ..core.numeric import FloatLike
 from ..core.plain import Plain
-from ..linalg.linalg import cholesky, cholesky_solve
+from ..linalg.cholesky import cholesky, cholesky_solve
 
 # The conformer every driver here evaluates `f` at. Fixed to float64 on
 # purpose, and not a parameter, for two reasons. Convergence work belongs at

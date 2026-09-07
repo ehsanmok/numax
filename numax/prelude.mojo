@@ -211,7 +211,7 @@ from .special.gamma import digamma, gamma, lgamma
 from .special.beta import beta
 
 # Dense linear algebra.
-from .linalg.linalg import (
+from .linalg import (
     cholesky,
     det,
     asum,

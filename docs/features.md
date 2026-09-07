@@ -226,10 +226,16 @@ unblocked algorithm, which is what the tests pin the blocked path against.
 | Products | `dot`, `outer`, `matvec`, `matmul` |
 | BLAS-1 | `dot`, `nrm2`, `asum`, `axpy` -- MAX ships none of it, and no BLAS anywhere is generic over its scalar type |
 
-All in [`linalg/linalg.mojo`](../numax/linalg/linalg.mojo), both tiers, in
-one file because Mojo wants a single owning module per name and these two
-share theirs. Every function's docstring records its own error behaviour
-and which MAX kernel, if any, it delegates to.
+All under [`numax/linalg/`](../numax/linalg/), one module per operation
+family the way `scipy.linalg` splits `_decomp_lu`, `_decomp_cholesky` and
+`_basic` behind a flat public namespace: `blas`, `triangular`, `cholesky`,
+`lu`, `qr`, `eigen`, `basic`, `misc`. Both tiers of an operation are
+neighbours in its module, because Mojo wants a single owning module per
+name and the five names that exist at both tiers share theirs. Import from
+`numax.linalg` and the split does not show. Every function's docstring
+records its own error behaviour and which MAX kernel, if any, it delegates
+to; every module's docstring records the tier and the MAX disposition for
+the family.
 
 The `Array` tier is tier 1 except the pivoted row: choosing a pivot by
 magnitude is a data-dependent branch, so `PivotedLU` gives up the GPU and

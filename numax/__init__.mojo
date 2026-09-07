@@ -265,7 +265,7 @@ from .special.legendre import legendre_p
 from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 
 # Dense linear algebra -- `numax.linalg`.
-from .linalg.linalg import (
+from .linalg import (
     back_substitution,
     cholesky,
     cholesky_solve,
