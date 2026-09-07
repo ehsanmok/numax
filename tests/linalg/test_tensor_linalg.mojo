@@ -14,7 +14,8 @@ from std.testing import TestSuite, assert_almost_equal, assert_raises
 from numax import Plain
 from numax.core.array import Shaped, zeros_dyn
 from numax.core.array import zeros as array_zeros
-from numax.linalg import batched_matmul, matmul, matvec, tril, triu
+from numax.core.array import transpose
+from numax.linalg import batched_matmul, cholesky, matmul, matvec, tril, triu
 
 comptime P = Plain[DType.float64, 1]
 
@@ -187,6 +188,121 @@ def test_tril_and_triu_split_the_matrix_at_the_diagonal() raises:
                 assert_almost_equal(Float64(lower[i]), 0.0, atol=1e-12)
             if row > col:
                 assert_almost_equal(Float64(upper[i]), 0.0, atol=1e-12)
+
+
+def _spd_5x5() raises -> List[Float64]:
+    """A symmetric positive definite 5x5, diagonally dominant by hand."""
+    return [
+        9.0,
+        3.0,
+        1.0,
+        2.0,
+        0.0,
+        3.0,
+        10.0,
+        2.0,
+        1.0,
+        1.0,
+        1.0,
+        2.0,
+        8.0,
+        3.0,
+        2.0,
+        2.0,
+        1.0,
+        3.0,
+        11.0,
+        4.0,
+        0.0,
+        1.0,
+        2.0,
+        4.0,
+        7.0,
+    ]
+
+
+def test_cholesky_reconstructs_the_matrix() raises:
+    """`L @ L.T` is `A` again, which is the whole claim of a Cholesky.
+
+    Run at `block=2` on a 5x5 so the blocked loop takes three steps with a
+    ragged last one, and the MAX trailing update runs for real rather than
+    being skipped by a single-block shortcut.
+    """
+    var ctx = _cpu()
+    var entries = _spd_5x5()
+    var a = Shaped[DType.float64, 5, 5](ctx, entries.copy())
+    var lower = cholesky[DType.float64, 5, False, 2](a)
+    var upper = transpose(lower)
+    var reconstructed = matmul(lower, upper).to_host()
+
+    for i in range(25):
+        assert_almost_equal(Float64(reconstructed[i]), entries[i], atol=1e-12)
+
+
+def test_cholesky_is_lower_triangular() raises:
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 5, 5](ctx, _spd_5x5())
+    var lower = cholesky[DType.float64, 5, False, 2](a).to_host()
+    for row in range(5):
+        for col in range(row + 1, 5):
+            assert_almost_equal(Float64(lower[row * 5 + col]), 0.0, atol=1e-15)
+
+
+def test_cholesky_blocking_does_not_change_the_answer() raises:
+    """Every block size factors the same matrix into the same `L`.
+
+    `block=5` on a 5x5 is the unblocked algorithm -- one panel, no trailing
+    update, no MAX call -- so this pins the blocked path against it and
+    would catch an off-by-one in the panel offsets or a trailing update
+    applied to the wrong submatrix.
+    """
+    var ctx = _cpu()
+    var a1 = Shaped[DType.float64, 5, 5](ctx, _spd_5x5())
+    var unblocked = cholesky[DType.float64, 5, False, 5](a1).to_host()
+
+    for bs in [1, 2, 3, 4]:
+        var a2 = Shaped[DType.float64, 5, 5](ctx, _spd_5x5())
+        var blocked: List[Scalar[DType.float64]]
+        if bs == 1:
+            blocked = cholesky[DType.float64, 5, False, 1](a2).to_host()
+        elif bs == 2:
+            blocked = cholesky[DType.float64, 5, False, 2](a2).to_host()
+        elif bs == 3:
+            blocked = cholesky[DType.float64, 5, False, 3](a2).to_host()
+        else:
+            blocked = cholesky[DType.float64, 5, False, 4](a2).to_host()
+        for i in range(25):
+            assert_almost_equal(
+                Float64(blocked[i]), Float64(unblocked[i]), atol=1e-12
+            )
+
+
+def test_cholesky_agrees_with_the_array_tier() raises:
+    """The two `cholesky` overloads factor the same matrix the same way."""
+    var ctx = _cpu()
+    var entries = _spd_5x5()
+    var a = Shaped[DType.float64, 5, 5](ctx, entries.copy())
+    var tensor_factor = cholesky[DType.float64, 5, False, 2](a).to_host()
+
+    var lifted = array_zeros[P, 25]()
+    for i in range(25):
+        lifted[i] = P(entries[i])
+    var array_factor = cholesky[P, 5](lifted)
+
+    for i in range(25):
+        assert_almost_equal(
+            Float64(tensor_factor[i]),
+            Float64(array_factor[i].v),
+            atol=1e-12,
+        )
+
+
+def test_cholesky_rejects_a_matrix_that_is_not_positive_definite() raises:
+    """Host-side, so it can raise where the tier-1 sibling must floor."""
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 2, 2](ctx, [1.0, 2.0, 2.0, 1.0])
+    with assert_raises(contains="not positive definite"):
+        _ = cholesky[DType.float64, 2, False, 2](a)
 
 
 def main() raises:

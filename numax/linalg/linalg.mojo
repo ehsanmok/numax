@@ -7,12 +7,20 @@ runs a fixed number of passes -- `n - 1` reflectors, `sweeps` Jacobi sweeps
 -- and selects branchlessly, so all of it launches inside a GPU thread.
 That is also what forecloses pivoting; see "Scope: no pivoting" below.
 
-**The `Tensor` half, at the bottom of the file, is MAX's.** `matmul`,
-`matvec`, `batched_matmul`, `tril` and `triu` allocate a destination, hand
-MAX two `TileTensor` views and wait; `linalg.matmul` alone is a dispatch
-tree covering Apple simdgroup, SM100, SM90, Ampere/CDNA, vendor
-cuBLAS/rocBLAS/hipBLASLt and AMD RDNA, so numax names no architecture.
-Those entry points are `dtype`-monomorphic, which is exactly why the
+**The `Tensor` half, at the bottom of the file, goes through MAX.**
+`matmul`, `matvec`, `batched_matmul`, `tril` and `triu` are MAX kernels
+outright: numax allocates a destination, hands over two `TileTensor` views
+and waits. `linalg.matmul` alone is a dispatch tree covering Apple
+simdgroup, SM100, SM90, Ampere/CDNA, vendor cuBLAS/rocBLAS/hipBLASLt and
+AMD RDNA, so numax names no architecture.
+
+`cholesky` is the other kind: MAX has no Cholesky, so numax writes it, but
+writes it *blocked* so that the cubic term is a matrix product and goes
+back to MAX. That is the pattern the remaining factorizations follow as
+they land -- panel on the host, `O(n^3)` in MAX's GEMM -- and each names
+its own ceiling.
+
+These entry points are `dtype`-monomorphic, which is exactly why the
 `Array` half exists beside them rather than being replaced by them.
 
 The two halves share names deliberately. `matmul(a, b)` picks by argument
@@ -101,7 +109,9 @@ from layout.tile_layout import row_major
 from linalg.bmm import batched_matmul as _max_batched_matmul
 from linalg.matmul import matmul as _max_matmul
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
+from max.gpu.host import DeviceContext
 from std.collections import Array
+from std.math import sqrt
 from std.utils import IndexList
 
 from ..core.array import Dynamic, Shaped, zeros_dyn
@@ -1543,3 +1553,123 @@ def triu[
     `numpy.triu` at `k=0`; the mirror of `tril` and the same MAX kernel.
     """
     return _band_part[dtype, rows, cols, gpu](a, 0, -1)
+
+
+def _staged[
+    dtype: DType
+](
+    values: List[Scalar[dtype]],
+    rows: Int,
+    cols: Int,
+    ctx: DeviceContext,
+) raises -> Dynamic[dtype, 2]:
+    """A `rows x cols` device tensor holding `values`, row-major."""
+    var staged = zeros_dyn[dtype, 2](rows, cols, ctx=ctx)
+    staged.copy_from_host(values)
+    return staged^
+
+
+def cholesky[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
+](mut a: Shaped[dtype, n, n]) raises -> Shaped[
+    dtype, n, n
+] where dtype.is_floating_point():
+    """**Tier 2.** The lower-triangular `L` with `L @ L.T == a`, blocked.
+
+    MAX has no Cholesky -- `qr_factorization` is its only factorization,
+    and that one is on the older `LayoutTensor` -- so this is numax filling
+    a gap rather than calling into one. What it does not do is fill it from
+    scratch: this is the right-looking blocked algorithm, so each step
+    factors one `block x block` diagonal panel, solves the panel below it,
+    and then subtracts `L21 @ L21.T` from everything remaining. That last
+    subtraction is the whole cubic cost of a Cholesky, and it is a matrix
+    product, so it goes to MAX's `matmul` and inherits its dispatch. The
+    panel is `O(n * block^2)` and the GEMM is `O(n^3)`.
+
+    **Ceiling.** The panel factorization and the block staging run on the
+    host: the trailing submatrix of a row-major tensor is not contiguous,
+    and numax has no strided device sub-view to hand MAX yet, so each step
+    copies its panel down and its update back. The flops are MAX's, the
+    copies are not, which puts an `O(n^2)` band on what the GPU path can
+    win per step. The upgrade is a device-resident tiling that slices
+    `TileTensor` in place and calls MAX on the slice; the algorithm above
+    does not change when that lands, only `_staged` disappears.
+
+    `block` is a parameter so a caller can tune it or set it to `n` to get
+    the unblocked algorithm back. No pivoting, and none is needed: a
+    symmetric positive definite matrix does not require it.
+
+    Raises when a diagonal entry comes out non-positive, which is what a
+    matrix that is not positive definite looks like from in here. The
+    sibling `cholesky` over `Array[T, n*n]` floors the diagonal instead and
+    returns something finite, because a tier-1 kernel cannot branch on a
+    value; this one is host-side and can afford to tell the truth.
+    """
+    var ctx = a.context()
+    var work = a.to_host()
+    var k = 0
+
+    while k < n:
+        var nb = min(block, n - k)
+
+        # Panel: the diagonal block, unblocked. Contributions from earlier
+        # blocks are already gone, subtracted by their trailing update, so
+        # the inner sums start at `k` rather than at zero.
+        for j in range(nb):
+            var col = k + j
+            var diagonal = work[col * n + col]
+            for p in range(k, col):
+                diagonal -= work[col * n + p] * work[col * n + p]
+            if diagonal <= 0:
+                raise Error(
+                    "cholesky: matrix is not positive definite (pivot ",
+                    Float64(diagonal),
+                    " at index ",
+                    col,
+                    ")",
+                )
+            var root = sqrt(diagonal)
+            work[col * n + col] = root
+            for i in range(j + 1, nb):
+                var row = k + i
+                var entry = work[row * n + col]
+                for p in range(k, col):
+                    entry -= work[row * n + p] * work[col * n + p]
+                work[row * n + col] = entry / root
+
+        # Panel: everything below the diagonal block, solved against it.
+        for row in range(k + nb, n):
+            for j in range(nb):
+                var col = k + j
+                var entry = work[row * n + col]
+                for p in range(k, col):
+                    entry -= work[row * n + p] * work[col * n + p]
+                work[row * n + col] = entry / work[col * n + col]
+
+        # Trailing update: A22 -= L21 @ L21.T, which is MAX's.
+        var m = n - k - nb
+        if m > 0:
+            var lower = List[Scalar[dtype]](capacity=m * nb)
+            var lower_t = List[Scalar[dtype]](capacity=nb * m)
+            for i in range(m):
+                for j in range(nb):
+                    lower.append(work[(k + nb + i) * n + k + j])
+            for j in range(nb):
+                for i in range(m):
+                    lower_t.append(work[(k + nb + i) * n + k + j])
+
+            var left = _staged[dtype](lower^, m, nb, ctx)
+            var right = _staged[dtype](lower_t^, nb, m, ctx)
+            var update = matmul[dtype, gpu](left, right).to_host()
+
+            for i in range(m):
+                for j in range(i + 1):
+                    work[(k + nb + i) * n + k + nb + j] -= update[i * m + j]
+
+        k += nb
+
+    for row in range(n):
+        for col in range(row + 1, n):
+            work[row * n + col] = Scalar[dtype](0)
+
+    return Shaped[dtype, n, n](ctx, work^)
