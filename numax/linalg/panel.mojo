@@ -108,6 +108,21 @@ def _sync[gpu: Bool]():
         barrier()
 
 
+@always_inline
+def _at[
+    trans: Bool, dtype: DType, Lay: TensorLayout
+](a: _View[dtype, Lay], i: Int, j: Int) -> Scalar[dtype]:
+    """`a[i, j]`, or `a[j, i]` at `trans=True`.
+
+    The one place the transposed solves differ from the untransposed ones,
+    so it lives here rather than being spelled out at each of the four
+    read sites."""
+    comptime if trans:
+        return a[Coord(j, i)]
+    else:
+        return a[Coord(i, j)]
+
+
 def potrf_diag[
     dtype: DType,
     ALayout: TensorLayout,
@@ -333,6 +348,7 @@ def trsv_diag[
     XLayout: TensorLayout,
     upper: Bool,
     unit: Bool,
+    trans: Bool = False,
     gpu: Bool = False,
 ](
     a: _View[dtype, ALayout],
@@ -346,6 +362,11 @@ def trsv_diag[
     The diagonal step of a blocked triangular solve: `upper` picks back
     substitution over forward, and `unit` says the stored diagonal is not
     the triangle's (which is what `getrf_panel` leaves for `L`).
+
+    `trans=True` reads `a[p, i]` where the untransposed form reads
+    `a[i, p]`, so `L^T` is solved against without materializing it. That
+    is what a Cholesky solve's second half needs, and transposing an
+    `n x n` matrix to get it would cost more than the solve.
 
     One thread, sequentially, because a substitution's row `i` needs row
     `i - 1` and the inner dot is only `nb` long. At the default `block` the
@@ -366,10 +387,10 @@ def trsv_diag[
         var total = x[Coord(k0 + i)]
         if upper:
             for p in range(i + 1, n_b):
-                total = total - a[Coord(k0 + i, k0 + p)] * x[Coord(k0 + p)]
+                total = total - _at[trans](a, k0 + i, k0 + p) * x[Coord(k0 + p)]
         else:
             for p in range(i):
-                total = total - a[Coord(k0 + i, k0 + p)] * x[Coord(k0 + p)]
+                total = total - _at[trans](a, k0 + i, k0 + p) * x[Coord(k0 + p)]
         comptime if unit:
             x.store[1](Coord(k0 + i), total)
         else:
@@ -380,6 +401,7 @@ def gemv_sub[
     dtype: DType,
     ALayout: TensorLayout,
     XLayout: TensorLayout,
+    trans: Bool = False,
     target: StaticString = "cpu",
 ](
     a: _View[dtype, ALayout],
@@ -403,6 +425,8 @@ def gemv_sub[
     result into the same vector it reads is safe because the two ranges
     are disjoint by construction -- `x[col0:col0+cols]` is already solved
     and `x[row0:]` is not yet.
+
+    `trans=True` reads the block transposed, matching `trsv_diag`.
     """
     if rows <= 0 or cols <= 0:
         return
@@ -414,10 +438,105 @@ def gemv_sub[
         var row = row0 + coord_to_index_list(coord)[0]
         var total = x[Coord(row)]
         for j in range(cols):
-            total = total - a[Coord(row, col0 + j)] * x[Coord(col0 + j)]
+            total = total - _at[trans](a, row, col0 + j) * x[Coord(col0 + j)]
         x.store[1](Coord(row), total)
 
     elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
+
+
+def trsm_diag[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    upper: Bool,
+    unit: Bool,
+    trans: Bool = False,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    b: _View[dtype, BLayout],
+    k: Int,
+    nb: Int,
+    rhs: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Solve the `nb x nb` triangular block at `(k, k)` against rows
+    `k..k+nb` of `b`, for all `rhs` of its columns, in place.
+
+    `trsv_diag` with a matrix on the right: same substitution, one per
+    column of `b`. The columns are independent -- a substitution's
+    dependency runs down the rows, not across -- so this is one
+    `max.algorithm.elementwise` over `rhs` and needs no barrier, which is
+    what makes it the multiple-right-hand-side case worth having rather
+    than looping the vector version.
+
+    `b` is the full right-hand side, `n x rhs`, addressed with offsets.
+    `upper`, `unit` and `trans` mean what they mean in `trsv_diag`.
+    """
+    if nb <= 0 or rhs <= 0:
+        return
+
+    @always_inline
+    def column[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var a, var b, var k, var nb}:
+        var c = coord_to_index_list(coord)[0]
+        for step in range(nb):
+            var i = (nb - 1 - step) if upper else step
+            var total = b[Coord(k + i, c)]
+            if upper:
+                for p in range(i + 1, nb):
+                    total = (
+                        total - _at[trans](a, k + i, k + p) * b[Coord(k + p, c)]
+                    )
+            else:
+                for p in range(i):
+                    total = (
+                        total - _at[trans](a, k + i, k + p) * b[Coord(k + p, c)]
+                    )
+            comptime if unit:
+                b.store[1](Coord(k + i, c), total)
+            else:
+                b.store[1](Coord(k + i, c), total / a[Coord(k + i, k + i)])
+
+    elementwise[simd_width=1, target=target](column, Coord(rhs), ctx)
+
+
+def laswp_matrix[
+    dtype: DType,
+    BLayout: TensorLayout,
+    PLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    b: _View[dtype, BLayout],
+    pivots: _View[DType.int32, PLayout],
+    n: Int,
+    rhs: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """`laswp` with a matrix on the right: apply the recorded row
+    interchanges to every column of an `n x rhs` `b`.
+
+    The interchanges compose, so the walk up `j` stays sequential; the
+    columns do not, so each one gets its own lane. One
+    `max.algorithm.elementwise` over `rhs`, `n` swaps each.
+    """
+    if rhs <= 0:
+        return
+
+    @always_inline
+    def column[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var b, var pivots, var n}:
+        var c = coord_to_index_list(coord)[0]
+        for j in range(n):
+            var other = Int(pivots[Coord(j)])
+            if other != j:
+                var keep = b[Coord(j, c)]
+                b.store[1](Coord(j, c), b[Coord(other, c)])
+                b.store[1](Coord(other, c), keep)
+
+    elementwise[simd_width=1, target=target](column, Coord(rhs), ctx)
 
 
 def trsm_right_lower_t[
@@ -499,6 +618,7 @@ def pack_block[
     dtype: DType,
     ALayout: TensorLayout,
     DLayout: TensorLayout,
+    trans: Bool = False,
     target: StaticString = "cpu",
 ](
     a: _View[dtype, ALayout],
@@ -521,6 +641,10 @@ def pack_block[
     Only the operands need it. The *result* of the product goes back into
     the strided matrix through `matmul`'s epilogue, which owns its own
     store, so nothing is ever unpacked.
+
+    `trans=True` packs the transpose, `dst[i, j] = a[col0+j, row0+i]`,
+    which is how a solve against `A^T` gets a dense operand without
+    transposing `A` first. `rows` and `cols` describe `dst` either way.
     """
 
     @always_inline
@@ -530,7 +654,10 @@ def pack_block[
         var at = coord_to_index_list(coord)
         var i = at[0]
         var j = at[1]
-        dst.store[w](coord, a.load[w](Coord(row0 + i, col0 + j)))
+        comptime if trans:
+            dst.store[1](coord, a[Coord(col0 + j, row0 + i)])
+        else:
+            dst.store[w](coord, a.load[w](Coord(row0 + i, col0 + j)))
 
     elementwise[simd_width=1, target=target](copy, Coord(rows, cols), ctx)
 

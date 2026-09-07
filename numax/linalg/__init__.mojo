@@ -31,7 +31,7 @@ modules matter when reading or extending.
 | Module | Holds | SciPy counterpart |
 | --- | --- | --- |
 | `blas` | `matmul`, `matvec`, `batched_matmul`, `dot`, `nrm2`, `asum`, `axpy`, `outer` | `scipy.linalg.blas`, `numpy.linalg.matmul` |
-| `triangular` | `forward_substitution`, `back_substitution`, `tridiagonal_solve` | `solve_triangular`, `solve_banded` |
+| `triangular` | `solve_triangular`, `forward_substitution`, `back_substitution`, `tridiagonal_solve` | `solve_banded` |
 | `cholesky` | `cholesky`, `cholesky_solve`, `slogdet_cholesky` | `_decomp_cholesky` |
 | `lu` | `lu`, `lu_factor`, `PivotedLU`, `TensorLU`, `det` | `_decomp_lu` |
 | `qr` | `qr`, `lstsq` | `_decomp_qr` |
@@ -59,9 +59,18 @@ the cost of the GPU.
 
 Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
 `batched_matmul`, the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`,
-`outer`), and blocked `cholesky`, `lu_factor` (returning a reusable
-`TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that chooses
-MAX's target, and the factorizations a `block` size that tunes the panel.
+`outer`), blocked `cholesky`, `lu_factor` (returning a reusable
+`TensorLU`) and `solve`, and the solves those unlock:
+`solve_triangular`, `cholesky_solve`, `inverse` and `det`. Each takes a
+`gpu: Bool` parameter that chooses MAX's target, and everything blocked a
+`block` size that tunes the panel.
+
+The solves come in a vector and a matrix form, and the pair is not a
+convenience: with one right-hand side the update between diagonal blocks
+is a `gemv`, with several it is a matrix product and goes to
+`linalg.matmul`. That is why `inverse` solves against the whole identity
+in one call rather than looping the columns, and why `cholesky_solve` and
+`TensorLU.solve` each have both spellings.
 All three factorizations are device-resident -- their panel steps are
 `panel.mojo` kernels addressing the matrix in place and their trailing
 updates are fused into `matmul`'s epilogue, so nothing crosses to the host
@@ -89,9 +98,9 @@ mutable view cannot be built from an immutable binding.
 
 ## Not here yet
 
-`qr`, `svd`, `eigh`, `cholesky_solve` have no `Tensor` overload, so past
-the crossover in `docs/performance.md` they are genuinely missing rather
-than one import away. MAX's own `linalg.qr_factorization` does not close
+`qr`, `svd`, `eigh` and `pinv` have no `Tensor` overload, so past the
+crossover in `docs/performance.md` they are genuinely missing rather than
+one import away. MAX's own `linalg.qr_factorization` does not close
 that gap: it is on the older `LayoutTensor`, and numax's interop is
 `TileTensor` only. `tridiagonal_solve` will stay `Array`-only -- Thomas is
 already linear and has nothing to hand a GEMM.
@@ -116,5 +125,6 @@ from .qr import lstsq, qr
 from .triangular import (
     back_substitution,
     forward_substitution,
+    solve_triangular,
     tridiagonal_solve,
 )

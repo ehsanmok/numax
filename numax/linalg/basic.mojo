@@ -14,16 +14,19 @@ differentiable at `Dual`.
 MAX ships no `solve`, no `inv` and no pseudo-inverse at any size, so
 nothing here delegates.
 
-`inverse` factors once and substitutes `n` times rather than calling
-`solve` `n` times. Note that inverting explicitly is rarely the right move
-at any size: solving against a specific right-hand side is both cheaper and
-better conditioned. `pinv` goes through the SVD and is the answer for the
-underdetermined and rank-deficient cases `lstsq` refuses.
+**`inverse` has two tiers too.** Both factor once rather than calling
+`solve` `n` times; over `Tensor` the `n` right-hand sides go through the
+factorization together, so the substitutions are `trsm` and the work
+between diagonal blocks is a GEMM. Note that inverting explicitly is
+rarely the right move at any size: solving against a specific right-hand
+side is both cheaper and better conditioned. `pinv` goes through the SVD
+and is the answer for the underdetermined and rank-deficient cases
+`lstsq` refuses.
 """
 
 from std.collections import Array
 
-from ..core.array import Shaped
+from ..core.array import Shaped, eye
 from ..core.numeric import FloatLike, ge_indicator, guard_nonzero, max_of
 
 from .common import _PIVOT_FLOOR, _zeros
@@ -96,6 +99,32 @@ def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
             out[i * n + column] = x[i].copy()
 
     return out^
+
+
+def inverse[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
+](mut a: Shaped[dtype, n, n]) raises -> Shaped[
+    dtype, n, n
+] where dtype.is_floating_point():
+    """**Tier 2.** `A^-1`, by factoring once and solving against the whole
+    identity at once. `scipy.linalg.inv`.
+
+    One `lu_factor` and one `TensorLU.solve` with `n` right-hand sides, so
+    the substitutions are `trsm` rather than `n` separate `trsv`s: the
+    update between diagonal blocks is a matrix product and goes to MAX's
+    `matmul`. That is the difference from the `Array[T, n*n]` sibling,
+    which substitutes column by column because at register residency
+    there is nothing else to do.
+
+    Inverting explicitly is still rarely the right move. `solve` against
+    the right-hand side actually wanted is cheaper and better conditioned,
+    and `cholesky_solve` cheaper again when the matrix is positive
+    definite. This exists for the cases that genuinely need the entries of
+    `A^-1` -- a covariance matrix's precision, for instance.
+    """
+    var factorization = lu_factor[dtype, n, gpu, block](a)
+    var identity = eye[n, dtype](a.context())
+    return factorization.solve[n, block](identity)
 
 
 def pinv[

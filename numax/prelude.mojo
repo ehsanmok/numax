@@ -232,6 +232,7 @@ from .linalg import (
     norm,
     qr,
     solve,
+    solve_triangular,
     svd,
     trace,
 )

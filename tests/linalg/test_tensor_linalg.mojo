@@ -20,16 +20,21 @@ from std.collections import Array
 from numax.linalg import (
     asum,
     axpy,
+    back_substitution,
     batched_matmul,
     cholesky,
+    cholesky_solve,
     det,
+    forward_substitution,
     dot,
+    inverse,
     lu_factor,
     matmul,
     matvec,
     nrm2,
     outer,
     solve,
+    solve_triangular,
 )
 
 comptime P = Plain[DType.float64, 1]
@@ -625,6 +630,285 @@ def test_tensor_outer_accepts_a_rectangular_result() raises:
         for j in range(n):
             var want = Float64(i + 1) * (10.0**j)
             assert_almost_equal(got[i * n + j], Scalar[DType.float64](want))
+
+
+def test_solve_triangular_agrees_with_forward_substitution() raises:
+    """The `Tensor` triangular solve and the `Array` substitution are the
+    same operation at two residencies, so they answer the same."""
+    var ctx = _cpu()
+    var entries: List[Float64] = [
+        2.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        3.0,
+        0.0,
+        0.0,
+        -1.0,
+        0.5,
+        4.0,
+        0.0,
+        0.25,
+        -2.0,
+        1.0,
+        5.0,
+    ]
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0]
+
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b = Shaped[DType.float64, 4](ctx, rhs.copy())
+    var got = solve_triangular[DType.float64, 4, False, False, False, False, 2](
+        a, b
+    ).to_host()
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+    var want = forward_substitution[P, 4](lifted, _array_of[4](rhs.copy()))
+
+    for i in range(4):
+        assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-12)
+
+
+def test_solve_triangular_transposed_solves_against_the_transpose() raises:
+    """`trans=True` reads the stored lower triangle as an upper one, so the
+    answer must match solving against the transpose written out."""
+    var ctx = _cpu()
+    var entries: List[Float64] = [
+        2.0,
+        0.0,
+        0.0,
+        1.0,
+        3.0,
+        0.0,
+        -1.0,
+        0.5,
+        4.0,
+    ]
+    var rhs: List[Float64] = [1.0, -2.0, 3.0]
+
+    var a = Shaped[DType.float64, 3, 3](ctx, entries.copy())
+    var b = Shaped[DType.float64, 3](ctx, rhs.copy())
+    var got = solve_triangular[DType.float64, 3, True, False, True, False, 2](
+        a, b
+    ).to_host()
+
+    var transposed = array_zeros[P, 9]()
+    for i in range(3):
+        for j in range(3):
+            transposed[i * 3 + j] = P(entries[j * 3 + i])
+    var want = back_substitution[P, 3](transposed, _array_of[3](rhs.copy()))
+
+    for i in range(3):
+        assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-12)
+
+
+def test_solve_triangular_matrix_agrees_with_the_vector_overload() raises:
+    """The two spellings differ in how the update between diagonal blocks
+    is computed -- a GEMM against a `gemv` -- and in nothing else."""
+    var ctx = _cpu()
+    var entries: List[Float64] = [
+        2.0,
+        0.0,
+        0.0,
+        1.0,
+        3.0,
+        0.0,
+        -1.0,
+        0.5,
+        4.0,
+    ]
+    var first: List[Float64] = [1.0, -2.0, 3.0]
+    var second: List[Float64] = [4.0, 5.0, -6.0]
+
+    var wide = Shaped[DType.float64, 3, 2](
+        ctx,
+        [
+            first[0],
+            second[0],
+            first[1],
+            second[1],
+            first[2],
+            second[2],
+        ],
+    )
+    var a = Shaped[DType.float64, 3, 3](ctx, entries.copy())
+    var got = solve_triangular[
+        DType.float64, 3, 2, False, False, False, False, 2
+    ](a, wide).to_host()
+
+    var a1 = Shaped[DType.float64, 3, 3](ctx, entries.copy())
+    var b1 = Shaped[DType.float64, 3](ctx, first.copy())
+    var want_first = solve_triangular[
+        DType.float64, 3, False, False, False, False, 2
+    ](a1, b1).to_host()
+    var a2 = Shaped[DType.float64, 3, 3](ctx, entries.copy())
+    var b2 = Shaped[DType.float64, 3](ctx, second.copy())
+    var want_second = solve_triangular[
+        DType.float64, 3, False, False, False, False, 2
+    ](a2, b2).to_host()
+
+    for i in range(3):
+        assert_almost_equal(
+            Float64(got[i * 2]), Float64(want_first[i]), atol=1e-12
+        )
+        assert_almost_equal(
+            Float64(got[i * 2 + 1]), Float64(want_second[i]), atol=1e-12
+        )
+
+
+def test_cholesky_solve_reproduces_the_right_hand_side() raises:
+    """`a @ x == b` for the `x` a Cholesky solve returns, which is what the
+    two triangular halves together are supposed to mean."""
+    var ctx = _cpu()
+    var entries = _spd_5x5()
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+    var a = Shaped[DType.float64, 5, 5](ctx, entries.copy())
+    var factor = cholesky[DType.float64, 5, False, 2](a)
+    var b = Shaped[DType.float64, 5](ctx, rhs.copy())
+    var solved = cholesky_solve[DType.float64, 5, False, 2](factor, b).to_host()
+
+    # The product is formed here rather than with `matvec`, which segfaults
+    # at `float64` when `n` is not a multiple of four -- see
+    # `.cursor/rules/max-feedback.mdc`. Five rows of five is cheap.
+    for i in range(5):
+        var total = Float64(0)
+        for j in range(5):
+            total += entries[i * 5 + j] * Float64(solved[j])
+        assert_almost_equal(total, rhs[i], atol=1e-10)
+
+
+def test_cholesky_solve_agrees_with_the_array_tier() raises:
+    var ctx = _cpu()
+    var entries = _spd_5x5()
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+    var a = Shaped[DType.float64, 5, 5](ctx, entries.copy())
+    var factor = cholesky[DType.float64, 5, False, 2](a)
+    var b = Shaped[DType.float64, 5](ctx, rhs.copy())
+    var got = cholesky_solve[DType.float64, 5, False, 2](factor, b).to_host()
+
+    var lifted = array_zeros[P, 25]()
+    for i in range(25):
+        lifted[i] = P(entries[i])
+    var array_factor = cholesky[P, 5](lifted)
+    var want = cholesky_solve[P, 5](array_factor, _array_of[5](rhs.copy()))
+
+    for i in range(5):
+        assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-10)
+
+
+def test_cholesky_solve_matrix_agrees_with_the_vector_overload() raises:
+    var ctx = _cpu()
+    var entries = _spd_5x5()
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+    var columns = List[Scalar[DType.float64]](length=5, fill=0)
+    for i in range(5):
+        columns[i] = Scalar[DType.float64](rhs[i])
+
+    var a = Shaped[DType.float64, 5, 5](ctx, entries.copy())
+    var factor = cholesky[DType.float64, 5, False, 2](a)
+    var wide = Shaped[DType.float64, 5, 1](ctx, columns.copy())
+    var got = cholesky_solve[DType.float64, 5, 1, False, 2](
+        factor, wide
+    ).to_host()
+
+    var a2 = Shaped[DType.float64, 5, 5](ctx, entries.copy())
+    var factor2 = cholesky[DType.float64, 5, False, 2](a2)
+    var b = Shaped[DType.float64, 5](ctx, rhs.copy())
+    var want = cholesky_solve[DType.float64, 5, False, 2](factor2, b).to_host()
+
+    for i in range(5):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
+
+
+def test_lu_factor_solves_several_right_hand_sides_at_once() raises:
+    """The matrix `solve` on a factorization is the vector `solve` done
+    column by column, and has to answer the same."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var first: List[Float64] = [1.0, 2.0, 3.0, 4.0]
+    var second: List[Float64] = [-1.0, 0.5, 2.0, 7.0]
+
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var factorization = lu_factor[DType.float64, 4, False, 2](a)
+    var wide = Shaped[DType.float64, 4, 2](
+        ctx,
+        [
+            first[0],
+            second[0],
+            first[1],
+            second[1],
+            first[2],
+            second[2],
+            first[3],
+            second[3],
+        ],
+    )
+    var got = factorization.solve[2, 2](wide).to_host()
+
+    var a1 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b1 = Shaped[DType.float64, 4](ctx, first.copy())
+    var want_first = solve[DType.float64, 4, False, 2](a1, b1).to_host()
+    var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b2 = Shaped[DType.float64, 4](ctx, second.copy())
+    var want_second = solve[DType.float64, 4, False, 2](a2, b2).to_host()
+
+    for i in range(4):
+        assert_almost_equal(
+            Float64(got[i * 2]), Float64(want_first[i]), atol=1e-10
+        )
+        assert_almost_equal(
+            Float64(got[i * 2 + 1]), Float64(want_second[i]), atol=1e-10
+        )
+
+
+def test_inverse_times_the_matrix_is_the_identity() raises:
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var inverted = inverse[DType.float64, 4, False, 2](a)
+
+    var a_again = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var product = matmul(a_again, inverted).to_host()
+    for i in range(4):
+        for j in range(4):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(Float64(product[i * 4 + j]), want, atol=1e-10)
+
+
+def test_inverse_agrees_with_the_array_tier() raises:
+    """Same name, same matrix, same inverse -- the `Tensor` overload solves
+    against the whole identity at once and the `Array` one column by
+    column, which must not show up in the answer."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var got = inverse[DType.float64, 4, False, 2](a).to_host()
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+    var want = inverse[P, 4](lifted)
+
+    for i in range(16):
+        assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-10)
+
+
+def test_tensor_det_agrees_with_the_reusable_factorization() raises:
+    """The free `det` throws the factorization away; `TensorLU.det` keeps
+    it. Same number either way."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var direct = Float64(det[DType.float64, 4, False, 2](a))
+
+    var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var factorization = lu_factor[DType.float64, 4, False, 2](a2)
+    assert_almost_equal(direct, Float64(factorization.det()), atol=1e-12)
 
 
 def main() raises:

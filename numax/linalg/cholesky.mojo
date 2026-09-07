@@ -36,23 +36,13 @@ from ..core.array import Shaped, tril, zeros, zeros_dyn
 from ..core.numeric import FloatLike, guard_nonzero
 
 from .blas import _target
-from .common import _PIVOT_FLOOR, _zeros
+from .common import _PIVOT_FLOOR, _Dense, _zeros
 from .panel import _PANEL_THREADS, pack_block, potrf_diag, trsm_right_lower_t
-from .triangular import back_substitution, forward_substitution
-
-
-comptime _Dense[dtype: DType] = TileTensor[
-    dtype,
-    type_of(row_major(Coord(0, 0))),
-    MutAnyOrigin,
-    Storage=PointerStorage[element_width=1],
-]
-"""A runtime-shaped, contiguous rank-2 view over an existing pointer.
-
-The type of the operand `matmul` will accept and of the extents-only `c`
-it insists on. Runtime-shaped because the trailing block shrinks every
-step, contiguous because `matmul` reads its arguments as if they were.
-"""
+from .triangular import (
+    back_substitution,
+    forward_substitution,
+    solve_triangular,
+)
 
 
 def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
@@ -276,6 +266,55 @@ def cholesky_solve[
             transposed[i * n + j] = lower[j * n + i].copy()
 
     return back_substitution[T, n](transposed, y)
+
+
+def cholesky_solve[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
+](mut lower: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** Solve `A @ x = b` given `A`'s Cholesky factor `L`,
+    blocked and device-resident. `scipy.linalg.cho_solve`.
+
+    Two triangular solves, `L @ y = b` then `L.T @ x = y`, both through
+    `solve_triangular`. The second one passes `trans=True` rather than
+    transposing `L`: an `n x n` transpose would cost more than the solve
+    it feeds, and the `Array` sibling only materializes one because a
+    tier-1 kernel has no way to read an index pair conditionally.
+
+    Takes the factor rather than `A` for the reason the `Array` version
+    does -- one factorization, many right-hand sides -- so pair it with
+    `cholesky`, whose output is exactly this input.
+
+    MAX ships neither the factorization nor the solve, so both halves are
+    numax's; the cubic work inside them is still MAX's `matmul`.
+    """
+    var y = solve_triangular[dtype, n, False, False, False, gpu, block](
+        lower, b
+    )
+    return solve_triangular[dtype, n, True, False, True, gpu, block](lower, y)
+
+
+def cholesky_solve[
+    dtype: DType, n: Int, rhs: Int, gpu: Bool = False, block: Int = 16
+](
+    mut lower: Shaped[dtype, n, n], mut b: Shaped[dtype, n, rhs]
+) raises -> Shaped[dtype, n, rhs] where dtype.is_floating_point():
+    """**Tier 2.** Solve `A @ X = B` given `A`'s Cholesky factor `L`, for
+    a matrix `B`. `scipy.linalg.cho_solve` with a two-dimensional
+    right-hand side.
+
+    The vector overload's two solves against the matrix `solve_triangular`,
+    so the update between diagonal blocks is a GEMM. This is the spelling
+    a Gaussian process wants when it has a batch of right-hand sides
+    rather than one.
+    """
+    var y = solve_triangular[dtype, n, rhs, False, False, False, gpu, block](
+        lower, b
+    )
+    return solve_triangular[dtype, n, rhs, True, False, True, gpu, block](
+        lower, y
+    )
 
 
 def slogdet_cholesky[T: FloatLike, n: Int](lower: Array[T, n * n]) -> T:

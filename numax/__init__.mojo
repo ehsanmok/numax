@@ -292,6 +292,7 @@ from .linalg import (
     pinv,
     qr,
     solve,
+    solve_triangular,
     svd,
     trace,
     tridiagonal_solve,

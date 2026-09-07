@@ -19,15 +19,27 @@ tractable. It will not gain a blocked `Tensor` form: Thomas is already
 linear and has nothing to hand a GEMM.
 """
 
-from layout.tile_layout import TensorLayout
+from layout import Coord, TileTensor
+from layout.tile_layout import TensorLayout, row_major
+from linalg.matmul import matmul as _max_matmul
 from max.gpu.host import DeviceContext
 from std.collections import Array
+from std.sys.info import align_of
+from std.utils import IndexList
 
+from ..core.array import Shaped, zeros_dyn
 from ..core.numeric import FloatLike, guard_nonzero
 
 from .blas import _target
-from .common import _PIVOT_FLOOR, _zeros
-from .panel import _View, gemv_sub, trsv_diag
+from .common import _PIVOT_FLOOR, _Dense, _zeros
+from .panel import (
+    _View,
+    gemv_sub,
+    pack_block,
+    pack_vector,
+    trsm_diag,
+    trsv_diag,
+)
 
 
 def forward_substitution[
@@ -78,6 +90,7 @@ def _trsv[
     XLayout: TensorLayout,
     upper: Bool,
     unit: Bool,
+    trans: Bool = False,
     gpu: Bool = False,
 ](
     a: _View[dtype, ALayout],
@@ -91,7 +104,8 @@ def _trsv[
 
     `upper` picks back substitution over forward; `unit` says the stored
     diagonal is not the triangle's, which is what the packed `L` of an LU
-    needs. The triangle is read where it lies -- a strided block is fine
+    needs; `trans` reads the triangle transposed, which is what a Cholesky
+    solve's second half needs. The triangle is read where it lies -- a strided block is fine
     here, because both steps address it themselves rather than handing it
     to `matmul`.
 
@@ -119,21 +133,200 @@ def _trsv[
                     XLayout=XLayout,
                     upper=upper,
                     unit=unit,
+                    trans=trans,
                     gpu=True,
                 ]
             ](a, x, Int32(k), Int32(nb), grid_dim=1, block_dim=1)
         else:
-            trsv_diag[dtype, ALayout, XLayout, upper, unit](
+            trsv_diag[dtype, ALayout, XLayout, upper, unit, trans](
                 a, x, Int32(k), Int32(nb)
             )
 
         # Everything not yet solved, updated by the block just solved.
         comptime if upper:
-            gemv_sub[target=_target[gpu]()](a, x, 0, k, k, nb, ctx)
+            gemv_sub[trans=trans, target=_target[gpu]()](a, x, 0, k, k, nb, ctx)
         else:
-            gemv_sub[target=_target[gpu]()](
+            gemv_sub[trans=trans, target=_target[gpu]()](
                 a, x, k + nb, k, n - k - nb, nb, ctx
             )
+
+
+def _trsm[
+    dtype: DType,
+    ALayout: TensorLayout,
+    upper: Bool,
+    unit: Bool,
+    trans: Bool = False,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    b: _Dense[dtype],
+    n: Int,
+    rhs: Int,
+    block: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Solve a triangular system against a matrix, in place, blocked and
+    device-resident. BLAS `trsm`, left side.
+
+    `_trsv` with `rhs` right-hand sides at once, and the reason it is a
+    separate routine rather than a loop over that one: with a matrix on
+    the right the update between diagonal steps is a *matrix* product, so
+    it goes to `linalg.matmul` and the whole solve is `O(n^2 * rhs)` of
+    GEMM instead of `O(n^2)` of `gemv` done `rhs` times.
+
+    `b` is a `_Dense` view, so dense and row-major by its type rather than
+    by a promise in prose. That is not generality lost -- every caller here allocates it -- and it is what lets each
+    block row of `b` be handed to `matmul` as a contiguous operand with no
+    packing at all. The triangle is read where it lies and its block is
+    packed, because `matmul` ignores row stride.
+
+    `upper`, `unit` and `trans` mean what they mean in `_trsv`.
+    """
+    if n <= 0 or rhs <= 0:
+        return
+
+    # The triangle's block, made dense for the GEMM, and the GEMM's own
+    # output, which nothing reads: the epilogue subtracts each tile into
+    # `b` as it lands. Both allocated once for the whole solve.
+    var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
+    var scratch = zeros_dyn[dtype, 2](n, rhs, ctx=ctx)
+    var ov = operand.view()
+    var sv = scratch.view()
+
+    var steps = (n + block - 1) // block
+    for step in range(steps):
+        var k = (n - (step + 1) * block) if upper else (step * block)
+        var nb = block
+        if upper:
+            if k < 0:
+                nb = block + k
+                k = 0
+        else:
+            nb = min(block, n - k)
+
+        trsm_diag[upper=upper, unit=unit, trans=trans, target=_target[gpu]()](
+            a, b, k, nb, rhs, ctx
+        )
+
+        # The rows still unsolved, updated by the block just solved.
+        var row0 = 0 if upper else k + nb
+        var rows = k if upper else n - k - nb
+        if rows <= 0:
+            continue
+
+        var left: _Dense[dtype] = TileTensor(
+            ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, nb))
+        )
+        pack_block[trans=trans, target=_target[gpu]()](
+            a, left, row0, k, rows, nb, ctx
+        )
+
+        # `b`'s own rows `k..k+nb`: dense already, because `b` is.
+        var right: _Dense[dtype] = TileTensor(
+            b.ptr_at_offset(Coord(k, 0)), row_major(Coord(nb, rhs))
+        )
+        var product: _Dense[dtype] = TileTensor(
+            sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, rhs))
+        )
+
+        @parameter
+        @always_inline
+        @__copy_capture(b, row0)
+        def subtract[
+            _dtype: DType,
+            width: SIMDLength,
+            *,
+            alignment: Int = align_of[SIMD[_dtype, width]](),
+        ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
+            var at = Coord(row0 + idx[0], idx[1])
+            b.store[width](
+                at, b.load[width](at) - rebind[SIMD[dtype, width]](value)
+            )
+
+        _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
+            product, left, right, ctx
+        )
+
+    ctx.synchronize()
+
+
+def solve_triangular[
+    dtype: DType,
+    n: Int,
+    upper: Bool = False,
+    unit: Bool = False,
+    trans: Bool = False,
+    gpu: Bool = False,
+    block: Int = 16,
+](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** Solve `A @ x = b` for triangular `A`.
+    `scipy.linalg.solve_triangular`.
+
+    The `Tensor`-tier sibling of `forward_substitution` and
+    `back_substitution`, which are one function here because `upper`
+    already distinguishes them and a caller reaching for a triangular
+    solve should not have to know which of two names its triangle wants.
+    `unit=True` treats the diagonal as an implicit `1` without reading it,
+    which is what an LU's packed `L` needs; `trans=True` solves against
+    `A^T` without transposing `A`.
+
+    MAX ships no triangular solve at any size -- `trsm` exists only inside
+    its private cuBLAS/rocBLAS bindings, which are per-vendor and so out
+    of bounds here -- so this is numax's, blocked and device-resident: one
+    `numax.linalg.panel` kernel per diagonal block and one `gemv_sub`
+    between them, nothing crossing to the host.
+
+    `a` is taken mutably because `view()` hands back a writable
+    `TileTensor`; neither operand is modified. `b` is copied, so the
+    caller's vector survives.
+    """
+    var ctx = a.context()
+    var x = Shaped[dtype, n](ctx)
+    var xv = x.view()
+    pack_vector[target=_target[gpu]()](b.view(), xv, 0, n, ctx)
+    _trsv[upper=upper, unit=unit, trans=trans, gpu=gpu](
+        a.view(), xv, n, block, ctx
+    )
+    ctx.synchronize()
+    return x^
+
+
+def solve_triangular[
+    dtype: DType,
+    n: Int,
+    rhs: Int,
+    upper: Bool = False,
+    unit: Bool = False,
+    trans: Bool = False,
+    gpu: Bool = False,
+    block: Int = 16,
+](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n, rhs]) raises -> Shaped[
+    dtype, n, rhs
+] where dtype.is_floating_point():
+    """**Tier 2.** Solve `A @ X = B` for triangular `A` and a matrix `B`.
+    `scipy.linalg.solve_triangular` with a two-dimensional right-hand
+    side.
+
+    Not a loop over the vector overload: with several right-hand sides the
+    update between diagonal blocks is a matrix product, so it goes to
+    MAX's `matmul` and the cubic term is a GEMM. That is the whole reason
+    to have both spellings, and it is what `inverse` is built on.
+
+    Parameters are the vector overload's. Device-resident throughout.
+    """
+    var ctx = a.context()
+    var x = Shaped[dtype, n, rhs](ctx)
+    var xd: _Dense[dtype] = TileTensor(
+        x.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, rhs))
+    )
+    pack_block[target=_target[gpu]()](b.view(), xd, 0, 0, n, rhs, ctx)
+    _trsm[upper=upper, unit=unit, trans=trans, gpu=gpu](
+        a.view(), xd, n, rhs, block, ctx
+    )
+    return x^
 
 
 def tridiagonal_solve[

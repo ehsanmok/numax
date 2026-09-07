@@ -42,17 +42,22 @@ from ..core.numeric import FloatLike, guard_nonzero
 from ..core.plain import Plain
 
 from .blas import _target
-from .cholesky import _Dense
-from .common import _PIVOT_FLOOR, _zeros
+from .common import _PIVOT_FLOOR, _Dense, _zeros
 from .panel import (
     _PANEL_THREADS,
     getrf_panel,
     laswp,
+    laswp_matrix,
     pack_block,
     pack_vector,
     trsm_left_lower_unit,
 )
-from .triangular import _trsv, back_substitution, forward_substitution
+from .triangular import (
+    _trsm,
+    _trsv,
+    back_substitution,
+    forward_substitution,
+)
 
 
 def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
@@ -299,6 +304,49 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         ctx.synchronize()
         return x^
 
+    def solve[
+        rhs: Int, block: Int = 16
+    ](mut self, mut b: Shaped[Self.dtype, Self.n, rhs]) raises -> Shaped[
+        Self.dtype, Self.n, rhs
+    ] where Self.dtype.is_floating_point():
+        """`X` with `A @ X == B`, for a matrix `B`, reusing this
+        factorization. `scipy.linalg.lu_solve` with a two-dimensional
+        right-hand side.
+
+        The same three steps as the vector overload, each in its matrix
+        form: `laswp_matrix` replays the interchanges down every column at
+        once, and the two substitutions are `_trsm`, so the update between
+        diagonal blocks is a matrix product and goes to MAX's `matmul`.
+        That is why this is not a loop over the vector overload -- the
+        loop would do `rhs` times the `O(n^2)` of a `gemv` and never reach
+        a GEMM.
+
+        `inverse` is this with `B` the identity.
+        """
+        var ctx = self.factored.context()
+        var x = Shaped[Self.dtype, Self.n, rhs](ctx)
+        var fv = self.factored.view()
+        var pv = self.pivots.view()
+        var xd: _Dense[Self.dtype] = TileTensor(
+            x.view().ptr_at_offset(Coord(0, 0)),
+            row_major(Coord(Self.n, rhs)),
+        )
+
+        pack_block[target=_target[Self.gpu]()](
+            b.view(), xd, 0, 0, Self.n, rhs, ctx
+        )
+        laswp_matrix[target=_target[Self.gpu]()](xd, pv, Self.n, rhs, ctx)
+
+        _trsm[upper=False, unit=True, gpu=Self.gpu](
+            fv, xd, Self.n, rhs, block, ctx
+        )
+        _trsm[upper=True, unit=False, gpu=Self.gpu](
+            fv, xd, Self.n, rhs, block, ctx
+        )
+
+        ctx.synchronize()
+        return x^
+
     def det(
         mut self,
     ) raises -> Scalar[Self.dtype] where Self.dtype.is_floating_point():
@@ -541,12 +589,31 @@ def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     Unpivoted, so the sign is always the product's own -- there is no row
     swap count to correct for.
 
-    MAX ships no `det` at any size. Past the crossover, `lu_factor` over
-    `Tensor` and take `TensorLU.det`, which corrects for the swap parity
-    this one has no swaps to correct for.
+    MAX ships no `det` at any size. Past the crossover, the `Tensor`
+    overload of this name pivots and corrects for the swap parity this one
+    has no swaps to correct for.
     """
     var factored = lu[T, n](a)
     var product = T.one()
     for i in range(n):
         product = product * factored[i * n + i]
     return product^
+
+
+def det[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
+](mut a: Shaped[dtype, n, n]) raises -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    """**Tier 2.** The determinant, pivoted. `scipy.linalg.det`.
+
+    `lu_factor` and `TensorLU.det`, thrown away afterwards. Reach for the
+    factorization directly if the determinant is not the only thing wanted
+    from it -- `TensorLU` carries `solve` too, and this spelling discards
+    a cubic-cost object to return one number.
+
+    Pivoted, unlike the `Array[T, n*n]` sibling, so the swap parity is
+    folded into the sign and a matrix with a zero leading entry is fine.
+    """
+    var factorization = lu_factor[dtype, n, gpu, block](a)
+    return factorization.det()
