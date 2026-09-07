@@ -72,9 +72,48 @@ Two co-equal axes:
    holomorphically — so no kernel needs a per-type copy.
 2. **NumPy/SciPy parity, MAX-first.** MAX's `TileTensor`, the top-level
    `linalg`/`nn` roots and `max.algorithm` are the substrate (there is no
-   `max.linalg` and no `max.random`; RNG is `std.random`). Prefer calling MAX over
-   writing a replacement; `docs/parity.md` has the survey the dispositions rest
-   on.
+   `max.linalg` and no `max.random`; RNG is `std.random`). MAX-first is a gate,
+   not a preference: re-implementing something MAX already ships is a defect.
+   The gate is below and `docs/parity.md` is the per-area survey the
+   dispositions rest on.
+
+**The MAX-first gate.** Before writing any kernel that runs on a `Tensor`,
+search for the MAX one — the `user-max-docs` MCP against `stable`, plus the
+`~/workspace/modular-oss` checkout — and record the result in
+`docs/parity.md`. Then label it:
+
+- **Delegate.** MAX has it, on `TileTensor`. Call it.
+- **Extend.** MAX lacks it, or ships it only on the old `LayoutTensor`. numax
+  writes it *in MAX's idiom* — `TileTensor` in and out, a
+  `target: StaticString = "cpu"` parameter, `ctx: Optional[DeviceContext]`,
+  optional `elementwise_lambda_fn`/`elementwise_compute_lambda_fn` epilogues —
+  so it stays upstreamable. Cholesky, LU, solve, QR, SVD, eig and the forward
+  FFT are all this case.
+- **Diverge.** MAX cannot express it. Only the `Array[T, n*n]` `FloatLike`
+  tier, and only where conformer genericity or register residency is the
+  actual reason.
+
+Two rules hold the boundary. **Interop is `TileTensor`-only**: a MAX API that
+takes the older `LayoutTensor` is denied, not bridged — `linalg.qr_factorization`
+(with `apply_q`/`form_q`) and `outer_product_acc` are the ones met so far, and
+`rg LayoutTensor numax/` stays free of code. And **`Tensor` is the only
+user-facing tensor type**; `TileTensor` appears at the interop boundary and in
+the kernel-author primitives of `numax/core/tensor.mojo`, never as the thing a
+user of `numax.linalg` passes.
+
+**Never write per-arch code.** `matmul` already dispatches Apple simdgroup,
+SM100, SM90, Ampere/CDNA, vendor cuBLAS/rocBLAS/hipBLASLt, AMD RDNA and a naive
+fallback behind one entry point; numax's whole part is passing `target="gpu"`.
+There is no `has_nvidia_gpu_accelerator`, `has_amd_gpu_accelerator` or Apple
+branch anywhere in numax. Keep it that way.
+
+Verify signatures against the pinned release, not the checkout —
+`~/workspace/modular-oss` tracks MAX 26.6.0.dev/Mojo 1.1.0.dev and its `linalg`
+module list already differs from `stable`. Note also that the MCP's
+`docs_check_imports` reports false `not_found` for nested Mojo kernel paths
+(it rejects `linalg.matmul` and even `max.gpu.host`); `docs_get` on the package
+page is the reliable check, at `/api/mojo/<pkg>/<module>.md` and then
+`/api/mojo/<pkg>/<module>/<symbol>.md`.
 
 Adding a `FloatLike` method is expensive — every present and future conformer
 must implement it. The trait grew only when call sites multiplied *and* the
