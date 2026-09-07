@@ -193,13 +193,29 @@ own GPU-launchable versions.
 
 ## `numax.linalg`
 
-Matrices are comptime-sized `Array[T, n*n]` in registers, not heap
-allocations. That is what makes `cholesky` differentiable at `Dual` and
-launchable inside a GPU thread; MAX's own `linalg` is monomorphic in a raw
-`dtype`, so no conformer passes through it, and it is the right call past
-roughly 8x8.
+Two tiers under one set of names, resolved by argument type.
 
-| Area | Surface |
+The `Array[T, n*n]` tier is comptime-sized and register-resident, not heap
+allocated. That is what makes `cholesky` differentiable at `Dual` and
+launchable inside a GPU thread, and it is the right shape for the small
+matrices that appear *inside* a per-element kernel.
+
+The `Tensor` tier goes through MAX and is the one to use past roughly 8x8
+(see [performance.md](performance.md)). It is `dtype`-monomorphic, so no
+conformer passes through it — which is why the `Array` tier exists beside
+it rather than being replaced by it. `to_tensor`/`to_array` cross over.
+
+| Area | Surface — over `Tensor` |
+|---|---|
+| Products | `matmul` (comptime and run-time shapes), `matvec`, `batched_matmul` — MAX's `linalg.matmul`/`bmm` outright, so they inherit its Apple/NVIDIA/AMD/vendor-BLAS dispatch and numax names no architecture |
+| Factorizations | `cholesky`, `lu_factor` (returning a reusable `TensorLU` with `solve`/`det`), `solve` — MAX ships no factorization on `TileTensor`, so these are numax's, written blocked so the `O(n^3)` trailing update is a matrix product and goes back to `linalg.matmul`. Host-side panel; each docstring names that ceiling |
+| Not yet | `qr`, `svd`, `eigh`, `cholesky_solve` over `Tensor`. MAX's `qr_factorization` is on the older `LayoutTensor`, which numax denies rather than bridges |
+
+Every `Tensor` entry point takes `gpu: Bool` (which picks MAX's `target`)
+and the factorizations take a `block` size; `block=n` recovers the
+unblocked algorithm, which is what the tests pin the blocked path against.
+
+| Area | Surface — over `Array[T, n*n]` |
 |---|---|
 | Factorizations | `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd` |
 | Solves | `solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, `forward_substitution`, `back_substitution` |
@@ -210,11 +226,17 @@ roughly 8x8.
 | Products | `dot`, `outer`, `matvec`, `matmul` |
 | BLAS-1 | `dot`, `nrm2`, `asum`, `axpy` -- MAX ships none of it, and no BLAS anywhere is generic over its scalar type |
 
-All in [`linalg/linalg.mojo`](../numax/linalg/linalg.mojo); every function's
-docstring records its own error behaviour and where MAX's kernel takes over.
-Everything is tier 1 except the pivoted row: choosing a pivot by magnitude
-is a data-dependent branch, so `PivotedLU` gives up the GPU and the generic
-`T` in exchange for factoring matrices `lu` cannot start on.
+All in [`linalg/linalg.mojo`](../numax/linalg/linalg.mojo), both tiers, in
+one file because Mojo wants a single owning module per name and these two
+share theirs. Every function's docstring records its own error behaviour
+and which MAX kernel, if any, it delegates to.
+
+The `Array` tier is tier 1 except the pivoted row: choosing a pivot by
+magnitude is a data-dependent branch, so `PivotedLU` gives up the GPU and
+the generic `T` in exchange for factoring matrices `lu` cannot start on.
+The whole `Tensor` tier is tier 2 in the sense that it is host-orchestrated
+and `dtype`-monomorphic, not in the sense of being CPU-bound — `gpu=True`
+runs MAX's GPU kernels.
 
 ## `numax.optimize`
 

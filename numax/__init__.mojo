@@ -52,7 +52,7 @@ is safe; its own docstring lists them and where to reach them.
 |---|---|
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows` -- is `numax.core.tensor` |
 | `numax.special` | Γ and B, `erf`, Bessel `J`/`Y`, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, activations |
-| `numax.linalg` | `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
+| `numax.linalg` | Two tiers under one set of names, picked by argument type. Over `Tensor`, through MAX: `matmul`/`matvec`/`batched_matmul` are MAX kernels, and `cholesky`/`lu_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM. Over `Array[T, n*n]`, `FloatLike`-generic: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
 | `numax.optimize` | `newton`/`halley`/`bisection` at a fixed iteration count; `newton_tol`, `brentq`, `bfgs`, `nelder_mead`, `least_squares`, `curve_fit` to a tolerance |
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
@@ -65,7 +65,9 @@ is safe; its own docstring lists them and where to reach them.
 
 **Tier 1** is everything with a fixed iteration count and no per-lane
 branching, and therefore launchable inside a GPU thread: the special
-functions, `linalg`, the fixed-step algorithms. **Tier 2** is `optimize`,
+functions, `linalg`'s `Array` tier, the fixed-step algorithms. **Tier 2**
+is `linalg`'s `Tensor` tier (host-orchestrated, though `gpu=True` still
+runs MAX's GPU kernels), `optimize`,
 the adaptive half of `integrate`, `sorting`, `logic`, `elementwise` and
 `ops`: `Plain`-only, host-side, free to loop or branch on data. Every
 subpackage's docstring declares its tier, and tier 1 never calls tier 2.

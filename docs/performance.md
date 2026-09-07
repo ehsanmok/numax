@@ -255,14 +255,14 @@ magnitude below the representable resolution and cannot be observed.
 See `bench/accuracy/README.md` for the full table and the defect
 writeup.
 
-## Use MAX past N (small-matrix linalg)
+## Cross the tiers past N (dense linalg)
 
-`numax/linalg/linalg.mojo`'s matrices are `Array[T, n*n]` in registers -- a
-compile-time size that keeps them GPU-launchable (one matrix per SIMD
-lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual` or
-`Compensated`, at the cost of both compile time and register pressure
-growing with `n`. Past a certain `n`, MAX's own `TileTensor`-based,
-`dtype`-monomorphic routines win on raw speed. `bench/bench_matmul.mojo`
+`numax/linalg/linalg.mojo`'s `Array[T, n*n]` tier keeps its matrices in
+registers -- a compile-time size that keeps them GPU-launchable (one matrix
+per SIMD lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual`
+or `Compensated`, at the cost of both compile time and register pressure
+growing with `n`. Past a certain `n`, the `Tensor` tier of the same module
+wins on raw speed, because it is MAX's kernel. `bench/bench_matmul.mojo`
 measures exactly where, for `matmul` (nanoseconds per `n x n` product,
 lower is better; the batched column runs 4 independent products per call,
 one per SIMD lane, divided by 4 to stay comparable):
@@ -280,19 +280,26 @@ against the 4-wide batched form, and is ~130x ahead by `n = 64`. See
 `bench/README.md`'s "Matmul: where MAX overtakes the generic loop" for
 the full writeup.
 
-`matmul` and `qr_factorization` (Householder, in-place) are the only two
-dense-linear-algebra primitives MAX itself ships -- there is no MAX
-`lu`/`solve`/`det`/`trace`/`norm`/`inverse` at any size, generic or
-otherwise (verified against `~/workspace/modular/max/kernels/src/linalg/`).
-So for a large, plain-`dtype` system past the crossover above, the
-practical move is not a drop-in MAX function call for every name in this
-module -- it's building the large-matrix equivalent from
-`linalg.qr_factorization` the way a LAPACK-style solver does
-(`solve`/`det`/`inverse` all reduce to `R` and `Q^T b` once `A = QR`).
-`cholesky`/`cholesky_solve`/`tridiagonal_solve` have no MAX equivalent to
-route to at any size, since MAX ships neither a Cholesky factorization nor
-a triangular solve. Every function's own docstring in `numax/linalg/linalg.mojo`
-states which of these two cases it falls into.
+Crossing is `to_tensor` and then the same function name, which resolves to
+the `Tensor` overload. What that gets differs by operation:
+
+- `matmul`, `matvec`, `batched_matmul` are MAX kernels outright, so the
+  table above *is* their number.
+- `cholesky`, `lu_factor` and `solve` are numax's, because MAX ships no
+  factorization on `TileTensor` -- its only one, `qr_factorization`, is on
+  the older `LayoutTensor`, which numax denies rather than bridges, and is
+  an untuned CPU scalar loop besides. They are blocked, so the `O(n^3)`
+  trailing update is a matrix product and lands in `linalg.matmul` while
+  the panel stays `O(n * block^2)`. The panel and the block staging run on
+  the host, which puts an `O(n^2)`-per-step floor on what the GPU path can
+  win; each docstring names that ceiling.
+- `qr`, `svd`, `eigh`, `cholesky_solve` and `tridiagonal_solve` have no
+  `Tensor` overload yet, so past the crossover they are genuinely missing
+  rather than one import away. `tridiagonal_solve` will stay that way:
+  Thomas is already linear and has nothing to hand a GEMM.
+
+These numbers are the `Array` tier against MAX and were measured before
+the `Tensor` tier existed; the blocked factorizations are unmeasured.
 
 ## Bench tasks
 

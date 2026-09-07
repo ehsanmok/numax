@@ -248,9 +248,14 @@ survey of what MAX does ship.
   `FloatLike`-generic form over `List[T]`, so calling them at `Compensated`
   recovers precision a long summation loses at `Plain` — the one place this
   surface and the composable-type spine meet.
-- **`numax.linalg`** — small dense linear algebra, `FloatLike`-generic. The
-  point is differentiability, not speed: MAX's `matmul` and `qr_factorization`
-  are monomorphic in a raw `dtype`, so no `Dual` passes through them.
+- **`numax.linalg`** — dense linear algebra at two tiers under one set of
+  names, resolved by argument type. Over `Tensor`: `matmul`, `matvec` and
+  `batched_matmul` are MAX kernels outright, and `cholesky`/`lu_factor`/`solve`
+  are blocked so their cubic term is a matrix product and goes back to MAX.
+  Over `Array[T, n*n]`: the same operations `FloatLike`-generic and
+  register-resident, where the point is differentiability rather than speed —
+  MAX's kernels are monomorphic in a raw `dtype`, so no `Dual` passes through
+  them. `to_tensor`/`to_array` cross between the tiers.
 - **`numax.io`, `numax.stats.random`** — `nmx.save`/`nmx.load`, a binary format
   of numax's own since MAX ships no array I/O, plus `numpy.save`/`numpy.load`
   for `.npy` interchange, so a program ported from NumPy can ingest the files

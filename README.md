@@ -188,10 +188,12 @@ math, reductions along an axis, sorting, masking, reshaping, `.npy` files.
 is a value in registers whose element count is part of its type, generic over
 the `FloatLike` conformer rather than over a `DType`. That is what makes a
 Cholesky differentiate at `Dual` and run inside one GPU thread, one matrix
-per SIMD lane, so it is what every algorithm takes: `linalg`, `fft`,
-`signal`, `interpolate`, and the fixed-step kernels in `optimize` and
-`integrate`. NumPy gets away with one array type because it needs neither
-property.
+per SIMD lane, so it is what the algorithms take: `fft`, `signal`,
+`interpolate`, and the fixed-step kernels in `optimize` and `integrate`.
+`linalg` takes both — the same names resolve to MAX's kernels on a `Tensor`
+and to the differentiable register-resident versions on an `Array`, and
+`to_tensor`/`to_array` cross between them. NumPy gets away with one array
+type because it needs neither property.
 
 `TileTensor` is MAX's borrowed view, a pointer and a layout that own nothing.
 `.view()` hands one to a kernel and that is the only place it appears; you do
@@ -392,8 +394,8 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `a.astype(np.float32)` | `astype[f32](a)` | explicit: there is no dtype promotion |
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
 | `a.sum(axis=1)`, `a.mean(axis=1)` | `sum[axis=1](a)`, `mean[axis=1](a)` | same name as the whole-tensor form; one axis drops, the rest survive |
-| `np.linalg.solve(A, b)` | `solve[P, n](A, b)` | over `Array[T, n*n]`, so it differentiates |
-| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr`, `svd`, `eigh` | |
+| `np.linalg.solve(A, b)` | `solve(A, b)` on a `Tensor`, or `solve[P, n](A, b)` on an `Array` | the first is blocked pivoted LU with its trailing update in MAX's GEMM; the second differentiates |
+| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr`, `svd`, `eigh` | `cholesky` also has a blocked `Tensor` overload; `qr`/`svd`/`eigh` are `Array`-only so far |
 | `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` | no symmetry assumed; `lstsq` factors instead of forming the normal equations |
 | `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |

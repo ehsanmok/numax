@@ -495,9 +495,9 @@ def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     Factors once and substitutes `n` times rather than calling `solve` `n`
     times, which would redo the factorization for every column.
 
-    No MAX equivalent exists to route to for a large, plain-`dtype` `A`
-    (verified: MAX ships no `inv` at any size) -- see this module's own
-    "Use MAX past N" section. Note that inverting explicitly is rarely the
+    MAX ships no `inv` at any size. Past the crossover, `lu_factor` over
+    `Tensor` and call `solve` against each column of the identity. Note
+    that inverting explicitly is rarely the
     right move at any size; solving against a specific right-hand side
     (`solve`/`cholesky_solve`) is both cheaper and better-conditioned than
     forming `A^-1` and multiplying, the same trade-off that holds for
@@ -532,10 +532,10 @@ def tridiagonal_solve[
     both are passed full-length rather than short by one so the indexing
     matches the row it belongs to.
 
-    No MAX equivalent at any size, and unlike the dense routines here there
-    is no large-`n` MAX primitive to build one from either -- Thomas is
-    already linear, so there is nothing for `linalg.matmul` or
-    `linalg.qr_factorization` to improve on.
+    No MAX equivalent at any size, and unlike the dense routines here
+    there is nothing to gain from one: Thomas is already linear, so
+    MAX's `matmul` has nothing to improve on and the blocked treatment
+    the dense factorizations get would be pure overhead.
 
     `O(n)` rather than the `O(n^3)` a general solve would cost, which is
     why cubic splines and implicit one-dimensional PDE steps are tractable
@@ -662,16 +662,23 @@ def qr[
     Fixed iteration count (`n - 1` reflectors, `n` comptime), so this stays
     launchable inside a GPU thread like everything else here.
 
-    **The one function in this module MAX has a direct counterpart for.**
-    `linalg.qr_factorization` (`~/workspace/modular/max/kernels/src/linalg/qr_factorization.mojo`)
-    is a LAPACK-style in-place Householder factorization over
-    `LayoutTensor`, and is the thing to call for a large, plain-`dtype`
-    `A` -- with two caveats worth knowing before switching: it is
-    monomorphic in `dtype` (so no `Dual` passes through it, which is the
-    whole reason this version exists), and it is a CPU-only scalar-loop
-    reference implementation rather than a tuned kernel. It also returns
-    the reflectors plus a `sigma` vector, not an explicit `Q`; `apply_q`
-    and `form_q` alongside it are how you get `Q`'s action or `Q` itself.
+    **The one function here MAX has a counterpart for, and it is denied.**
+    `linalg.qr_factorization` is a LAPACK-style in-place Householder
+    factorization, but it is over the older `LayoutTensor`, which numax
+    does not bridge to -- interop is `TileTensor` only, so that this
+    library has exactly one owning tensor type and one view type. Three
+    other things would argue against it even without that rule: it is
+    monomorphic in `dtype` (no `Dual` passes through it, which is the whole
+    reason this version exists), it is a CPU-only scalar-loop reference
+    rather than a tuned kernel, and it returns reflectors plus a `sigma`
+    vector rather than an explicit `Q` (`apply_q`/`form_q` alongside it are
+    how a caller gets `Q`'s action or `Q` itself).
+
+    So there is no `Tensor` overload of `qr` yet. It is the next blocked
+    factorization to write, in the shape `cholesky` and `lu_factor`
+    already have -- panel reflectors, trailing update through MAX's
+    `matmul` -- and until it lands, a large QR is genuinely missing rather
+    than one import away.
     """
     var r = _zeros[T, n * n]()
     for i in range(n * n):
@@ -875,8 +882,10 @@ def outer[
     """The outer product `out[i, j] = a[i] * b[j]`, row-major.
 
     The rank-1 update every quasi-Newton method and every Householder
-    reflector is built from. MAX has `outer_product_acc`, but only on the
-    older `LayoutTensor` and only accumulating into an existing matrix.
+    reflector is built from. MAX's `outer_product_acc` is the nearest
+    thing and is denied twice over: it is on the older `LayoutTensor`,
+    which numax does not bridge to, and it only accumulates into an
+    existing matrix rather than producing one.
     """
     var out = _zeros[T, n * n]()
     for i in range(n):
