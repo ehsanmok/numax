@@ -62,6 +62,10 @@ Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
 `outer`), and blocked `cholesky`, `lu_factor` (returning a reusable
 `TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that chooses
 MAX's target, and the factorizations a `block` size that tunes the panel.
+`cholesky` is device-resident -- its panel steps are `panel.mojo` kernels
+addressing the matrix in place and its trailing update is fused into
+`matmul`'s epilogue, so nothing crosses to the host between the copy in and
+the copy out.
 `tril`/`triu` are `numax.core`'s, also MAX-backed.
 
 The BLAS-1 five are the newest and the plainest illustration of what

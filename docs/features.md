@@ -208,7 +208,7 @@ it rather than being replaced by it. `to_tensor`/`to_array` cross over.
 | Area | Surface — over `Tensor` |
 |---|---|
 | Products | `matmul` (comptime and run-time shapes), `matvec`, `batched_matmul` — MAX's `linalg.matmul`/`bmm` outright, so they inherit its Apple/NVIDIA/AMD/vendor-BLAS dispatch and numax names no architecture |
-| Factorizations | `cholesky`, `lu_factor` (returning a reusable `TensorLU` with `solve`/`det`), `solve` — MAX ships no factorization on `TileTensor`, so these are numax's, written blocked so the `O(n^3)` trailing update is a matrix product and goes back to `linalg.matmul`. Host-side panel; each docstring names that ceiling |
+| Factorizations | `cholesky`, `lu_factor` (returning a reusable `TensorLU` with `solve`/`det`), `solve` — MAX ships no factorization on `TileTensor`, so these are numax's, written blocked so the `O(n^3)` trailing update is a matrix product and goes back to `linalg.matmul`. `cholesky` is device-resident: the matrix is copied in and out and never otherwise touched by the host, with the panel steps in [`linalg/panel.mojo`](../numax/linalg/panel.mojo) and the trailing update fused into `matmul`'s epilogue. `lu_factor` and `solve` still factor their panel on the host; each docstring names its own ceiling |
 | Not yet | `qr`, `svd`, `eigh`, `cholesky_solve` over `Tensor`. MAX's `qr_factorization` is on the older `LayoutTensor`, which numax denies rather than bridges |
 
 Every `Tensor` entry point takes `gpu: Bool` (which picks MAX's `target`)

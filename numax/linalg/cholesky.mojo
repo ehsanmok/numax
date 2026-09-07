@@ -24,15 +24,35 @@ Neither tier pivots, and neither needs to: a symmetric positive definite
 matrix does not require it. That is a theorem, not luck.
 """
 
+from layout import Coord, TileTensor
+from layout.tile_layout import TensorLayout, row_major
+from layout.tile_tensor import PointerStorage
+from linalg.matmul import matmul as _max_matmul
 from std.collections import Array
-from std.math import sqrt
+from std.sys.info import align_of
+from std.utils import IndexList
 
-from ..core.array import Shaped
+from ..core.array import Shaped, tril, zeros, zeros_dyn
 from ..core.numeric import FloatLike, guard_nonzero
 
-from .blas import matmul
-from .common import _PIVOT_FLOOR, _staged, _zeros
+from .blas import _target
+from .common import _PIVOT_FLOOR, _zeros
+from .panel import _PANEL_THREADS, pack_block, potrf_diag, trsm_right_lower_t
 from .triangular import back_substitution, forward_substitution
+
+
+comptime _Dense[dtype: DType] = TileTensor[
+    dtype,
+    type_of(row_major(Coord(0, 0))),
+    MutAnyOrigin,
+    Storage=PointerStorage[element_width=1],
+]
+"""A runtime-shaped, contiguous rank-2 view over an existing pointer.
+
+The type of the operand `matmul` will accept and of the extents-only `c`
+it insists on. Runtime-shaped because the trailing block shrinks every
+step, contiguous because `matmul` reads its arguments as if they were.
+"""
 
 
 def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
@@ -78,105 +98,152 @@ def cholesky[
 ](mut a: Shaped[dtype, n, n]) raises -> Shaped[
     dtype, n, n
 ] where dtype.is_floating_point():
-    """**Tier 2.** The lower-triangular `L` with `L @ L.T == a`, blocked.
+    """**Tier 2.** The lower-triangular `L` with `L @ L.T == a`, blocked
+    and device-resident.
 
     MAX has no Cholesky -- `qr_factorization` is its only factorization,
     and that one is on the older `LayoutTensor` -- so this is numax filling
     a gap rather than calling into one. What it does not do is fill it from
     scratch: this is the right-looking blocked algorithm, so each step
-    factors one `block x block` diagonal panel, solves the panel below it,
+    factors one `block x block` diagonal block, solves the panel below it,
     and then subtracts `L21 @ L21.T` from everything remaining. That last
     subtraction is the whole cubic cost of a Cholesky, and it is a matrix
-    product, so it goes to MAX's `matmul` and inherits its dispatch. The
-    panel is `O(n * block^2)` and the GEMM is `O(n^3)`.
+    product, so it goes to `linalg.matmul` and inherits MAX's dispatch. The
+    panel work is `O(n * block^2)` and the GEMM is `O(n^3)`.
 
-    **Ceiling.** The panel factorization and the block staging run on the
-    host: the trailing submatrix of a row-major tensor is not contiguous,
-    and numax has no strided device sub-view to hand MAX yet, so each step
-    copies its panel down and its update back. The flops are MAX's, the
-    copies are not, which puts an `O(n^2)` band on what the GPU path can
-    win per step. The upgrade is a device-resident tiling that slices
-    `TileTensor` in place and calls MAX on the slice; the algorithm above
-    does not change when that lands, only `_staged` disappears.
+    **Nothing leaves the device.** The matrix is copied once on the way in
+    and once on the way out and is otherwise never touched by the host: the
+    diagonal block and the panel solve are `numax.linalg.panel` kernels
+    addressing the matrix in place, and the trailing update's result goes
+    straight back into the strided trailing block through `matmul`'s
+    epilogue. Only the GEMM's *operand* is copied, into an `n x block`
+    scratch reused every step, because MAX's `matmul` ignores the row
+    stride of its arguments and so cannot read `L21` where it lies. One
+    `L21` serves as both operands under `transpose_b`.
+
+    The cost is two `n x n` workspaces beside the matrix: one for the
+    result and one MAX writes the GEMM into and nothing reads, which has to
+    exist because `matmul` stores to `c` whether an epilogue is supplied or
+    not. LAPACK's `potrf` takes a workspace argument for the same reason.
+
+    The three round trips per block step that the previous version needed
+    -- panel down, operands down, update back -- are gone, and with them
+    the `O(n^2)` copy band they put on every step.
 
     `block` is a parameter so a caller can tune it or set it to `n` to get
     the unblocked algorithm back. No pivoting, and none is needed: a
     symmetric positive definite matrix does not require it.
 
     Raises when a diagonal entry comes out non-positive, which is what a
-    matrix that is not positive definite looks like from in here. The
-    sibling `cholesky` over `Array[T, n*n]` floors the diagonal instead and
-    returns something finite, because a tier-1 kernel cannot branch on a
-    value; this one is host-side and can afford to tell the truth.
+    matrix that is not positive definite looks like from in here. The check
+    happens **once, at the end**: `potrf_diag` records the first bad pivot
+    in a device-side `info` tensor and floors it, so the factorization runs
+    to completion either way rather than putting a device synchronization
+    in the loop. The sibling `cholesky` over `Array[T, n*n]` floors the
+    diagonal too but has no way to report it, because a tier-1 kernel
+    cannot branch on a value.
     """
     var ctx = a.context()
-    var work = a.to_host()
-    var k = 0
+    var work = Shaped[dtype, n, n](ctx)
+    var info = zeros[DType.int32, 1](ctx)
+    # `L21` made dense for the GEMM. `n x block` covers every step's panel,
+    # so it is allocated once rather than per step.
+    var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
+    # The GEMM's own output, which nothing here ever reads: the epilogue
+    # takes each tile as it is computed and subtracts it into the trailing
+    # block. It still has to exist and it still has to be the product's
+    # full size, because `matmul` writes `c` whether an epilogue is given
+    # or not -- measured, and the reason this is not overlaid on `work`.
+    var scratch = zeros_dyn[dtype, 2](n, n, ctx=ctx)
 
+    var wv = work.view()
+    var iv = info.view()
+    var ov = operand.view()
+    var sv = scratch.view()
+
+    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+
+    var k = 0
     while k < n:
         var nb = min(block, n - k)
 
-        # Panel: the diagonal block, unblocked. Contributions from earlier
-        # blocks are already gone, subtracted by their trailing update, so
-        # the inner sums start at `k` rather than at zero.
-        for j in range(nb):
-            var col = k + j
-            var diagonal = work[col * n + col]
-            for p in range(k, col):
-                diagonal -= work[col * n + p] * work[col * n + p]
-            if diagonal <= 0:
-                raise Error(
-                    "cholesky: matrix is not positive definite (pivot ",
-                    Float64(diagonal),
-                    " at index ",
-                    col,
-                    ")",
-                )
-            var root = sqrt(diagonal)
-            work[col * n + col] = root
-            for i in range(j + 1, nb):
-                var row = k + i
-                var entry = work[row * n + col]
-                for p in range(k, col):
-                    entry -= work[row * n + p] * work[col * n + p]
-                work[row * n + col] = entry / root
+        comptime if gpu:
+            ctx.enqueue_function[
+                potrf_diag[
+                    dtype,
+                    ALayout=type_of(wv).LayoutType,
+                    ILayout=type_of(iv).LayoutType,
+                    gpu=True,
+                ]
+            ](
+                wv,
+                iv,
+                Int32(k),
+                Int32(nb),
+                grid_dim=1,
+                block_dim=_PANEL_THREADS,
+            )
+        else:
+            potrf_diag(wv, iv, Int32(k), Int32(nb))
 
-        # Panel: everything below the diagonal block, solved against it.
-        for row in range(k + nb, n):
-            for j in range(nb):
-                var col = k + j
-                var entry = work[row * n + col]
-                for p in range(k, col):
-                    entry -= work[row * n + p] * work[col * n + p]
-                work[row * n + col] = entry / work[col * n + col]
+        trsm_right_lower_t[target=_target[gpu]()](wv, k, nb, n, ctx)
 
-        # Trailing update: A22 -= L21 @ L21.T, which is MAX's.
         var m = n - k - nb
         if m > 0:
-            var lower = List[Scalar[dtype]](capacity=m * nb)
-            var lower_t = List[Scalar[dtype]](capacity=nb * m)
-            for i in range(m):
-                for j in range(nb):
-                    lower.append(work[(k + nb + i) * n + k + j])
-            for j in range(nb):
-                for i in range(m):
-                    lower_t.append(work[(k + nb + i) * n + k + j])
+            var base = k + nb
 
-            var left = _staged[dtype](lower^, m, nb, ctx)
-            var right = _staged[dtype](lower_t^, nb, m, ctx)
-            var update = matmul[dtype, gpu](left, right).to_host()
+            # Dense `m x nb` over the head of the scratch, and a second
+            # view of it, because `matmul` takes `a` and `b` mutably and
+            # rejects two live views that share an origin.
+            var left: _Dense[dtype] = TileTensor(
+                ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
+            )
+            var right: _Dense[dtype] = TileTensor(
+                ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
+            )
+            pack_block[target=_target[gpu]()](wv, left, base, k, m, nb, ctx)
 
-            for i in range(m):
-                for j in range(i + 1):
-                    work[(k + nb + i) * n + k + nb + j] -= update[i * m + j]
+            var product: _Dense[dtype] = TileTensor(
+                sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, m))
+            )
+
+            @parameter
+            @always_inline
+            @__copy_capture(wv, base)
+            def subtract[
+                _dtype: DType,
+                width: SIMDLength,
+                *,
+                alignment: Int = align_of[SIMD[_dtype, width]](),
+            ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
+                var at = Coord(base + idx[0], base + idx[1])
+                wv.store[width](
+                    at,
+                    wv.load[width](at) - rebind[SIMD[dtype, width]](value),
+                )
+
+            _max_matmul[
+                transpose_b=True,
+                elementwise_lambda_fn=subtract,
+                target=_target[gpu](),
+            ](product, left, right, ctx)
 
         k += nb
 
-    for row in range(n):
-        for col in range(row + 1, n):
-            work[row * n + col] = Scalar[dtype](0)
+    ctx.synchronize()
 
-    return Shaped[dtype, n, n](ctx, work^)
+    var flag = Int(info.to_host()[0])
+    if flag != 0:
+        raise Error(
+            (
+                "cholesky: matrix is not positive definite (non-positive pivot"
+                " at index "
+            ),
+            flag - 1,
+            ")",
+        )
+
+    return tril[dtype, n, n, gpu](work)
 
 
 def cholesky_solve[

@@ -332,11 +332,45 @@ def test_cholesky_agrees_with_the_array_tier() raises:
 
 
 def test_cholesky_rejects_a_matrix_that_is_not_positive_definite() raises:
-    """Host-side, so it can raise where the tier-1 sibling must floor."""
+    """Reported through the `info` tensor rather than raised in the loop,
+    so the factorization still has to notice."""
     var ctx = _cpu()
     var a = Shaped[DType.float64, 2, 2](ctx, [1.0, 2.0, 2.0, 1.0])
     with assert_raises(contains="not positive definite"):
         _ = cholesky[DType.float64, 2, False, 2](a)
+
+
+def test_cholesky_reports_a_failure_in_a_later_block() raises:
+    """The pivot check is deferred to the end of the factorization -- one
+    read of `info` instead of a device synchronization per block step -- so
+    a failure in a block *after* the first has to survive every step that
+    follows it. This matrix is positive definite in its leading 2x2 and
+    fails at index 3, which is the second block at `block=2`.
+    """
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 4, 4](
+        ctx,
+        [
+            4.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            4.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            3.0,
+            0.0,
+            0.0,
+            3.0,
+            1.0,
+        ],
+    )
+    with assert_raises(contains="index 3"):
+        _ = cholesky[DType.float64, 4, False, 2](a)
 
 
 def _nonsymmetric_4x4() raises -> List[Float64]:
