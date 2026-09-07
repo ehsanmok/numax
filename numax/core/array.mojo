@@ -1493,18 +1493,30 @@ def _band_part[
     on a `bool` buffer fails to compile under the pinned toolchain, the
     same limitation `Tensor`'s own constructor documents. MAX only asks
     that the flag be nonzero to invert the mask, so the dtype is free.
+
+    Two device-side constraints, both of which fault at run time rather
+    than failing to compile, so neither is visible from the call:
+
+    - The three count tensors must live in **host** memory even when the
+      matrix is on the accelerator. MAX dereferences them while building
+      the launch, so device-resident counts fault with
+      `CUDA_ERROR_ILLEGAL_ADDRESS`.
+    - `read` must **copy**-capture its view (`var src`), not borrow it
+      (`imm src`). A borrow hands the kernel a host address for a
+      structure the device cannot reach, and faults the same way.
     """
     var ctx = a.context()
     var result = Shaped[dtype, rows, cols](ctx)
-    var num_lower = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](lower)])
-    var num_upper = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](upper)])
-    var exclude = Shaped[DType.int64, 1](ctx)
+    var counts = DeviceContext(api="cpu")
+    var num_lower = Shaped[DType.int64, 1](counts, [Scalar[DType.int64](lower)])
+    var num_upper = Shaped[DType.int64, 1](counts, [Scalar[DType.int64](upper)])
+    var exclude = Shaped[DType.int64, 1](counts)
     var src = a.view()
     var dst = result.view()
 
     def read[
         width: Int, rank: Int
-    ](idx: IndexList[rank]) {imm src} -> SIMD[dtype, width]:
+    ](idx: IndexList[rank]) {var src} -> SIMD[dtype, width]:
         return src.load[width](Coord(idx[0], idx[1]))
 
     _max_band_part[simd_width=1, target="gpu" if gpu else "cpu"](
