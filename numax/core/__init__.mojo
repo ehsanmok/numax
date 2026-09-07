@@ -13,6 +13,7 @@ from numax.core.tensor import map, reduce, reduce_axis   # the engine
 | `numeric` | The `FloatLike` trait, plus the branchless helpers (`max_of`, `blend`, `ge_indicator`) every conformer-generic kernel is built from |
 | `plain`, `dual`, `gradient`, `compensated`, `decimal`, `interval`, `complex` | The conformers: ordinary SIMD, forward-mode autodiff, multi-variable gradients, error-compensated arithmetic, exact base-10 fixed point, interval enclosures, complex over any of them |
 | `tensor` | `map`/`reduce`/`reduce_axis`/`reduce_rows`/`broadcast_op_rows` -- one `gpu: Bool` parameter picks CPU or GPU, comptime and runtime shapes under one name, plus `map_strided`/`reduce_strided` for a transposed or sliced view |
+| `rowwise` | `sum_axis`/`max_axis` -- the same axis reductions delegated to MAX's `algorithm.rowwise` scaffolder and `reduce_op` monoids, one body for both targets, threaded on CPU and tiered on GPU. `tensor`'s `reduce_axis` remains for a fold outside MAX's monoid set |
 | `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Shaped[DType.bool]`, and sort/search/mask |
 | `constants` | `pi` and `e` at any conformer |
@@ -182,6 +183,7 @@ from .dtypes import (
     u32,
     u64,
 )
+from .rowwise import max_axis, sum_axis
 from .tensor import (
     add_combine,
     broadcast_op_axis,

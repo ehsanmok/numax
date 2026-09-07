@@ -222,6 +222,7 @@ test-elementwise = "mojo -I . tests/core/test_elementwise.mojo"
 test-ops = "mojo -I . tests/core/test_ops.mojo"
 test-creation = "mojo -I . tests/core/test_creation.mojo"
 test-constants = "mojo -I . tests/core/test_constants.mojo"
+test-rowwise = "mojo -I . tests/core/test_rowwise.mojo"
 # Listed as dependencies rather than one long `&&` chain so a new suite is
 # one line to add in one place; pixi runs them in the order given.
 tests = { depends-on = [
@@ -231,6 +232,7 @@ tests = { depends-on = [
     "test-special",
     "test-tensor",
     "test-tensor-reduce",
+    "test-rowwise",
     "test-activations",
     "test-erf",
     "test-gamma",
