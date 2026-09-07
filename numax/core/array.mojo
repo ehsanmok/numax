@@ -10,7 +10,9 @@ are host-side. `numax.core.tensor` holds the GPU-launchable walks.
 tiling, reshaping, coalescing) but no NumPy-named *factory* functions --
 `TileTensor.zeros`/`.ones`/`.full`/`.arange` all fail to resolve (verified
 directly against `~/workspace/modular/max/kernels/src/layout/tile_tensor.mojo`),
-and `max.algorithm.functional` ships only `elementwise`. This module adds
+and no top-level kernel root supplies them either -- `algorithm` is a
+reduction library (`reduce_op` monoids over the `rowwise` scaffolder), not an
+array library. This module adds
 **only** those factory/manipulation names, comptime-shape, as a thin layer
 over `TileTensor` -- not a competing array type. Any array-level work in
 numax builds as a thin layer over `TileTensor`, because that is what every

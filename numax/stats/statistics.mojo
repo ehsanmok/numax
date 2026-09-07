@@ -5,12 +5,20 @@
 primitives underneath the same operations.
 
 `docs/parity.md` picks statistics as a genuine `numax` gap with a
-selective axis-1 lift: MAX ships no `mean`/`var`/`std`/`median`/`mode` at
-all (verified directly -- `max.algorithm.functional` exports only
-`elementwise`), but it does ship `argmax`/`argmin` (`nn.argmaxmin`), which
-this module routes to directly rather than re-implementing (the MAX-first
-check firing first, same shape as `numax.linalg.matmul`'s `Tensor` overload
-being MAX's `linalg.matmul`).
+selective axis-1 lift: MAX ships no NumPy-named `mean`/`var`/`std`/`median`/
+`mode` entry point, but it does ship `argmax`/`argmin` (`nn.argmaxmin`),
+which this module routes to directly rather than re-implementing (the
+MAX-first check firing first, same shape as `numax.linalg.matmul`'s `Tensor`
+overload being MAX's `linalg.matmul`).
+
+What MAX *does* ship, and an earlier revision of this docstring denied, is
+the fold underneath: `algorithm.reduce_op`'s `Welford` is an online
+mean/variance monoid, and `algorithm.rowwise` drives it on CPU and GPU from
+one body. The denial cited `max.algorithm.functional`, a `max.*` path that
+does export only `elementwise` -- but the kernel package is the **top-level
+`algorithm`** root, the same distinction that puts matmul in `linalg` and not
+`max.linalg`. So the entry points here are numax's to name, while the
+reduction they sit on is MAX's to provide.
 
 Two genuinely different shapes live in this one file, because they answer
 two different questions:

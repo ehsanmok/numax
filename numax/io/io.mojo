@@ -4,8 +4,8 @@
 
 `docs/parity.md` picks tensor I/O as a genuine `numax` gap: MAX ships
 no binary `TileTensor` I/O at all (verified by direct probe -- there is no
-`layout`-level save/load, and `max.algorithm.functional` exports only
-`elementwise`). This module is `numax`'s own round-trip format -- for
+`layout`-level save/load, and the top-level `algorithm` root is a reduction
+library, not I/O). This module is `numax`'s own round-trip format -- for
 NumPy interchange, `npy.mojo`'s `numpy.save`/`numpy.load` read and write
 `.npy` directly (no Python and no NumPy: the format is self-contained).
 `NMX1` is the better choice between numax programs, since it carries the

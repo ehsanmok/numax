@@ -30,7 +30,7 @@ Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
 |---|---|---|
 | Matmul | `matmul`, `batched_matmul`, `gemv`, `grouped_matmul`, vendor cuBLAS/rocBLAS | `linalg` |
 | Transpose | `transpose` (n-D), `matrix_band_part` | `linalg` |
-| Reductions | `reduce_sum/max/min/product/mean`, `reduce_argmin`, `reduce_argmax` | `algorithm.reductions` |
+| Reductions | `ReduceSum`/`ReduceMax`/`ReduceMin`/`ReduceProduct`, `MinMax`, `ArgMax`, `ArgMin`, `Welford` (online mean/variance), `OnlineLogSumExp` (flash softmax), driven by the `rowwise` CPU/GPU scaffolder | `algorithm.reduce_op`, `algorithm.rowwise` |
 | Drivers | `elementwise`, `parallelize`, `stencil` | `max.algorithm` |
 | Shape ops | `reshape`, `slice`, `concat`, `split`, `tile`, `broadcast`, `pad`, `arange` | `nn` |
 | Indexing | `gather`, `scatter_nd`, `index_tensor`, `arg_nonzero` | `nn` |
@@ -38,6 +38,25 @@ Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
 | GPU | `DeviceContext`, buffers, streams, `GPUInfo` | `max.gpu.host` |
 | RNG | `seed`, `rand`, `randn`, Philox `Random`/`NormalRandom` | `std.random` |
 | Scalar math | `exp`, `log`, trig, `pow`, `sqrt`, `hypot`, **`erf` `erfc` `gamma` `lgamma` `j0` `j1` `y0` `y1`**, `floor`/`ceil`/`trunc` | `std.math` |
+
+The `algorithm` root is a **reduction library, not a function library**, which
+is why its row names monoids rather than NumPy-shaped calls. A reduction is
+authored as a `ReduceOp` conformer — inlined state, `__init__` for the
+identity, `accumulate[w]` for the SIMD-tile fold, `join` to combine — and
+driven by `rowwise.launch`. Its stated contract is one body for both targets:
+the body never branches on `target`, because `rowwise.reduce`/`pjoin`/`once`/
+`simd` each comptime-dispatch on `params.target`, so GPU primitives never
+appear in CPU codegen and vice versa. That is the same CPU/GPU split
+`numax.core.tensor` spells with its own `gpu: Bool` parameter, which makes
+numax's reduce family a re-implementation of upstream scaffolding rather than
+a gap it fills.
+
+The convenience wrappers that *would* make this a function library —
+`reduce_sum`, `reduce_mean` and friends — are in `algorithm.reductions`, which
+is **26.6-dev only**: at the 26.5 pin `from algorithm.reductions import
+reduce_sum` fails with "unable to locate module 'reductions'". Composing
+`rowwise` with a `reduce_op` monoid is the supported spelling here, and it
+loses nothing, since `Welford` and `OnlineLogSumExp` are already at the pin.
 
 **Not available, so numax writes it:**
 

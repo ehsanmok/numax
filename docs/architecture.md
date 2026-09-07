@@ -11,8 +11,8 @@
    produces plain SIMD, autodiff, extra precision, or complex arithmetic
    depending on the conformer you instantiate it with.
 2. **NumPy/SciPy parity on Mojo, MAX-first** -- MAX's existing
-   infrastructure (`TileTensor`, the top-level `linalg` and `nn` roots,
-   `max.algorithm`, `max.gpu`) is the substrate for array-shaped work;
+   infrastructure (`TileTensor`, the top-level `linalg`, `nn` and `algorithm`
+   roots, `max.algorithm`, `max.gpu`) is the substrate for array-shaped work;
    `numax` adds
    the composable-type layer and the NumPy-named entry surface over it.
 

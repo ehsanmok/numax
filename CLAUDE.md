@@ -71,16 +71,25 @@ Two co-equal axes:
    `Gradient[Dual[Plain]]` is a Hessian, `Complex[Dual[Plain]]` differentiates
    holomorphically — so no kernel needs a per-type copy.
 2. **NumPy/SciPy parity, MAX-first.** MAX's `TileTensor`, the top-level
-   `linalg`/`nn` roots and `max.algorithm` are the substrate (there is no
-   `max.linalg` and no `max.random`; RNG is `std.random`). MAX-first is a gate,
-   not a preference: re-implementing something MAX already ships is a defect.
-   The gate is below and `docs/parity.md` is the per-area survey the
+   `linalg`/`nn`/`algorithm` roots and `max.algorithm` are the substrate (there
+   is no `max.linalg` and no `max.random`; RNG is `std.random`). MAX-first is a
+   gate, not a preference: re-implementing something MAX already ships is a
+   defect. The gate is below and `docs/parity.md` is the per-area survey the
    dispositions rest on.
 
 **The MAX-first gate.** Before writing any kernel that runs on a `Tensor`,
 search for the MAX one — the `user-max-docs` MCP against `stable`, plus the
 `~/workspace/modular-oss` checkout — and record the result in
-`docs/parity.md`. Then label it:
+`docs/parity.md`. Search **every** top-level kernel root, not the one the
+subsystem's name suggests: `linalg` (the GEMM family), `nn` (graph
+operators), `layout` (`TileTensor` itself), and `algorithm` — which is a
+reduction library, the `reduce_op` monoids driven by the `rowwise` CPU/GPU
+scaffolder. Checking a `max.*` path is not checking the root:
+`max.algorithm.functional` exports `elementwise` and little else, while the
+top-level `algorithm` root is where the reductions live. Reading the first as
+the second is what let numax hand-write a reduction engine MAX already
+shipped, the same `max.linalg`-vs-`linalg` distinction one paragraph up.
+Then label it:
 
 - **Delegate.** MAX has it, on `TileTensor`. Call it.
 - **Extend.** MAX lacks it, or ships it only on the old `LayoutTensor`. numax
