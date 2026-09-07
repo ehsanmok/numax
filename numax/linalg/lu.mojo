@@ -242,7 +242,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return out^
 
     def solve[
-        block: Int = 64
+        block: Int = 16
     ](mut self, mut b: Shaped[Self.dtype, Self.n]) raises -> Shaped[
         Self.dtype, Self.n
     ] where Self.dtype.is_floating_point():
@@ -383,7 +383,7 @@ def lu_factor[
 
 
 def lu_factor[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
 ](mut a: Shaped[dtype, n, n]) raises -> TensorLU[
     dtype, n, gpu
 ] where dtype.is_floating_point():
@@ -423,6 +423,12 @@ def lu_factor[
     equivalent because its panel is only `block x block`. The upgrade is a
     recursive panel (LAPACK's `getrf2`); its docstring in `panel.mojo` has
     the detail.
+
+    That ceiling is why `block` defaults to `16` here and `32` in
+    `cholesky`: the panel term is linear in `block` and this panel is the
+    expensive one, so the optimum sits lower. Both defaults are measured
+    (`bench/bench_linalg.mojo` sweeps `block`), and a caller who knows its
+    shape should tune it.
     """
     var ctx = a.context()
     var work = Shaped[dtype, n, n](ctx)

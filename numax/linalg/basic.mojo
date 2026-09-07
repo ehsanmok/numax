@@ -48,7 +48,7 @@ def solve[
 
 
 def solve[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
 ](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
     dtype, n
 ] where dtype.is_floating_point():

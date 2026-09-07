@@ -94,7 +94,7 @@ def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
 
 
 def cholesky[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
 ](mut a: Shaped[dtype, n, n]) raises -> Shaped[
     dtype, n, n
 ] where dtype.is_floating_point():
@@ -131,8 +131,13 @@ def cholesky[
     the `O(n^2)` copy band they put on every step.
 
     `block` is a parameter so a caller can tune it or set it to `n` to get
-    the unblocked algorithm back. No pivoting, and none is needed: a
-    symmetric positive definite matrix does not require it.
+    the unblocked algorithm back. The default is `32`, measured rather than
+    guessed: the cost is `A * n^2 * block` for the panel solve plus
+    `B * n^3 / block` for the GEMM's own writes to `c`, so it has an
+    interior minimum, and `32` sat at or next to it at every size and on
+    both targets (`bench/bench_linalg.mojo` sweeps it). No pivoting, and
+    none is needed: a symmetric positive definite matrix does not require
+    it.
 
     Raises when a diagonal entry comes out non-positive, which is what a
     matrix that is not positive definite looks like from in here. The check
