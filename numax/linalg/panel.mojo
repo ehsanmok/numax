@@ -26,13 +26,17 @@ the block size is a compile-time bound so nothing is allocated per step.
 **How the work is spread.** Two shapes appear, and which one a routine gets
 follows from whether its columns are independent:
 
-- The two `trsm`s and the packing are embarrassingly parallel over rows or
-  columns, so they go through `max.algorithm.elementwise` -- one MAX launch,
-  CPU threading and GPU dispatch included, no kernel written here.
+- The two `trsm`s, `gemv_sub` and the packing are embarrassingly parallel
+  over rows or columns, so they go through `max.algorithm.elementwise` --
+  one MAX launch, CPU threading and GPU dispatch included, no kernel
+  written here.
 - `potrf_diag` and `getrf_panel` are sequential over columns, with a
   cross-thread dependency at each one. They are single-thread-block kernels
   with `barrier()` between phases, so the whole panel is one launch rather
   than one launch per column.
+- `laswp` and `trsv_diag` are sequential outright and small enough that
+  they stay that way: `O(n)` and `O(block^2)` respectively, beside the
+  `O(n^2)` of the `gemv_sub`s between them.
 
 The single-block shape is the known ceiling, and it is worth stating
 plainly because it is where a device-resident factorization stops being
@@ -292,6 +296,130 @@ def getrf_panel[
         _sync[gpu]()
 
 
+def laswp[
+    dtype: DType,
+    XLayout: TensorLayout,
+    PLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    x: _View[dtype, XLayout],
+    pivots: _View[DType.int32, PLayout],
+    n: Int32,
+) where dtype.is_floating_point():
+    """Apply `getrf_panel`'s recorded row interchanges to a vector.
+
+    LAPACK's `laswp`: walk `j` upward swapping `x[j]` with
+    `x[pivots[j]]`, which reproduces on the right-hand side the same
+    permutation the factorization applied to the matrix. Order matters --
+    the interchanges compose -- so this is sequential and one thread does
+    all of it. That is `n` swaps against a factorization's `n^3 / 3`
+    flops, so there is nothing to parallelize that would matter.
+
+    Launch on the accelerator with `grid_dim=1`, `block_dim=1`.
+    """
+    if _lane[gpu]() != 0:
+        return
+    for j in range(Int(n)):
+        var other = Int(pivots[Coord(j)])
+        if other != j:
+            var keep = x[Coord(j)]
+            x.store[1](Coord(j), x[Coord(other)])
+            x.store[1](Coord(other), keep)
+
+
+def trsv_diag[
+    dtype: DType,
+    ALayout: TensorLayout,
+    XLayout: TensorLayout,
+    upper: Bool,
+    unit: Bool,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    x: _View[dtype, XLayout],
+    k: Int32,
+    nb: Int32,
+) where dtype.is_floating_point():
+    """Solve the `nb x nb` triangular block at `(k, k)` against
+    `x[k:k+nb]`, in place.
+
+    The diagonal step of a blocked triangular solve: `upper` picks back
+    substitution over forward, and `unit` says the stored diagonal is not
+    the triangle's (which is what `getrf_panel` leaves for `L`).
+
+    One thread, sequentially, because a substitution's row `i` needs row
+    `i - 1` and the inner dot is only `nb` long. At the default `block` the
+    whole routine is about 2000 scalar operations, run `n / block` times
+    per triangle, against the `O(n^2)` of the updates between them -- so
+    parallelizing it would be measuring noise. The updates are where the
+    work is, and those are `gemv_sub`.
+
+    Launch on the accelerator with `grid_dim=1`, `block_dim=1`.
+    """
+    if _lane[gpu]() != 0:
+        return
+    var k0 = Int(k)
+    var n_b = Int(nb)
+
+    for step in range(n_b):
+        var i = (n_b - 1 - step) if upper else step
+        var total = x[Coord(k0 + i)]
+        if upper:
+            for p in range(i + 1, n_b):
+                total = total - a[Coord(k0 + i, k0 + p)] * x[Coord(k0 + p)]
+        else:
+            for p in range(i):
+                total = total - a[Coord(k0 + i, k0 + p)] * x[Coord(k0 + p)]
+        comptime if unit:
+            x.store[1](Coord(k0 + i), total)
+        else:
+            x.store[1](Coord(k0 + i), total / a[Coord(k0 + i, k0 + i)])
+
+
+def gemv_sub[
+    dtype: DType,
+    ALayout: TensorLayout,
+    XLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    x: _View[dtype, XLayout],
+    row0: Int,
+    col0: Int,
+    rows: Int,
+    cols: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """`x[row0:row0+rows] -= a[row0:, col0:] @ x[col0:col0+cols]`.
+
+    The update between two diagonal steps of a blocked triangular solve,
+    and the only `O(n^2)` part of one. Independent per row, so it is one
+    `max.algorithm.elementwise`.
+
+    Reads a strided block of `a` directly rather than packing it, which is
+    the difference between this and the trailing update of a
+    factorization: an elementwise body does its own addressing, so the
+    stride is not a problem here the way it is for `matmul`. Writing the
+    result into the same vector it reads is safe because the two ranges
+    are disjoint by construction -- `x[col0:col0+cols]` is already solved
+    and `x[row0:]` is not yet.
+    """
+    if rows <= 0 or cols <= 0:
+        return
+
+    @always_inline
+    def update[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var a, var x, var row0, var col0, var cols}:
+        var row = row0 + coord_to_index_list(coord)[0]
+        var total = x[Coord(row)]
+        for j in range(cols):
+            total = total - a[Coord(row, col0 + j)] * x[Coord(col0 + j)]
+        x.store[1](Coord(row), total)
+
+    elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
+
+
 def trsm_right_lower_t[
     dtype: DType, ALayout: TensorLayout, target: StaticString = "cpu"
 ](
@@ -405,3 +533,34 @@ def pack_block[
         dst.store[w](coord, a.load[w](Coord(row0 + i, col0 + j)))
 
     elementwise[simd_width=1, target=target](copy, Coord(rows, cols), ctx)
+
+
+def pack_vector[
+    dtype: DType,
+    ALayout: TensorLayout,
+    DLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    dst: _View[dtype, DLayout],
+    offset: Int,
+    count: Int,
+    ctx: DeviceContext,
+) raises:
+    """`pack_block` for a rank-1 view: `dst[i] = a[offset + i]`.
+
+    A separate name rather than a rank parameter because the body indexes
+    with a `Coord` of the tensor's own rank, and a rank-1 view cannot be
+    given a two-coordinate index. Used to bring a right-hand side onto the
+    device beside a factorization, and to copy one there so a solve does
+    not overwrite its caller's vector.
+    """
+
+    @always_inline
+    def copy[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var a, var dst, var offset}:
+        var i = coord_to_index_list(coord)[0]
+        dst.store[1](Coord(i), a[Coord(offset + i)])
+
+    elementwise[simd_width=1, target=target](copy, Coord(count), ctx)

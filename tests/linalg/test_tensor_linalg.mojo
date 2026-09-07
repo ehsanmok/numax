@@ -524,7 +524,8 @@ def test_lu_factor_det_agrees_with_the_array_tier() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
-    var tensor_det = Float64(lu_factor[DType.float64, 4, False, 2](a).det())
+    var factorization = lu_factor[DType.float64, 4, False, 2](a)
+    var tensor_det = Float64(factorization.det())
 
     var lifted = array_zeros[P, 16]()
     for i in range(16):

@@ -60,11 +60,14 @@ def solve[
     throws the factorization away.
 
     Unlike the `Array[T, n*n]` sibling, this pivots, so it solves systems
-    that one cannot start on. The trade is the GPU and the generic `T`:
-    picking a row by magnitude is a branch on data.
+    that one cannot start on. The trade is the generic `T`: picking a row
+    by magnitude is a branch on data, so there is no conformer axis here.
+    Both halves do run on the accelerator at `gpu=True` -- the
+    factorization and the two substitutions alike, since `TensorLU` carries
+    `gpu` in its type and cannot be solved against on the wrong device.
     """
     var factorization = lu_factor[dtype, n, gpu, block](a)
-    return factorization.solve(b)
+    return factorization.solve[block](b)
 
 
 def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:

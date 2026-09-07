@@ -62,10 +62,13 @@ Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
 `outer`), and blocked `cholesky`, `lu_factor` (returning a reusable
 `TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that chooses
 MAX's target, and the factorizations a `block` size that tunes the panel.
-`cholesky` is device-resident -- its panel steps are `panel.mojo` kernels
-addressing the matrix in place and its trailing update is fused into
-`matmul`'s epilogue, so nothing crosses to the host between the copy in and
-the copy out.
+All three factorizations are device-resident -- their panel steps are
+`panel.mojo` kernels addressing the matrix in place and their trailing
+updates are fused into `matmul`'s epilogue, so nothing crosses to the host
+between the copy in and the copy out. `TensorLU` holds its factors and its
+pivot vector in device memory and carries `gpu` in its type, which is what
+makes solving a device factorization from host code a compile error rather
+than a device-pointer read.
 `tril`/`triu` are `numax.core`'s, also MAX-backed.
 
 The BLAS-1 five are the newest and the plainest illustration of what

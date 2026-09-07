@@ -11,7 +11,14 @@ conditioned -- `[[0, 1], [1, 0]]` is the standard example. `PivotedLU`
 `Plain[dtype, 1]` at width 1, because a SIMD `T` holds several matrices
 whose lanes would want different pivot orders and there is no single order
 to pick. `TensorLU` (from `lu_factor` over `Tensor`) pivots too and is
-blocked, so its trailing `L21 @ U12` update goes to `blas.matmul`.
+blocked and device-resident: the factors and the pivot vector stay in
+device memory, the panel and the two substitutions are `panel.mojo`
+kernels, and the trailing `L21 @ U12` update is fused into
+`linalg.matmul`'s epilogue.
+
+`TensorLU` carries `gpu` in its type, so a factorization built on the
+accelerator cannot be solved against by host code -- the mismatch is a
+compile error rather than a device-pointer read.
 
 Both factorization objects carry the solves that reuse them, which is the
 point of returning a factorization rather than a solution: one
@@ -21,16 +28,31 @@ Rank deficiency is not detected at any tier. A singular matrix factors to a
 zero pivot; `cond` on the original matrix is the check.
 """
 
+from layout import Coord, TileTensor
+from layout.tile_layout import row_major
+from linalg.matmul import matmul as _max_matmul
+from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.collections import Array
+from std.sys.info import align_of
+from std.utils import IndexList
 
-from ..core.array import Shaped, _context
+from ..core.array import Shaped, zeros, zeros_dyn
 from ..core.numeric import FloatLike, guard_nonzero
 from ..core.plain import Plain
 
-from .blas import matmul
-from .common import _PIVOT_FLOOR, _staged, _zeros
-from .triangular import back_substitution, forward_substitution
+from .blas import _target
+from .cholesky import _Dense
+from .common import _PIVOT_FLOOR, _zeros
+from .panel import (
+    _PANEL_THREADS,
+    getrf_panel,
+    laswp,
+    pack_block,
+    pack_vector,
+    trsm_left_lower_unit,
+)
+from .triangular import _trsv, back_substitution, forward_substitution
 
 
 def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
@@ -130,7 +152,9 @@ struct PivotedLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
         return product^
 
 
-struct TensorLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
+struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
+    Movable where dtype.is_floating_point()
+):
     """**Tier 2.** A blocked `LU` factorization of a `Tensor`, with partial
     pivoting, and the solves that reuse it.
 
@@ -154,80 +178,157 @@ struct TensorLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
     rather than being flagged. `cond` on the original matrix is the check.
     """
 
-    var factored: List[Scalar[Self.dtype]]
+    var factored: Shaped[Self.dtype, Self.n, Self.n]
     """`L` below the diagonal (its own diagonal an implicit `1`) and `U` on
     and above it, row-major, packed the way `PivotedLU` packs them.
 
-    A `List` rather than a `Tensor` because every use of it -- the two
-    substitutions in `solve`, the diagonal product in `det` -- walks
-    elements one at a time in an order fixed by the previous element. There
-    is no kernel to hand this to, so it stays where it is addressable, and
-    `to_tensor_factored` exists for a caller who wants it on a device
-    anyway.
+    A `Tensor`, on whichever device the factorization ran on, and it never
+    leaves it. An earlier version kept this as a host `List` on the
+    argument that a substitution walks elements in an order fixed by the
+    previous one -- true of an element, false of a *block*: `solve` is
+    blocked exactly the way the factorization is, so the sequential part
+    is one `block x block` system per step and the `O(n^2)` between them
+    is parallel.
     """
 
-    var permutation: List[Int]
-    """Row `i` of the factored matrix is row `permutation[i]` of the
-    original."""
+    var pivots: Shaped[DType.int32, Self.n]
+    """`pivots[j]` is the row column `j` interchanged with, LAPACK's `ipiv`
+    convention.
+
+    On the device beside `factored`, because `solve` applies these to the
+    right-hand side there. Composed in order rather than resolved into a
+    permutation vector, which is what lets `laswp` replay them with one
+    pass and no allocation.
+    """
 
     var sign: Int
-    """`+1` or `-1`, the parity of the row swaps; `det`'s sign."""
+    """`+1` or `-1`, the parity of the row swaps; `det`'s sign.
+
+    A host `Int`, computed once from `pivots` when the factorization
+    finishes: it is one number, and reading it off the device per `det`
+    call would cost a synchronization for a parity.
+    """
 
     def __init__(
         out self,
-        var factored: List[Scalar[Self.dtype]],
-        var permutation: List[Int],
+        var factored: Shaped[Self.dtype, Self.n, Self.n],
+        var pivots: Shaped[DType.int32, Self.n],
         sign: Int,
     ):
         self.factored = factored^
-        self.permutation = permutation^
+        self.pivots = pivots^
         self.sign = sign
 
     def to_tensor_factored(
-        self, ctx: Optional[DeviceContext] = None
+        mut self, ctx: Optional[DeviceContext] = None
     ) raises -> Shaped[Self.dtype, Self.n, Self.n]:
-        """The packed `L`/`U` as a tensor, for inspection or reuse."""
-        return Shaped[Self.dtype, Self.n, Self.n](
-            _context(ctx), self.factored.copy()
-        )
+        """The packed `L`/`U` as a tensor, for inspection or reuse.
 
-    def solve(
-        self, mut b: Shaped[Self.dtype, Self.n]
-    ) raises -> Shaped[Self.dtype, Self.n]:
+        A copy, so the caller cannot invalidate this factorization by
+        writing through it. `ctx` is accepted for signature compatibility
+        and ignored -- the copy stays on the factorization's own device.
+        """
+        var out = Shaped[Self.dtype, Self.n, Self.n](self.factored.context())
+        pack_block[target=_target[Self.gpu]()](
+            self.factored.view(),
+            out.view(),
+            0,
+            0,
+            Self.n,
+            Self.n,
+            self.factored.context(),
+        )
+        self.factored.context().synchronize()
+        return out^
+
+    def solve[
+        block: Int = 64
+    ](mut self, mut b: Shaped[Self.dtype, Self.n]) raises -> Shaped[
+        Self.dtype, Self.n
+    ] where Self.dtype.is_floating_point():
         """`x` with `A @ x == b`, reusing this factorization.
 
-        `scipy.linalg.lu_solve`. Permute, forward-substitute through `L`
-        (unit diagonal, so no division), back-substitute through `U`. Both
-        substitutions are inherently sequential -- element `i` needs
-        element `i - 1` -- so there is no kernel to delegate to and no MAX
-        call here. The cubic work already happened in the factorization,
-        which is where MAX was.
+        `scipy.linalg.lu_solve`. Three steps, all on the factorization's
+        own device: replay the interchanges onto `b` with `laswp`,
+        forward-substitute through `L` (unit diagonal, so no division),
+        back-substitute through `U`.
+
+        Blocked like the factorization, so "a substitution is sequential"
+        is true only of the `block x block` diagonal system each step
+        solves; the `O(n^2)` update between them is one row per thread. The
+        factor stays where the factorization left it, which is the point of
+        `lu_factor` returning this object rather than a matrix.
         """
-        var rhs = b.to_host()
-        var x = List[Scalar[Self.dtype]](length=Self.n, fill=0)
-        for i in range(Self.n):
-            x[i] = rhs[self.permutation[i]]
+        var ctx = self.factored.context()
+        var x = Shaped[Self.dtype, Self.n](ctx)
+        var fv = self.factored.view()
+        var xv = x.view()
+        var pv = self.pivots.view()
 
-        for i in range(Self.n):
-            var acc = x[i]
-            for p in range(i):
-                acc -= self.factored[i * Self.n + p] * x[p]
-            x[i] = acc
+        pack_vector[target=_target[Self.gpu]()](b.view(), xv, 0, Self.n, ctx)
 
-        for step in range(Self.n):
-            var i = Self.n - 1 - step
-            var acc = x[i]
-            for p in range(i + 1, Self.n):
-                acc -= self.factored[i * Self.n + p] * x[p]
-            x[i] = acc / self.factored[i * Self.n + i]
+        comptime if Self.gpu:
+            ctx.enqueue_function[
+                laswp[
+                    Self.dtype,
+                    XLayout=type_of(xv).LayoutType,
+                    PLayout=type_of(pv).LayoutType,
+                    gpu=True,
+                ]
+            ](xv, pv, Int32(Self.n), grid_dim=1, block_dim=1)
+        else:
+            laswp(xv, pv, Int32(Self.n))
 
-        return Shaped[Self.dtype, Self.n](b.context(), x^)
+        _trsv[
+            Self.dtype,
+            type_of(fv).LayoutType,
+            type_of(xv).LayoutType,
+            upper=False,
+            unit=True,
+            gpu=Self.gpu,
+        ](fv, xv, Self.n, block, ctx)
+        _trsv[
+            Self.dtype,
+            type_of(fv).LayoutType,
+            type_of(xv).LayoutType,
+            upper=True,
+            unit=False,
+            gpu=Self.gpu,
+        ](fv, xv, Self.n, block, ctx)
 
-    def det(self) raises -> Scalar[Self.dtype]:
-        """`det(A)`: the product of `U`'s diagonal, times the swap parity."""
+        ctx.synchronize()
+        return x^
+
+    def det(
+        mut self,
+    ) raises -> Scalar[Self.dtype] where Self.dtype.is_floating_point():
+        """`det(A)`: the product of `U`'s diagonal, times the swap parity.
+
+        The diagonal is gathered on the device into an `n`-vector and only
+        that is read back, so the cost is `O(n)` of transfer rather than
+        the `O(n^2)` a copy of the factor would be. The product itself is
+        `n` multiplications and stays on the host, where an overflow is at
+        least visible.
+        """
+        var ctx = self.factored.context()
+        var diagonal = Shaped[Self.dtype, Self.n](ctx)
+        var fv = self.factored.view()
+        var dv = diagonal.view()
+
+        @always_inline
+        def gather[w: Int, alignment: Int = 1](coord: Coord) {var fv, var dv}:
+            var i = coord[0]
+            dv.store[1](Coord(i), fv[Coord(i, i)])
+
+        elementwise[simd_width=1, target=_target[Self.gpu]()](
+            gather, Coord(Self.n), ctx
+        )
+        ctx.synchronize()
+
+        var values = diagonal.to_host()
         var product = Scalar[Self.dtype](self.sign)
         for i in range(Self.n):
-            product *= self.factored[i * Self.n + i]
+            product *= values[i]
         return product
 
 
@@ -284,7 +385,7 @@ def lu_factor[
 def lu_factor[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
 ](mut a: Shaped[dtype, n, n]) raises -> TensorLU[
-    dtype, n
+    dtype, n, gpu
 ] where dtype.is_floating_point():
     """**Tier 2.** Factor `a` into `P @ L @ U`, blocked.
     `scipy.linalg.lu_factor`.
@@ -304,85 +405,128 @@ def lu_factor[
     is unnecessary. The `Array[T, n*n]` sibling `lu_factor` is the one to
     call at a conformer other than a raw `dtype`.
 
-    **Ceiling.** As in `cholesky`, the panel runs on the host and each step
-    stages its blocks down and its update back, because numax has no
-    strided device sub-view to hand MAX. The flops are MAX's, the copies
-    are not.
+    **Nothing leaves the device.** As in `cholesky`, the matrix crosses to
+    the host once on the way in and once on the way out: the panel is a
+    `numax.linalg.panel` kernel addressing the matrix in place, the block
+    row is an `elementwise` solve, and the trailing update's result goes
+    back into the strided trailing block through `matmul`'s epilogue. Only
+    the GEMM's two operands are packed dense, because MAX's `matmul`
+    ignores their row stride.
+
+    The cost is a `n x n` workspace MAX writes the GEMM into that nothing
+    reads -- `matmul` stores to `c` whether an epilogue is given or not --
+    plus an `n x block` and a `block x n` for the operands.
+
+    **Ceiling.** `getrf_panel` runs on one thread block: its panel is the
+    full remaining height, so it is `O(n^2 * block / 2)` of work on a
+    single SM while the rest of the accelerator waits. `cholesky` has no
+    equivalent because its panel is only `block x block`. The upgrade is a
+    recursive panel (LAPACK's `getrf2`); its docstring in `panel.mojo` has
+    the detail.
     """
     var ctx = a.context()
-    var work = a.to_host()
-    var permutation = List[Int](length=n, fill=0)
-    for i in range(n):
-        permutation[i] = i
-    var sign = 1
-    var k = 0
+    var work = Shaped[dtype, n, n](ctx)
+    var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
+    var info = zeros[DType.int32, 1](ctx)
+    # `L21` and `U12` made dense for the GEMM, and the GEMM's own output,
+    # which nothing reads. All three are allocated once.
+    var left_operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
+    var right_operand = zeros_dyn[dtype, 2](block, n, ctx=ctx)
+    var scratch = zeros_dyn[dtype, 2](n, n, ctx=ctx)
 
+    var wv = work.view()
+    var pv = pivots.view()
+    var iv = info.view()
+    var lv = left_operand.view()
+    var rv = right_operand.view()
+    var sv = scratch.view()
+
+    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+
+    var k = 0
     while k < n:
         var nb = min(block, n - k)
 
-        # Panel: unblocked right-looking LU over columns k..k+nb-1, taking
-        # the rank-1 update only as far as the panel's own right edge.
-        for j in range(nb):
-            var col = k + j
+        comptime if gpu:
+            ctx.enqueue_function[
+                getrf_panel[
+                    dtype,
+                    ALayout=type_of(wv).LayoutType,
+                    PLayout=type_of(pv).LayoutType,
+                    ILayout=type_of(iv).LayoutType,
+                    gpu=True,
+                ]
+            ](
+                wv,
+                pv,
+                iv,
+                Int32(k),
+                Int32(nb),
+                Int32(n),
+                grid_dim=1,
+                block_dim=_PANEL_THREADS,
+            )
+        else:
+            getrf_panel(wv, pv, iv, Int32(k), Int32(nb), Int32(n))
 
-            var best = col
-            var best_magnitude = abs(Float64(work[col * n + col]))
-            for i in range(col + 1, n):
-                var magnitude = abs(Float64(work[i * n + col]))
-                if magnitude > best_magnitude:
-                    best = i
-                    best_magnitude = magnitude
+        trsm_left_lower_unit[target=_target[gpu]()](wv, k, nb, n, ctx)
 
-            if best != col:
-                for c in range(n):
-                    var swap = work[col * n + c]
-                    work[col * n + c] = work[best * n + c]
-                    work[best * n + c] = swap
-                var swap_index = permutation[col]
-                permutation[col] = permutation[best]
-                permutation[best] = swap_index
-                sign = -sign
-
-            var pivot = work[col * n + col]
-            for i in range(col + 1, n):
-                work[i * n + col] /= pivot
-                for jj in range(j + 1, nb):
-                    work[i * n + k + jj] -= (
-                        work[i * n + col] * work[col * n + k + jj]
-                    )
-
-        # Block row: U12 = L11^-1 @ A12, with L11 unit-diagonal.
-        for i in range(nb):
-            var row = k + i
-            for col in range(k + nb, n):
-                var entry = work[row * n + col]
-                for p in range(i):
-                    entry -= work[row * n + k + p] * work[(k + p) * n + col]
-                work[row * n + col] = entry
-
-        # Trailing update: A22 -= L21 @ U12, which is MAX's.
         var m = n - k - nb
         if m > 0:
-            var left_values = List[Scalar[dtype]](capacity=m * nb)
-            var right_values = List[Scalar[dtype]](capacity=nb * m)
-            for i in range(m):
-                for j in range(nb):
-                    left_values.append(work[(k + nb + i) * n + k + j])
-            for i in range(nb):
-                for j in range(m):
-                    right_values.append(work[(k + i) * n + k + nb + j])
+            var base = k + nb
 
-            var left = _staged[dtype](left_values^, m, nb, ctx)
-            var right = _staged[dtype](right_values^, nb, m, ctx)
-            var update = matmul[dtype, gpu](left, right).to_host()
+            var left: _Dense[dtype] = TileTensor(
+                lv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
+            )
+            var right: _Dense[dtype] = TileTensor(
+                rv.ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, m))
+            )
+            pack_block[target=_target[gpu]()](wv, left, base, k, m, nb, ctx)
+            pack_block[target=_target[gpu]()](wv, right, k, base, nb, m, ctx)
 
-            for i in range(m):
-                for j in range(m):
-                    work[(k + nb + i) * n + k + nb + j] -= update[i * m + j]
+            var product: _Dense[dtype] = TileTensor(
+                sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, m))
+            )
+
+            @parameter
+            @always_inline
+            @__copy_capture(wv, base)
+            def subtract[
+                _dtype: DType,
+                width: SIMDLength,
+                *,
+                alignment: Int = align_of[SIMD[_dtype, width]](),
+            ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
+                var at = Coord(base + idx[0], base + idx[1])
+                wv.store[width](
+                    at,
+                    wv.load[width](at) - rebind[SIMD[dtype, width]](value),
+                )
+
+            _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
+                product, left, right, ctx
+            )
 
         k += nb
 
-    return TensorLU[dtype, n](work^, permutation^, sign)
+    ctx.synchronize()
+
+    # The interchange list is `n` int32s, so reading it back to count the
+    # parity is `O(n)` of transfer against the factorization's `O(n^3)`.
+    # `pivots` is over-allocated by `_PANEL_THREADS` because
+    # `getrf_panel`'s single block parks its candidates in the tail; only
+    # the head travels with the factorization.
+    var recorded = pivots.to_host()
+    var sign = 1
+    var trimmed = zeros[DType.int32, n](ctx)
+    var head = List[Scalar[DType.int32]](capacity=n)
+    for j in range(n):
+        head.append(recorded[j])
+        if Int(recorded[j]) != j:
+            sign = -sign
+    trimmed.copy_from_host(head^)
+
+    return TensorLU[dtype, n, gpu](work^, trimmed^, sign)
 
 
 def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:

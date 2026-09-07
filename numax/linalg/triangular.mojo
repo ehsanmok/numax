@@ -1,13 +1,17 @@
 """Solves against triangular and tridiagonal matrices.
 `scipy.linalg`'s `solve_triangular` and the banded solvers.
 
-**Tier 1.** Fixed trip count, no per-lane branching, so all of it launches
-inside a GPU thread at any conformer.
+**Tier 1** for the `Array` substitutions: fixed trip count, no per-lane
+branching, so all of it launches inside a GPU thread at any conformer.
+These are the primitives the factorizations in `cholesky`, `lu` and `qr`
+finish with.
 
-MAX has no triangular solve at any size, so there is nothing to delegate
-to here and no `Tensor` tier: these are the substitution primitives the
-factorizations in `cholesky`, `lu` and `qr` finish with, and they are
-`Array`-only.
+MAX has no triangular solve at any size -- no `trsm` outside the private
+cuBLAS/rocBLAS FFI -- so nothing here delegates. The blocked, device-
+resident `_trsv` pair is numax's too: each step solves one `block x block`
+diagonal system with a `numax.linalg.panel` kernel and then updates the
+rest of the vector with a `gemv_sub`, which is where the `O(n^2)` is and
+which MAX's `elementwise` parallelizes. `TensorLU.solve` is their caller.
 
 `tridiagonal_solve` is Thomas, `O(n)` rather than the `O(n^3)` a general
 solve costs, which is what makes cubic splines and implicit 1-D PDE steps
@@ -15,11 +19,15 @@ tractable. It will not gain a blocked `Tensor` form: Thomas is already
 linear and has nothing to hand a GEMM.
 """
 
+from layout.tile_layout import TensorLayout
+from max.gpu.host import DeviceContext
 from std.collections import Array
 
 from ..core.numeric import FloatLike, guard_nonzero
 
+from .blas import _target
 from .common import _PIVOT_FLOOR, _zeros
+from .panel import _View, gemv_sub, trsv_diag
 
 
 def forward_substitution[
@@ -62,6 +70,70 @@ def back_substitution[
             total = total - (upper[i * n + j] * x[j])
         x[i] = total / guard_nonzero(upper[i * n + i], T.constant(_PIVOT_FLOOR))
     return x^
+
+
+def _trsv[
+    dtype: DType,
+    ALayout: TensorLayout,
+    XLayout: TensorLayout,
+    upper: Bool,
+    unit: Bool,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    x: _View[dtype, XLayout],
+    n: Int,
+    block: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Solve a triangular system against a vector, in place, blocked and
+    device-resident.
+
+    `upper` picks back substitution over forward; `unit` says the stored
+    diagonal is not the triangle's, which is what the packed `L` of an LU
+    needs. The triangle is read where it lies -- a strided block is fine
+    here, because both steps address it themselves rather than handing it
+    to `matmul`.
+
+    Two launches per block step: `trsv_diag` for the diagonal system,
+    which is sequential and small, and `gemv_sub` for the update to the
+    rest of the vector, which is `O(n^2)` overall and parallel over rows.
+    Nothing crosses to the host.
+    """
+    var steps = (n + block - 1) // block
+    for step in range(steps):
+        var k = (n - (step + 1) * block) if upper else (step * block)
+        var nb = block
+        if upper:
+            if k < 0:
+                nb = block + k
+                k = 0
+        else:
+            nb = min(block, n - k)
+
+        comptime if gpu:
+            ctx.enqueue_function[
+                trsv_diag[
+                    dtype,
+                    ALayout=ALayout,
+                    XLayout=XLayout,
+                    upper=upper,
+                    unit=unit,
+                    gpu=True,
+                ]
+            ](a, x, Int32(k), Int32(nb), grid_dim=1, block_dim=1)
+        else:
+            trsv_diag[dtype, ALayout, XLayout, upper, unit](
+                a, x, Int32(k), Int32(nb)
+            )
+
+        # Everything not yet solved, updated by the block just solved.
+        comptime if upper:
+            gemv_sub[target=_target[gpu]()](a, x, 0, k, k, nb, ctx)
+        else:
+            gemv_sub[target=_target[gpu]()](
+                a, x, k + nb, k, n - k - nb, nb, ctx
+            )
 
 
 def tridiagonal_solve[
