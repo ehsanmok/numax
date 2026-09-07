@@ -216,6 +216,7 @@ from .linalg.linalg import (
     det,
     asum,
     axpy,
+    batched_matmul,
     dot,
     eigh,
     eigvals,
@@ -232,6 +233,8 @@ from .linalg.linalg import (
     solve,
     svd,
     trace,
+    tril,
+    triu,
 )
 
 # Statistics and sampling. The builtin-shadowing reductions are excluded --

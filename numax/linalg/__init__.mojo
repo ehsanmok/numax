@@ -1,23 +1,35 @@
-"""numax.linalg: small dense linear algebra, generic over FloatLike.
+"""numax.linalg: dense linear algebra at two tiers, one set of names.
 
-Matrices are comptime-sized `Array[T, n*n]` in registers, not heap
-allocations. That is what makes `cholesky` differentiable at `Dual` and
-launchable inside a GPU thread; MAX's own `linalg` is the right call past
-roughly 8x8, and it is monomorphic in a raw `dtype`, so no conformer
-passes through it.
+The `Array[T, n*n]` tier is comptime-sized and lives in registers, not on
+the heap. That is what makes `cholesky` differentiable at `Dual` and
+launchable inside a GPU thread, and it is the right shape for the small
+matrices that appear *inside* a per-element kernel.
+
+The `Tensor` tier is MAX's. `matmul`, `matvec`, `batched_matmul`, `tril`
+and `triu` call MAX kernels over `TileTensor`, so they inherit its whole
+dispatch tree -- Apple, NVIDIA, AMD, vendor BLAS -- without numax naming an
+architecture. They are `dtype`-monomorphic, which is why the `Array` tier
+exists beside them rather than being replaced by them.
+
+Names are shared where both tiers have the operation; overload resolution
+picks by argument type. `to_tensor`/`to_array` cross between them.
 
 ```mojo
-from numax.linalg import cholesky, qr, solve, det, norm
+from numax.linalg import cholesky, qr, solve, det, norm, matmul
 ```
 
-Factorizations (`cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`), solves
-(`solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, the
+Over `Array`: factorizations (`cholesky`, `lu`, `qr`, `eigh`, `eigvals`,
+`svd`), solves (`solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, the
 substitutions), inverses (`inverse`, `pinv`), scalars (`det`, `trace`,
 `cond`, `slogdet_cholesky`), norms (`norm` at `fro`/`1`/`inf`, `nrm2`, `asum`)
-and products (`dot`, `axpy`, `outer`, `matvec`,
-`matmul`). Tier 1, except `lu_factor` and the `PivotedLU` it returns:
-choosing a pivot by magnitude is a branch on data, which buys the
-matrices unpivoted `lu` cannot factor at the cost of the GPU.
+and products (`dot`, `axpy`, `outer`, `matvec`, `matmul`). Tier 1, except
+`lu_factor` and the `PivotedLU` it returns: choosing a pivot by magnitude is
+a branch on data, which buys the matrices unpivoted `lu` cannot factor at
+the cost of the GPU.
+
+Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
+`batched_matmul`, `tril` and `triu`, each taking a `gpu: Bool` parameter
+that chooses MAX's target.
 """
 
 from .linalg import (
@@ -51,4 +63,7 @@ from .linalg import (
     svd,
     trace,
     tridiagonal_solve,
+    batched_matmul,
+    tril,
+    triu,
 )

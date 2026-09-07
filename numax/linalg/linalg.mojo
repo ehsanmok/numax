@@ -1,17 +1,29 @@
-"""Small dense linear algebra, `FloatLike`-generic and compile-time-sized.
+"""Dense linear algebra: a `FloatLike` tier over `Array`, a MAX tier over
+`Tensor`.
 
-**This module is tier 1, except `lu_factor`/`lu_solve`/`det_lu`, which
-declare tier 2 in their own docstrings.** Every tier-1 factorization here
+**The `Array[T, n*n]` half is tier 1**, except `lu_factor`/`lu_solve`/`det_lu`,
+which declare tier 2 in their own docstrings. Every tier-1 factorization here
 runs a fixed number of passes -- `n - 1` reflectors, `sweeps` Jacobi sweeps
 -- and selects branchlessly, so all of it launches inside a GPU thread.
 That is also what forecloses pivoting; see "Scope: no pivoting" below.
 
-MAX already ships `linalg.matmul` and `linalg.qr_factorization` over
-`TileTensor`, both fast and both CPU/GPU. Neither is what this module is
-for: they are monomorphic in a raw `dtype`, so a `Dual` cannot pass through
-them, which makes them exactly as differentiable as a BLAS call. Anything
-here that only needs raw speed on large matrices should use MAX's version
-instead -- this module exists for the cases where the *type* matters.
+**The `Tensor` half, at the bottom of the file, is MAX's.** `matmul`,
+`matvec`, `batched_matmul`, `tril` and `triu` allocate a destination, hand
+MAX two `TileTensor` views and wait; `linalg.matmul` alone is a dispatch
+tree covering Apple simdgroup, SM100, SM90, Ampere/CDNA, vendor
+cuBLAS/rocBLAS/hipBLASLt and AMD RDNA, so numax names no architecture.
+Those entry points are `dtype`-monomorphic, which is exactly why the
+`Array` half exists beside them rather than being replaced by them.
+
+The two halves share names deliberately. `matmul(a, b)` picks by argument
+type: an `Array[T, n*n]` factors one small matrix per SIMD lane inside a
+kernel, a `Tensor` goes to MAX. They live in one module because Mojo wants
+a single owner per name -- importing one name from two modules is
+deprecated -- so a name that exists at both tiers is defined once, here.
+
+`Tensor` in, `Tensor` out on the MAX half. `TileTensor` appears only as the
+`.view()` at a MAX call site; it is the interop type, not something a
+caller of this module passes.
 
 A differentiable Cholesky is the concrete payoff. Gaussian process
 marginal likelihoods, Kalman filter updates, and multivariate normal
@@ -60,35 +72,39 @@ and the generic `T` to do it -- they are `Plain[dtype, 1]` at width 1, since
 a SIMD lane holding a different matrix would want a different pivot order
 -- which is the whole trade, stated once here and again at each of them.
 
-## Use MAX past N (see `docs/parity.md`)
+## Cross the tiers past N (see `docs/parity.md`)
 
-Every function in this module is register-resident and register-bound: an
+Every `Array` function here is register-resident and register-bound: an
 `n x n` matrix is `n*n` values of `Array[T, n*n]`, so both compile time and
-register pressure grow with `n`, and the naive triple-loop `matmul` this
-module uses is the right algorithm at small `n` and the wrong one past it.
-`bench/bench_matmul.mojo`'s measured crossover on an M3 Pro is `n = 8` for
-a single matrix, `n = 16` against the 4-wide batched form, and by `n = 64`
-`linalg.matmul` is ~130x faster -- see `matmul`'s own docstring below
-and `docs/performance.md`'s "Use MAX past N" table for the numbers.
+register pressure grow with `n`, and the naive triple-loop `matmul` the
+`Array` tier uses is the right algorithm at small `n` and the wrong one
+past it. `bench/bench_matmul.mojo`'s measured crossover on an M3 Pro is
+`n = 8` for a single matrix, `n = 16` against the 4-wide batched form, and
+by `n = 64` MAX is ~130x faster -- see `docs/performance.md`'s "Use MAX
+past N" table.
 
-`linalg.matmul` and `linalg.qr_factorization` (both over
-`TileTensor`, both CPU/GPU, both monomorphic in a raw `dtype`) are the only
-two dense-linear-algebra primitives MAX itself ships (import root is the
-top-level `linalg`, not `max.linalg` -- there is no such package; verified
-against
-`~/workspace/modular/max/kernels/src/linalg/` -- there is no MAX
-`lu`/`solve`/`det`/`trace`/`norm`/`inverse` at all, generic or otherwise).
-So for `lu`/`solve`/`det`/`inverse`/`cholesky_solve` at a large, plain-`T`
-`n`, there is no direct MAX function to call in this function's place --
-the honest recommendation is to build the large-matrix equivalent from
-`linalg.qr_factorization` (Householder QR is what LAPACK-style solvers
-use for exactly this), not to expect a drop-in replacement. Each function's
-own docstring below repeats this where it applies, so the note is visible
-at the call site, not only here.
+Past that crossover the answer is now in this same module: `to_tensor` the
+data and call the `Tensor` overload, which is MAX's kernel. `to_array` is
+the way back.
+
+What MAX does *not* ship is the rest of `scipy.linalg`. There is no MAX
+`lu`, `solve`, `det`, `trace`, `norm`, `inverse`, Cholesky, SVD, eigen or
+triangular solve -- verified against `stable` and
+`~/workspace/modular-oss/max/kernels/src/linalg/`. MAX's one factorization,
+`qr_factorization`, is on the older `LayoutTensor` and is a CPU-only scalar
+loop, so numax denies it rather than bridging to it. Those gaps are numax's
+to fill, written in MAX's idiom on `TileTensor` so the fill is upstreamable.
 """
 
+from layout import Coord, TileTensor
+from layout.tile_layout import row_major
+from linalg.bmm import batched_matmul as _max_batched_matmul
+from linalg.matmul import matmul as _max_matmul
+from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from std.collections import Array
+from std.utils import IndexList
 
+from ..core.array import Dynamic, Shaped, zeros_dyn
 from ..core.numeric import (
     FloatLike,
     blend,
@@ -1331,3 +1347,199 @@ def cond[T: FloatLike, n: Int, sweeps: Int = 12](a: Array[T, n * n]) -> T:
         largest = max_of(largest, values[i])
         smallest = min_of(smallest, values[i])
     return largest / guard_nonzero(smallest, T.constant(_PIVOT_FLOOR))
+
+
+# ------------------------------------------------------------------
+# The MAX tier: `Tensor` in, `Tensor` out.
+#
+# Everything below delegates to a MAX kernel over `TileTensor`. numax
+# allocates the destination, takes `.view()`s, calls MAX and synchronizes;
+# the algorithm, the tiling and the per-architecture choice are all MAX's.
+#
+# `gpu` is a compile-time parameter rather than a look at `ctx.api()`
+# because MAX's `target` is a `StaticString`: deciding it at run time would
+# compile the GPU kernels into every CPU-only build. `map` and `reduce` in
+# `numax.core.tensor` take the same parameter for the same reason.
+#
+# These take their operands mutably even though they only read them --
+# `view()` hands back a `TileTensor` that can write, and a mutable view
+# cannot be built from an immutable binding. `transpose` in
+# `numax.core.array` has the same signature for the same reason.
+# ------------------------------------------------------------------
+
+
+def matmul[
+    dtype: DType, m: Int, k: Int, n: Int, gpu: Bool = False
+](mut a: Shaped[dtype, m, k], mut b: Shaped[dtype, k, n]) raises -> Shaped[
+    dtype, m, n
+]:
+    """The matrix product `a @ b`, on `a`'s own device.
+
+    `linalg.matmul` does the work, and that one call is a whole dispatch
+    tree: Apple simdgroup kernels, SM100 `tcgen05`, SM90, Ampere and CDNA
+    multistage GEMM with tile shapes chosen by heuristic, GEMV when a
+    dimension is 1, vendor cuBLAS/rocBLAS/hipBLASLt, AMD RDNA WMMA, and a
+    naive kernel when nothing else fits. numax names no architecture and
+    picks no kernel.
+
+    The sibling `matmul` over `Array[T, n*n]` is the one to call inside a
+    kernel, or at any conformer other than a raw `dtype`; `to_tensor`
+    crosses from there to here and `to_array` back.
+    """
+    var ctx = a.context()
+    var result = Shaped[dtype, m, n](ctx)
+    var c = result.view()
+    _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def matmul[
+    dtype: DType, gpu: Bool = False
+](mut a: Dynamic[dtype, 2], mut b: Dynamic[dtype, 2]) raises -> Dynamic[
+    dtype, 2
+]:
+    """The matrix product `a @ b` at extents known only at run time.
+
+    The run-time-shaped overload of the one above, selected by argument
+    type rather than by a `where` clause: `Shaped` and `Dynamic` are
+    different layouts, so the two can never be ambiguous. MAX reads the
+    extents from the layout either way -- a compile-time shape buys kernel
+    specialization, not correctness.
+
+    Raises when `a`'s columns and `b`'s rows disagree, which is the check
+    the static overload gets from the type system for free.
+    """
+    if a.dim[1]() != b.dim[0]():
+        raise Error(
+            "matmul shape mismatch: a is ",
+            a.dim[0](),
+            "x",
+            a.dim[1](),
+            " and b is ",
+            b.dim[0](),
+            "x",
+            b.dim[1](),
+        )
+    var ctx = a.context()
+    var result = zeros_dyn[dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
+    var c = result.view()
+    _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def matvec[
+    dtype: DType, m: Int, k: Int, gpu: Bool = False
+](mut a: Shaped[dtype, m, k], mut x: Shaped[dtype, k]) raises -> Shaped[
+    dtype, m
+]:
+    """The matrix-vector product `a @ x`, on `a`'s own device.
+
+    Routed through `linalg.matmul` rather than `linalg.gemv`, with the
+    vectors relaid as `k x 1` and `m x 1` over their own pointers. MAX's
+    dispatch already sends a matmul with `n == 1` to its GEMV kernels --
+    including the split-K and vector variants it picks between by shape --
+    so calling `gemv` directly would be a second numax path to the same
+    kernels, and one that would have to reproduce the choice.
+
+    The relayout is free: a rank-1 buffer of `k` elements and a `k x 1`
+    row-major layout address the same memory in the same order, so this
+    hands MAX a different description of bytes it was going to read
+    anyway, not a copy.
+    """
+    var ctx = a.context()
+    var result = Shaped[dtype, m](ctx)
+    var xv = x.view()
+    var yv = result.view()
+    var x_col = TileTensor(xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1)))
+    var y_col = TileTensor(yv.ptr_at_offset(Coord(0)), row_major(Coord(m, 1)))
+    _max_matmul[target="gpu" if gpu else "cpu"](y_col, a.view(), x_col, ctx)
+    ctx.synchronize()
+    return result^
+
+
+def batched_matmul[
+    dtype: DType, batch: Int, m: Int, k: Int, n: Int, gpu: Bool = False
+](
+    mut a: Shaped[dtype, batch, m, k], mut b: Shaped[dtype, batch, k, n]
+) raises -> Shaped[dtype, batch, m, n]:
+    """`batch` independent matrix products, one per leading index.
+
+    `linalg.bmm.batched_matmul` does the work, in one launch rather than
+    `batch` of them. There is no `Array[T, n*n]` counterpart: a batch of
+    small matrices is what a `map` over a conformer already expresses, one
+    matrix per SIMD lane, so the batched form only earns its own kernel at
+    sizes past the crossover.
+    """
+    var ctx = a.context()
+    var result = Shaped[dtype, batch, m, n](ctx)
+    var c = result.view()
+    _max_batched_matmul[target="gpu" if gpu else "cpu"](
+        c, a.view(), b.view(), context=ctx
+    )
+    ctx.synchronize()
+    return result^
+
+
+def _band_part[
+    dtype: DType, rows: Int, cols: Int, gpu: Bool
+](mut a: Shaped[dtype, rows, cols], lower: Int, upper: Int) raises -> Shaped[
+    dtype, rows, cols
+]:
+    """`linalg.matrix_band_part` with the counts staged the way MAX wants.
+
+    MAX reads `num_lower`, `num_upper` and `exclude` out of scalar tensors
+    rather than taking them as arguments, so that they can arrive from a
+    graph edge; a negative count means "keep every diagonal on that side".
+    The flag tensor is `int64` rather than `bool` because `enqueue_memset`
+    on a `bool` buffer fails to compile under the pinned toolchain, the
+    same limitation `Tensor`'s own constructor documents. MAX only asks
+    that it be nonzero to invert the mask, so the dtype is free.
+    """
+    var ctx = a.context()
+    var result = Shaped[dtype, rows, cols](ctx)
+    var num_lower = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](lower)])
+    var num_upper = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](upper)])
+    var exclude = Shaped[DType.int64, 1](ctx)
+    var src = a.view()
+    var dst = result.view()
+
+    def read[
+        width: Int, rank: Int
+    ](idx: IndexList[rank]) {imm src} -> SIMD[dtype, width]:
+        return src.load[width](Coord(idx[0], idx[1]))
+
+    _max_band_part[simd_width=1, target="gpu" if gpu else "cpu"](
+        read,
+        IndexList[2](rows, cols),
+        num_lower.view(),
+        num_upper.view(),
+        exclude.view(),
+        dst,
+        ctx,
+    )
+    ctx.synchronize()
+    return result^
+
+
+def tril[
+    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
+    """A copy of `a` with everything above the diagonal set to zero.
+
+    `numpy.tril` at `k=0`. The band is MAX's `matrix_band_part`, an
+    elementwise kernel over the whole matrix rather than a walk of the
+    triangle, so it runs on either device.
+    """
+    return _band_part[dtype, rows, cols, gpu](a, -1, 0)
+
+
+def triu[
+    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
+    """A copy of `a` with everything below the diagonal set to zero.
+
+    `numpy.triu` at `k=0`; the mirror of `tril` and the same MAX kernel.
+    """
+    return _band_part[dtype, rows, cols, gpu](a, 0, -1)
