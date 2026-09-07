@@ -8,10 +8,11 @@ matrices that appear *inside* a per-element kernel.
 The `Tensor` tier goes through MAX. `matmul`, `matvec` and
 `batched_matmul` are MAX kernels over `TileTensor`, so they inherit its
 whole dispatch tree -- Apple, NVIDIA, AMD, vendor BLAS -- without numax
-naming an architecture. `cholesky` is a gap MAX does not fill, so numax
-writes it blocked and sends the cubic term back through `matmul`. This tier
-is `dtype`-monomorphic, which is why the `Array` tier exists beside it
-rather than being replaced by it.
+naming an architecture. `cholesky`, `lu_factor` and `solve` are gaps MAX
+does not fill -- it ships no factorization on `TileTensor` at all -- so
+numax writes them blocked and sends the cubic term back through `matmul`.
+This tier is `dtype`-monomorphic, which is why the `Array` tier exists
+beside it rather than being replaced by it.
 
 Names are shared where both tiers have the operation; overload resolution
 picks by argument type. `to_tensor`/`to_array` cross between them.
@@ -30,9 +31,10 @@ a branch on data, which buys the matrices unpivoted `lu` cannot factor at
 the cost of the GPU.
 
 Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
-`batched_matmul` and a blocked `cholesky`, each taking a `gpu: Bool`
-parameter that chooses MAX's target. `tril`/`triu` are `numax.core`'s, also
-MAX-backed.
+`batched_matmul`, and blocked `cholesky`, `lu_factor` (returning a
+reusable `TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that
+chooses MAX's target and a `block` size that tunes the panel.
+`tril`/`triu` are `numax.core`'s, also MAX-backed.
 """
 
 from .linalg import (
@@ -55,6 +57,7 @@ from .linalg import (
     lu,
     lu_factor,
     PivotedLU,
+    TensorLU,
     matmul,
     matvec,
     norm,

@@ -14,11 +14,12 @@ allocates a destination, hands over two `TileTensor` views and waits.
 simdgroup, SM100, SM90, Ampere/CDNA, vendor cuBLAS/rocBLAS/hipBLASLt and
 AMD RDNA, so numax names no architecture.
 
-`cholesky` is the other kind: MAX has no Cholesky, so numax writes it, but
-writes it *blocked* so that the cubic term is a matrix product and goes
-back to MAX. That is the pattern the remaining factorizations follow as
-they land -- panel on the host, `O(n^3)` in MAX's GEMM -- and each names
-its own ceiling.
+`cholesky`, `lu_factor` and `solve` are the other kind: MAX ships no
+factorization over `TileTensor` at all, so numax writes them, but writes
+them *blocked* so that the cubic term is a matrix product and goes back to
+MAX. Panel on the host, `O(n^3)` in MAX's GEMM. That is the pattern the
+remaining factorizations follow as they land, and each names its own
+ceiling.
 
 These entry points are `dtype`-monomorphic, which is exactly why the
 `Array` half exists beside them rather than being replaced by them.
@@ -112,7 +113,7 @@ from max.gpu.host import DeviceContext
 from std.collections import Array
 from std.math import sqrt
 
-from ..core.array import Dynamic, Shaped, zeros_dyn
+from ..core.array import Dynamic, Shaped, _context, zeros_dyn
 from ..core.numeric import (
     FloatLike,
     blend,
@@ -193,9 +194,10 @@ def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     subsequent column. There is no error flag -- checking for one would be
     a per-lane branch.
 
-    No MAX equivalent at any size: MAX ships no Cholesky. For a large,
-    plain-`dtype` `A` the route is `linalg.qr_factorization`; see this
-    module's "Use MAX past N" section.
+    MAX ships no Cholesky, so past the crossover the answer is the
+    `Tensor` overload of this name at the bottom of the file: blocked, with
+    its trailing update in MAX's `matmul`. It also raises on a matrix that
+    is not positive definite, which this one cannot.
     """
     var out = _zeros[T, n * n]()
 
@@ -225,10 +227,9 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
 
     See this module's docstring for what "without pivoting" costs.
 
-    No MAX equivalent exists to route to for a large, plain-`dtype` `A`
-    (verified: MAX ships no `lu` at any size). `linalg.qr_factorization`
-    is the large-matrix building block LAPACK-style solvers use in `lu`'s
-    place; see this module's own "Use MAX past N" section.
+    MAX ships no `lu` at any size. Past the crossover, use `lu_factor` over
+    `Tensor`: blocked, partially pivoted, trailing update in MAX's
+    `matmul`. It pivots, so it also factors matrices this cannot start on.
     """
     var out = _zeros[T, n * n]()
     for i in range(n * n):
@@ -411,10 +412,10 @@ def solve[
 ](a: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
     """Solve `A @ x = b` by unpivoted LU followed by two substitutions.
 
-    No MAX equivalent exists to route to for a large, plain-`dtype`
-    system (verified: MAX ships no `solve` at any size) -- see this
-    module's own "Use MAX past N" section for what to build the
-    large-matrix case from instead.
+    MAX ships no `solve` at any size. Past the crossover, use the `Tensor`
+    overload of this name: blocked LU with partial pivoting, its trailing
+    update in MAX's `matmul`, and `lu_factor` exposed separately so one
+    factorization can serve several right-hand sides.
     """
     var factored = lu[T, n](a)
     var y = forward_substitution[T, n, unit_diagonal=True](factored, b)
@@ -454,10 +455,9 @@ def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     Unpivoted, so the sign is always the product's own -- there is no row
     swap count to correct for.
 
-    No MAX equivalent exists to route to for a large, plain-`dtype` `A`
-    (verified: MAX ships no `det` at any size) -- see this module's own
-    "Use MAX past N" section for what to build the large-matrix case from
-    instead (`prod(diag(R))` up to sign, from `linalg.qr_factorization`).
+    MAX ships no `det` at any size. Past the crossover, `lu_factor` over
+    `Tensor` and take `TensorLU.det`, which corrects for the swap parity
+    this one has no swaps to correct for.
     """
     var factored = lu[T, n](a)
     var product = T.one()
@@ -1608,3 +1608,228 @@ def cholesky[
             work[row * n + col] = Scalar[dtype](0)
 
     return Shaped[dtype, n, n](ctx, work^)
+
+
+struct TensorLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
+    """**Tier 2.** A blocked `LU` factorization of a `Tensor`, with partial
+    pivoting, and the solves that reuse it.
+
+    The `Tensor` counterpart of `PivotedLU`, and separate from it for the
+    same reason `matmul` has two overloads: this one is `dtype`-monomorphic
+    and its matrix has its own storage, that one is `FloatLike`-generic and
+    its matrix lives in registers.
+
+    MAX has no LU, so the factorization is numax's -- but blocked, so its
+    cubic term is a matrix product and goes to MAX's `matmul`. Each step
+    factors a `block`-wide panel with partial pivoting, solves the block
+    row to its right, and subtracts `L21 @ U12` from what remains.
+
+    Pivoting is why this is host-side and cannot be tier 1: choosing a row
+    by the magnitude of a value is a branch on data. It is also what makes
+    it correct where the unpivoted `lu` is not -- the exchange matrix
+    `[[0, 1], [1, 0]]` has a zero leading pivot and factors fine here.
+
+    Rank deficiency is still not reported: a singular matrix factors to a
+    zero pivot and `solve` divides by it, so the result is not finite
+    rather than being flagged. `cond` on the original matrix is the check.
+    """
+
+    var factored: List[Scalar[Self.dtype]]
+    """`L` below the diagonal (its own diagonal an implicit `1`) and `U` on
+    and above it, row-major, packed the way `PivotedLU` packs them.
+
+    A `List` rather than a `Tensor` because every use of it -- the two
+    substitutions in `solve`, the diagonal product in `det` -- walks
+    elements one at a time in an order fixed by the previous element. There
+    is no kernel to hand this to, so it stays where it is addressable, and
+    `to_tensor_factored` exists for a caller who wants it on a device
+    anyway.
+    """
+
+    var permutation: List[Int]
+    """Row `i` of the factored matrix is row `permutation[i]` of the
+    original."""
+
+    var sign: Int
+    """`+1` or `-1`, the parity of the row swaps; `det`'s sign."""
+
+    def __init__(
+        out self,
+        var factored: List[Scalar[Self.dtype]],
+        var permutation: List[Int],
+        sign: Int,
+    ):
+        self.factored = factored^
+        self.permutation = permutation^
+        self.sign = sign
+
+    def to_tensor_factored(
+        self, ctx: Optional[DeviceContext] = None
+    ) raises -> Shaped[Self.dtype, Self.n, Self.n]:
+        """The packed `L`/`U` as a tensor, for inspection or reuse."""
+        return Shaped[Self.dtype, Self.n, Self.n](
+            _context(ctx), self.factored.copy()
+        )
+
+    def solve(
+        self, mut b: Shaped[Self.dtype, Self.n]
+    ) raises -> Shaped[Self.dtype, Self.n]:
+        """`x` with `A @ x == b`, reusing this factorization.
+
+        `scipy.linalg.lu_solve`. Permute, forward-substitute through `L`
+        (unit diagonal, so no division), back-substitute through `U`. Both
+        substitutions are inherently sequential -- element `i` needs
+        element `i - 1` -- so there is no kernel to delegate to and no MAX
+        call here. The cubic work already happened in the factorization,
+        which is where MAX was.
+        """
+        var rhs = b.to_host()
+        var x = List[Scalar[Self.dtype]](length=Self.n, fill=0)
+        for i in range(Self.n):
+            x[i] = rhs[self.permutation[i]]
+
+        for i in range(Self.n):
+            var acc = x[i]
+            for p in range(i):
+                acc -= self.factored[i * Self.n + p] * x[p]
+            x[i] = acc
+
+        for step in range(Self.n):
+            var i = Self.n - 1 - step
+            var acc = x[i]
+            for p in range(i + 1, Self.n):
+                acc -= self.factored[i * Self.n + p] * x[p]
+            x[i] = acc / self.factored[i * Self.n + i]
+
+        return Shaped[Self.dtype, Self.n](b.context(), x^)
+
+    def det(self) raises -> Scalar[Self.dtype]:
+        """`det(A)`: the product of `U`'s diagonal, times the swap parity."""
+        var product = Scalar[Self.dtype](self.sign)
+        for i in range(Self.n):
+            product *= self.factored[i * Self.n + i]
+        return product
+
+
+def lu_factor[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
+](mut a: Shaped[dtype, n, n]) raises -> TensorLU[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** Factor `a` into `P @ L @ U`, blocked.
+    `scipy.linalg.lu_factor`.
+
+    Right-looking and blocked: factor a `block`-wide panel with partial
+    pivoting, solve the block row to its right against `L11`, then subtract
+    `L21 @ U12` from the trailing submatrix. That subtraction is the cubic
+    term and it is a matrix product, so it is MAX's `matmul`; the panel and
+    the block-row solve are `O(n * block^2)`.
+
+    Row interchanges are applied across the full width of the matrix as
+    they are chosen, rather than being recorded and replayed over the
+    columns outside the panel afterwards. Same result, one less pass.
+
+    See `TensorLU` for what pivoting costs and what it buys, and
+    `cholesky` for the same blocking on a symmetric matrix, where pivoting
+    is unnecessary. The `Array[T, n*n]` sibling `lu_factor` is the one to
+    call at a conformer other than a raw `dtype`.
+
+    **Ceiling.** As in `cholesky`, the panel runs on the host and each step
+    stages its blocks down and its update back, because numax has no
+    strided device sub-view to hand MAX. The flops are MAX's, the copies
+    are not.
+    """
+    var ctx = a.context()
+    var work = a.to_host()
+    var permutation = List[Int](length=n, fill=0)
+    for i in range(n):
+        permutation[i] = i
+    var sign = 1
+    var k = 0
+
+    while k < n:
+        var nb = min(block, n - k)
+
+        # Panel: unblocked right-looking LU over columns k..k+nb-1, taking
+        # the rank-1 update only as far as the panel's own right edge.
+        for j in range(nb):
+            var col = k + j
+
+            var best = col
+            var best_magnitude = abs(Float64(work[col * n + col]))
+            for i in range(col + 1, n):
+                var magnitude = abs(Float64(work[i * n + col]))
+                if magnitude > best_magnitude:
+                    best = i
+                    best_magnitude = magnitude
+
+            if best != col:
+                for c in range(n):
+                    var swap = work[col * n + c]
+                    work[col * n + c] = work[best * n + c]
+                    work[best * n + c] = swap
+                var swap_index = permutation[col]
+                permutation[col] = permutation[best]
+                permutation[best] = swap_index
+                sign = -sign
+
+            var pivot = work[col * n + col]
+            for i in range(col + 1, n):
+                work[i * n + col] /= pivot
+                for jj in range(j + 1, nb):
+                    work[i * n + k + jj] -= (
+                        work[i * n + col] * work[col * n + k + jj]
+                    )
+
+        # Block row: U12 = L11^-1 @ A12, with L11 unit-diagonal.
+        for i in range(nb):
+            var row = k + i
+            for col in range(k + nb, n):
+                var entry = work[row * n + col]
+                for p in range(i):
+                    entry -= work[row * n + k + p] * work[(k + p) * n + col]
+                work[row * n + col] = entry
+
+        # Trailing update: A22 -= L21 @ U12, which is MAX's.
+        var m = n - k - nb
+        if m > 0:
+            var left_values = List[Scalar[dtype]](capacity=m * nb)
+            var right_values = List[Scalar[dtype]](capacity=nb * m)
+            for i in range(m):
+                for j in range(nb):
+                    left_values.append(work[(k + nb + i) * n + k + j])
+            for i in range(nb):
+                for j in range(m):
+                    right_values.append(work[(k + i) * n + k + nb + j])
+
+            var left = _staged[dtype](left_values^, m, nb, ctx)
+            var right = _staged[dtype](right_values^, nb, m, ctx)
+            var update = matmul[dtype, gpu](left, right).to_host()
+
+            for i in range(m):
+                for j in range(m):
+                    work[(k + nb + i) * n + k + nb + j] -= update[i * m + j]
+
+        k += nb
+
+    return TensorLU[dtype, n](work^, permutation^, sign)
+
+
+def solve[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 64
+](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** `x` with `a @ x == b`. `scipy.linalg.solve`.
+
+    Factors with `lu_factor` -- blocked, partially pivoted, trailing update
+    in MAX -- and substitutes. Call `lu_factor` directly and reuse the
+    `TensorLU` when there is more than one right-hand side; this spelling
+    throws the factorization away.
+
+    Unlike the `Array[T, n*n]` sibling, this pivots, so it solves systems
+    that one cannot start on. The trade is the GPU and the generic `T`:
+    picking a row by magnitude is a branch on data.
+    """
+    var factorization = lu_factor[dtype, n, gpu, block](a)
+    return factorization.solve(b)

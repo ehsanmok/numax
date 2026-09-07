@@ -15,7 +15,15 @@ from numax import Plain
 from numax.core.array import Shaped, zeros_dyn
 from numax.core.array import zeros as array_zeros
 from numax.core.array import transpose, tril, triu
-from numax.linalg import batched_matmul, cholesky, matmul, matvec
+from numax.linalg import (
+    batched_matmul,
+    cholesky,
+    det,
+    lu_factor,
+    matmul,
+    matvec,
+    solve,
+)
 
 comptime P = Plain[DType.float64, 1]
 
@@ -322,6 +330,167 @@ def test_cholesky_rejects_a_matrix_that_is_not_positive_definite() raises:
     var a = Shaped[DType.float64, 2, 2](ctx, [1.0, 2.0, 2.0, 1.0])
     with assert_raises(contains="not positive definite"):
         _ = cholesky[DType.float64, 2, False, 2](a)
+
+
+def _nonsymmetric_4x4() raises -> List[Float64]:
+    return [
+        4.0,
+        1.0,
+        2.0,
+        0.5,
+        1.0,
+        5.0,
+        0.0,
+        2.0,
+        2.0,
+        0.0,
+        6.0,
+        1.0,
+        0.5,
+        2.0,
+        1.0,
+        7.0,
+    ]
+
+
+def test_solve_residual_is_at_machine_precision() raises:
+    """`a @ x` reproduces `b`, which is the only thing a solve promises."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0]
+
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b = Shaped[DType.float64, 4](ctx, rhs.copy())
+    var x = solve[DType.float64, 4, False, 2](a, b)
+
+    var a_again = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var product = matvec(a_again, x).to_host()
+    for i in range(4):
+        assert_almost_equal(Float64(product[i]), rhs[i], atol=1e-12)
+
+
+def test_solve_blocking_does_not_change_the_answer() raises:
+    """`block=n` is the unblocked LU, so it pins the blocked path."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0]
+
+    var a1 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b1 = Shaped[DType.float64, 4](ctx, rhs.copy())
+    var unblocked = solve[DType.float64, 4, False, 4](a1, b1).to_host()
+
+    var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b2 = Shaped[DType.float64, 4](ctx, rhs.copy())
+    var blocked = solve[DType.float64, 4, False, 2](a2, b2).to_host()
+
+    var a3 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b3 = Shaped[DType.float64, 4](ctx, rhs.copy())
+    var single = solve[DType.float64, 4, False, 1](a3, b3).to_host()
+
+    for i in range(4):
+        assert_almost_equal(
+            Float64(blocked[i]), Float64(unblocked[i]), atol=1e-12
+        )
+        assert_almost_equal(
+            Float64(single[i]), Float64(unblocked[i]), atol=1e-12
+        )
+
+
+def test_solve_agrees_with_the_array_tier() raises:
+    """Same name, same system, same answer.
+
+    The matrix is chosen to have no zero pivots, so the unpivoted `Array`
+    solve is entitled to agree; `test_lu_factor_handles_a_zero_leading_pivot`
+    covers the case where it is not.
+    """
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0]
+
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var b = Shaped[DType.float64, 4](ctx, rhs.copy())
+    var tensor_x = solve[DType.float64, 4, False, 2](a, b).to_host()
+
+    var lifted_a = array_zeros[P, 16]()
+    for i in range(16):
+        lifted_a[i] = P(entries[i])
+    var lifted_b = array_zeros[P, 4]()
+    for i in range(4):
+        lifted_b[i] = P(rhs[i])
+    var array_x = solve[P, 4](lifted_a, lifted_b)
+
+    for i in range(4):
+        assert_almost_equal(
+            Float64(tensor_x[i]), Float64(array_x[i].v), atol=1e-10
+        )
+
+
+def test_lu_factor_handles_a_zero_leading_pivot() raises:
+    """The exchange matrix is what pivoting buys.
+
+    `[[0, 1], [1, 0]]` is perfectly well conditioned with a determinant of
+    -1, and the unpivoted `Array` tier cannot start on it at all. This is
+    the claim that the `Tensor` tier pivots for real.
+    """
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 2, 2](ctx, [0.0, 1.0, 1.0, 0.0])
+    var factorization = lu_factor[DType.float64, 2, False, 2](a)
+
+    assert_almost_equal(Float64(factorization.det()), -1.0, atol=1e-12)
+
+    var b = Shaped[DType.float64, 2](ctx, [3.0, 5.0])
+    var x = factorization.solve(b).to_host()
+    assert_almost_equal(Float64(x[0]), 5.0, atol=1e-12)
+    assert_almost_equal(Float64(x[1]), 3.0, atol=1e-12)
+
+
+def test_lu_factor_is_reusable_across_right_hand_sides() raises:
+    """One factorization, several solves -- the reason `lu_factor` is public.
+
+    Each answer must match what a fresh `solve` on the same system gives,
+    so reusing the factorization is not quietly different from redoing it.
+    """
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var factorization = lu_factor[DType.float64, 4, False, 2](a)
+
+    var first_rhs: List[Float64] = [1.0, 0.0, 0.0, 0.0]
+    var second_rhs: List[Float64] = [0.0, 2.0, 0.0, -1.0]
+
+    var b1 = Shaped[DType.float64, 4](ctx, first_rhs.copy())
+    var reused_1 = factorization.solve(b1).to_host()
+    var b2 = Shaped[DType.float64, 4](ctx, second_rhs.copy())
+    var reused_2 = factorization.solve(b2).to_host()
+
+    var a1 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var fresh_b1 = Shaped[DType.float64, 4](ctx, first_rhs.copy())
+    var fresh_1 = solve[DType.float64, 4, False, 2](a1, fresh_b1).to_host()
+    var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var fresh_b2 = Shaped[DType.float64, 4](ctx, second_rhs.copy())
+    var fresh_2 = solve[DType.float64, 4, False, 2](a2, fresh_b2).to_host()
+
+    for i in range(4):
+        assert_almost_equal(
+            Float64(reused_1[i]), Float64(fresh_1[i]), atol=1e-12
+        )
+        assert_almost_equal(
+            Float64(reused_2[i]), Float64(fresh_2[i]), atol=1e-12
+        )
+
+
+def test_lu_factor_det_agrees_with_the_array_tier() raises:
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var tensor_det = Float64(lu_factor[DType.float64, 4, False, 2](a).det())
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+    var array_det = Float64(det[P, 4](lifted).v)
+
+    assert_almost_equal(tensor_det, array_det, atol=1e-9)
 
 
 def main() raises:

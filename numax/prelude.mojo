@@ -226,6 +226,7 @@ from .linalg.linalg import (
     lu,
     lu_factor,
     PivotedLU,
+    TensorLU,
     matmul,
     matvec,
     norm,
