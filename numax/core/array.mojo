@@ -125,7 +125,9 @@ from max.gpu.host import DeviceBuffer, DeviceContext
 from layout import Coord, TileTensor
 from layout.coord import DynamicCoord
 from layout.tile_layout import row_major, TensorLayout
+from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from linalg.transpose import transpose as _max_transpose
+from std.utils import IndexList
 
 from .numeric import FloatLike
 from .plain import Plain
@@ -1475,28 +1477,69 @@ def tri[
     return Shaped[dtype, n, n](_context(ctx), values^)
 
 
+def _band_part[
+    dtype: DType, rows: Int, cols: Int, gpu: Bool
+](mut a: Shaped[dtype, rows, cols], lower: Int, upper: Int) raises -> Shaped[
+    dtype, rows, cols
+]:
+    """`linalg.matrix_band_part` with the counts staged the way MAX wants.
+
+    MAX reads `num_lower`, `num_upper` and `exclude` out of scalar tensors
+    rather than taking them as arguments, so that they can arrive from a
+    graph edge; a negative count means "keep every diagonal on that side".
+    The flag tensor is `int64` rather than `bool` because `enqueue_memset`
+    on a `bool` buffer fails to compile under the pinned toolchain, the
+    same limitation `Tensor`'s own constructor documents. MAX only asks
+    that the flag be nonzero to invert the mask, so the dtype is free.
+    """
+    var ctx = a.context()
+    var result = Shaped[dtype, rows, cols](ctx)
+    var num_lower = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](lower)])
+    var num_upper = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](upper)])
+    var exclude = Shaped[DType.int64, 1](ctx)
+    var src = a.view()
+    var dst = result.view()
+
+    def read[
+        width: Int, rank: Int
+    ](idx: IndexList[rank]) {imm src} -> SIMD[dtype, width]:
+        return src.load[width](Coord(idx[0], idx[1]))
+
+    _max_band_part[simd_width=1, target="gpu" if gpu else "cpu"](
+        read,
+        IndexList[2](rows, cols),
+        num_lower.view(),
+        num_upper.view(),
+        exclude.view(),
+        dst,
+        ctx,
+    )
+    ctx.synchronize()
+    return result^
+
+
 def tril[
-    dtype: DType, n: Int
-](a: Shaped[dtype, n, n]) raises -> Shaped[dtype, n, n]:
-    """`a` with everything above the diagonal zeroed. `numpy.tril`."""
-    var source = a.to_host()
-    var values = List[Scalar[dtype]](length=n * n, fill=0)
-    for r in range(n):
-        for c in range(r + 1):
-            values[r * n + c] = source[r * n + c]
-    return Shaped[dtype, n, n](a.context(), values^)
+    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
+    """`a` with everything above the diagonal zeroed. `numpy.tril` at `k=0`.
+
+    The band is MAX's `matrix_band_part`, an elementwise kernel over the
+    whole matrix rather than a walk of the triangle, so this runs on either
+    device -- an earlier version here copied to the host and filled a
+    triangle one element at a time, which also meant it could only do
+    square matrices.
+    """
+    return _band_part[dtype, rows, cols, gpu](a, -1, 0)
 
 
 def triu[
-    dtype: DType, n: Int
-](a: Shaped[dtype, n, n]) raises -> Shaped[dtype, n, n]:
-    """`a` with everything below the diagonal zeroed. `numpy.triu`."""
-    var source = a.to_host()
-    var values = List[Scalar[dtype]](length=n * n, fill=0)
-    for r in range(n):
-        for c in range(r, n):
-            values[r * n + c] = source[r * n + c]
-    return Shaped[dtype, n, n](a.context(), values^)
+    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
+    """`a` with everything below the diagonal zeroed. `numpy.triu` at `k=0`.
+
+    The mirror of `tril` and the same MAX kernel.
+    """
+    return _band_part[dtype, rows, cols, gpu](a, 0, -1)
 
 
 def vander[

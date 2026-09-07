@@ -5,8 +5,8 @@ the heap. That is what makes `cholesky` differentiable at `Dual` and
 launchable inside a GPU thread, and it is the right shape for the small
 matrices that appear *inside* a per-element kernel.
 
-The `Tensor` tier goes through MAX. `matmul`, `matvec`, `batched_matmul`,
-`tril` and `triu` are MAX kernels over `TileTensor`, so they inherit its
+The `Tensor` tier goes through MAX. `matmul`, `matvec` and
+`batched_matmul` are MAX kernels over `TileTensor`, so they inherit its
 whole dispatch tree -- Apple, NVIDIA, AMD, vendor BLAS -- without numax
 naming an architecture. `cholesky` is a gap MAX does not fill, so numax
 writes it blocked and sends the cubic term back through `matmul`. This tier
@@ -30,8 +30,9 @@ a branch on data, which buys the matrices unpivoted `lu` cannot factor at
 the cost of the GPU.
 
 Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
-`batched_matmul`, `tril`, `triu` and a blocked `cholesky`, each taking a
-`gpu: Bool` parameter that chooses MAX's target.
+`batched_matmul` and a blocked `cholesky`, each taking a `gpu: Bool`
+parameter that chooses MAX's target. `tril`/`triu` are `numax.core`'s, also
+MAX-backed.
 """
 
 from .linalg import (
@@ -66,6 +67,4 @@ from .linalg import (
     trace,
     tridiagonal_solve,
     batched_matmul,
-    tril,
-    triu,
 )

@@ -233,8 +233,6 @@ from .linalg.linalg import (
     solve,
     svd,
     trace,
-    tril,
-    triu,
 )
 
 # Statistics and sampling. The builtin-shadowing reductions are excluded --

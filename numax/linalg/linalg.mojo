@@ -8,9 +8,9 @@ runs a fixed number of passes -- `n - 1` reflectors, `sweeps` Jacobi sweeps
 That is also what forecloses pivoting; see "Scope: no pivoting" below.
 
 **The `Tensor` half, at the bottom of the file, goes through MAX.**
-`matmul`, `matvec`, `batched_matmul`, `tril` and `triu` are MAX kernels
-outright: numax allocates a destination, hands over two `TileTensor` views
-and waits. `linalg.matmul` alone is a dispatch tree covering Apple
+`matmul`, `matvec` and `batched_matmul` are MAX kernels outright: numax
+allocates a destination, hands over two `TileTensor` views and waits.
+`linalg.matmul` alone is a dispatch tree covering Apple
 simdgroup, SM100, SM90, Ampere/CDNA, vendor cuBLAS/rocBLAS/hipBLASLt and
 AMD RDNA, so numax names no architecture.
 
@@ -108,11 +108,9 @@ from layout import Coord, TileTensor
 from layout.tile_layout import row_major
 from linalg.bmm import batched_matmul as _max_batched_matmul
 from linalg.matmul import matmul as _max_matmul
-from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from max.gpu.host import DeviceContext
 from std.collections import Array
 from std.math import sqrt
-from std.utils import IndexList
 
 from ..core.array import Dynamic, Shaped, zeros_dyn
 from ..core.numeric import (
@@ -1490,69 +1488,6 @@ def batched_matmul[
     )
     ctx.synchronize()
     return result^
-
-
-def _band_part[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool
-](mut a: Shaped[dtype, rows, cols], lower: Int, upper: Int) raises -> Shaped[
-    dtype, rows, cols
-]:
-    """`linalg.matrix_band_part` with the counts staged the way MAX wants.
-
-    MAX reads `num_lower`, `num_upper` and `exclude` out of scalar tensors
-    rather than taking them as arguments, so that they can arrive from a
-    graph edge; a negative count means "keep every diagonal on that side".
-    The flag tensor is `int64` rather than `bool` because `enqueue_memset`
-    on a `bool` buffer fails to compile under the pinned toolchain, the
-    same limitation `Tensor`'s own constructor documents. MAX only asks
-    that it be nonzero to invert the mask, so the dtype is free.
-    """
-    var ctx = a.context()
-    var result = Shaped[dtype, rows, cols](ctx)
-    var num_lower = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](lower)])
-    var num_upper = Shaped[DType.int64, 1](ctx, [Scalar[DType.int64](upper)])
-    var exclude = Shaped[DType.int64, 1](ctx)
-    var src = a.view()
-    var dst = result.view()
-
-    def read[
-        width: Int, rank: Int
-    ](idx: IndexList[rank]) {imm src} -> SIMD[dtype, width]:
-        return src.load[width](Coord(idx[0], idx[1]))
-
-    _max_band_part[simd_width=1, target="gpu" if gpu else "cpu"](
-        read,
-        IndexList[2](rows, cols),
-        num_lower.view(),
-        num_upper.view(),
-        exclude.view(),
-        dst,
-        ctx,
-    )
-    ctx.synchronize()
-    return result^
-
-
-def tril[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
-    """A copy of `a` with everything above the diagonal set to zero.
-
-    `numpy.tril` at `k=0`. The band is MAX's `matrix_band_part`, an
-    elementwise kernel over the whole matrix rather than a walk of the
-    triangle, so it runs on either device.
-    """
-    return _band_part[dtype, rows, cols, gpu](a, -1, 0)
-
-
-def triu[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
-    """A copy of `a` with everything below the diagonal set to zero.
-
-    `numpy.triu` at `k=0`; the mirror of `tril` and the same MAX kernel.
-    """
-    return _band_part[dtype, rows, cols, gpu](a, 0, -1)
 
 
 def _staged[

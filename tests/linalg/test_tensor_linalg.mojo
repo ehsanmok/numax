@@ -14,8 +14,8 @@ from std.testing import TestSuite, assert_almost_equal, assert_raises
 from numax import Plain
 from numax.core.array import Shaped, zeros_dyn
 from numax.core.array import zeros as array_zeros
-from numax.core.array import transpose
-from numax.linalg import batched_matmul, cholesky, matmul, matvec, tril, triu
+from numax.core.array import transpose, tril, triu
+from numax.linalg import batched_matmul, cholesky, matmul, matvec
 
 comptime P = Plain[DType.float64, 1]
 
@@ -188,6 +188,25 @@ def test_tril_and_triu_split_the_matrix_at_the_diagonal() raises:
                 assert_almost_equal(Float64(lower[i]), 0.0, atol=1e-12)
             if row > col:
                 assert_almost_equal(Float64(upper[i]), 0.0, atol=1e-12)
+
+
+def test_tril_and_triu_accept_a_non_square_matrix() raises:
+    """The MAX band kernel is rectangular; the host loop it replaced was not.
+
+    A 2x3 has one entry below the diagonal and three above it, so this
+    would not have compiled against the square-only `n, n` signature.
+    """
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 2, 3](ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var lower = tril(a).to_host()
+    var b = Shaped[DType.float64, 2, 3](ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var upper = triu(b).to_host()
+
+    var want_lower: List[Float64] = [1.0, 0.0, 0.0, 4.0, 5.0, 0.0]
+    var want_upper: List[Float64] = [1.0, 2.0, 3.0, 0.0, 5.0, 6.0]
+    for i in range(6):
+        assert_almost_equal(Float64(lower[i]), want_lower[i], atol=1e-12)
+        assert_almost_equal(Float64(upper[i]), want_upper[i], atol=1e-12)
 
 
 def _spd_5x5() raises -> List[Float64]:
