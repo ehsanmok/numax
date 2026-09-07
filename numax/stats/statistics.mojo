@@ -9,8 +9,8 @@ selective axis-1 lift: MAX ships no `mean`/`var`/`std`/`median`/`mode` at
 all (verified directly -- `max.algorithm.functional` exports only
 `elementwise`), but it does ship `argmax`/`argmin` (`nn.argmaxmin`), which
 this module routes to directly rather than re-implementing (the MAX-first
-check firing first, same shape as `numax.linalg.matmul`'s recommendation to
-call MAX's `linalg.matmul` past ~8x8).
+check firing first, same shape as `numax.linalg.matmul`'s `Tensor` overload
+being MAX's `linalg.matmul`).
 
 Two genuinely different shapes live in this one file, because they answer
 two different questions:

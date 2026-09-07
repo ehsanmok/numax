@@ -15,7 +15,7 @@ Two kinds of benchmark live here:
   serial `map` against its threaded `map_threaded`, which is
   `max.algorithm.elementwise` underneath. See the threading section below.
 - `bench_matmul.mojo` (`pixi run bench-matmul`) -- `numax.linalg.matmul`
-  against `max.linalg.matmul`, to find the size where MAX's blocked,
+  against MAX's `linalg.matmul`, to find the size where MAX's blocked,
   threaded kernel overtakes the generic triple loop. See the matmul
   section below.
 - `bench_gpu_roofline.mojo` (`pixi run bench-roofline`) -- not a comparison
@@ -457,7 +457,7 @@ Same reasoning that keeps `reduce_block_gpu` separate from `reduce`.
 
 ## Matmul: where MAX overtakes the generic loop
 
-`pixi run bench-matmul`, same machine. `max.linalg.matmul` (blocked,
+`pixi run bench-matmul`, same machine. MAX's `linalg.matmul` (blocked,
 vectorized, threaded, `TileTensor` of raw `float32`) against
 `numax.linalg.matmul` (naive triple loop over `Array[T, n*n]`, generic in
 `T: FloatLike`). Nanoseconds per `n x n` product, lower is better. The
@@ -484,8 +484,8 @@ blocking and threading are worth exactly nothing at `n = 4`, where MAX's
 per-call overhead (~100ns) is most of its time, and worth two orders of
 magnitude by `n = 64`.
 
-So `numax.linalg.matmul` was **not** replaced by a call into MAX, and the
-reason isn't performance:
+So the `Array` overload of `numax.linalg.matmul` was **not** replaced by a
+call into MAX, and the reason isn't performance:
 
 - The two take different arguments and cannot substitute for each other.
   MAX needs a `TileTensor` backed by device or host memory; `numax`'s
@@ -497,8 +497,16 @@ reason isn't performance:
   `Compensated`, or a `Complex`. Differentiating a matmul is the entire
   reason `numax`'s exists.
 
-The practical guidance, now in `numax/linalg/blas.mojo`'s docstring as well: if
-your entries are plain `dtype` and your matrix is bigger than about 8x8,
-call `max.linalg.matmul` directly — `numax` deliberately does not wrap it,
-since a pass-through adding no capability would just be a second name for
-the same function.
+The practical guidance, now in `numax/linalg/blas.mojo`'s docstring as well:
+if your entries are plain `dtype` and your matrix is bigger than about 8x8,
+cross to the `Tensor` tier. `to_tensor`, then the same `matmul` name, which
+resolves to the overload that *is* MAX's `linalg.matmul` — numax allocates
+the destination, takes `.view()`s and calls the kernel, so the dispatch
+across Apple, NVIDIA and AMD is MAX's and the table above is the number you
+get.
+
+That overload did not exist when this benchmark was written, and the
+guidance here used to be "call MAX directly, `numax` deliberately does not
+wrap it". It does now, which is why the two spellings sit beside each other
+in one module instead of one of them being an instruction to leave the
+library.

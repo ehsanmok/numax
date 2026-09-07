@@ -1,6 +1,6 @@
 """Where does MAX's `matmul` win, and where does `numax`'s own earn its keep?
 
-`max.linalg.matmul` is blocked, vectorized, and multi-threaded over a
+MAX's `linalg.matmul` is blocked, vectorized, and multi-threaded over a
 `TileTensor` of raw `dtype`. `numax.linalg.matmul` is a naive triple loop
 over an `Array[T, n*n]` that is generic in `T: FloatLike`. They are not
 competitors at the same job, and the point of this benchmark is to show
