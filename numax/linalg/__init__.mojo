@@ -61,7 +61,8 @@ Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
 `batched_matmul`, the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`,
 `outer`), blocked `cholesky`, `lu_factor` (returning a reusable
 `TensorLU`) and `solve`, and the solves those unlock:
-`solve_triangular`, `cholesky_solve`, `inverse` and `det`. Each takes a
+`solve_triangular`, `cholesky_solve`, `inverse` and `det`, plus the
+scalar summaries `norm` (`fro`/`1`/`inf`) and `trace`. Each takes a
 `gpu: Bool` parameter that chooses MAX's target, and everything blocked a
 `block` size that tunes the panel.
 
@@ -98,9 +99,9 @@ mutable view cannot be built from an immutable binding.
 
 ## Not here yet
 
-`qr`, `svd`, `eigh` and `pinv` have no `Tensor` overload, so past the
-crossover in `docs/performance.md` they are genuinely missing rather than
-one import away. MAX's own `linalg.qr_factorization` does not close
+`qr`, `svd`, `eigh`, `cond` and `pinv` have no `Tensor` overload, so past
+the crossover in `docs/performance.md` they are genuinely missing rather
+than one import away. `cond` is `svd`'s dependent and moves when it does. MAX's own `linalg.qr_factorization` does not close
 that gap: it is on the older `LayoutTensor`, and numax's interop is
 `TileTensor` only. `tridiagonal_solve` will stay `Array`-only -- Thomas is
 already linear and has nothing to hand a GEMM.

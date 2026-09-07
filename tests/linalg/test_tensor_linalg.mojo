@@ -31,11 +31,14 @@ from numax.linalg import (
     lu_factor,
     matmul,
     matvec,
+    norm,
     nrm2,
     outer,
     solve,
     solve_triangular,
+    trace,
 )
+from numax.linalg.misc import fro, inf
 
 comptime P = Plain[DType.float64, 1]
 
@@ -909,6 +912,74 @@ def test_tensor_det_agrees_with_the_reusable_factorization() raises:
     var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
     var factorization = lu_factor[DType.float64, 4, False, 2](a2)
     assert_almost_equal(direct, Float64(factorization.det()), atol=1e-12)
+
+
+def test_tensor_trace_agrees_with_the_array_trace() raises:
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var got = Float64(trace[DType.float64, 4](a))
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+    assert_almost_equal(got, Float64(trace[P, 4](lifted).v), atol=1e-12)
+
+
+def test_tensor_frobenius_norm_agrees_with_the_array_norm() raises:
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var got = Float64(norm[DType.float64, 4, fro](a))
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+    assert_almost_equal(got, Float64(norm[P, 4, fro](lifted).v), atol=1e-10)
+
+
+def test_tensor_induced_norms_agree_with_the_array_norms() raises:
+    """The `1`-norm collapses the rows and the `inf`-norm the columns, so
+    getting the two axes the wrong way round would pass one and fail the
+    other -- which is why both are checked on a matrix whose row and
+    column sums differ."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+
+    var a1 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    assert_almost_equal(
+        Float64(norm[DType.float64, 4, 1](a1)),
+        Float64(norm[P, 4, 1](lifted).v),
+        atol=1e-12,
+    )
+
+    var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    assert_almost_equal(
+        Float64(norm[DType.float64, 4, inf](a2)),
+        Float64(norm[P, 4, inf](lifted).v),
+        atol=1e-12,
+    )
+
+
+def test_tensor_frobenius_norm_is_nrm2_of_the_flattened_matrix() raises:
+    """The Frobenius norm reads the matrix as the vector it already is in
+    memory, so it has to equal `nrm2` on that vector."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var got = Float64(norm[DType.float64, 4, fro](a))
+
+    var flattened = List[Scalar[DType.float64]](length=16, fill=0)
+    for i in range(16):
+        flattened[i] = Scalar[DType.float64](entries[i])
+    var as_vector = Shaped[DType.float64, 16](ctx, flattened.copy())
+    assert_almost_equal(
+        got, Float64(nrm2[DType.float64, 16](as_vector)), atol=1e-12
+    )
 
 
 def main() raises:
