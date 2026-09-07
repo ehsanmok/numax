@@ -16,18 +16,45 @@ register-resident, which is what lets one call factor a matrix per SIMD
 lane inside a kernel. Past roughly 8x8 the `Tensor` overload is the faster
 one; `docs/performance.md` has the crossover.
 
-MAX ships no BLAS-1, and no BLAS anywhere is generic over its scalar type,
-so `dot`/`nrm2`/`asum`/`axpy`/`outer` are `Array`-only.
+MAX ships no BLAS-1 by name, but it ships everything BLAS-1 is made of, so
+`dot`/`nrm2`/`asum`/`axpy`/`outer` have a `Tensor` overload built from MAX
+primitives beside the `Array` one. The reductions (`dot`, `nrm2`, `asum`)
+drive MAX's `ReduceSum` monoid over its `rowwise` scaffolder; the maps
+(`axpy`, `outer`) go through `max.algorithm.elementwise`. Both give SIMD
+width, CPU threading and GPU dispatch without numax naming any of them.
+
+That split is the answer to a fair criticism of the `Array` versions: at
+`Plain[dtype, w]` each element holds a `w`-wide `SIMD`, so `axpy`'s loop is
+a `w`-wide FMA over the batch axis -- but at `w = 1` it is a scalar loop
+over `n`, and nothing in it could ever reach an accelerator. The fix was
+not to hand-vectorize that loop. It was to add the tier that hands the work
+to MAX, and leave the `Array` tier to the thing only it can do: run
+`FloatLike`-generically, per SIMD lane, inside a kernel body.
 """
 
+from algorithm import rowwise
+from algorithm.reduce_op import ReduceSum
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major
+from layout.tile_tensor import PointerStorage
 from linalg.bmm import batched_matmul as _max_batched_matmul
 from linalg.matmul import matmul as _max_matmul
+from max.algorithm.functional import elementwise
+from max.gpu.host import DeviceContext
 from std.collections import Array
+from std.math import sqrt as _sqrt
+from std.sys.info import simd_width_of
+from std.utils import IndexList
 
 from ..core.array import Dynamic, Shaped, zeros_dyn
 from ..core.numeric import FloatLike
+
+
+@always_inline
+def _target[gpu: Bool]() -> StaticString:
+    """MAX's `target` string for numax's `gpu: Bool` parameter."""
+    return "gpu" if gpu else "cpu"
+
 
 from .common import _zeros
 
@@ -102,6 +129,240 @@ def outer[
     for i in range(n):
         for j in range(n):
             out[i * n + j] = a[i] * b[j]
+    return out^
+
+
+def _fused_sum[
+    dtype: DType,
+    n: Int,
+    gpu: Bool,
+    Contribute: (def[w: Int](SIMD[dtype, w], IndexList[1]) -> SIMD[dtype, w])
+    & RegisterPassable
+    & ImplicitlyCopyable,
+](
+    xs: TileTensor[
+        dtype,
+        _,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+        linear_idx_type=_,
+    ],
+    dst: TileTensor[
+        dtype,
+        _,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+        linear_idx_type=_,
+    ],
+    contribute: Contribute,
+    ctx: DeviceContext,
+) raises:
+    """`sum(contribute(xs[i], i))` over a rank-1 `xs`, into `dst[0]`.
+
+    The shape all three BLAS-1 reductions share. MAX's `rowwise` scaffolder
+    already takes a per-tile transform between the load and the fold, which
+    is exactly where `dot`'s multiply, `nrm2`'s square and `asum`'s
+    magnitude belong -- each reads one tile and none of them needs a second
+    pass. So the fold is `ReduceSum` in all three cases and only
+    `contribute` differs, which is why this is one function and not three.
+
+    Reassociated, as any monoid reduction is: the `Array` overloads sum
+    strictly in order and say so, and these will differ from them in the
+    last bits.
+    """
+    comptime target = "gpu" if gpu else "cpu"
+    comptime simd_width = rowwise.pick_simd_width[
+        ReduceSum[dtype, 1], target, 64, dtype
+    ]()
+    var src = xs
+    var out = dst
+
+    @always_inline
+    def body[
+        params: rowwise.ContextParams
+    ](row_coords: Coord, mut c: rowwise.Context[params]) {
+        var src, var out, var contribute
+    }:
+        @always_inline
+        def load[
+            width: Int, alignment: Int, coord_rank: Int
+        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](Coord(idx))
+
+        var row = rowwise.Row[params, dtype, dtype, 0, 1, is_cached=False](
+            row_coords, n, c, load
+        )
+        var acc = row.reduce[ReduceSum[dtype, params.simd_width]](
+            contribute, load
+        ).acc
+
+        @always_inline
+        def write(oc: IndexList[1]) {var acc, var out}:
+            out.store[params.emit_tile_width](
+                Coord(0), acc.slice[params.emit_tile_width]()
+            )
+
+        row.emit(write)
+
+    rowwise.launch[
+        axis=0,
+        simd_width=simd_width,
+        target=target,
+        num_phases=1,
+        associative=True,
+    ](body, Coord(IndexList[1](n)), Optional(ctx))
+
+
+def dot[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Shaped[dtype, n], mut b: Shaped[dtype, n]) raises -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    """The inner product `sum(a[i] * b[i])` -- BLAS-1 `dot`, over `Tensor`.
+
+    MAX's `ReduceSum` monoid over its `rowwise` scaffolder, with the
+    multiply fused into the per-tile transform, so `b` is never
+    materialized as a product vector. Threaded on CPU, warp- or
+    block-tiered on GPU. Only the resulting scalar returns to the host.
+
+    Reassociated, unlike the `Array` overload's strict left-to-right sum.
+    A caller who needs the rounding pinned, or who needs `Compensated`,
+    wants that one.
+    """
+    var ctx = a.context()
+    var out = Shaped[dtype, 1](ctx)
+    var rhs = b.view()
+
+    @always_inline
+    def times[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: IndexList[1]) {var rhs} -> SIMD[dtype, w]:
+        return tile * rhs.load[w](Coord(idx))
+
+    _fused_sum[dtype, n, gpu](a.view(), out.view(), times, ctx)
+    return out.to_host()[0]
+
+
+def nrm2[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Shaped[dtype, n]) raises -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    """The Euclidean norm `sqrt(sum(a[i]**2))` -- BLAS-1 `nrm2`, over
+    `Tensor`.
+
+    Not rescaled, so a vector whose entries approach the square root of
+    `dtype`'s overflow threshold overflows here where LAPACK's `nrm2`
+    would not -- the same limit the `Array` overload documents, and for a
+    different reason: there the fixed-iteration invariant rules out the
+    running maximum, here it would cost a second pass over the data.
+    """
+    var ctx = a.context()
+    var out = Shaped[dtype, 1](ctx)
+
+    @always_inline
+    def square[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+        return tile * tile
+
+    _fused_sum[dtype, n, gpu](a.view(), out.view(), square, ctx)
+    return _sqrt(out.to_host()[0])
+
+
+def asum[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Shaped[dtype, n]) raises -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    """The sum of magnitudes `sum(|a[i]|)` -- BLAS-1 `asum`, over `Tensor`.
+
+    Cannot overflow the way `nrm2` can, which is why a convergence check
+    that only needs a magnitude usually wants this one.
+    """
+    var ctx = a.context()
+    var out = Shaped[dtype, 1](ctx)
+
+    @always_inline
+    def magnitude[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+        return abs(tile)
+
+    _fused_sum[dtype, n, gpu](a.view(), out.view(), magnitude, ctx)
+    return out.to_host()[0]
+
+
+def axpy[
+    dtype: DType, n: Int, gpu: Bool = False
+](
+    alpha: Scalar[dtype], mut x: Shaped[dtype, n], mut y: Shaped[dtype, n]
+) raises -> Shaped[dtype, n] where dtype.is_floating_point():
+    """`alpha * x + y` -- BLAS-1 `axpy`, over `Tensor`.
+
+    One fused `max.algorithm.elementwise` pass: `alpha` rides the body's
+    capture list, so no scaled copy of `x` is materialized. That is the
+    reason this cannot be `numax.core.tensor.map` -- `map`'s `step` is a
+    non-capturing compile-time function, which a run-time scalar cannot
+    reach.
+
+    Returns a new vector rather than updating `y` in place, matching the
+    `Array` overload, so the two spellings can be checked against each
+    other.
+    """
+    var ctx = x.context()
+    var out = Shaped[dtype, n](ctx)
+    var xv = x.view()
+    var yv = y.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var alpha, var xv, var yv, var ov}:
+        ov.store[w](coord, alpha * xv.load[w](coord) + yv.load[w](coord))
+
+    elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+        step, Coord(n), ctx
+    )
+    return out^
+
+
+def outer[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](mut a: Shaped[dtype, m], mut b: Shaped[dtype, n]) raises -> Shaped[
+    dtype, m, n
+] where dtype.is_floating_point():
+    """The outer product `out[i, j] = a[i] * b[j]` -- over `Tensor`.
+
+    The rank-1 update every quasi-Newton method and every Householder
+    reflector is built from. MAX's `outer_product_acc` is the nearest thing
+    and is denied twice over: it is on the older `LayoutTensor`, which
+    numax does not bridge to, and it only accumulates into an existing
+    matrix rather than producing one. So this is an `elementwise` map over
+    the `m x n` output, which is what `outer_product_acc` would have been
+    used for anyway.
+
+    Unlike the `Array` overload this is not restricted to a square result:
+    `a` and `b` may have different lengths, as `numpy.outer` allows.
+    """
+    var ctx = a.context()
+    var out = Shaped[dtype, m, n](ctx)
+    var av = a.view()
+    var bv = b.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
+        # One row of the output at a time: `a[i]` is uniform across the
+        # tile and `b[j:j+w]` is contiguous, so the store is too.
+        var i = coord[0]
+        var j = coord[1]
+        ov.store[w](coord, av[i] * bv.load[w](Coord(j)))
+
+    elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+        step, Coord(m, n), ctx
+    )
     return out^
 
 

@@ -224,7 +224,7 @@ unblocked algorithm, which is what the tests pin the blocked path against.
 | Pivoted (tier 2) | `lu_factor` and the `PivotedLU` it returns, whose `solve` and `det` get the answers the unpivoted routines cannot |
 | Norms | `norm` — `ord=fro` (default), `1` or `inf`, per `numpy.linalg.norm` — and `nrm2` |
 | Products | `dot`, `outer`, `matvec`, `matmul` |
-| BLAS-1 | `dot`, `nrm2`, `asum`, `axpy` -- MAX ships none of it, and no BLAS anywhere is generic over its scalar type |
+| BLAS-1 | `dot`, `nrm2`, `asum`, `axpy`, `outer`, at both tiers. MAX names no BLAS-1, so the `Tensor` overloads are built from what it does ship -- `ReduceSum` over `rowwise` for the three reductions, `elementwise` for the two maps, `gpu: Bool` picking the target. The `Array` overloads stay because no BLAS anywhere is generic over its scalar type, and only they run at `Dual` or `Compensated` |
 
 All under [`numax/linalg/`](../numax/linalg/), one module per operation
 family the way `scipy.linalg` splits `_decomp_lu`, `_decomp_cholesky` and

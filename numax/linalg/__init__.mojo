@@ -58,10 +58,19 @@ a branch on data, which buys the matrices unpivoted `lu` cannot factor at
 the cost of the GPU.
 
 Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
-`batched_matmul`, and blocked `cholesky`, `lu_factor` (returning a
-reusable `TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that
-chooses MAX's target and a `block` size that tunes the panel.
+`batched_matmul`, the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`,
+`outer`), and blocked `cholesky`, `lu_factor` (returning a reusable
+`TensorLU`) and `solve`. Each takes a `gpu: Bool` parameter that chooses
+MAX's target, and the factorizations a `block` size that tunes the panel.
 `tril`/`triu` are `numax.core`'s, also MAX-backed.
+
+The BLAS-1 five are the newest and the plainest illustration of what
+"MAX-first" buys: MAX names none of them, but `dot`/`nrm2`/`asum` are its
+`ReduceSum` monoid over its `rowwise` scaffolder with the multiply, square
+or magnitude fused into the per-tile transform, and `axpy`/`outer` are
+`max.algorithm.elementwise` maps. numax writes the contribution and the
+signature; MAX supplies the SIMD width, the CPU threading and the GPU
+tiering.
 
 `gpu` is a compile-time parameter rather than a look at `ctx.api()`
 because MAX's `target` is a `StaticString`: deciding it at run time would

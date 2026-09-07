@@ -15,13 +15,20 @@ from numax import Plain
 from numax.core.array import Shaped, zeros_dyn
 from numax.core.array import zeros as array_zeros
 from numax.core.array import transpose, tril, triu
+from std.collections import Array
+
 from numax.linalg import (
+    asum,
+    axpy,
     batched_matmul,
     cholesky,
     det,
+    dot,
     lu_factor,
     matmul,
     matvec,
+    nrm2,
+    outer,
     solve,
 )
 
@@ -491,6 +498,98 @@ def test_lu_factor_det_agrees_with_the_array_tier() raises:
     var array_det = Float64(det[P, 4](lifted).v)
 
     assert_almost_equal(tensor_det, array_det, atol=1e-9)
+
+
+def _ramp[n: Int](start: Float64, step: Float64) -> List[Scalar[DType.float64]]:
+    var values = List[Scalar[DType.float64]](capacity=n)
+    for i in range(n):
+        values.append(Scalar[DType.float64](start + step * Float64(i)))
+    return values^
+
+
+def _array_of[n: Int](values: List[Scalar[DType.float64]]) -> Array[P, n]:
+    var out = array_zeros[P, n]()
+    for i in range(n):
+        out[i] = P(values[i])
+    return out^
+
+
+def test_tensor_dot_agrees_with_the_array_dot() raises:
+    """The two spellings of `dot` are one word, so they must agree.
+
+    Not bit for bit: the `Array` fold is strictly left to right and the
+    `Tensor` one is MAX's reassociated `ReduceSum`, which is exactly what
+    both docstrings claim. The tolerance is what that difference costs at
+    this length, not a hedge.
+    """
+    comptime n = 64
+    var ctx = _cpu()
+    var xv = _ramp[n](0.5, 0.25)
+    var yv = _ramp[n](-3.0, 0.125)
+    var x = Shaped[DType.float64, n](ctx, xv.copy())
+    var y = Shaped[DType.float64, n](ctx, yv.copy())
+
+    var want = dot(_array_of[n](xv), _array_of[n](yv)).v
+    assert_almost_equal(dot(x, y), want, atol=1e-9)
+
+
+def test_tensor_nrm2_and_asum_agree_with_the_array_versions() raises:
+    comptime n = 48
+    var ctx = _cpu()
+    var xv = _ramp[n](-5.0, 0.375)
+    var x = Shaped[DType.float64, n](ctx, xv.copy())
+    var arr = _array_of[n](xv)
+
+    assert_almost_equal(nrm2(x), nrm2(arr).v, atol=1e-9)
+    assert_almost_equal(asum(x), asum(arr).v, atol=1e-9)
+
+
+def test_tensor_axpy_agrees_with_the_array_axpy() raises:
+    """`alpha` is a run-time scalar riding `elementwise`'s capture list,
+    which is the thing `numax.core.tensor.map` cannot express -- so this
+    also pins that the fused form got the right `alpha`."""
+    comptime n = 32
+    var ctx = _cpu()
+    var xv = _ramp[n](1.0, 0.5)
+    var yv = _ramp[n](7.0, -0.25)
+    var x = Shaped[DType.float64, n](ctx, xv.copy())
+    var y = Shaped[DType.float64, n](ctx, yv.copy())
+    var alpha = Scalar[DType.float64](-1.75)
+
+    var got = axpy(alpha, x, y).to_host()
+    var want = axpy(P(alpha), _array_of[n](xv), _array_of[n](yv))
+    for i in range(n):
+        assert_almost_equal(got[i], want[i].v, atol=1e-12)
+
+
+def test_tensor_outer_agrees_with_the_array_outer() raises:
+    comptime n = 8
+    var ctx = _cpu()
+    var av = _ramp[n](2.0, 0.5)
+    var bv = _ramp[n](-1.0, 0.25)
+    var a = Shaped[DType.float64, n](ctx, av.copy())
+    var b = Shaped[DType.float64, n](ctx, bv.copy())
+
+    var got = outer(a, b).to_host()
+    var want = outer(_array_of[n](av), _array_of[n](bv))
+    for i in range(n * n):
+        assert_almost_equal(got[i], want[i].v, atol=1e-12)
+
+
+def test_tensor_outer_accepts_a_rectangular_result() raises:
+    """`numpy.outer` does not require the two vectors to match, and the
+    `Array` overload cannot express that -- its result is `n * n`."""
+    comptime m = 3
+    comptime n = 5
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, m](ctx, [1.0, 2.0, 3.0])
+    var b = Shaped[DType.float64, n](ctx, [1.0, 10.0, 100.0, 1000.0, 10000.0])
+
+    var got = outer(a, b).to_host()
+    for i in range(m):
+        for j in range(n):
+            var want = Float64(i + 1) * (10.0**j)
+            assert_almost_equal(got[i * n + j], Scalar[DType.float64](want))
 
 
 def main() raises:
