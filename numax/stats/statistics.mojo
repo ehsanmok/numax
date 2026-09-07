@@ -1,8 +1,12 @@
 """NumPy-named statistics, composed from `numax.core.tensor` and `FloatLike`.
 
-**This module is tier 2.** Every reduction here walks a host copy.
+**Tier 2, with three exceptions.** `mean`, `variance` and `stddev` fold
+through MAX's `Welford` monoid over its `rowwise` scaffolder
+(`numax.core.rowwise`), so they are threaded on CPU, tiered on GPU under
+`gpu=True`, and never download the input -- only the resulting scalars come
+back. Every other reduction here still walks a host copy;
 `numax.core.tensor`'s `reduce` and `reduce_axis` are the GPU-launchable
-primitives underneath the same operations.
+primitives underneath those.
 
 `docs/parity.md` picks statistics as a genuine `numax` gap with a
 selective axis-1 lift: MAX ships no NumPy-named `mean`/`var`/`std`/`median`/
@@ -18,15 +22,19 @@ one body. The denial cited `max.algorithm.functional`, a `max.*` path that
 does export only `elementwise` -- but the kernel package is the **top-level
 `algorithm`** root, the same distinction that puts matmul in `linalg` and not
 `max.linalg`. So the entry points here are numax's to name, while the
-reduction they sit on is MAX's to provide.
+reduction they sit on is MAX's to provide -- which is now what happens:
+`mean`, `variance`, `stddev` and the axis-wise `mean`/`variance_axis` are
+`Welford` calls, and numax writes only the shape bookkeeping around them.
 
 Two genuinely different shapes live in this one file, because they answer
 two different questions:
 
 - **`Plain`-only, `TileTensor`-based** (`sum`, `prod`, `min`, `max`, `mean`,
-  `median`, `mode`, `argmax`, `argmin`, `cumprod`): "what NumPy-shaped
+  `variance`, `stddev`, `variance_axis`, `median`, `mode`, `argmax`,
+  `argmin`, `cumprod`): "what NumPy-shaped
   statistic can I compute over a buffer of raw `dtype` values". These
-  compose from `numax.core.tensor.reduce` the same way `numax.core.array`'s creation
+  compose from MAX's reductions and `numax.core.tensor.reduce` the same way
+  `numax.core.array`'s creation
   routines compose from `TileTensor` -- a thin, `Plain`-only layer, axis 2
   only. `median`/`mode` sort first via the standard library's `List.sort()`
   -- the fixed-iteration invariant restricts what *numax* writes inside a
@@ -83,10 +91,18 @@ from std.math import sqrt as _sqrt
 
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
+from layout.tile_tensor import PointerStorage
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 
 from ..core.array import Dynamic, Shaped, Tensor, _dyn_shape_from
 from ..core.numeric import FloatLike
+from ..core.rowwise import mean_variance_axis
+
+
+@always_inline
+def _target[gpu: Bool]() -> StaticString:
+    """`rowwise`'s target string for numax's `gpu: Bool` parameter."""
+    return "gpu" if gpu else "cpu"
 
 
 def _fold_axis[
@@ -215,21 +231,112 @@ def max[
 
 
 def mean[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool = False
+](mut xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
 ] where (
     dtype.is_floating_point()
     and axis >= 0
     and axis < LayoutType.rank
     and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
 ):
-    """The arithmetic mean along `axis`. `numpy.mean(a, axis=k)`."""
-    var totals = sum[axis=axis](xs)
-    var length = Scalar[dtype](xs.dim_at(axis))
-    for i in range(totals.size()):
-        totals[i] = totals[i] / length
-    return totals^
+    """The arithmetic mean along `axis`. `numpy.mean(a, axis=k)`.
+
+    MAX's `Welford` monoid, as the whole-tensor `mean` above. The variance
+    the monoid also produces is discarded here; `variance_axis` returns
+    both from the one traversal for a caller that wants them together.
+    """
+    var means = _welford_dst[axis=axis](xs)
+    var variances = _welford_dst[axis=axis](xs)
+    _welford_axis[axis=axis, gpu=gpu](xs, means, variances, 0)
+    return means^
+
+
+def variance_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool = False
+](mut xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> Tuple[
+    Dynamic[dtype, LayoutType.rank - 1], Dynamic[dtype, LayoutType.rank - 1]
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+):
+    """`(mean, variance)` along `axis`, from one traversal.
+
+    `numpy.mean(a, axis=k)` and `numpy.var(a, axis=k, ddof=ddof)` at once.
+    Named for the variance rather than the mean because `mean[axis=k]`
+    already exists and a caller reaching for both is reaching for this one;
+    MAX's `Welford` computes both regardless, so returning only one would
+    mean reducing twice to get the other.
+    """
+    var means = _welford_dst[axis=axis](xs)
+    var variances = _welford_dst[axis=axis](xs)
+    _welford_axis[axis=axis, gpu=gpu](xs, means, variances, ddof)
+    return (means^, variances^)
+
+
+def _welford_dst[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](mut xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
+    """A destination shaped like `xs` with `axis` dropped.
+
+    Run-time-shaped because the surviving extents are read from the input
+    rather than named, which is what `Dynamic` is for.
+    """
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank - 1)
+    for d in range(rank):
+        if d != axis:
+            extents.append(xs.dim_at(d))
+    return Dynamic[dtype, rank - 1](
+        xs.context(), row_major(_dyn_shape_from[rank - 1](extents))
+    )
+
+
+def _welford_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool
+](
+    mut xs: Tensor[dtype, LayoutType],
+    mut means: Dynamic[dtype, LayoutType.rank - 1],
+    mut variances: Dynamic[dtype, LayoutType.rank - 1],
+    ddof: Int,
+) raises where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
+):
+    """Fill `means` and `variances` along `axis` from one traversal.
+
+    Both destinations are arguments rather than return values so that
+    `mean` can discard one without the caller-visible tuple a returned
+    pair would need -- a `Dynamic` is not copyable, so moving one out of a
+    tuple is more ceremony than passing two in.
+    """
+    mean_variance_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+        xs.view(), means.view(), variances.view(), ddof, Optional(xs.context())
+    )
 
 
 def sum[
@@ -290,19 +397,48 @@ def max[
     return best
 
 
+def _welford[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool
+](mut xs: Tensor[dtype, LayoutType], ddof: Int) raises -> Tuple[
+    Scalar[dtype], Scalar[dtype]
+] where dtype.is_floating_point():
+    """`(mean, variance)` of every element of `xs`, in one traversal.
+
+    The whole tensor is one row: a rank-1 view over its buffer reduced
+    along axis 0. Only the two resulting scalars come back to the host, so
+    a device-resident `xs` stays where it is instead of being downloaded.
+    """
+    var ctx = xs.context()
+    var n = xs.size()
+    var flat = TileTensor(
+        xs.view().ptr_at_offset(Coord(0)), row_major(Coord(n))
+    )
+    var mean_out = Shaped[dtype, 1](ctx)
+    var var_out = Shaped[dtype, 1](ctx)
+    mean_variance_axis[dtype, _, _, axis=0, target=_target[gpu]()](
+        flat, mean_out.view(), var_out.view(), ddof, Optional(ctx)
+    )
+    return (mean_out.to_host()[0], var_out.to_host()[0])
+
+
 def mean[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](mut xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The arithmetic mean of `xs`.
+
+    MAX's `Welford` monoid over its `rowwise` scaffolder, so this is
+    threaded on CPU, tiered on GPU, and never downloads `xs` -- only the
+    resulting scalar crosses back. `gpu=True` requires `xs` to have been
+    allocated on an accelerator context.
 
     `Plain`-only: a mean is a single scalar with no derivative to
     propagate through the division by a plain `Int` count, so there is no
     axis-1 win here the way there is for `variance`/`stddev`/`cumsum`.
     """
-    var n = xs.size()
-    return sum(xs) / Scalar[dtype](n)
+    var pair = _welford[gpu=gpu](xs, 0)
+    return pair[0]
 
 
 def median[
@@ -387,33 +523,30 @@ def cumprod[
 
 
 def variance[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](mut xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The variance of every element of `xs`, `ddof` subtracted from the
     divisor (`ddof=1` for the sample variance).
 
-    Two passes over a host copy: the mean, then the squared deviations.
+    One traversal through MAX's `Welford` monoid, which carries
+    `{count, mean, M2}` and combines partials by Chan's formula, rather
+    than the two host passes this used to make. Both the threading and the
+    accuracy come from that: Welford never forms `E[x^2]`, so a variance
+    small relative to the mean survives, where the one-pass
+    subtract-of-squares shortcut cancels away to noise.
+
     The `List[T]` form below is the `FloatLike`-generic one -- call that at
     `Compensated` when the summation length is what threatens the result.
     """
-    var n = xs.size()
-    var values = xs.to_host()
-    var total = Scalar[dtype](0)
-    for i in range(n):
-        total += values[i]
-    var mu = total / Scalar[dtype](n)
-    var acc = Scalar[dtype](0)
-    for i in range(n):
-        var d = values[i] - mu
-        acc += d * d
-    return acc / Scalar[dtype](n - ddof)
+    var pair = _welford[gpu=gpu](xs, ddof)
+    return pair[1]
 
 
 def stddev[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> SIMD[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](mut xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
     """The standard deviation of `xs`: `variance(xs, ddof)` square-rooted.
@@ -422,7 +555,7 @@ def stddev[
     below documents: `std` is Mojo's standard library package and cannot be
     defined as a function name at all.
     """
-    return _sqrt(variance(xs, ddof))
+    return _sqrt(variance[gpu=gpu](xs, ddof))
 
 
 def cumsum[

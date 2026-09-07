@@ -29,9 +29,21 @@ one of MAX's monoids. Both ship, because they answer different questions:
   point per monoid, each naming its own. So `reduce_axis[combine]` stays for
   folds outside the closed set, at the cost of being serial and scalar.
 
-The two agree on output layout: `dst` is indexed through its coalesced view,
-holding the surviving axes in row-major order, so a call here can be checked
-directly against the same reduction spelled with `combine`.
+The two agree on output layout: `dst` receives the surviving axes in row-major
+order, so a call here can be checked directly against the same reduction
+spelled with `combine`.
+
+That is a **contract on the destination, not a constraint on its layout**.
+These write `dst` through a rank-1 view built over its own pointer, at a flat
+row-major index, so its layout is consulted for nothing but its element count.
+Two reasons, and the second is why there is no `is_row_major` clause on the
+output the way `reduce_axis` has one: `coalesce()`, which would respect an
+arbitrary layout, requires every extent at compile time, and these accept a
+runtime-shaped destination -- `numax.stats` reduces into a `Dynamic` tensor
+whose extents are read from the input rather than named, and a predicate over
+a layout built at run time has nothing to prove itself against.
+`numax.core.tensor`'s runtime `map` overload flattens the same way for the
+same reason. Pass a row-major destination; a strided one is filled densely.
 
 A monoid reduction is reassociated by construction -- MAX folds SIMD tiles
 and joins partials across threads or lanes -- so a floating-point sum here
@@ -42,9 +54,15 @@ rewritten in terms of this.
 """
 
 from algorithm import rowwise
-from algorithm.reduce_op import ReduceMax, ReduceMin, ReduceProduct, ReduceSum
+from algorithm.reduce_op import (
+    ReduceMax,
+    ReduceMin,
+    ReduceProduct,
+    ReduceSum,
+    Welford,
+)
 from layout import Coord, TileTensor
-from layout.tile_layout import TensorLayout
+from layout.tile_layout import row_major, TensorLayout
 from layout.tile_tensor import PointerStorage
 from max.gpu.host import DeviceContext
 from std.utils import IndexList
@@ -67,15 +85,6 @@ def sum_axis[
 ) raises where (
     TileTensor[
         dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].all_dims_known
-    and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].is_row_major
-    and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].all_dims_known
-    and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
@@ -104,7 +113,9 @@ def sum_axis[
         dims[d] = Int(xs.dim[d]())
     var axis_size = Int(xs.dim[axis]())
     var src = xs
-    var out_flat = dst.coalesce()
+    var out_flat = TileTensor(
+        dst.ptr_at_offset(Coord(0)), row_major(Coord(dst.num_elements()))
+    )
 
     @always_inline
     def body[
@@ -167,15 +178,6 @@ def max_axis[
 ) raises where (
     TileTensor[
         dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].all_dims_known
-    and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].is_row_major
-    and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].all_dims_known
-    and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
@@ -200,7 +202,9 @@ def max_axis[
         dims[d] = Int(xs.dim[d]())
     var axis_size = Int(xs.dim[axis]())
     var src = xs
-    var out_flat = dst.coalesce()
+    var out_flat = TileTensor(
+        dst.ptr_at_offset(Coord(0)), row_major(Coord(dst.num_elements()))
+    )
 
     @always_inline
     def body[
@@ -243,6 +247,127 @@ def max_axis[
         target=target,
         num_phases=1,
         associative=False,
+    ](body, Coord(dims), ctx)
+
+
+def mean_variance_axis[
+    dtype: DType,
+    XsLayout: TensorLayout,
+    OutLayout: TensorLayout,
+    axis: Int,
+    target: StaticString = "cpu",
+](
+    xs: TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ],
+    means: TileTensor[
+        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ],
+    variances: TileTensor[
+        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ],
+    ddof: Int = 0,
+    ctx: Optional[DeviceContext] = None,
+) raises where (
+    dtype.is_floating_point()
+    and TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+    and axis >= 0
+    and axis
+    < TileTensor[
+        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].rank
+):
+    """Mean and variance along `axis` in one pass, on either target.
+
+    `numpy.mean(a, axis=k)` and `numpy.var(a, axis=k, ddof=ddof)` together,
+    through MAX's `Welford` monoid: a single traversal carrying
+    `{count, mean, M2}`, combined across SIMD lanes and threads by Chan's
+    formula. `ddof` is subtracted from the divisor, so `ddof=1` gives the
+    sample variance.
+
+    Both statistics come back from one call because the monoid computes
+    both and separating them would mean reducing twice. A caller wanting
+    only the mean still pays one pass; it just also gets the variance.
+
+    Numerically this is the point of the monoid rather than an incidental
+    benefit. The textbook two-pass form needs the mean before it can
+    accumulate deviations, so the naive one-pass alternative --
+    `E[x^2] - E[x]^2` -- cancels catastrophically when the mean is large
+    relative to the spread. Welford never forms `E[x^2]`, so a variance of
+    order one is recoverable from values of order `1e8`, where the
+    subtract-of-squares form returns noise or a negative number. That is
+    also why the result will not match a two-pass host computation in the
+    last bits: this one is the more accurate of the two.
+    """
+    comptime rank = type_of(xs).rank
+    comptime simd_width = rowwise.pick_simd_width[
+        Welford[dtype, 1], target, 64, dtype
+    ]()
+
+    var dims = IndexList[rank]()
+    comptime for d in range(rank):
+        dims[d] = Int(xs.dim[d]())
+    var axis_size = Int(xs.dim[axis]())
+    var src = xs
+    var mean_flat = TileTensor(
+        means.ptr_at_offset(Coord(0)), row_major(Coord(means.num_elements()))
+    )
+    var var_flat = TileTensor(
+        variances.ptr_at_offset(Coord(0)),
+        row_major(Coord(variances.num_elements())),
+    )
+    var divisor = Scalar[dtype](axis_size - ddof)
+
+    @always_inline
+    def body[
+        params: rowwise.ContextParams
+    ](row_coords: Coord, mut c: rowwise.Context[params]) {
+        var axis_size,
+        var src,
+        var mean_flat,
+        var var_flat,
+        var dims,
+        var divisor,
+    }:
+        @always_inline
+        def load[
+            width: Int, alignment: Int, coord_rank: Int
+        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](Coord(idx))
+
+        var row = rowwise.Row[
+            params, dtype, dtype, axis, rank, is_cached=False
+        ](row_coords, axis_size, c, load)
+
+        @always_inline
+        def contribute[
+            w: Int
+        ](tile: SIMD[dtype, w], idx: IndexList[rank]) {} -> SIMD[dtype, w]:
+            return tile
+
+        var state = row.reduce[Welford[dtype, params.simd_width]](
+            contribute, load
+        )
+
+        @always_inline
+        def write(
+            oc: IndexList[rank],
+        ) {var state, var mean_flat, var var_flat, var dims, var divisor}:
+            comptime w = params.emit_tile_width
+            var at = Coord(_collapsed[rank, axis](oc, dims))
+            mean_flat.store[w](at, state.mean.slice[w]())
+            var_flat.store[w](at, state.M2.slice[w]() / divisor)
+
+        row.emit(write)
+
+    rowwise.launch[
+        axis=axis,
+        simd_width=simd_width,
+        target=target,
+        num_phases=1,
+        associative=True,
     ](body, Coord(dims), ctx)
 
 

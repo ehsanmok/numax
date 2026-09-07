@@ -38,6 +38,7 @@ from numax.stats import (
     stddev,
     sum,
     variance,
+    variance_axis,
 )
 
 comptime dtype = DType.float32
@@ -221,6 +222,98 @@ def test_compensated_variance_beats_plain_on_a_long_summation() raises:
             plain_err,
         ),
     )
+
+
+def test_tensor_variance_recovers_a_small_spread_under_a_large_mean() raises:
+    """The reason `variance` folds through `Welford` and not a shortcut.
+
+    Alternating `1e4` and `1e4 + 1` has variance exactly `0.25`. Welford
+    carries `M2` directly, never forming a second moment, so it returns
+    that. The one-pass `E[x^2] - E[x]^2` alternative cannot: the squares
+    land near `1e8`, where the float32 spacing is `8`, so both moments
+    round to the same multiple of `8` and the difference comes out exactly
+    `0.0` -- computed, not supposed. The assertion below is three orders
+    of magnitude inside that failure, so it distinguishes the two rather
+    than merely exercising the call.
+
+    The magnitudes are `dtype`-specific: this suite runs at float32, and
+    at float64 the same point needs `1e8` instead of `1e4` -- one has to
+    outrun the mantissa for the shortcut to fail.
+    """
+    comptime n = 8
+    var ctx = DeviceContext(api="cpu")
+    var xs = full[dtype, n](0, ctx=ctx)
+    var v = xs.view()
+    for i in range(n):
+        v[i] = Scalar[dtype](1e4) + Scalar[dtype](i % 2)
+
+    assert_almost_equal(variance(xs), Scalar[dtype](0.25), atol=1e-3)
+    assert_almost_equal(stddev(xs), Scalar[dtype](0.5), atol=1e-3)
+
+
+def test_tensor_variance_honors_ddof() raises:
+    """`ddof=1` divides by `n - 1`, matching `numpy.var(a, ddof=1)`."""
+    var ctx = DeviceContext(api="cpu")
+    var xs = _fixed_array()
+    # [1, 2, 2, 3, 7, 9], mean 4, sum of squared deviations 52
+    assert_almost_equal(variance(xs), Scalar[dtype](52.0 / 6.0))
+    assert_almost_equal(variance(xs, ddof=1), Scalar[dtype](52.0 / 5.0))
+
+
+def test_variance_axis_agrees_with_the_separate_entry_points() raises:
+    """One traversal returning both statistics matches asking separately.
+
+    The convenience claim: `variance_axis` exists so a caller wanting mean
+    and variance folds once, and its answers must be the ones `mean[axis]`
+    gives -- otherwise it is a second implementation, not a convenience.
+    """
+    comptime rows = 3
+    comptime cols = 4
+    var ctx = DeviceContext(api="cpu")
+    var xs = full[dtype, rows, cols](0, ctx=ctx)
+    var v = xs.view()
+    for r in range(rows):
+        for c in range(cols):
+            v[r, c] = Scalar[dtype]((r * cols + c) % 5)
+
+    var pair = variance_axis[axis=1](xs)
+    var pm = pair[0].to_host()
+    var pv = pair[1].to_host()
+    var sm = mean[axis=1](xs).to_host()
+    for r in range(rows):
+        assert_almost_equal(pm[r], sm[r])
+        var mu = Scalar[dtype](0)
+        for c in range(cols):
+            mu += Scalar[dtype]((r * cols + c) % 5)
+        mu = mu / Scalar[dtype](cols)
+        var acc = Scalar[dtype](0)
+        for c in range(cols):
+            var d = Scalar[dtype]((r * cols + c) % 5) - mu
+            acc += d * d
+        assert_almost_equal(pm[r], mu)
+        assert_almost_equal(pv[r], acc / Scalar[dtype](cols))
+
+
+def test_mean_reduces_the_first_axis() raises:
+    """`axis=0` is the tiled tier, where a SIMD lane is an output column
+    rather than a partial -- a different code path in MAX's scaffolder
+    from `axis=1`, and the one that silently drops columns if a body
+    emits one value where it should emit a tile."""
+    comptime rows = 4
+    comptime cols = 3
+    var ctx = DeviceContext(api="cpu")
+    var xs = full[dtype, rows, cols](0, ctx=ctx)
+    var v = xs.view()
+    for r in range(rows):
+        for c in range(cols):
+            v[r, c] = Scalar[dtype](r + 2 * c)
+
+    var got = mean[axis=0](xs).to_host()
+    for c in range(cols):
+        var mu = Scalar[dtype](0)
+        for r in range(rows):
+            mu += Scalar[dtype](r + 2 * c)
+        assert_almost_equal(got[c], mu / Scalar[dtype](rows))
 
 
 def main() raises:
