@@ -357,10 +357,18 @@ examples-cpu = { depends-on = [
 bench = "mojo -I . bench/bench_tensor_map.mojo"
 bench-matmul = "mojo -I . bench/bench_matmul.mojo"
 bench-elementwise = "mojo -I . bench/bench_elementwise.mojo"
+# The `Tensor` tier of numax.linalg against the `linalg.matmul` ceiling its
+# blocked factorizations are trying to reach. CPU-only, so CI can run it;
+# `bench-linalg-gpu` is the same measurements on a device.
+bench-linalg = "mojo -I . bench/bench_linalg.mojo"
 # The fusion sweep runs a GPU half, so it needs real Metal hardware too.
 bench-fusion = "mojo -I . bench/bench_fusion.mojo"
 # Needs real Metal hardware, like the GPU examples -- a local-only check.
 bench-gpu = "mojo -I . bench/bench_tensor_map_gpu.mojo"
+# The linalg sweep on a device. `float32` only, and not because of a choice
+# numax made: `linalg.matmul` does not compile for GPU at `float64`, which
+# `.cursor/rules/max-feedback.mdc` records. Needs a real device.
+bench-linalg-gpu = "mojo -I . bench/bench_linalg_gpu.mojo"
 # Diagnoses *why* the GPU path lands where it does: bandwidth vs arithmetic,
 # per-thread width, block size, and sync accounting. Metal hardware too.
 bench-roofline = "mojo -I . bench/bench_gpu_roofline.mojo"
