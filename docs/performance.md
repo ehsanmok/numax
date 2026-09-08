@@ -257,15 +257,15 @@ writeup.
 
 ## Cross the tiers past N (dense linalg)
 
-`numax.linalg`'s `Array[T, n*n]` tier keeps its matrices in
+`numax.linalg.array`'s `Array[T, n*n]` tier keeps its matrices in
 registers -- a compile-time size that keeps them GPU-launchable (one matrix
 per SIMD lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual`
 or `Compensated`, at the cost of both compile time and register pressure
-growing with `n`. Past a certain `n`, the `Tensor` tier of the same module
-wins on raw speed, because it is MAX's kernel. `bench/bench_matmul.mojo`
-measures exactly where, for `matmul` (nanoseconds per `n x n` product,
-lower is better; the batched column runs 4 independent products per call,
-one per SIMD lane, divided by 4 to stay comparable):
+growing with `n`. Past a certain `n`, the `Tensor` tier -- `numax.linalg`
+itself -- wins on raw speed, because its cubic term is MAX's kernel.
+`bench/bench_matmul.mojo` measures exactly where, for `matmul` (nanoseconds
+per `n x n` product, lower is better; the batched column runs 4 independent
+products per call, one per SIMD lane, divided by 4 to stay comparable):
 
 | n | MAX | numax scalar | numax batched (per matrix) |
 |---|---|---|---|
@@ -280,26 +280,129 @@ against the 4-wide batched form, and is ~130x ahead by `n = 64`. See
 `bench/README.md`'s "Matmul: where MAX overtakes the generic loop" for
 the full writeup.
 
-Crossing is `to_tensor` and then the same function name, which resolves to
-the `Tensor` overload. What that gets differs by operation:
+Crossing is `to_tensor` and then the same function name from
+`numax.linalg` rather than `numax.linalg.array`. What that gets differs by
+operation:
 
 - `matmul`, `matvec`, `batched_matmul` are MAX kernels outright, so the
   table above *is* their number.
-- `cholesky`, `lu_factor` and `solve` are numax's, because MAX ships no
-  factorization on `TileTensor` -- its only one, `qr_factorization`, is on
-  the older `LayoutTensor`, which numax denies rather than bridges, and is
-  an untuned CPU scalar loop besides. They are blocked, so the `O(n^3)`
-  trailing update is a matrix product and lands in `linalg.matmul` while
-  the panel stays `O(n * block^2)`. The panel and the block staging run on
-  the host, which puts an `O(n^2)`-per-step floor on what the GPU path can
-  win; each docstring names that ceiling.
-- `qr`, `svd`, `eigh`, `cholesky_solve` and `tridiagonal_solve` have no
-  `Tensor` overload yet, so past the crossover they are genuinely missing
-  rather than one import away. `tridiagonal_solve` will stay that way:
-  Thomas is already linear and has nothing to hand a GEMM.
+- `dot`, `nrm2`, `asum`, `axpy` and `outer` are compositions of MAX
+  primitives: the reductions drive `ReduceSum` under the `rowwise`
+  scaffolder, the maps go through `elementwise`.
+- `cholesky`, `lu_factor`, `qr_factor`, `solve`, `solve_triangular`,
+  `cholesky_solve`, `inverse`, `det`, `norm` and `trace` are numax's,
+  because MAX ships no factorization on `TileTensor` at any size. They are
+  blocked and device-resident: the `O(n^3)` trailing update is a matrix
+  product and lands in `linalg.matmul`, while the panel stays
+  `O(n * block^2)`.
+- `svd`, `eigh`, `eigvals`, `cond`, `pinv` and `tridiagonal_solve` are
+  `Array`-only, deliberately -- `numax/linalg/__init__.mojo` has the
+  reasoning. Past the crossover they are genuinely missing rather than one
+  import away.
 
-These numbers are the `Array` tier against MAX and were measured before
-the `Tensor` tier existed; the blocked factorizations are unmeasured.
+### The blocked factorizations, measured
+
+`bench/bench_linalg.mojo` and `bench/bench_linalg_gpu.mojo`, against
+`bench/scipy/linalg.py` (LAPACK), `bench/torch/linalg.py` and
+`bench/cupy/linalg.py` (cuSOLVER). `float32` throughout, on both
+processors, because `linalg.matmul` does not compile for GPU at `float64`
+at all and a `float64` CPU table beside a `float32` GPU one would compare
+two different computations.
+
+The first row of each table is not a competitor, it is the **ceiling**:
+`linalg.matmul` on the same size, which is what a blocked factorization's
+cubic term actually calls. The fraction of that row a factorization
+reaches is how much of its work went to MAX.
+
+**CPU -- AMD EPYC 7R32, 16 cores / 32 threads, 64 MiB L3.** GFLOP/s at
+`n = 1024`, from the standard LAPACK flop counts:
+
+| op | numax | SciPy (LAPACK + OpenBLAS) | numax / SciPy |
+|---|---|---|---|
+| `matmul` (ceiling) | 656 | 833 | 0.79 |
+| `cholesky` | 15.4 | 99.5 | 0.15 |
+| `lu_factor` | 17.2 | 43.9 | 0.39 |
+| `solve` | 17.0 | 52.6 | 0.32 |
+| `qr_factor` | 3.9 at the default block, 8.3 at `block=4` | 12.4 | 0.31-0.67 |
+
+**GPU -- NVIDIA A10G (Ampere).** Same counts, `n = 1024` except `qr`,
+which is `n = 512`:
+
+| op | numax | PyTorch (cuSOLVER) | CuPy (cuSOLVER) |
+|---|---|---|---|
+| `matmul` (ceiling) | 20,459 | 15,342 | 14,995 |
+| `cholesky` | 51.0 | 595.0 | 349.9 |
+| `lu_factor` | 30.6 | 282.9 | 266.8 |
+| `solve` | 28.1 | 257.6 | 257.9 |
+| `qr` (n=512) | 8.4 | 80.0 | 79.1 |
+
+Three things to read out of those, in order of how much they matter:
+
+1. **The GEMM is not the problem.** MAX's `matmul` reaches 79% of
+   OpenBLAS on CPU and *beats* cuBLAS's FP32 path on the A10G -- 20.5
+   against 15.3 TFLOP/s. It is also less accurate on the same product
+   (max residual 8.4 against cuBLAS FP32's 3.4, where cuBLAS with TF32
+   enabled gives 18.2 at 25.2 TFLOP/s), so MAX's `float32` GEMM sits
+   between the two vendor paths on both axes. Either way, a factorization
+   at 51 GFLOP/s on a device whose GEMM does 20,000 is not being held back
+   by the multiply.
+2. **The gap is the panel and the launch count.** Every block step is a
+   single-block panel kernel -- one SM on the GPU, effectively serial on
+   CPU -- followed by a host-side launch of the trailing GEMM. At
+   `block = 32` and `n = 1024` that is 32 dependent launches around 32
+   panels, and the panels are `O(n * block^2)` of work that no GEMM
+   touches. cuSOLVER's advantage is a parallel panel, not a better GEMM.
+   That is the next optimization, and it is a real one: 6-12x on the GPU.
+3. **The best block size is small, and for QR it shrinks with `n`.**
+   Measured at `n = 1024`: `cholesky` 22.99 ms at `block=32` against 29.66
+   at 16 and 30.11 at 64; `lu_factor` 41.43 ms at 16 against 43.87 at 8 and
+   58.31 at 32; `qr_factor` 168 ms at `block=4` against 203 at 8, 359 at 16
+   and 1502 at 128. Bigger blocks make the panel quadratically more
+   expensive faster than they make the GEMM more efficient, which is the
+   signature of point 2. `cholesky` and `lu_factor` keep their tuned
+   defaults (32 and 16); `qr_factor`'s default of 16 is right at
+   `n <= 512` and leaves about 2x on the table at `n = 1024`, so a large
+   QR should pass `block` explicitly.
+
+### BLAS-1 on `Tensor`
+
+Bandwidth, not arithmetic, so GB/s over the traffic each operation must
+move. At `n = 67M` (256 MiB, past this box's L3 either way):
+
+| op | numax CPU | SciPy CPU | numax A10G | PyTorch A10G | CuPy A10G |
+|---|---|---|---|---|---|
+| `dot` | 70.6 | 27.9 | 298.9 | 503.9 | 244.9 |
+| `nrm2` | 71.1 | 13.9 | 169.2 | 495.9 | 163.5 |
+| `asum` | 67.4 | 48.5 | 169.1 | 161.2 | 163.5 |
+| `axpy` | 25.3 | 78.3 | 342.4 | 475.8 | 292.8 |
+
+The reductions on CPU beat OpenBLAS's own level-1 routines by 1.4-5x,
+which is the clearest single payoff of routing them through MAX's
+`rowwise` scaffolder: `sdot` and `snrm2` are one thread, `ReduceSum` under
+`rowwise` is all 16 cores. On the GPU they land between CuPy and PyTorch.
+
+`axpy` is the exception and the reason is its signature, not its kernel:
+it returns a new vector rather than updating `y` in place, so every call
+allocates and first-touches 256 MiB. Measured directly at `n = 16M`: the
+whole call is 8.5 ms, the `elementwise` pass alone is 4.3 ms and the
+zeroed allocation alone is 4.7 ms. Half the time is the allocation, which
+is why OpenBLAS's in-place `saxpy` is ahead on CPU. Reuse the result
+tensor if this is on a hot path.
+
+Note also the `n = 16M` row of the raw tables: 16M `float32` is exactly
+64 MiB, this box's L3, so the CPU reductions there read out of cache and
+report 264-362 GB/s. That is a cache number and it is in the harness on
+purpose, sitting next to a memory-resident one.
+
+### What is not measured
+
+This box is an NVIDIA A10G on x86_64. **ROCm and Metal are not measured
+here at all.** Both are reached the same way -- numax passes
+`target="gpu"` and `linalg.matmul` dispatches Apple simdgroup, CDNA or
+RDNA underneath, with no per-architecture code anywhere in numax -- so the
+*coverage* is inherited from MAX's dispatch. That is a statement about
+what compiles and runs, not about what it costs: nothing on this page
+should be read as an AMD or Apple number.
 
 ## Bench tasks
 
@@ -309,11 +412,16 @@ pixi run bench-gpu     # CPU vs. GPU (map[gpu=True]) across a size sweep
 pixi run bench-roofline # GPU: how much memory bandwidth map[gpu=True] reaches
 pixi run bench-elementwise # CPU: serial vs. threaded at six sizes
 pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
-pixi run bench-matmul   # CPU: numax.linalg.matmul vs. MAX's linalg.matmul
+pixi run bench-matmul   # CPU: the Array tier's matmul vs. MAX's linalg.matmul
+pixi run bench-linalg   # CPU: the Tensor tier vs. the linalg.matmul ceiling
+pixi run bench-linalg-gpu # the same sweep on a device (CUDA/Metal)
 pixi run bench-numpy    # cross-language: NumPy, CPU
 pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
 pixi run bench-cupy     # cross-language: CuPy, GPU (Linux/CUDA only)
+pixi run -e bench-python bench-scipy-linalg # linalg baseline: LAPACK, CPU
+pixi run -e bench-python bench-torch-linalg # linalg baseline: cuSOLVER, CUDA
+pixi run -e bench-python bench-cupy-linalg  # linalg baseline: cuSOLVER, CUDA
 pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON/AVX2)
 pixi run accuracy       # CPU: max error per function vs. checked-in mpmath refs
 ```

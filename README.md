@@ -635,6 +635,28 @@ same source produces both device rows. Full sweeps from 64K to 67M, both sync
 shapes, and the methodology: [`docs/performance.md`](docs/performance.md),
 [`bench/README.md`](bench/README.md).
 
+**Dense linalg is a separate measurement, on separate hardware** (EPYC 7R32
+host, A10G device), `float32` because MAX's `matmul` does not compile for GPU
+at `float64`. GFLOP/s at `n = 1024`, higher is better:
+
+| | `matmul` (the ceiling) | `cholesky` | `lu_factor` | `solve` |
+|---|---|---|---|---|
+| numax, CPU | 656 | 15.4 | 17.2 | 17.0 |
+| SciPy (LAPACK + OpenBLAS), CPU | 833 | 99.5 | 43.9 | 52.6 |
+| numax, A10G | 20,459 | 51.0 | 30.6 | 28.1 |
+| PyTorch (cuSOLVER), A10G | 15,342 | 595.0 | 282.9 | 257.6 |
+
+Read that as one claim and one gap. The `matmul` row is the claim: numax's
+factorizations put their whole `O(n^3)` term through `linalg.matmul`, and
+MAX's GEMM is at 79% of OpenBLAS on the host and *ahead* of cuBLAS's FP32
+path on the device. The factorization rows are the gap, and it is not the
+multiply -- each block step is a single-block panel kernel plus a host
+launch, so cuSOLVER's 6-12x is a parallel panel. BLAS-1 goes the other way:
+`dot` and `nrm2` on `Tensor` beat OpenBLAS's own `sdot`/`snrm2` by 2.5-5x on
+the host, because `ReduceSum` under MAX's `rowwise` scaffolder threads and
+they do not. ROCm and Metal are reached by the same `target="gpu"` with no
+per-architecture code in numax, and are **unmeasured** here.
+
 ## Accuracy
 
 Every approximation documents an error bound, and `pixi run accuracy` checks it
