@@ -67,9 +67,12 @@ loses nothing, since `Welford` and `OnlineLogSumExp` are already at the pin.
   `TileTensor` only. So: no usable LU, Cholesky, SVD, eig, `solve`, triangular
   solve, inverse, determinant, matrix norm, or BLAS-1, and no cuSOLVER bridge.
   numax's `cholesky`, `lu_factor`, `qr_factor` and `solve` over `Tensor` fill
-  the gap blocked, sending the `O(n^3)` term back through `linalg.matmul`;
-  `svd` and `eigh` over `Tensor` are still missing and are the next ones to
-  write.
+  the gap blocked, sending the `O(n^3)` term back through `linalg.matmul`.
+  `svd`, `eigh` and `eigvals` over `Tensor` stop short on purpose: their
+  reduction phase is the block reflector numax now has, but their iterative
+  phase is a sequential sweep over a two-wide band with data-dependent
+  deflation, which no GEMM helps and which is tier 2 by numax's definition.
+  `numax/linalg/__init__.mojo` carries the reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere.
 - **Out-of-place tensor arithmetic and explicit broadcast.** `TileTensor` has

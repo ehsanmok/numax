@@ -100,11 +100,39 @@ mutable view cannot be built from an immutable binding.
 
 ## Not here yet
 
-`svd`, `eigh`, `cond` and `pinv` have no `Tensor` overload, so past the
-crossover in `docs/performance.md` they are genuinely missing rather than
-one import away. `cond` is `svd`'s dependent and moves when it does.
-`tridiagonal_solve` will stay `Array`-only -- Thomas is already linear and
-has nothing to hand a GEMM.
+`svd`, `eigh`, `eigvals`, `cond` and `pinv` have no `Tensor` overload, so
+past the crossover in `docs/performance.md` they are genuinely missing
+rather than one import away. `cond` and `pinv` are `svd`'s dependents and
+move when it does. `tridiagonal_solve` will stay `Array`-only -- Thomas is
+already linear and has nothing to hand a GEMM.
+
+The spectral four stop here deliberately, and the reason is the shape of
+the algorithms rather than the amount of work left. Every one of them is
+two phases. The first is a reduction -- symmetric to tridiagonal, general
+to bidiagonal or to Hessenberg -- and that phase is exactly the block
+reflector `qr_factor` already runs: a panel of Householder vectors,
+`larft_panel`'s `T`, a trailing update that is three GEMMs. It would be
+MAX-first in the same way, and it is over half the arithmetic.
+
+The second phase is not. Implicitly shifted QL/QR sweeps on the
+tridiagonal, or Golub-Kahan sweeps on the bidiagonal, loop to a tolerance,
+deflate on a data-dependent test, and do it on a band two entries wide.
+There is no GEMM to hand anything to, the sweeps are sequential in a way
+`O(n^2)` of total work spread over `O(n)` of them makes unfixable at this
+level, and both properties are tier 2 by numax's own definition -- so a
+`Tensor` `eigh` would be half a device-resident MAX kernel and half a host
+loop that decides the runtime at exactly the sizes a `Tensor` tier is for.
+Closing that half properly is LAPACK's multishift-with-aggressive-early-
+deflation machinery, which is a research-grade item and not a missing
+overload.
+
+So the `Array` tier keeps `eigh`, `eigvals`, `svd`, `cond` and `pinv` for
+matrices small enough to live in registers, where it also differentiates
+them, and a caller with a large device-resident spectral problem gets an
+honest no. When this resumes, the first commit is the reduction phase
+alone -- `sytrd` on top of the existing block reflector, checkable by
+asserting `Q^T A Q` is tridiagonal and similar to `A` -- with the sweep
+following as declared tier 2.
 
 `qr` is the one name where the two tiers are spelled differently.
 `qr_factor` returns a `TensorQR` rather than a `(R, Q)` tuple, because a
