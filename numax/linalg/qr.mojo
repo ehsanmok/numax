@@ -32,7 +32,7 @@ from std.utils import IndexList
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.array import Dynamic, Shaped, zeros, zeros_dyn
+from ..core.array import Dynamic, Static, zeros, zeros_dyn
 
 from .blas import _target
 from .common import _Dense
@@ -311,14 +311,14 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
     be read by host code.
     """
 
-    var factored: Shaped[Self.dtype, Self.m, Self.n]
-    var taus: Shaped[Self.dtype, Self.n]
+    var factored: Static[Self.dtype, Self.m, Self.n]
+    var taus: Static[Self.dtype, Self.n]
     var block: Int
 
     def __init__(
         out self,
-        var factored: Shaped[Self.dtype, Self.m, Self.n],
-        var taus: Shaped[Self.dtype, Self.n],
+        var factored: Static[Self.dtype, Self.m, Self.n],
+        var taus: Static[Self.dtype, Self.n],
         block: Int,
     ):
         self.factored = factored^
@@ -327,7 +327,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
     def r(
         mut self,
-    ) raises -> Shaped[
+    ) raises -> Static[
         Self.dtype, Self.n, Self.n
     ] where Self.dtype.is_floating_point():
         """`R`: the leading `n x n` upper triangle, zeros below it.
@@ -355,7 +355,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
     def q(
         mut self,
-    ) raises -> Shaped[
+    ) raises -> Static[
         Self.dtype, Self.m, Self.n
     ] where Self.dtype.is_floating_point():
         """The thin `Q`: `m x n` with orthonormal columns, formed
@@ -413,7 +413,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
     def apply_q_transpose[
         rhs: Int
-    ](mut self, mut b: Shaped[Self.dtype, Self.m, rhs]) raises -> Shaped[
+    ](mut self, mut b: Static[Self.dtype, Self.m, rhs]) raises -> Static[
         Self.dtype, Self.m, rhs
     ] where Self.dtype.is_floating_point():
         """`Q^T @ B`, without forming `Q`.
@@ -428,7 +428,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         the discarded columns of the full `Q` see.
         """
         var ctx = self.factored.context()
-        var out = Shaped[Self.dtype, Self.m, rhs](ctx)
+        var out = Static[Self.dtype, Self.m, rhs](ctx)
         var ov = out.view()
         pack_block[target=_target[Self.gpu]()](
             b.view(), ov, 0, 0, Self.m, rhs, ctx
@@ -459,7 +459,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
     def solve[
         block: Int = 16
-    ](mut self, mut b: Shaped[Self.dtype, Self.m]) raises -> Shaped[
+    ](mut self, mut b: Static[Self.dtype, Self.m]) raises -> Static[
         Self.dtype, Self.n
     ] where Self.dtype.is_floating_point():
         """The least-squares solution of `A @ x ~= b`, reusing this
@@ -511,7 +511,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
 def qr_factor[
     dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Shaped[dtype, m, n]) raises -> TensorQR[dtype, m, n, gpu] where (
+](mut a: Static[dtype, m, n]) raises -> TensorQR[dtype, m, n, gpu] where (
     dtype.is_floating_point() and m >= n
 ):
     """**Tier 2.** Blocked Householder QR of an `m x n` matrix with
@@ -553,7 +553,7 @@ def qr_factor[
     diagonal; `cond` on the original matrix is the check for it.
     """
     var ctx = a.context()
-    var factored = Shaped[dtype, m, n](ctx)
+    var factored = Static[dtype, m, n](ctx)
     var taus = zeros[dtype, n](ctx)
     var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
 

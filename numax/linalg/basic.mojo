@@ -21,14 +21,14 @@ MAX ships no `solve`, no `inv` and no pseudo-inverse at any size, so
 nothing here delegates.
 """
 
-from ..core.array import Shaped, eye
+from ..core.array import Static, eye
 
 from .lu import lu_factor
 
 
 def solve[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
+](mut a: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
     dtype, n
 ] where dtype.is_floating_point():
     """**Tier 2.** `x` with `a @ x == b`. `scipy.linalg.solve`.
@@ -51,7 +51,7 @@ def solve[
 
 def inverse[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Shaped[dtype, n, n]) raises -> Shaped[
+](mut a: Static[dtype, n, n]) raises -> Static[
     dtype, n, n
 ] where dtype.is_floating_point():
     """**Tier 2.** `A^-1`, by factoring once and solving against the whole

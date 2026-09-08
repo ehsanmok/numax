@@ -26,7 +26,7 @@ from max.algorithm.functional import elementwise
 from std.math import sqrt as _sqrt
 from std.utils import IndexList
 
-from ..core.array import Shaped
+from ..core.array import Static
 from ..core.rowwise import max_axis, sum_axis
 
 from .blas import _fused_sum, _target
@@ -56,7 +56,7 @@ pointer, different layout."""
 
 def trace[
     dtype: DType, n: Int, gpu: Bool = False
-](mut a: Shaped[dtype, n, n]) raises -> Scalar[
+](mut a: Static[dtype, n, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():
     """**Tier 2.** The sum of the diagonal entries of `A`.
@@ -73,7 +73,7 @@ def trace[
     MAX's. Reassociated, unlike the `Array` overload's ordered sum.
     """
     var ctx = a.context()
-    var diagonal = Shaped[dtype, n](ctx)
+    var diagonal = Static[dtype, n](ctx)
     var av = a.view()
     var dv = diagonal.view()
 
@@ -84,7 +84,7 @@ def trace[
 
     elementwise[simd_width=1, target=_target[gpu]()](gather, Coord(n), ctx)
 
-    var out = Shaped[dtype, 1](ctx)
+    var out = Static[dtype, 1](ctx)
 
     @always_inline
     def identity[
@@ -98,7 +98,7 @@ def trace[
 
 def norm[
     dtype: DType, n: Int, ord: Int = fro, gpu: Bool = False
-](mut a: Shaped[dtype, n, n]) raises -> Scalar[
+](mut a: Static[dtype, n, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point() and (ord == fro or ord == 1 or ord == inf):
     """**Tier 2.** A matrix norm of `A`, over `Tensor`.
@@ -135,7 +135,7 @@ def norm[
         var flat: _Flat[dtype] = TileTensor(
             av.ptr_at_offset(Coord(0, 0)), row_major(Coord(n * n))
         )
-        var out = Shaped[dtype, 1](ctx)
+        var out = Static[dtype, 1](ctx)
 
         @always_inline
         def square[
@@ -146,7 +146,7 @@ def norm[
         _fused_sum[dtype, n * n, gpu](flat, out.view(), square, ctx)
         return _sqrt(out.to_host()[0])
 
-    var magnitudes = Shaped[dtype, n, n](ctx)
+    var magnitudes = Static[dtype, n, n](ctx)
     var mv = magnitudes.view()
 
     @always_inline
@@ -162,12 +162,12 @@ def norm[
     # calls are written out rather than sharing an `axis` computed from
     # `ord`, because a derived comptime axis has nothing to prove its own
     # bound against.
-    var sums = Shaped[dtype, n](ctx)
+    var sums = Static[dtype, n](ctx)
     comptime if ord == 1:
         sum_axis[axis=0, target=_target[gpu]()](mv, sums.view(), ctx)
     else:
         sum_axis[axis=1, target=_target[gpu]()](mv, sums.view(), ctx)
 
-    var out = Shaped[dtype, 1](ctx)
+    var out = Static[dtype, 1](ctx)
     max_axis[axis=0, target=_target[gpu]()](sums.view(), out.view(), ctx)
     return out.to_host()[0]

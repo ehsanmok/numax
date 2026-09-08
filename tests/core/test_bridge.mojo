@@ -28,7 +28,7 @@ from std.utils import IndexList
 from numax import Dual, Plain
 from numax.core.array import (
     Dynamic,
-    Shaped,
+    Static,
     Tensor,
     eye,
     to_array,
@@ -44,14 +44,14 @@ comptime dtype = DType.float64
 comptime P = Plain[dtype]
 
 
-def _matrix() raises -> Shaped[dtype, 2, 2]:
+def _matrix() raises -> Static[dtype, 2, 2]:
     """`[[4, 2], [2, 3]]` -- symmetric positive definite, so it has a
     Cholesky factor and a determinant of 8."""
     var ctx = DeviceContext(api="cpu")
     var values = List[Scalar[dtype]](capacity=4)
     for v in [4.0, 2.0, 2.0, 3.0]:
         values.append(Scalar[dtype](v))
-    return Shaped[dtype, 2, 2](ctx, values^)
+    return Static[dtype, 2, 2](ctx, values^)
 
 
 def test_rank_1_round_trips() raises:
@@ -59,7 +59,7 @@ def test_rank_1_round_trips() raises:
     var values = List[Scalar[dtype]](capacity=3)
     for v in [1.5, -2.0, 0.25]:
         values.append(Scalar[dtype](v))
-    var xs = Shaped[dtype, 3](ctx, values^)
+    var xs = Static[dtype, 3](ctx, values^)
 
     var lifted = to_array[P](xs)
     var back = to_tensor[dtype, 3](lifted, ctx)
@@ -117,14 +117,14 @@ def test_lifted_values_match_the_source_elements() raises:
 
 def test_from_view_round_trips_the_elements() raises:
     var a = _matrix()
-    var back = Shaped[dtype, 2, 2].from_view(a.view(), a.context())
+    var back = Static[dtype, 2, 2].from_view(a.view(), a.context())
     for i in range(4):
         assert_almost_equal(back[i], a[i])
 
 
 def test_from_view_copies_rather_than_aliases() raises:
     var a = _matrix()
-    var back = Shaped[dtype, 2, 2].from_view(a.view(), a.context())
+    var back = Static[dtype, 2, 2].from_view(a.view(), a.context())
     var v = a.view()
     v[0, 0] = 99.0
     assert_almost_equal(a[0], Scalar[dtype](99.0))

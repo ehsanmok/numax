@@ -42,7 +42,7 @@ comptime P = Plain[f64]
 comptime n = 24                                     # grid points over [-4, 4]
 comptime dx = 8.0 / (n - 1)
 comptime kinetic = 1.0 / (dx * dx)
-comptime Sweep = Shaped[f64, 256].LayoutType
+comptime Sweep = Static[f64, 256].LayoutType
 
 # Written once against `FloatLike`: no dtype, no device, no derivative rule.
 def ground_energy[T: FloatLike](w: T) -> T:
@@ -108,7 +108,7 @@ runs the whole thing, CPU and GPU side by side.
 - **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
   `DeviceContext` you pass a factory decides host or device memory. Nothing else
   changes, and `.view()` yields the `TileTensor` every MAX kernel takes. Its
-  shape lives in its layout type, so `Shaped[f32, 2, 3]` with the extents
+  shape lives in its layout type, so `Static[f32, 2, 3]` with the extents
   compiled in and `Dynamic[f32, 2]` with the extents supplied at run time are
   one type, not two. `Array[T, n]` is the register-resident half that carries
   the algorithms; [the section below](#start-with-tensor-cross-to-array-for-algorithms)
@@ -174,7 +174,7 @@ def main() raises:
     var on_gpu = zeros[f32, 1024](ctx=DeviceContext())   # same code, device memory
 ```
 
-`Shaped[f64, 2, 3]` and `Dynamic[f64, 2]` are one struct at two layouts. The
+`Static[f64, 2, 3]` and `Dynamic[f64, 2]` are one struct at two layouts. The
 first has its extents in the type, which is what a GPU launch and the
 algorithm layer both need; the second carries them as values, which is what
 makes a shape read from a file expressible at all. `.dynamic()` and
@@ -202,7 +202,7 @@ not build one yourself.
 
 | | Owns its memory | Shape | Where you meet it |
 |---|---|---|---|
-| `Tensor` (`Shaped`, `Dynamic`) | yes, a MAX `DeviceBuffer` | in the layout type, compile time or run time per dimension | every NumPy-named call |
+| `Tensor` (`Static`, `Dynamic`) | yes, a MAX `DeviceBuffer` | in the layout type, compile time or run time per dimension | every NumPy-named call |
 | `TileTensor` | no, it borrows | from the tensor it views | `.view()`, at a kernel boundary |
 | `Array[T, n]` | it *is* the value, in registers | `n` at compile time | every SciPy-named algorithm |
 
@@ -446,7 +446,7 @@ shares its names with the `Tensor` tier, so it is
 
 `f32`/`f64` are short for `DType.float32`/`.float64` and nothing else, so the
 same name works wherever a dtype belongs, across both layers:
-`linspace[5, f64](...)` and `Shaped[f64, 4, 4](ctx)` on the tensor side,
+`linspace[5, f64](...)` and `Static[f64, 4, 4](ctx)` on the tensor side,
 `Plain[f64]` and `Dual[Plain[f64]]` on the kernel side. Every MAX dtype has
 one: `f16`, `bf16`, the five `f8e*` variants, `i8` through `u64`, and `bool`.
 The kernel layer needs a floating-point dtype, so the integer names belong to
@@ -485,7 +485,7 @@ var comp_var = variance(comp_list).value       # ~double precision, same code
 Only the context and the walk differ:
 
 ```mojo
-comptime T = Shaped[f32, 1024]
+comptime T = Static[f32, 1024]
 
 var cpu = DeviceContext(api="cpu")
 var xs = linspace[1024, f32](-2.0, 2.0, ctx=cpu)

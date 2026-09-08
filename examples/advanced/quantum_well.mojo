@@ -44,7 +44,7 @@ comptime n = 24  # grid points over [-4, 4]
 comptime dx = 8.0 / (n - 1)
 comptime kinetic = 1.0 / (dx * dx)
 comptime sweep = 256
-comptime SweepLayout = Shaped[f64, sweep].LayoutType
+comptime SweepLayout = Static[f64, sweep].LayoutType
 
 
 def ground_energy[T: FloatLike](w: T) -> T:

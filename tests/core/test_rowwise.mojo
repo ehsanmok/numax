@@ -14,7 +14,7 @@ path of the same functions is exercised by hand on real hardware; see
 from max.gpu.host import DeviceContext
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.array import Shaped, zeros
+from numax.core.array import Static, zeros
 from numax.core.rowwise import max_axis, sum_axis
 from numax.core.tensor import reduce_axis
 
@@ -43,7 +43,7 @@ def test_sum_axis_matches_reduce_axis_along_rows() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Shaped[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=1](
@@ -67,7 +67,7 @@ def test_sum_axis_matches_reduce_axis_down_columns() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Shaped[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
 
     var want = zeros[dtype, cols](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=0](
@@ -87,7 +87,7 @@ def test_max_axis_agrees_exactly() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Shaped[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_larger[dtype], axis=1](
@@ -113,7 +113,7 @@ def test_sum_axis_reduces_the_middle_axis_of_a_rank_3_tensor() raises:
     comptime d1 = 3
     comptime d2 = 4
     var ctx = DeviceContext(api="cpu")
-    var a = Shaped[dtype, d0, d1, d2](ctx, _ramp(d0 * d1 * d2))
+    var a = Static[dtype, d0, d1, d2](ctx, _ramp(d0 * d1 * d2))
 
     var want = zeros[dtype, d0 * d2](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=1](
@@ -132,7 +132,7 @@ def test_sum_axis_folds_a_rank_1_tensor_to_one_value() raises:
     """The whole-tensor fold, which is the rank-1 case of the axis one."""
     comptime n = 16
     var ctx = DeviceContext(api="cpu")
-    var a = Shaped[dtype, n](ctx, _ramp(n))
+    var a = Static[dtype, n](ctx, _ramp(n))
 
     var got = zeros[dtype, 1](ctx)
     sum_axis[dtype, _, _, axis=0](a.view(), got.view())

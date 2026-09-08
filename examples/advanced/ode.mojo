@@ -24,7 +24,7 @@ Run with: `pixi run example-ode` (needs a GPU; the CPU half runs anywhere).
 from max.gpu.host import DeviceContext
 from std.math import exp as exp_f64
 
-from numax import Dual, FloatLike, Plain, Shaped
+from numax import Dual, FloatLike, Plain, Static
 from numax.integrate import rk4
 from numax.core.tensor import map
 
@@ -68,7 +68,7 @@ def main() raises:
     print("ensemble:", n, "trajectories,", num_steps, "RK4 steps each")
     print()
 
-    comptime Ensemble = Shaped[dtype, n]
+    comptime Ensemble = Static[dtype, n]
 
     # Initial conditions spread across [-2, 2].
     var host_y0 = List[Scalar[dtype]](capacity=n)

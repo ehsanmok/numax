@@ -34,7 +34,7 @@ from numax.core.dtypes import (
 )
 from numax.core.array import (
     to_array,
-    Shaped,
+    Static,
     Tensor,
     arange,
     concatenate,
@@ -157,7 +157,7 @@ def test_empty_like_matches_source_shape() raises:
     var ctx = DeviceContext(api="cpu")
     var src = zeros[dtype, 2, 2](ctx)
     var _unused = empty_like(src)
-    assert_equal(Shaped[dtype, 2, 2].num_elements, src.num_elements)
+    assert_equal(Static[dtype, 2, 2].num_elements, src.num_elements)
 
 
 def test_transpose_swaps_rows_and_columns() raises:

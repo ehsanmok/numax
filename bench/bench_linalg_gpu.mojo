@@ -45,7 +45,7 @@ from max.gpu.host import DeviceContext
 from std.math import sqrt
 from std.time import perf_counter_ns
 
-from numax.core.array import Shaped, transpose
+from numax.core.array import Static, transpose
 from numax.linalg import (
     asum,
     axpy,
@@ -85,45 +85,45 @@ def _general_entry(i: Int, j: Int, n: Int) -> Float64:
     return Float64((i * 37 + j * 11) % 17) * 0.0625 - 0.5
 
 
-def _spd[n: Int](ctx: DeviceContext) raises -> Shaped[dtype, n, n]:
+def _spd[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
     var values = List[Scalar[dtype]](capacity=n * n)
     for i in range(n):
         for j in range(n):
             values.append(Scalar[dtype](_spd_entry(i, j, n)))
-    return Shaped[dtype, n, n](ctx, values^)
+    return Static[dtype, n, n](ctx, values^)
 
 
-def _general[n: Int](ctx: DeviceContext) raises -> Shaped[dtype, n, n]:
+def _general[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
     var values = List[Scalar[dtype]](capacity=n * n)
     for i in range(n):
         for j in range(n):
             values.append(Scalar[dtype](_general_entry(i, j, n)))
-    return Shaped[dtype, n, n](ctx, values^)
+    return Static[dtype, n, n](ctx, values^)
 
 
-def _general_offset[n: Int](ctx: DeviceContext) raises -> Shaped[dtype, n, n]:
+def _general_offset[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
     var values = List[Scalar[dtype]](capacity=n * n)
     for i in range(n):
         for j in range(n):
             values.append(Scalar[dtype](_general_entry(i, j, n) + 1.0))
-    return Shaped[dtype, n, n](ctx, values^)
+    return Static[dtype, n, n](ctx, values^)
 
 
 def _general_rect[
     m: Int, n: Int
-](ctx: DeviceContext) raises -> Shaped[dtype, m, n]:
+](ctx: DeviceContext) raises -> Static[dtype, m, n]:
     var values = List[Scalar[dtype]](capacity=m * n)
     for i in range(m):
         for j in range(n):
             values.append(Scalar[dtype](_general_entry(i, j, m)))
-    return Shaped[dtype, m, n](ctx, values^)
+    return Static[dtype, m, n](ctx, values^)
 
 
-def _ramp[n: Int](ctx: DeviceContext, salt: Int) raises -> Shaped[dtype, n]:
+def _ramp[n: Int](ctx: DeviceContext, salt: Int) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](Float64((i * 37 + salt * 11) % 17) - 8.0))
-    return Shaped[dtype, n](ctx, values^)
+    return Static[dtype, n](ctx, values^)
 
 
 def _row(name: String, n: Int, ns: Float64, flops: Float64, resid: Float64):

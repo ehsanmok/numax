@@ -40,7 +40,7 @@ needed at either the CPU or GPU call site.
 from max.gpu.host import DeviceContext
 from std.math import exp
 
-from numax import Compensated, Dual, Plain, Shaped, gaussian
+from numax import Compensated, Dual, Plain, Static, gaussian
 from numax.core.tensor import map
 
 comptime dtype = DType.float32
@@ -80,7 +80,7 @@ def main() raises:
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 
-    comptime Flat = Shaped[dtype, n]
+    comptime Flat = Static[dtype, n]
 
     var host_xs = List[Scalar[dtype]](capacity=n)
     for i in range(n):
@@ -175,7 +175,7 @@ def main() raises:
     # rank-1 -- `map[gpu=True]` takes it directly, no `.coalesce()` needed
     # at this call site either.
     comptime cube = 16
-    comptime Cube = Shaped[dtype, cube, cube, cube]
+    comptime Cube = Static[dtype, cube, cube, cube]
     var xs3 = Cube(ctx)
     xs3.copy_from_host(host_xs)
     var ys3 = Cube(ctx)
@@ -253,7 +253,7 @@ def main() raises:
     print("max |coarsened (width=4) - scalar|          =", max_diff)
 
     comptime odd_n = n + 3
-    comptime Odd = Shaped[dtype, odd_n]
+    comptime Odd = Static[dtype, odd_n]
     comptime odd_threads = (odd_n + coarse_width - 1) // coarse_width
     comptime odd_blocks = (odd_threads + block_size - 1) // block_size
     var odd_host = List[Scalar[dtype]](capacity=odd_n)

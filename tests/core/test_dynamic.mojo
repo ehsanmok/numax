@@ -1,6 +1,6 @@
 """Tests for a `Tensor` whose extents arrive at run time.
 
-`Shaped[dtype, *dims]` and `Dynamic[dtype, rank]` are the same struct at two
+`Static[dtype, *dims]` and `Dynamic[dtype, rank]` are the same struct at two
 layout types, so what is checked here is that the second one is a real
 tensor and not a second-class one: it allocates from values only known at
 run time, reports its own shape, carries elements through the same host
@@ -19,7 +19,7 @@ from max.gpu.host import DeviceContext
 
 from numax.core.array import (
     Dynamic,
-    Shaped,
+    Static,
     broadcast_to,
     concatenate_dyn,
     empty_dyn,
@@ -57,7 +57,7 @@ def test_a_dynamic_tensor_takes_its_shape_at_run_time() raises:
 
 
 def test_staticness_is_a_property_of_the_layout_type() raises:
-    assert_true(Shaped[dtype, 4, 3].LayoutType.all_dims_known)
+    assert_true(Static[dtype, 4, 3].LayoutType.all_dims_known)
     assert_true(not Dynamic[dtype, 2].LayoutType.all_dims_known)
 
 
@@ -90,7 +90,7 @@ def test_a_transform_gives_the_same_answer_at_either_shape() raises:
     for i in range(6):
         values.append(Scalar[dtype](i + 1))
 
-    var static_a = Shaped[dtype, 2, 3](ctx, values.copy())
+    var static_a = Static[dtype, 2, 3](ctx, values.copy())
     var dynamic_a = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     dynamic_a.copy_from_host(values)
 

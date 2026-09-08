@@ -20,20 +20,20 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Shaped, Tensor, full, zeros
+from numax.core.array import Static, Tensor, full, zeros
 from numax.io import nmx
 
 comptime dtype = DType.float32
 comptime _TMP_DIR = "/tmp/numax_test_io"
 
 
-def _fixed_1d() raises -> Shaped[dtype, 4]:
+def _fixed_1d() raises -> Static[dtype, 4]:
     var ctx = DeviceContext(api="cpu")
     var vals = [1.5, -2.25, 3.0, 0.125]
     var values = List[Scalar[dtype]](capacity=4)
     for i in range(4):
         values.append(Scalar[dtype](vals[i]))
-    return Shaped[dtype, 4](ctx, values^)
+    return Static[dtype, 4](ctx, values^)
 
 
 def test_save_load_round_trips_a_rank_1_tensor() raises:
@@ -158,7 +158,7 @@ def test_print_matches_format_defaults() raises:
     assert_equal(String(xs), xs.format())
 
 
-def _ramp[*dims: Int]() raises -> Shaped[dtype, *dims]:
+def _ramp[*dims: Int]() raises -> Static[dtype, *dims]:
     var a = zeros[dtype, *dims](DeviceContext(api="cpu"))
     for i in range(a.size()):
         a[i] = Scalar[dtype](i)

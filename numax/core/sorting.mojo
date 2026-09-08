@@ -51,12 +51,12 @@ from nn.argsort import argsort as _nn_argsort
 from std.collections import Array
 
 from layout.tile_layout import TensorLayout, row_major
-from .array import Dynamic, Shaped, Tensor, asarray, _dyn_shape, _product
+from .array import Dynamic, Static, Tensor, asarray, _dyn_shape, _product
 
 
 def sort[
     dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Shaped[
+](a: Tensor[dtype, LayoutType]) raises -> Static[
     dtype, LayoutType.static_product
 ] where LayoutType.all_dims_known:
     """A sorted rank-1 copy of `a`, ascending. `numpy.sort(a, axis=None)`.
@@ -75,7 +75,7 @@ def sort[
     comptime n = LayoutType.static_product
     var values = a.to_host()
     _std_sort(values)
-    return Shaped[dtype, n](a.context(), values^)
+    return Static[dtype, n](a.context(), values^)
 
 
 def sort[
@@ -107,7 +107,7 @@ def argsort[
 
     Returned as a `List[Int]` rather than a `Tensor`, because an index array
     is not a numeric tensor: nothing downstream wants to run a `FloatLike`
-    kernel over it, and giving it a `Shaped[int64, ...]` would invite exactly
+    kernel over it, and giving it a `Static[int64, ...]` would invite exactly
     that. The flattening is the `axis=None` contract every other routine in
     this module follows, and it is also what makes the input rank-1 the way
     `nn.argsort` requires.
@@ -133,7 +133,7 @@ def argsort[
 
 def searchsorted[
     dtype: DType, n: Int
-](sorted_values: Shaped[dtype, n], value: Scalar[dtype]) raises -> Int:
+](sorted_values: Static[dtype, n], value: Scalar[dtype]) raises -> Int:
     """The index where `value` would be inserted to keep `sorted_values`
     ascending. `numpy.searchsorted(a, v, side="left")`.
 

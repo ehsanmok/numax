@@ -19,7 +19,7 @@ version is the same softmax rather than merely a plausible one.
 from max.gpu.host import DeviceContext
 from std.math import exp
 
-from numax import Plain, Shaped, softmax
+from numax import Plain, Static, softmax
 from numax.core.tensor import (
     add_combine,
     broadcast_op_rows,
@@ -67,8 +67,8 @@ def check_rows_sum_to_one(label: String, storage: List[Scalar[dtype]]) raises:
 
 
 def main() raises:
-    comptime Rows = Shaped[dtype, rows, cols]
-    comptime PerRow = Shaped[dtype, rows]
+    comptime Rows = Static[dtype, rows, cols]
+    comptime PerRow = Static[dtype, rows]
 
     # --- CPU, via `numax.special.activations.softmax` ---
     var cpu = DeviceContext(api="cpu")

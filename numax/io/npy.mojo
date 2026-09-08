@@ -49,7 +49,7 @@ from std.sys.info import size_of
 from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout, row_major
-from ..core.array import Dynamic, Shaped, Tensor, _context, _dyn_shape_from
+from ..core.array import Dynamic, Static, Tensor, _context, _dyn_shape_from
 
 
 # The magic's first byte is 0x93, which is not valid UTF-8 on its own: a
@@ -339,7 +339,7 @@ struct numpy:
     @staticmethod
     def load[
         dtype: DType, *dims: Int
-    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Shaped[
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Static[
         dtype, *dims
     ]:
         """Read a NumPy `.npy` file written by `numpy.save`, onto `ctx`'s
@@ -369,7 +369,7 @@ struct numpy:
         comptime for i in range(rank):
             if file_dims[i] != dims[i]:
                 raise Error("numax.io.numpy.load: shape mismatch")
-        return Shaped[dtype, *dims](_context(ctx), values^)
+        return Static[dtype, *dims](_context(ctx), values^)
 
     @staticmethod
     def load_dyn[

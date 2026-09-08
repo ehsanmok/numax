@@ -11,7 +11,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.array import (
-    Shaped,
+    Static,
     Tensor,
     copy,
     diag,
@@ -33,22 +33,22 @@ from numax.core.array import (
 comptime dtype = DType.float64
 
 
-def _t[n: Int](values: List[Float64]) raises -> Shaped[dtype, n]:
+def _t[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Shaped[dtype, n](ctx, elements^)
+    return Static[dtype, n](ctx, elements^)
 
 
 def _m[
     rows: Int, cols: Int
-](values: List[Float64]) raises -> Shaped[dtype, rows, cols]:
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         elements.append(Scalar[dtype](values[i]))
-    return Shaped[dtype, rows, cols](ctx, elements^)
+    return Static[dtype, rows, cols](ctx, elements^)
 
 
 def test_geomspace_is_a_geometric_progression() raises:

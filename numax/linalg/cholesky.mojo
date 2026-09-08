@@ -28,7 +28,7 @@ from linalg.matmul import matmul as _max_matmul
 from std.sys.info import align_of
 from std.utils import IndexList
 
-from ..core.array import Shaped, tril, zeros, zeros_dyn
+from ..core.array import Static, tril, zeros, zeros_dyn
 
 from .blas import _target
 from .common import _Dense
@@ -38,7 +38,7 @@ from .triangular import solve_triangular
 
 def cholesky[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Shaped[dtype, n, n]) raises -> Shaped[
+](mut a: Static[dtype, n, n]) raises -> Static[
     dtype, n, n
 ] where dtype.is_floating_point():
     """**Tier 2.** The lower-triangular `L` with `L @ L.T == a`, blocked
@@ -92,7 +92,7 @@ def cholesky[
     cannot branch on a value.
     """
     var ctx = a.context()
-    var work = Shaped[dtype, n, n](ctx)
+    var work = Static[dtype, n, n](ctx)
     var info = zeros[DType.int32, 1](ctx)
     # `L21` made dense for the GEMM. `n x block` covers every step's panel,
     # so it is allocated once rather than per step.
@@ -196,7 +196,7 @@ def cholesky[
 
 def cholesky_solve[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut lower: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
+](mut lower: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
     dtype, n
 ] where dtype.is_floating_point():
     """**Tier 2.** Solve `A @ x = b` given `A`'s Cholesky factor `L`,
@@ -224,8 +224,8 @@ def cholesky_solve[
 def cholesky_solve[
     dtype: DType, n: Int, rhs: Int, gpu: Bool = False, block: Int = 16
 ](
-    mut lower: Shaped[dtype, n, n], mut b: Shaped[dtype, n, rhs]
-) raises -> Shaped[dtype, n, rhs] where dtype.is_floating_point():
+    mut lower: Static[dtype, n, n], mut b: Static[dtype, n, rhs]
+) raises -> Static[dtype, n, rhs] where dtype.is_floating_point():
     """**Tier 2.** Solve `A @ X = B` given `A`'s Cholesky factor `L`, for
     a matrix `B`. `scipy.linalg.cho_solve` with a two-dimensional
     right-hand side.

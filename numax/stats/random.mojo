@@ -61,7 +61,7 @@ from std.random import rand, randn, seed as _std_seed
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Shaped, Tensor, _context, _product
+from ..core.array import Static, Tensor, _context, _product
 
 
 def uniform[
@@ -70,7 +70,7 @@ def uniform[
     low: Scalar[dtype] = 0,
     high: Scalar[dtype] = 1,
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, *dims]:
+) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with values drawn uniformly from `[low, high)`.
 
@@ -84,7 +84,7 @@ def uniform[
     var span = high - low
     for i in range(n):
         storage[i] = low + span * storage[i]
-    return Shaped[dtype, *dims](_context(ctx), storage^)
+    return Static[dtype, *dims](_context(ctx), storage^)
 
 
 def normal[
@@ -93,7 +93,7 @@ def normal[
     mean: Scalar[dtype] = 0,
     stddev: Scalar[dtype] = 1,
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, *dims]:
+) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with values drawn from a normal distribution with the given
     `mean` and `stddev`.
@@ -101,14 +101,14 @@ def normal[
     comptime n = _product[*dims]()
     var storage = List[Scalar[dtype]](length=n, fill=0)
     randn(storage.unsafe_ptr(), n, Float64(mean), Float64(stddev))
-    return Shaped[dtype, *dims](_context(ctx), storage^)
+    return Static[dtype, *dims](_context(ctx), storage^)
 
 
 def exponential[
     dtype: DType, *dims: Int
 ](
     scale: Scalar[dtype] = 1, ctx: Optional[DeviceContext] = None
-) raises -> Shaped[dtype, *dims]:
+) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape, filled with values drawn
     from an exponential distribution with the given `scale` (`1/rate`).
 
@@ -122,12 +122,12 @@ def exponential[
         storage[i] = -scale * Scalar[dtype](
             log(Float64(1) - Float64(storage[i]))
         )
-    return Shaped[dtype, *dims](_context(ctx), storage^)
+    return Static[dtype, *dims](_context(ctx), storage^)
 
 
 def randint[
     dtype: DType, *dims: Int
-](low: Int, high: Int, ctx: Optional[DeviceContext] = None) raises -> Shaped[
+](low: Int, high: Int, ctx: Optional[DeviceContext] = None) raises -> Static[
     dtype, *dims
 ]:
     """A new tensor filled with integers drawn uniformly from `[low, high)`.
@@ -146,12 +146,12 @@ def randint[
     for i in range(n):
         var value = Float64(low) + span * Float64(draws[i])
         storage[i] = Scalar[dtype](Int(value))
-    return Shaped[dtype, *dims](_context(ctx), storage^)
+    return Static[dtype, *dims](_context(ctx), storage^)
 
 
 def randbool[
     dtype: DType, *dims: Int
-](p: Float64 = 0.5, ctx: Optional[DeviceContext] = None) raises -> Shaped[
+](p: Float64 = 0.5, ctx: Optional[DeviceContext] = None) raises -> Static[
     DType.bool, *dims
 ] where (dtype == DType.bool):
     """A new boolean tensor, true with probability `p`.
@@ -170,7 +170,7 @@ def randbool[
     var storage = List[Scalar[DType.bool]](length=n, fill=False)
     for i in range(n):
         storage[i] = Float64(draws[i]) < p
-    return Shaped[DType.bool, *dims](_context(ctx), storage^)
+    return Static[DType.bool, *dims](_context(ctx), storage^)
 
 
 def seed(value: Int):
@@ -232,7 +232,7 @@ struct Generator(Copyable, Movable):
         low: Scalar[dtype] = 0,
         high: Scalar[dtype] = 1,
         ctx: Optional[DeviceContext] = None,
-    ) raises -> Shaped[dtype, *dims]:
+    ) raises -> Static[dtype, *dims]:
         """`uniform`, from this generator's stream."""
         self._advance()
         return uniform[dtype, *dims](low, high, ctx=ctx)
@@ -244,7 +244,7 @@ struct Generator(Copyable, Movable):
         mean: Scalar[dtype] = 0,
         stddev: Scalar[dtype] = 1,
         ctx: Optional[DeviceContext] = None,
-    ) raises -> Shaped[dtype, *dims]:
+    ) raises -> Static[dtype, *dims]:
         """`normal`, from this generator's stream."""
         self._advance()
         return normal[dtype, *dims](mean, stddev, ctx=ctx)
@@ -255,7 +255,7 @@ struct Generator(Copyable, Movable):
         mut self,
         scale: Scalar[dtype] = 1,
         ctx: Optional[DeviceContext] = None,
-    ) raises -> Shaped[dtype, *dims]:
+    ) raises -> Static[dtype, *dims]:
         """`exponential`, from this generator's stream."""
         self._advance()
         return exponential[dtype, *dims](scale, ctx=ctx)
@@ -264,7 +264,7 @@ struct Generator(Copyable, Movable):
         dtype: DType, *dims: Int
     ](
         mut self, low: Int, high: Int, ctx: Optional[DeviceContext] = None
-    ) raises -> Shaped[dtype, *dims]:
+    ) raises -> Static[dtype, *dims]:
         """`randint`, from this generator's stream."""
         self._advance()
         return randint[dtype, *dims](low, high, ctx=ctx)
@@ -273,7 +273,7 @@ struct Generator(Copyable, Movable):
         dtype: DType, *dims: Int
     ](
         mut self, p: Float64 = 0.5, ctx: Optional[DeviceContext] = None
-    ) raises -> Shaped[DType.bool, *dims] where (dtype == DType.bool):
+    ) raises -> Static[DType.bool, *dims] where (dtype == DType.bool):
         """`randbool`, from this generator's stream."""
         self._advance()
         return randbool[dtype, *dims](p, ctx=ctx)

@@ -15,7 +15,7 @@ place.
 from max.gpu.host import DeviceContext
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.array import Shaped, zeros
+from numax.core.array import Static, zeros
 from numax.linalg.panel import (
     _PANEL_THREADS,
     getrf_panel,
@@ -57,7 +57,7 @@ def test_potrf_diag_factors_the_whole_block() raises:
     comptime n = 6
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Shaped[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.view(), info.view(), 0, n)
@@ -78,7 +78,7 @@ def test_potrf_diag_leaves_the_upper_triangle_alone() raises:
     comptime n = 5
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Shaped[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.view(), info.view(), 0, n)
@@ -99,7 +99,7 @@ def test_potrf_diag_factors_an_offset_block() raises:
     comptime nb = 4
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Shaped[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.view(), info.view(), k, nb)
@@ -131,7 +131,7 @@ def test_potrf_diag_flags_a_matrix_that_is_not_positive_definite() raises:
     comptime n = 3
     var ctx = _cpu()
     # Diagonal entry (1, 1) is too small for the column below it.
-    var a = Shaped[dtype, n, n](
+    var a = Static[dtype, n, n](
         ctx, [4.0, 2.0, 2.0, 2.0, 1.0, 0.0, 2.0, 0.0, 9.0]
     )
     var info = zeros[DType.int32, 1](ctx)
@@ -149,7 +149,7 @@ def test_trsm_right_lower_t_solves_against_the_diagonal_block() raises:
     comptime nb = 3
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Shaped[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.view(), info.view(), 0, nb)
@@ -176,7 +176,7 @@ def test_trsm_left_lower_unit_solves_the_block_row() raises:
             original[i * n + j] = Scalar[dtype](
                 Float64((i * 5 + j * 2) % 7) + 1.0
             )
-    var a = Shaped[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](ctx, original.copy())
 
     trsm_left_lower_unit(a.view(), 0, nb, n, ctx)
     ctx.synchronize()
@@ -207,7 +207,7 @@ def test_getrf_panel_gives_lu_of_the_columns_it_factored() raises:
             original[i * n + j] = Scalar[dtype](
                 Float64((i * 3 + j * 7) % 11) - 5.0 + 0.5
             )
-    var a = Shaped[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](ctx, original.copy())
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
 
@@ -243,7 +243,7 @@ def test_getrf_panel_picks_the_largest_pivot() raises:
     usable on a matrix with a zero in the pivot position."""
     comptime n = 3
     var ctx = _cpu()
-    var a = Shaped[dtype, n, n](
+    var a = Static[dtype, n, n](
         ctx, [0.0, 1.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0]
     )
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
@@ -265,7 +265,7 @@ def test_pack_block_copies_a_strided_block_densely() raises:
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n * n):
         values[i] = Scalar[dtype](i)
-    var a = Shaped[dtype, n, n](ctx, values.copy())
+    var a = Static[dtype, n, n](ctx, values.copy())
     var dst = zeros[dtype, rows, cols](ctx)
 
     pack_block(a.view(), dst.view(), 2, 3, rows, cols, ctx)

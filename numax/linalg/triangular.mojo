@@ -25,7 +25,7 @@ from max.gpu.host import DeviceContext
 from std.sys.info import align_of
 from std.utils import IndexList
 
-from ..core.array import Shaped, zeros_dyn
+from ..core.array import Static, zeros_dyn
 
 from .blas import _target
 from .common import _Dense
@@ -214,7 +214,7 @@ def solve_triangular[
     trans: Bool = False,
     gpu: Bool = False,
     block: Int = 16,
-](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
+](mut a: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
     dtype, n
 ] where dtype.is_floating_point():
     """**Tier 2.** Solve `A @ x = b` for triangular `A`.
@@ -239,7 +239,7 @@ def solve_triangular[
     caller's vector survives.
     """
     var ctx = a.context()
-    var x = Shaped[dtype, n](ctx)
+    var x = Static[dtype, n](ctx)
     var xv = x.view()
     pack_vector[target=_target[gpu]()](b.view(), xv, 0, n, ctx)
     _trsv[upper=upper, unit=unit, trans=trans, gpu=gpu](
@@ -258,7 +258,7 @@ def solve_triangular[
     trans: Bool = False,
     gpu: Bool = False,
     block: Int = 16,
-](mut a: Shaped[dtype, n, n], mut b: Shaped[dtype, n, rhs]) raises -> Shaped[
+](mut a: Static[dtype, n, n], mut b: Static[dtype, n, rhs]) raises -> Static[
     dtype, n, rhs
 ] where dtype.is_floating_point():
     """**Tier 2.** Solve `A @ X = B` for triangular `A` and a matrix `B`.
@@ -273,7 +273,7 @@ def solve_triangular[
     Parameters are the vector overload's. Device-resident throughout.
     """
     var ctx = a.context()
-    var x = Shaped[dtype, n, rhs](ctx)
+    var x = Static[dtype, n, rhs](ctx)
     var xd: _Dense[dtype] = TileTensor(
         x.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, rhs))
     )

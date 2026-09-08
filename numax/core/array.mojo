@@ -18,7 +18,7 @@ over `TileTensor` -- not a competing array type. Any array-level work in
 numax builds as a thin layer over `TileTensor`, because that is what every
 MAX kernel already takes.
 
-**One tensor type, CPU and GPU.** `Shaped[dtype, *dims]` is the only owning
+**One tensor type, CPU and GPU.** `Static[dtype, *dims]` is the only owning
 tensor in `numax`, and it works on either kind of device because its storage
 is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
 `DeviceContext(api="cpu")` and the buffer is host memory, pass
@@ -203,7 +203,7 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
     chosen. The shape lives in `LayoutType`, one dimension at a time: an
     extent compiled in as a `ComptimeInt` is known to every `where` clause
     and every kernel launch, one carried as a `Scalar` is read at run time.
-    `Shaped[dtype, 4, 4]` names the fully-static case and
+    `Static[dtype, 4, 4]` names the fully-static case and
     `Dynamic[dtype, 2]` a matrix whose extents arrive at run time, both of
     them this same type.
 
@@ -460,7 +460,7 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
 
     def static_view[
         *dims: Int
-    ](var self) raises -> Shaped[Self.dtype, *dims] where (
+    ](var self) raises -> Static[Self.dtype, *dims] where (
         _LayoutOf[*dims].rank == Self.rank
     ):
         """The same storage at a compile-time shape, checked once.
@@ -486,7 +486,7 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
                     ", not ",
                     dims[i],
                 )
-        return Shaped[Self.dtype, *dims](
+        return Static[Self.dtype, *dims](
             self.buffer,
             rebind[_LayoutOf[*dims]](row_major[*dims]()),
             self.host_addressable,
@@ -638,18 +638,19 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
                 host[i] = values[i]
 
 
-comptime Shaped[dtype: DType, *dims: Int] = Tensor[dtype, _LayoutOf[*dims]]
-"""`Tensor` at a compile-time shape: `Shaped[f32, 2, 3]` is a 2x3.
+comptime Static[dtype: DType, *dims: Int] = Tensor[dtype, _LayoutOf[*dims]]
+"""`Tensor` at a compile-time shape: `Static[f32, 2, 3]` is a 2x3.
 
-The struct's own name cannot double as this alias, so a signature that
-names a shape spells `Shaped`; the factories take the same `*dims`.
+The struct's own name cannot double as this alias, so a signature whose
+extents are known at compile time spells `Static` and one whose extents
+are not spells `Dynamic`; the factories take the same `*dims`.
 """
 
 comptime Dynamic[dtype: DType, rank: Int] = Tensor[dtype, _DynLayoutOf[rank]]
 """`Tensor` at a rank that is compile-time and extents that are not:
 `Dynamic[f32, 2]` is a matrix whose shape is a constructor argument.
 
-`zeros_dyn` and its siblings build one. The name differs from `Shaped`
+`zeros_dyn` and its siblings build one. The name differs from `Static`
 rather than overloading it because a parameter list of extents and a
 parameter list holding only a rank cannot be told apart at a call site.
 """
@@ -669,10 +670,10 @@ def _context(ctx: Optional[DeviceContext]) raises -> DeviceContext:
 
 def zeros[
     dtype: DType, *dims: Int
-](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `0`."""
-    return Shaped[dtype, *dims](_context(ctx))
+    return Static[dtype, *dims](_context(ctx))
 
 
 def zeros_dyn[
@@ -698,7 +699,7 @@ def asarray[
     """A rank-1 tensor holding `values`, as long as `values` is.
 
     The constructor for data whose length is a run-time fact.
-    `Shaped[dtype, n](ctx, values)` needs `n` in the type, so anything
+    `Static[dtype, n](ctx, values)` needs `n` in the type, so anything
     producing a count instead of a constant -- a boolean mask, `unique`, a
     file read -- had no way to hand back a right-sized tensor. This does,
     and it is what those functions return.
@@ -711,7 +712,7 @@ def asarray[
 
 def ones[
     dtype: DType, *dims: Int
-](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `1`."""
     return full[dtype, *dims](1, ctx=ctx)
@@ -746,7 +747,7 @@ def full[
     dtype: DType, *dims: Int
 ](
     fill_value: Scalar[dtype], ctx: Optional[DeviceContext] = None
-) raises -> Shaped[dtype, *dims]:
+) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
     filled with `fill_value`."""
     return _filled(zeros[dtype, *dims](ctx), fill_value)
@@ -765,7 +766,7 @@ def full_dyn[
 
 def empty[
     dtype: DType, *dims: Int
-](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, *dims]:
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape, its contents unspecified.
 
     Unlike NumPy's `empty`, this zero-initializes rather than truly leaving
@@ -774,7 +775,7 @@ def empty[
     here. Callers that write every element before reading (the usual reason
     to reach for `empty` at all) pay nothing extra in practice.
     """
-    return Shaped[dtype, *dims](_context(ctx))
+    return Static[dtype, *dims](_context(ctx))
 
 
 def empty_dyn[
@@ -789,12 +790,12 @@ def empty_dyn[
 
 def eye[
     n: Int, dtype: DType = DType.float64
-](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
     """The `n`x`n` identity matrix."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = 1
-    return Shaped[dtype, n, n](_context(ctx), values^)
+    return Static[dtype, n, n](_context(ctx), values^)
 
 
 def zeros[T: FloatLike, n: Int]() -> Array[T, n]:
@@ -842,7 +843,7 @@ def linspace[
     start: Float64,
     stop: Float64,
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, num]:
+) raises -> Static[dtype, num]:
     """`num` evenly spaced values from `start` to `stop`, inclusive of both.
 
     Matches `numpy.linspace`'s default `endpoint=True`. `num == 1` returns
@@ -865,7 +866,7 @@ def linspace[
         var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(lo + Scalar[dtype](i) * step)
-    return Shaped[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](_context(ctx), values^)
 
 
 def logspace[
@@ -875,7 +876,7 @@ def logspace[
     stop: Float64,
     base: Float64 = 10,
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, num]:
+) raises -> Static[dtype, num]:
     """`num` values evenly spaced on a log scale: `base**x` for `x` in
     `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults.
 
@@ -890,7 +891,7 @@ def logspace[
         var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(b ** (lo + Scalar[dtype](i) * step))
-    return Shaped[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](_context(ctx), values^)
 
 
 def arange[
@@ -899,7 +900,7 @@ def arange[
     start: Float64 = 0,
     step: Float64 = 1,
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, num]:
+) raises -> Static[dtype, num]:
     """`num` values starting at `start`, spaced by `step`.
 
     `numpy.arange` takes a `stop` and derives the count from it, which makes
@@ -913,7 +914,7 @@ def arange[
     var values = List[Scalar[dtype]](capacity=num)
     for i in range(num):
         values.append(first + Scalar[dtype](i) * by)
-    return Shaped[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](_context(ctx), values^)
 
 
 def zeros_like[
@@ -951,7 +952,7 @@ def empty_like[
 
 def transpose[
     dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, cols, rows]:
+](mut a: Static[dtype, rows, cols]) raises -> Static[dtype, cols, rows]:
     """An owned-copy transpose of a 2D tensor, on `a`'s own device.
 
     On the host the permutation is `linalg.transpose` -- MAX's own kernel.
@@ -988,7 +989,7 @@ def transpose[
     source, or to feed something that wants a plain `Tensor`).
     """
     var ctx = a.context()
-    var result = Shaped[dtype, cols, rows](ctx)
+    var result = Static[dtype, cols, rows](ctx)
     var src = a.view()
     var dst = result.view()
 
@@ -1013,21 +1014,21 @@ def transpose[
 
 def squeeze[
     dtype: DType, n: Int
-](a: Shaped[dtype, 1, n]) raises -> Shaped[dtype, n]:
+](a: Static[dtype, 1, n]) raises -> Static[dtype, n]:
     """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
-    return Shaped[dtype, n](a.context(), a.to_host())
+    return Static[dtype, n](a.context(), a.to_host())
 
 
 def squeeze[
     dtype: DType, n: Int
-](a: Shaped[dtype, n, 1]) raises -> Shaped[dtype, n]:
+](a: Static[dtype, n, 1]) raises -> Static[dtype, n]:
     """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
-    return Shaped[dtype, n](a.context(), a.to_host())
+    return Static[dtype, n](a.context(), a.to_host())
 
 
 def stack[
     dtype: DType, n: Int
-](a: Shaped[dtype, n], b: Shaped[dtype, n]) raises -> Shaped[dtype, 2, n]:
+](a: Static[dtype, n], b: Static[dtype, n]) raises -> Static[dtype, 2, n]:
     """Stack two same-shaped rank-1 tensors along a new leading axis
     (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
 
@@ -1046,12 +1047,12 @@ def stack[
         values.append(a_values[i])
     for i in range(n):
         values.append(b_values[i])
-    return Shaped[dtype, 2, n](a.context(), values^)
+    return Static[dtype, 2, n](a.context(), values^)
 
 
 def reshape[
     dtype: DType, n: Int, rows: Int, cols: Int
-](a: Shaped[dtype, n]) raises -> Shaped[dtype, rows, cols] where (
+](a: Static[dtype, n]) raises -> Static[dtype, rows, cols] where (
     rows * cols == n
 ):
     """A rank-2 copy of a rank-1 tensor, in row-major order.
@@ -1069,17 +1070,17 @@ def reshape[
     same shape for the same kind of reason. `ravel` is the inverse, and the
     two compose into any reshape this module can express.
     """
-    return Shaped[dtype, rows, cols](a.context(), a.to_host())
+    return Static[dtype, rows, cols](a.context(), a.to_host())
 
 
 def reshape[
     dtype: DType, n: Int, d0: Int, d1: Int, d2: Int
-](a: Shaped[dtype, n]) raises -> Shaped[dtype, d0, d1, d2] where (
+](a: Static[dtype, n]) raises -> Static[dtype, d0, d1, d2] where (
     d0 * d1 * d2 == n
 ):
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
-    return Shaped[dtype, d0, d1, d2](a.context(), a.to_host())
+    return Static[dtype, d0, d1, d2](a.context(), a.to_host())
 
 
 def reshape_dyn[
@@ -1318,7 +1319,7 @@ def broadcast_to[
 
 def ravel[
     dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Shaped[
+](a: Tensor[dtype, LayoutType]) raises -> Static[
     dtype, LayoutType.static_product
 ] where LayoutType.all_dims_known:
     """A rank-1 copy in row-major order -- the inverse of `reshape`.
@@ -1331,7 +1332,7 @@ def ravel[
 
     The overload below flattens a tensor whose extents are run-time values.
     """
-    return Shaped[dtype, LayoutType.static_product](a.context(), a.to_host())
+    return Static[dtype, LayoutType.static_product](a.context(), a.to_host())
 
 
 def ravel[
@@ -1349,7 +1350,7 @@ def ravel[
 
 def concatenate[
     dtype: DType, n: Int, m: Int
-](a: Shaped[dtype, n], b: Shaped[dtype, m]) raises -> Shaped[dtype, n + m]:
+](a: Static[dtype, n], b: Static[dtype, m]) raises -> Static[dtype, n + m]:
     """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
 
     Rank-1 only, for the same reason `stack` takes exactly two rank-1
@@ -1372,13 +1373,13 @@ def concatenate[
         values.append(a_values[i])
     for i in range(m):
         values.append(b_values[i])
-    return Shaped[dtype, n + m](a.context(), values^)
+    return Static[dtype, n + m](a.context(), values^)
 
 
 def split[
     dtype: DType, n: Int, at: Int
-](a: Shaped[dtype, n]) raises -> Tuple[
-    Shaped[dtype, at], Shaped[dtype, n - at]
+](a: Static[dtype, n]) raises -> Tuple[
+    Static[dtype, at], Static[dtype, n - at]
 ] where (at >= 0 and at <= n):
     """Cut a rank-1 tensor in two at comptime index `at`: elements
     `[0, at)` and `[at, n)`. The inverse of `concatenate`.
@@ -1397,8 +1398,8 @@ def split[
     for i in range(at, n):
         tail.append(values[i])
     return (
-        Shaped[dtype, at](ctx, head^),
-        Shaped[dtype, n - at](ctx, tail^),
+        Static[dtype, at](ctx, head^),
+        Static[dtype, n - at](ctx, tail^),
     )
 
 
@@ -1408,7 +1409,7 @@ def geomspace[
     start: Float64,
     stop: Float64,
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, num] where dtype.is_floating_point():
+) raises -> Static[dtype, num] where dtype.is_floating_point():
     """`num` values spaced evenly on a geometric progression, endpoints
     included. `numpy.geomspace`.
 
@@ -1426,12 +1427,12 @@ def geomspace[
         for _ in range(num):
             values.append(current)
             current = current * Scalar[dtype](ratio)
-    return Shaped[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](_context(ctx), values^)
 
 
 def identity[
     n: Int, dtype: DType = DType.float64
-](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
     """The `n`x`n` identity matrix. `numpy.identity`.
 
     Same result as `eye`; both names exist in NumPy and a caller reaching
@@ -1442,7 +1443,7 @@ def identity[
 
 def diag[
     dtype: DType, n: Int
-](a: Shaped[dtype, n]) raises -> Shaped[dtype, n, n]:
+](a: Static[dtype, n]) raises -> Static[dtype, n, n]:
     """A square matrix with `a` on its main diagonal. `numpy.diag`.
 
     The vector-to-matrix direction only; `diagonal` is the inverse.
@@ -1451,23 +1452,23 @@ def diag[
     var source = a.to_host()
     for i in range(n):
         values[i * n + i] = source[i]
-    return Shaped[dtype, n, n](a.context(), values^)
+    return Static[dtype, n, n](a.context(), values^)
 
 
 def diagonal[
     dtype: DType, n: Int
-](a: Shaped[dtype, n, n]) raises -> Shaped[dtype, n]:
+](a: Static[dtype, n, n]) raises -> Static[dtype, n]:
     """The main diagonal of a square matrix. `numpy.diagonal`."""
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(source[i * n + i])
-    return Shaped[dtype, n](a.context(), values^)
+    return Static[dtype, n](a.context(), values^)
 
 
 def diagflat[
     dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Shaped[
+](a: Tensor[dtype, LayoutType]) raises -> Static[
     dtype, LayoutType.static_product, LayoutType.static_product
 ] where LayoutType.all_dims_known:
     """`a` flattened onto the diagonal of a square matrix.
@@ -1480,7 +1481,7 @@ def diagflat[
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = source[i]
-    return Shaped[dtype, n, n](a.context(), values^)
+    return Static[dtype, n, n](a.context(), values^)
 
 
 def diagflat[
@@ -1502,18 +1503,18 @@ def diagflat[
 
 def tri[
     dtype: DType, n: Int
-](ctx: Optional[DeviceContext] = None) raises -> Shaped[dtype, n, n]:
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
     """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`."""
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for r in range(n):
         for c in range(r + 1):
             values[r * n + c] = 1
-    return Shaped[dtype, n, n](_context(ctx), values^)
+    return Static[dtype, n, n](_context(ctx), values^)
 
 
 def _band_part[
     dtype: DType, rows: Int, cols: Int, gpu: Bool
-](mut a: Shaped[dtype, rows, cols], lower: Int, upper: Int) raises -> Shaped[
+](mut a: Static[dtype, rows, cols], lower: Int, upper: Int) raises -> Static[
     dtype, rows, cols
 ]:
     """`linalg.matrix_band_part` with the counts staged the way MAX wants.
@@ -1538,11 +1539,11 @@ def _band_part[
       structure the device cannot reach, and faults the same way.
     """
     var ctx = a.context()
-    var result = Shaped[dtype, rows, cols](ctx)
+    var result = Static[dtype, rows, cols](ctx)
     var counts = DeviceContext(api="cpu")
-    var num_lower = Shaped[DType.int64, 1](counts, [Scalar[DType.int64](lower)])
-    var num_upper = Shaped[DType.int64, 1](counts, [Scalar[DType.int64](upper)])
-    var exclude = Shaped[DType.int64, 1](counts)
+    var num_lower = Static[DType.int64, 1](counts, [Scalar[DType.int64](lower)])
+    var num_upper = Static[DType.int64, 1](counts, [Scalar[DType.int64](upper)])
+    var exclude = Static[DType.int64, 1](counts)
     var src = a.view()
     var dst = result.view()
 
@@ -1566,7 +1567,7 @@ def _band_part[
 
 def tril[
     dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
+](mut a: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols]:
     """`a` with everything above the diagonal zeroed. `numpy.tril` at `k=0`.
 
     The band is MAX's `matrix_band_part`, an elementwise kernel over the
@@ -1580,7 +1581,7 @@ def tril[
 
 def triu[
     dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, rows, cols]:
+](mut a: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols]:
     """`a` with everything below the diagonal zeroed. `numpy.triu` at `k=0`.
 
     The mirror of `tril` and the same MAX kernel.
@@ -1590,7 +1591,7 @@ def triu[
 
 def vander[
     dtype: DType, n: Int, cols: Int
-](a: Shaped[dtype, n]) raises -> Shaped[
+](a: Static[dtype, n]) raises -> Static[
     dtype, n, cols
 ] where dtype.is_floating_point():
     """The Vandermonde matrix of `a`: `out[i, j] = a[i] ** (cols - 1 - j)`.
@@ -1602,13 +1603,13 @@ def vander[
         for j in range(cols):
             values[r * cols + (cols - 1 - j)] = power
             power = power * source[r]
-    return Shaped[dtype, n, cols](a.context(), values^)
+    return Static[dtype, n, cols](a.context(), values^)
 
 
 def meshgrid[
     dtype: DType, n: Int, m: Int
-](x: Shaped[dtype, n], y: Shaped[dtype, m]) raises -> Tuple[
-    Shaped[dtype, m, n], Shaped[dtype, m, n]
+](x: Static[dtype, n], y: Static[dtype, m]) raises -> Tuple[
+    Static[dtype, m, n], Static[dtype, m, n]
 ]:
     """Coordinate matrices from two coordinate vectors. `numpy.meshgrid`
     with its default `indexing="xy"`, so both outputs are `(m, n)`."""
@@ -1622,18 +1623,18 @@ def meshgrid[
             yy[r * n + c] = ys[r]
     var ctx = x.context()
     return (
-        Shaped[dtype, m, n](ctx, xx^),
-        Shaped[dtype, m, n](ctx, yy^),
+        Static[dtype, m, n](ctx, xx^),
+        Static[dtype, m, n](ctx, yy^),
     )
 
 
-def flip[dtype: DType, n: Int](a: Shaped[dtype, n]) raises -> Shaped[dtype, n]:
+def flip[dtype: DType, n: Int](a: Static[dtype, n]) raises -> Static[dtype, n]:
     """A rank-1 tensor reversed. `numpy.flip` at `axis=0`."""
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(source[n - 1 - i])
-    return Shaped[dtype, n](a.context(), values^)
+    return Static[dtype, n](a.context(), values^)
 
 
 def copy[
@@ -1652,8 +1653,8 @@ def copy[
 def vstack[
     dtype: DType, rows_a: Int, rows_b: Int, cols: Int
 ](
-    a: Shaped[dtype, rows_a, cols], b: Shaped[dtype, rows_b, cols]
-) raises -> Shaped[dtype, rows_a + rows_b, cols]:
+    a: Static[dtype, rows_a, cols], b: Static[dtype, rows_b, cols]
+) raises -> Static[dtype, rows_a + rows_b, cols]:
     """Two matrices joined along their rows. `numpy.vstack`.
 
     Row-major storage makes this the concatenating direction: the two
@@ -1666,14 +1667,14 @@ def vstack[
         values.append(a_values[i])
     for i in range(rows_b * cols):
         values.append(b_values[i])
-    return Shaped[dtype, rows_a + rows_b, cols](a.context(), values^)
+    return Static[dtype, rows_a + rows_b, cols](a.context(), values^)
 
 
 def hstack[
     dtype: DType, rows: Int, cols_a: Int, cols_b: Int
 ](
-    a: Shaped[dtype, rows, cols_a], b: Shaped[dtype, rows, cols_b]
-) raises -> Shaped[dtype, rows, cols_a + cols_b]:
+    a: Static[dtype, rows, cols_a], b: Static[dtype, rows, cols_b]
+) raises -> Static[dtype, rows, cols_a + cols_b]:
     """Two matrices joined along their columns. `numpy.hstack`."""
     var a_values = a.to_host()
     var b_values = b.to_host()
@@ -1685,7 +1686,7 @@ def hstack[
             values[r * (cols_a + cols_b) + cols_a + c] = b_values[
                 r * cols_b + c
             ]
-    return Shaped[dtype, rows, cols_a + cols_b](a.context(), values^)
+    return Static[dtype, rows, cols_a + cols_b](a.context(), values^)
 
 
 def _format_axis[
@@ -1806,7 +1807,7 @@ def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
 
     Rounding is only meaningful for a float; an integer or boolean tensor
     prints its elements as they are. Without the split, `print` on a
-    `Shaped[DType.int32, ...]` was a *compile* error rather than a missing
+    `Static[DType.int32, ...]` was a *compile* error rather than a missing
     feature, because `_round_to`'s `10.0 ** precision` requires a
     floating-point SIMD.
     """
@@ -1868,7 +1869,7 @@ def to_tensor[
 ](
     a: Array[Plain[dtype], _LayoutOf[*dims].static_product],
     ctx: Optional[DeviceContext] = None,
-) raises -> Shaped[dtype, *dims]:
+) raises -> Static[dtype, *dims]:
     """A `Tensor` of the named shape holding `a`'s elements, row-major.
 
     The way back down from the conformer layer, and `Plain`-only on
@@ -1885,4 +1886,4 @@ def to_tensor[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(a[i].v)
-    return Shaped[dtype, *dims](_context(ctx), values^)
+    return Static[dtype, *dims](_context(ctx), values^)

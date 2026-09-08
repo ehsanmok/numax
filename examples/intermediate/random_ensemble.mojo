@@ -30,7 +30,7 @@ value, not identical ones.
 from max.gpu.host import DeviceContext
 from std.random import Random
 
-from numax import Plain, Shaped
+from numax import Plain, Static
 from numax.core.numeric import FloatLike
 from numax.integrate import rk4
 from numax.stats import seed, uniform
@@ -87,7 +87,7 @@ def main() raises:
     var cpu = DeviceContext(api="cpu")
     var y0_cpu = uniform[dtype, n](-2, 2, ctx=cpu)
 
-    comptime Ensemble = Shaped[dtype, n]
+    comptime Ensemble = Static[dtype, n]
     var yt_cpu = Ensemble(cpu)
     map[step=trajectory_step](y0_cpu.view(), yt_cpu.view())
 

@@ -37,7 +37,7 @@ from max.gpu.host import DeviceContext
 from std.sys.info import align_of
 from std.utils import IndexList
 
-from ..core.array import Shaped, zeros, zeros_dyn
+from ..core.array import Static, zeros, zeros_dyn
 
 from .blas import _target
 from .common import _Dense
@@ -79,7 +79,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
     rather than being flagged. `cond` on the original matrix is the check.
     """
 
-    var factored: Shaped[Self.dtype, Self.n, Self.n]
+    var factored: Static[Self.dtype, Self.n, Self.n]
     """`L` below the diagonal (its own diagonal an implicit `1`) and `U` on
     and above it, row-major, packed the way `PivotedLU` packs them.
 
@@ -92,7 +92,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
     is parallel.
     """
 
-    var pivots: Shaped[DType.int32, Self.n]
+    var pivots: Static[DType.int32, Self.n]
     """`pivots[j]` is the row column `j` interchanged with, LAPACK's `ipiv`
     convention.
 
@@ -112,8 +112,8 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
     def __init__(
         out self,
-        var factored: Shaped[Self.dtype, Self.n, Self.n],
-        var pivots: Shaped[DType.int32, Self.n],
+        var factored: Static[Self.dtype, Self.n, Self.n],
+        var pivots: Static[DType.int32, Self.n],
         sign: Int,
     ):
         self.factored = factored^
@@ -122,14 +122,14 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
     def to_tensor_factored(
         mut self, ctx: Optional[DeviceContext] = None
-    ) raises -> Shaped[Self.dtype, Self.n, Self.n]:
+    ) raises -> Static[Self.dtype, Self.n, Self.n]:
         """The packed `L`/`U` as a tensor, for inspection or reuse.
 
         A copy, so the caller cannot invalidate this factorization by
         writing through it. `ctx` is accepted for signature compatibility
         and ignored -- the copy stays on the factorization's own device.
         """
-        var out = Shaped[Self.dtype, Self.n, Self.n](self.factored.context())
+        var out = Static[Self.dtype, Self.n, Self.n](self.factored.context())
         pack_block[target=_target[Self.gpu]()](
             self.factored.view(),
             out.view(),
@@ -144,7 +144,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
     def solve[
         block: Int = 16
-    ](mut self, mut b: Shaped[Self.dtype, Self.n]) raises -> Shaped[
+    ](mut self, mut b: Static[Self.dtype, Self.n]) raises -> Static[
         Self.dtype, Self.n
     ] where Self.dtype.is_floating_point():
         """`x` with `A @ x == b`, reusing this factorization.
@@ -161,7 +161,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         `lu_factor` returning this object rather than a matrix.
         """
         var ctx = self.factored.context()
-        var x = Shaped[Self.dtype, Self.n](ctx)
+        var x = Static[Self.dtype, Self.n](ctx)
         var fv = self.factored.view()
         var xv = x.view()
         var pv = self.pivots.view()
@@ -202,7 +202,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
     def solve[
         rhs: Int, block: Int = 16
-    ](mut self, mut b: Shaped[Self.dtype, Self.n, rhs]) raises -> Shaped[
+    ](mut self, mut b: Static[Self.dtype, Self.n, rhs]) raises -> Static[
         Self.dtype, Self.n, rhs
     ] where Self.dtype.is_floating_point():
         """`X` with `A @ X == B`, for a matrix `B`, reusing this
@@ -220,7 +220,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         `inverse` is this with `B` the identity.
         """
         var ctx = self.factored.context()
-        var x = Shaped[Self.dtype, Self.n, rhs](ctx)
+        var x = Static[Self.dtype, Self.n, rhs](ctx)
         var fv = self.factored.view()
         var pv = self.pivots.view()
         var xd: _Dense[Self.dtype] = TileTensor(
@@ -255,7 +255,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         least visible.
         """
         var ctx = self.factored.context()
-        var diagonal = Shaped[Self.dtype, Self.n](ctx)
+        var diagonal = Static[Self.dtype, Self.n](ctx)
         var fv = self.factored.view()
         var dv = diagonal.view()
 
@@ -278,7 +278,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
 def lu_factor[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Shaped[dtype, n, n]) raises -> TensorLU[
+](mut a: Static[dtype, n, n]) raises -> TensorLU[
     dtype, n, gpu
 ] where dtype.is_floating_point():
     """**Tier 2.** Factor `a` into `P @ L @ U`, blocked.
@@ -325,7 +325,7 @@ def lu_factor[
     shape should tune it.
     """
     var ctx = a.context()
-    var work = Shaped[dtype, n, n](ctx)
+    var work = Static[dtype, n, n](ctx)
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
     # `L21` and `U12` made dense for the GEMM, and the GEMM's own output,
@@ -431,7 +431,7 @@ def lu_factor[
 
 def det[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Shaped[dtype, n, n]) raises -> Scalar[
+](mut a: Static[dtype, n, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():
     """**Tier 2.** The determinant, pivoted. `scipy.linalg.det`.

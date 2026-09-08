@@ -36,7 +36,7 @@ from std.sys.info import size_of
 from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout
-from ..core.array import Shaped, Tensor, _context
+from ..core.array import Static, Tensor, _context
 
 
 comptime _MAGIC = "NMX1"
@@ -102,7 +102,7 @@ struct nmx:
     @staticmethod
     def load[
         dtype: DType, *dims: Int
-    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Shaped[
+    ](path: String, ctx: Optional[DeviceContext] = None) raises -> Static[
         dtype, *dims
     ]:
         """Read a tensor written by `nmx.save`, onto `ctx`'s device.
@@ -151,7 +151,7 @@ struct nmx:
             if file_dim != dims[i]:
                 raise Error("numax.io.nmx.load: shape mismatch")
 
-        comptime nbytes = Shaped[dtype, *dims].num_elements * size_of[
+        comptime nbytes = Static[dtype, *dims].num_elements * size_of[
             Scalar[dtype]
         ]()
         if len(data) - offset != nbytes:
@@ -160,9 +160,9 @@ struct nmx:
             )
 
         var out_storage = List[Scalar[dtype]](
-            length=Shaped[dtype, *dims].num_elements, fill=0
+            length=Static[dtype, *dims].num_elements, fill=0
         )
         var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Shaped[dtype, *dims](_context(ctx), out_storage^)
+        return Static[dtype, *dims](_context(ctx), out_storage^)

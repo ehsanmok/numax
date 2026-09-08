@@ -11,13 +11,13 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Shaped, zeros, zeros_dyn
+from numax.core.array import Static, zeros, zeros_dyn
 from numax.stats import max, mean, min, prod, sum
 
 comptime dtype = DType.float64
 
 
-def _ramp[*dims: Int]() raises -> Shaped[dtype, *dims]:
+def _ramp[*dims: Int]() raises -> Static[dtype, *dims]:
     var ctx = DeviceContext(api="cpu")
     var a = zeros[dtype, *dims](ctx)
     for i in range(a.size()):

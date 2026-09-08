@@ -67,7 +67,7 @@ from .core.constants import e, e_at, pi, pi_at
 # `Array[T, n]`.
 from .core.array import (
     Dynamic,
-    Shaped,
+    Static,
     Tensor,
     arange,
     broadcast_to,

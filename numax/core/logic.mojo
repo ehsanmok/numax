@@ -15,7 +15,7 @@ on a device.
 `Plain`-only. A comparison returns truth, not a number, so there is nothing
 for a `Dual` derivative or a `Compensated` error term to carry.
 
-Truth is a `Shaped[DType.bool, *dims]`, not a same-dtype tensor of 0/1. That
+Truth is a `Static[DType.bool, *dims]`, not a same-dtype tensor of 0/1. That
 is what makes `greater(a, b)` compose with `logical_and`, and it is the type
 `numax.core.sorting.extract`/`select` take, so `select(a > b, x, y)` needs
 nothing in between. A tensor of values becomes a mask with
@@ -34,7 +34,7 @@ from std.math import (
 )
 
 from layout.tile_layout import TensorLayout
-from .array import Shaped, Tensor, _product
+from .array import Static, Tensor, _product
 
 
 def _eq_step[

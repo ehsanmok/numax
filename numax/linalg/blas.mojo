@@ -44,7 +44,7 @@ from std.math import sqrt as _sqrt
 from std.sys.info import simd_width_of
 from std.utils import IndexList
 
-from ..core.array import Dynamic, Shaped, zeros_dyn
+from ..core.array import Dynamic, Static, zeros_dyn
 
 
 @always_inline
@@ -136,7 +136,7 @@ def _fused_sum[
 
 def dot[
     dtype: DType, n: Int, gpu: Bool = False
-](mut a: Shaped[dtype, n], mut b: Shaped[dtype, n]) raises -> Scalar[
+](mut a: Static[dtype, n], mut b: Static[dtype, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():
     """The inner product `sum(a[i] * b[i])` -- BLAS-1 `dot`, over `Tensor`.
@@ -151,7 +151,7 @@ def dot[
     wants that one.
     """
     var ctx = a.context()
-    var out = Shaped[dtype, 1](ctx)
+    var out = Static[dtype, 1](ctx)
     var rhs = b.view()
 
     @always_inline
@@ -166,7 +166,7 @@ def dot[
 
 def nrm2[
     dtype: DType, n: Int, gpu: Bool = False
-](mut a: Shaped[dtype, n]) raises -> Scalar[
+](mut a: Static[dtype, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():
     """The Euclidean norm `sqrt(sum(a[i]**2))` -- BLAS-1 `nrm2`, over
@@ -179,7 +179,7 @@ def nrm2[
     running maximum, here it would cost a second pass over the data.
     """
     var ctx = a.context()
-    var out = Shaped[dtype, 1](ctx)
+    var out = Static[dtype, 1](ctx)
 
     @always_inline
     def square[
@@ -193,7 +193,7 @@ def nrm2[
 
 def asum[
     dtype: DType, n: Int, gpu: Bool = False
-](mut a: Shaped[dtype, n]) raises -> Scalar[
+](mut a: Static[dtype, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():
     """The sum of magnitudes `sum(|a[i]|)` -- BLAS-1 `asum`, over `Tensor`.
@@ -202,7 +202,7 @@ def asum[
     that only needs a magnitude usually wants this one.
     """
     var ctx = a.context()
-    var out = Shaped[dtype, 1](ctx)
+    var out = Static[dtype, 1](ctx)
 
     @always_inline
     def magnitude[
@@ -217,8 +217,8 @@ def asum[
 def axpy[
     dtype: DType, n: Int, gpu: Bool = False
 ](
-    alpha: Scalar[dtype], mut x: Shaped[dtype, n], mut y: Shaped[dtype, n]
-) raises -> Shaped[dtype, n] where dtype.is_floating_point():
+    alpha: Scalar[dtype], mut x: Static[dtype, n], mut y: Static[dtype, n]
+) raises -> Static[dtype, n] where dtype.is_floating_point():
     """`alpha * x + y` -- BLAS-1 `axpy`, over `Tensor`.
 
     One fused `max.algorithm.elementwise` pass: `alpha` rides the body's
@@ -232,7 +232,7 @@ def axpy[
     other.
     """
     var ctx = x.context()
-    var out = Shaped[dtype, n](ctx)
+    var out = Static[dtype, n](ctx)
     var xv = x.view()
     var yv = y.view()
     var ov = out.view()
@@ -251,7 +251,7 @@ def axpy[
 
 def outer[
     dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut a: Shaped[dtype, m], mut b: Shaped[dtype, n]) raises -> Shaped[
+](mut a: Static[dtype, m], mut b: Static[dtype, n]) raises -> Static[
     dtype, m, n
 ] where dtype.is_floating_point():
     """The outer product `out[i, j] = a[i] * b[j]` -- over `Tensor`.
@@ -268,7 +268,7 @@ def outer[
     `a` and `b` may have different lengths, as `numpy.outer` allows.
     """
     var ctx = a.context()
-    var out = Shaped[dtype, m, n](ctx)
+    var out = Static[dtype, m, n](ctx)
     var av = a.view()
     var bv = b.view()
     var ov = out.view()
@@ -289,7 +289,7 @@ def outer[
 
 def matvec[
     dtype: DType, m: Int, k: Int, gpu: Bool = False
-](mut a: Shaped[dtype, m, k], mut x: Shaped[dtype, k]) raises -> Shaped[
+](mut a: Static[dtype, m, k], mut x: Static[dtype, k]) raises -> Static[
     dtype, m
 ]:
     """The matrix-vector product `a @ x`, on `a`'s own device.
@@ -307,7 +307,7 @@ def matvec[
     anyway, not a copy.
     """
     var ctx = a.context()
-    var result = Shaped[dtype, m](ctx)
+    var result = Static[dtype, m](ctx)
     var xv = x.view()
     var yv = result.view()
     var x_col = TileTensor(xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1)))
@@ -319,7 +319,7 @@ def matvec[
 
 def matmul[
     dtype: DType, m: Int, k: Int, n: Int, gpu: Bool = False
-](mut a: Shaped[dtype, m, k], mut b: Shaped[dtype, k, n]) raises -> Shaped[
+](mut a: Static[dtype, m, k], mut b: Static[dtype, k, n]) raises -> Static[
     dtype, m, n
 ]:
     """The matrix product `a @ b`, on `a`'s own device.
@@ -336,7 +336,7 @@ def matmul[
     crosses from there to here and `to_array` back.
     """
     var ctx = a.context()
-    var result = Shaped[dtype, m, n](ctx)
+    var result = Static[dtype, m, n](ctx)
     var c = result.view()
     _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
     ctx.synchronize()
@@ -351,7 +351,7 @@ def matmul[
     """The matrix product `a @ b` at extents known only at run time.
 
     The run-time-shaped overload of the one above, selected by argument
-    type rather than by a `where` clause: `Shaped` and `Dynamic` are
+    type rather than by a `where` clause: `Static` and `Dynamic` are
     different layouts, so the two can never be ambiguous. MAX reads the
     extents from the layout either way -- a compile-time shape buys kernel
     specialization, not correctness.
@@ -381,8 +381,8 @@ def matmul[
 def batched_matmul[
     dtype: DType, batch: Int, m: Int, k: Int, n: Int, gpu: Bool = False
 ](
-    mut a: Shaped[dtype, batch, m, k], mut b: Shaped[dtype, batch, k, n]
-) raises -> Shaped[dtype, batch, m, n]:
+    mut a: Static[dtype, batch, m, k], mut b: Static[dtype, batch, k, n]
+) raises -> Static[dtype, batch, m, n]:
     """`batch` independent matrix products, one per leading index.
 
     `linalg.bmm.batched_matmul` does the work, in one launch rather than
@@ -392,7 +392,7 @@ def batched_matmul[
     sizes past the crossover.
     """
     var ctx = a.context()
-    var result = Shaped[dtype, batch, m, n](ctx)
+    var result = Static[dtype, batch, m, n](ctx)
     var c = result.view()
     _max_batched_matmul[target="gpu" if gpu else "cpu"](
         c, a.view(), b.view(), context=ctx

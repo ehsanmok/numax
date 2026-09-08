@@ -94,7 +94,7 @@ from layout.tile_layout import row_major, TensorLayout
 from layout.tile_tensor import PointerStorage
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 
-from ..core.array import Dynamic, Shaped, Tensor, _dyn_shape_from
+from ..core.array import Dynamic, Static, Tensor, _dyn_shape_from
 from ..core.numeric import FloatLike
 from ..core.rowwise import mean_variance_axis
 
@@ -413,8 +413,8 @@ def _welford[
     var flat = TileTensor(
         xs.view().ptr_at_offset(Coord(0)), row_major(Coord(n))
     )
-    var mean_out = Shaped[dtype, 1](ctx)
-    var var_out = Shaped[dtype, 1](ctx)
+    var mean_out = Static[dtype, 1](ctx)
+    var var_out = Static[dtype, 1](ctx)
     mean_variance_axis[dtype, _, _, axis=0, target=_target[gpu]()](
         flat, mean_out.view(), var_out.view(), ddof, Optional(ctx)
     )
@@ -511,7 +511,7 @@ def argmin[
 
 def cumprod[
     dtype: DType, n: Int
-](xs: Shaped[dtype, n]) raises -> Shaped[dtype, n]:
+](xs: Static[dtype, n]) raises -> Static[dtype, n]:
     """The running product of `xs`: `ys[i] = xs[0] * ... * xs[i]`."""
     var values = xs.to_host()
     var storage = List[Scalar[dtype]](capacity=n)
@@ -519,7 +519,7 @@ def cumprod[
     for i in range(n):
         acc = acc * values[i]
         storage.append(acc)
-    return Shaped[dtype, n](xs.context(), storage^)
+    return Static[dtype, n](xs.context(), storage^)
 
 
 def variance[
@@ -560,7 +560,7 @@ def stddev[
 
 def cumsum[
     dtype: DType, n: Int
-](xs: Shaped[dtype, n]) raises -> Shaped[dtype, n]:
+](xs: Static[dtype, n]) raises -> Static[dtype, n]:
     """The running sum of `xs`: `ys[i] = xs[0] + ... + xs[i]`. The
     counterpart of `cumprod`; the `List[T]` form below is the
     `FloatLike`-generic one."""
@@ -570,7 +570,7 @@ def cumsum[
     for i in range(n):
         acc = acc + values[i]
         storage.append(acc)
-    return Shaped[dtype, n](xs.context(), storage^)
+    return Static[dtype, n](xs.context(), storage^)
 
 
 def mean[T: FloatLike](xs: List[T]) -> T:

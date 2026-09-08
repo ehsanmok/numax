@@ -58,7 +58,7 @@ from std.math import (
 )
 
 from layout.tile_layout import TensorLayout
-from .array import Shaped, Tensor, _product
+from .array import Static, Tensor, _product
 
 
 def _unary[
@@ -615,7 +615,7 @@ def clip[
 
 def diff[
     dtype: DType, n: Int
-](a: Shaped[dtype, n]) raises -> Shaped[dtype, n - 1] where n >= 1:
+](a: Static[dtype, n]) raises -> Static[dtype, n - 1] where n >= 1:
     """First differences, `out[i] = a[i+1] - a[i]`. `numpy.diff`.
 
     Rank-1, and one element shorter than its input -- which is why the
@@ -626,12 +626,12 @@ def diff[
     var out = List[Scalar[dtype]](length=n - 1, fill=0)
     for i in range(n - 1):
         out[i] = values[i + 1] - values[i]
-    return Shaped[dtype, n - 1](a.context(), out^)
+    return Static[dtype, n - 1](a.context(), out^)
 
 
 def gradient[
     dtype: DType, n: Int
-](a: Shaped[dtype, n], spacing: Scalar[dtype] = 1) raises -> Shaped[
+](a: Static[dtype, n], spacing: Scalar[dtype] = 1) raises -> Static[
     dtype, n
 ] where (n >= 2):
     """Central differences interior, one-sided at the ends. `numpy.gradient`.
@@ -645,4 +645,4 @@ def gradient[
     out[n - 1] = (values[n - 1] - values[n - 2]) / spacing
     for i in range(1, n - 1):
         out[i] = (values[i + 1] - values[i - 1]) / (spacing + spacing)
-    return Shaped[dtype, n](a.context(), out^)
+    return Static[dtype, n](a.context(), out^)

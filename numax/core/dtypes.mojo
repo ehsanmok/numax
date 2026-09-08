@@ -3,7 +3,7 @@
 This module declares no tier: it holds names, not code.
 
 A dtype is not a conformer -- the same name works at every layer, which is
-the point: `linspace[5, f32](...)` and `Shaped[f32, 4, 4](ctx)` on the
+the point: `linspace[5, f32](...)` and `Static[f32, 4, 4](ctx)` on the
 tensor side, `Plain[f32]` and `Dual[Plain[f32]]` on the kernel side.
 `Plain`'s `width` defaults to 1, so `Plain[f32]` is the single-lane scalar;
 name `Plain[f32, 8]` for a vector width.

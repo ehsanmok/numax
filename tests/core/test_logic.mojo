@@ -10,7 +10,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Shaped, Tensor
+from numax.core.array import Static, Tensor
 from numax.core.logic import (
     all,
     allclose,
@@ -37,20 +37,20 @@ from numax.core.logic import (
 comptime dtype = DType.float32
 
 
-def _tensor[n: Int](values: List[Float64]) raises -> Shaped[dtype, n]:
+def _tensor[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Shaped[dtype, n](ctx, elements^)
+    return Static[dtype, n](ctx, elements^)
 
 
-def _bools[n: Int](values: List[Bool]) raises -> Shaped[DType.bool, n]:
+def _bools[n: Int](values: List[Bool]) raises -> Static[DType.bool, n]:
     var ctx = DeviceContext(api="cpu")
     var elements = List[Scalar[DType.bool]](capacity=n)
     for i in range(n):
         elements.append(values[i])
-    return Shaped[DType.bool, n](ctx, elements^)
+    return Static[DType.bool, n](ctx, elements^)
 
 
 def test_equal_and_not_equal_are_complements() raises:
@@ -83,8 +83,8 @@ def test_ordering_comparisons_match_hand_computed_masks() raises:
 
 def test_comparisons_preserve_rank() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Shaped[dtype, 2, 3](ctx)
-    var b = Shaped[dtype, 2, 3](ctx)
+    var a = Static[dtype, 2, 3](ctx)
+    var b = Static[dtype, 2, 3](ctx)
     var mask = greater(a, b)
     assert_equal(mask.num_elements, 6)
     assert_equal(mask.rank, 2)
