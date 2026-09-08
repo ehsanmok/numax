@@ -66,9 +66,10 @@ loses nothing, since `Welford` and `OnlineLogSumExp` are already at the pin.
   older `LayoutTensor`, which numax denies rather than bridges — interop is
   `TileTensor` only. So: no usable LU, Cholesky, SVD, eig, `solve`, triangular
   solve, inverse, determinant, matrix norm, or BLAS-1, and no cuSOLVER bridge.
-  numax's `cholesky`, `lu_factor` and `solve` over `Tensor` fill the gap
-  blocked, sending the `O(n^3)` term back through `linalg.matmul`; `qr`, `svd`
-  and `eigh` over `Tensor` are still missing and are the next ones to write.
+  numax's `cholesky`, `lu_factor`, `qr_factor` and `solve` over `Tensor` fill
+  the gap blocked, sending the `O(n^3)` term back through `linalg.matmul`;
+  `svd` and `eigh` over `Tensor` are still missing and are the next ones to
+  write.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere.
 - **Out-of-place tensor arithmetic and explicit broadcast.** `TileTensor` has
@@ -94,7 +95,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 | Comparison and logic | `numax/core/logic.mojo` | Truth is a `Shaped[DType.bool]`, so a comparison composes with `logical_and` |
 | Statistics | `numax/stats/statistics.mojo` | NumPy-named entry points only: `mean`/`variance`/`stddev` and the axis-wise `mean`/`variance_axis` fold through MAX's `Welford` monoid, `argmin`/`argmax` route into `nn.argmaxmin`. The `List[T]` forms of `variance`/`stddev`/`cumsum`/`mean` are `FloatLike`-generic — at `Compensated` they match a float64 reference where `Plain` drifts |
 | Sorting, searching, masking | `numax/core/sorting.mojo` | Tier 2. `argsort` routes into `nn.argsort`; the rest walk a host copy, where `std.builtin.sort` is the better route |
-| Dense linalg | `numax/linalg/` (`blas`, `triangular`, `cholesky`, `lu`, `qr`, `eigen`, `basic`, `misc`) | Two tiers, one set of names, resolved by argument type. Over `Tensor`: `matmul`/`matvec`/`batched_matmul` delegate to `linalg.matmul`/`bmm`, and `cholesky`/`lu_factor`/`solve` are blocked and device-resident, with the `O(n^3)` trailing update fused into `linalg.matmul`'s epilogue. Over `Array[T, n*n]`: `FloatLike`-generic and register-resident, where differentiability is the point. `PivotedLU`/`TensorLU` are the tier-2 exceptions, since a pivot choice is a branch on data |
+| Dense linalg | `numax/linalg/` (`blas`, `triangular`, `cholesky`, `lu`, `qr`, `eigen`, `basic`, `misc`) | Two tiers, one set of names, resolved by argument type. Over `Tensor`: `matmul`/`matvec`/`batched_matmul` delegate to `linalg.matmul`/`bmm`, and `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked and device-resident, with the `O(n^3)` trailing update fused into `linalg.matmul`'s epilogue -- MAX's only factorization, `linalg.qr_factorization`, is `LayoutTensor`-only and so denied. Over `Array[T, n*n]`: `FloatLike`-generic and register-resident, where differentiability is the point. `PivotedLU`/`TensorLU` are the tier-2 exceptions, since a pivot choice is a branch on data |
 | Root finding and minimization | `numax/optimize/solve.mojo`, `numax/optimize/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2). `least_squares`/`curve_fit` take the Jacobian from `Gradient` rather than a difference |
 | Quadrature and ODE | `numax/integrate/quadrature.mojo`, `numax/integrate/ode.mojo`, `numax/integrate/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2, including `solve_ivp_stiff`, whose Newton iteration takes `df/dy` from `Dual` |
 | Transforms and signal | `numax/fft/fft.mojo`, `numax/signal/signal.mojo` | Power-of-two by construction. MAX's only transform is `nn.irfft` -- inverse-only, last-axis-only, NVIDIA-only -- so there is no forward FFT to route to at all. `lfilter`/`firwin` cover IIR and FIR; filter *design* past a windowed sinc is out |

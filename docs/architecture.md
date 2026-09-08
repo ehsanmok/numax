@@ -250,8 +250,9 @@ survey of what MAX does ship.
   surface and the composable-type spine meet.
 - **`numax.linalg`** — dense linear algebra at two tiers under one set of
   names, resolved by argument type. Over `Tensor`: `matmul`, `matvec` and
-  `batched_matmul` are MAX kernels outright, and `cholesky`/`lu_factor`/`solve`
-  are blocked so their cubic term is a matrix product and goes back to MAX.
+  `batched_matmul` are MAX kernels outright, and
+  `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked so their cubic term
+  is a matrix product and goes back to MAX.
   Over `Array[T, n*n]`: the same operations `FloatLike`-generic and
   register-resident, where the point is differentiability rather than speed —
   MAX's kernels are monomorphic in a raw `dtype`, so no `Dual` passes through

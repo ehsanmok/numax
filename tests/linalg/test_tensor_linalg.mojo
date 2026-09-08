@@ -33,7 +33,10 @@ from numax.linalg import (
     matvec,
     norm,
     nrm2,
+    lstsq,
     outer,
+    qr,
+    qr_factor,
     solve,
     solve_triangular,
     trace,
@@ -980,6 +983,198 @@ def test_tensor_frobenius_norm_is_nrm2_of_the_flattened_matrix() raises:
     assert_almost_equal(
         got, Float64(nrm2[DType.float64, 16](as_vector)), atol=1e-12
     )
+
+
+def _tall_6x3() -> List[Float64]:
+    """A tall matrix of full column rank, deliberately not close to
+    triangular, so a QR of it exercises every reflector."""
+    return [
+        1.0,
+        -2.0,
+        3.0,
+        4.0,
+        5.0,
+        -1.0,
+        -3.0,
+        2.0,
+        7.0,
+        0.5,
+        -4.0,
+        1.5,
+        6.0,
+        1.0,
+        -2.5,
+        2.0,
+        3.5,
+        4.0,
+    ]
+
+
+def test_tensor_qr_reconstructs_the_matrix() raises:
+    """`Q @ R == A` is the whole claim of a QR, and the first thing a bug
+    in the block reflector breaks."""
+    var ctx = _cpu()
+    var entries = _tall_6x3()
+    var a = Shaped[DType.float64, 6, 3](ctx, entries.copy())
+    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var upper = factorization.r()
+    var orthogonal = factorization.q()
+
+    var product = matmul(orthogonal, upper).to_host()
+    for i in range(18):
+        assert_almost_equal(
+            Float64(product[i]), Float64(entries[i]), atol=1e-10
+        )
+
+
+def test_tensor_qr_q_has_orthonormal_columns() raises:
+    """`Q^T Q == I` on the thin factorization: three columns, so a `3 x 3`
+    identity."""
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 6, 3](ctx, _tall_6x3())
+    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var orthogonal = factorization.q()
+
+    var transposed = transpose[DType.float64, 6, 3](orthogonal)
+    var gram = matmul(transposed, orthogonal).to_host()
+    for i in range(3):
+        for j in range(3):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(Float64(gram[i * 3 + j]), want, atol=1e-10)
+
+
+def test_tensor_qr_r_is_upper_triangular() raises:
+    var ctx = _cpu()
+    var a = Shaped[DType.float64, 6, 3](ctx, _tall_6x3())
+    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var r = factorization.r().to_host()
+    for i in range(3):
+        for j in range(3):
+            if i > j:
+                assert_almost_equal(Float64(r[i * 3 + j]), 0.0, atol=1e-14)
+
+
+def test_tensor_qr_agrees_with_the_array_tier_up_to_column_signs() raises:
+    """The two tiers run the same algorithm on a square matrix, so `|R|`
+    matches entry for entry. Only the magnitudes: the sign of a reflector
+    is free, and flipping column `j` of `Q` with row `j` of `R` is the
+    same factorization."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var factorization = qr_factor[DType.float64, 4, 4, False, 2](a)
+    var got = factorization.r().to_host()
+
+    var lifted = array_zeros[P, 16]()
+    for i in range(16):
+        lifted[i] = P(entries[i])
+    var array_factored = qr[P, 4](lifted)
+    var want = array_factored[0].copy()
+
+    for i in range(16):
+        assert_almost_equal(
+            abs(Float64(got[i])), abs(Float64(want[i].v)), atol=1e-10
+        )
+
+
+def test_tensor_qr_apply_q_transpose_agrees_with_forming_q() raises:
+    """`apply_q_transpose` exists so a caller never pays for `Q`. It has to
+    give what forming `Q` and transposing it would have."""
+    var ctx = _cpu()
+    var rhs: List[Float64] = [
+        1.0,
+        0.5,
+        -2.0,
+        3.0,
+        4.0,
+        -1.0,
+        0.25,
+        2.0,
+        -3.0,
+        1.0,
+        5.0,
+        -0.5,
+    ]
+
+    var a = Shaped[DType.float64, 6, 3](ctx, _tall_6x3())
+    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var b = Shaped[DType.float64, 6, 2](ctx, rhs.copy())
+    var applied = factorization.apply_q_transpose[2](b).to_host()
+
+    var orthogonal = factorization.q()
+    var transposed = transpose[DType.float64, 6, 3](orthogonal)
+    var b2 = Shaped[DType.float64, 6, 2](ctx, rhs.copy())
+    var direct = matmul(transposed, b2).to_host()
+
+    # Only the leading `n` rows are `Q^T B`; below them is the part of `B`
+    # the thin `Q` does not see.
+    for i in range(3):
+        for j in range(2):
+            assert_almost_equal(
+                Float64(applied[i * 2 + j]),
+                Float64(direct[i * 2 + j]),
+                atol=1e-10,
+            )
+
+
+def test_tensor_qr_solve_agrees_with_the_array_lstsq() raises:
+    """A least-squares solve through the reusable factorization, against
+    the `Array` tier's `lstsq` on the same overdetermined system."""
+    var ctx = _cpu()
+    var entries = _tall_6x3()
+    var rhs: List[Float64] = [2.0, -1.0, 4.0, 0.5, 3.0, -2.0]
+
+    var a = Shaped[DType.float64, 6, 3](ctx, entries.copy())
+    var b = Shaped[DType.float64, 6](ctx, rhs.copy())
+    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var got = factorization.solve(b).to_host()
+
+    var lifted = array_zeros[P, 18]()
+    for i in range(18):
+        lifted[i] = P(entries[i])
+    var lifted_rhs = array_zeros[P, 6]()
+    for i in range(6):
+        lifted_rhs[i] = P(rhs[i])
+    var want = lstsq[P, 6, 3](lifted, lifted_rhs)
+
+    for i in range(3):
+        assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-10)
+
+
+def test_tensor_qr_block_size_does_not_change_the_answer() raises:
+    """A block wider than the matrix takes the single-panel path and a
+    block of one takes the unblocked one. Both are the same
+    factorization."""
+    var ctx = _cpu()
+    var entries = _tall_6x3()
+
+    var a1 = Shaped[DType.float64, 6, 3](ctx, entries.copy())
+    var wide = qr_factor[DType.float64, 6, 3, False, 8](a1)
+    var one = wide.r().to_host()
+
+    var a2 = Shaped[DType.float64, 6, 3](ctx, entries.copy())
+    var narrow = qr_factor[DType.float64, 6, 3, False, 1](a2)
+    var other = narrow.r().to_host()
+
+    for i in range(9):
+        assert_almost_equal(Float64(one[i]), Float64(other[i]), atol=1e-10)
+
+
+def test_tensor_qr_of_a_square_matrix_reconstructs_it() raises:
+    """`m == n` is the boundary of the `m >= n` constraint, and the case
+    where the last panel has nothing to its right."""
+    var ctx = _cpu()
+    var entries = _nonsymmetric_4x4()
+    var a = Shaped[DType.float64, 4, 4](ctx, entries.copy())
+    var factorization = qr_factor[DType.float64, 4, 4, False, 2](a)
+    var upper = factorization.r()
+    var orthogonal = factorization.q()
+
+    var product = matmul(orthogonal, upper).to_host()
+    for i in range(16):
+        assert_almost_equal(
+            Float64(product[i]), Float64(entries[i]), atol=1e-10
+        )
 
 
 def main() raises:

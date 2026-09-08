@@ -444,6 +444,234 @@ def gemv_sub[
     elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
 
 
+def geqr2_panel[
+    dtype: DType,
+    ALayout: TensorLayout,
+    TauLayout: TensorLayout,
+    SLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    tau: _View[dtype, TauLayout],
+    scratch: _View[dtype, SLayout],
+    k: Int32,
+    nb: Int32,
+    m: Int32,
+) where dtype.is_floating_point():
+    """Unblocked Householder factorization of the panel at columns
+    `k..k+nb`, rows `k..m`. LAPACK's `geqr2`.
+
+    `nb` reflectors, each formed from one column and then applied to the
+    columns still inside the panel. What it leaves behind is LAPACK's
+    packed form: `a[k+j, k+j]` holds `R`'s diagonal entry, the entries
+    below it hold the reflector's `v` with an implicit leading `1`, and
+    `tau[k+j]` holds the scale. Nothing above the diagonal is touched.
+
+    The columns to the *right* of the panel are left alone -- they are the
+    trailing block's, and `qr`'s block reflector does those with three
+    matrix products instead of `nb` rank-one updates. That split is the
+    whole reason for blocking a QR.
+
+    `scratch` is `_PANEL_THREADS` entries of workspace for the norm
+    reduction, for the same reason `getrf_panel` parks its pivot
+    candidates past the end of `pivots`: a single-block kernel has nowhere
+    else to put one value per thread.
+
+    Launch on the accelerator with `grid_dim=1`,
+    `block_dim=_PANEL_THREADS`; the host path runs it single-threaded.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var k0 = Int(k)
+    var n_b = Int(nb)
+    var rows = Int(m)
+
+    for j in range(n_b):
+        var col = k0 + j
+
+        # ||x|| over the sub-column strictly below the diagonal, reduced
+        # through thread 0 -- the same shape as `getrf_panel`'s pivot scan.
+        var partial = Scalar[dtype](0)
+        var i = col + 1 + t
+        while i < rows:
+            var value = a[Coord(i, col)]
+            partial += value * value
+            i += nt
+        scratch.store[1](Coord(t), partial)
+        _sync[gpu]()
+
+        if t == 0:
+            var total = Scalar[dtype](0)
+            for c in range(nt):
+                total += scratch[Coord(c)]
+            scratch.store[1](Coord(nt), total)
+        _sync[gpu]()
+
+        var below = scratch[Coord(nt)]
+        var alpha = a[Coord(col, col)]
+
+        # A column already in reflected form has nothing below the
+        # diagonal, so its reflector is the identity: `tau = 0`, and the
+        # scaling that would divide by zero never runs.
+        if below == 0:
+            if t == 0:
+                tau.store[1](Coord(col), Scalar[dtype](0))
+            _sync[gpu]()
+            continue
+
+        var beta = sqrt(alpha * alpha + below)
+        if alpha > 0:
+            beta = -beta
+        var this_tau = (beta - alpha) / beta
+        var scale = Scalar[dtype](1) / (alpha - beta)
+
+        i = col + 1 + t
+        while i < rows:
+            a.store[1](Coord(i, col), a[Coord(i, col)] * scale)
+            i += nt
+        if t == 0:
+            a.store[1](Coord(col, col), beta)
+            tau.store[1](Coord(col), this_tau)
+        _sync[gpu]()
+
+        # `H = I - tau v v^T` on the panel's remaining columns, one column
+        # per thread. `v`'s leading entry is the implicit `1`, so the dot
+        # picks up `c`'s own diagonal row separately.
+        var c = j + 1 + t
+        while c < n_b:
+            var other = k0 + c
+            var dot = a[Coord(col, other)]
+            for r in range(col + 1, rows):
+                dot += a[Coord(r, col)] * a[Coord(r, other)]
+            var factor = this_tau * dot
+            a.store[1](Coord(col, other), a[Coord(col, other)] - factor)
+            for r in range(col + 1, rows):
+                a.store[1](
+                    Coord(r, other),
+                    a[Coord(r, other)] - factor * a[Coord(r, col)],
+                )
+            c += nt
+        _sync[gpu]()
+
+
+def larft_panel[
+    dtype: DType,
+    ALayout: TensorLayout,
+    TauLayout: TensorLayout,
+    TLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    tau: _View[dtype, TauLayout],
+    t_block: _View[dtype, TLayout],
+    k: Int32,
+    nb: Int32,
+    m: Int32,
+) where dtype.is_floating_point():
+    """Build the `nb x nb` triangular factor `T` of the panel's block
+    reflector, so that `I - V T V^T` is the product of its `nb`
+    Householder reflections. LAPACK's `larft`, forward and columnwise.
+
+    This is what turns `nb` rank-one updates into three matrix products:
+    with `T` in hand the trailing block's update is
+    `C -= V (T^T (V^T C))`, and every factor of that is a GEMM.
+
+    `t_block` is a dense `nb x nb` scratch; only its upper triangle is
+    written and the caller packs it from there. `V` is read where `geqr2`
+    left it -- the strict lower trapezoid of the panel, unit diagonal
+    implicit.
+
+    Column `i` costs `i` dot products of length `m - k - i`, one per
+    thread, and then one `i x i` triangular multiply that thread 0 does
+    alone: `nb^3 / 3` in total, which is nothing beside the panel it
+    describes.
+
+    Launch on the accelerator with `grid_dim=1`,
+    `block_dim=_PANEL_THREADS`.
+    """
+    var lane = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var k0 = Int(k)
+    var n_b = Int(nb)
+    var rows = Int(m)
+
+    if lane == 0:
+        t_block.store[1](Coord(0, 0), tau[Coord(k0)])
+    _sync[gpu]()
+
+    for i in range(1, n_b):
+        var this_tau = tau[Coord(k0 + i)]
+
+        # `w[p] = -tau_i * (V[:, p] . V[:, i])`, parked in `T`'s own column
+        # `i` because the triangular multiply below consumes it in place.
+        var p = lane
+        while p < i:
+            var total = a[Coord(k0 + i, k0 + p)]
+            for r in range(k0 + i + 1, rows):
+                total += a[Coord(r, k0 + p)] * a[Coord(r, k0 + i)]
+            t_block.store[1](Coord(p, i), -this_tau * total)
+            p += nt
+        _sync[gpu]()
+
+        if lane == 0:
+            # `T[0:i, i] = T[0:i, 0:i] @ w`, ascending in `p` so the only
+            # entry of `w` overwritten before it is read is `w[p]` itself.
+            for q in range(i):
+                var total = Scalar[dtype](0)
+                for r in range(q, i):
+                    total += t_block[Coord(q, r)] * t_block[Coord(r, i)]
+                t_block.store[1](Coord(q, i), total)
+            t_block.store[1](Coord(i, i), this_tau)
+        _sync[gpu]()
+
+
+def pack_reflectors[
+    dtype: DType,
+    ALayout: TensorLayout,
+    DLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    dst: _View[dtype, DLayout],
+    k: Int,
+    nb: Int,
+    rows: Int,
+    trans: Bool,
+    ctx: DeviceContext,
+) raises:
+    """Materialize the panel's `V` -- unit lower trapezoidal, `rows x nb`
+    -- into the dense `dst`, or its transpose.
+
+    `geqr2_panel` stores `V` implicitly: the diagonal is an unwritten `1`,
+    everything above it belongs to `R`, and only the strict lower trapezoid
+    is really there. `matmul` cannot be told that, so the operand is built
+    once per panel step. `trans` is a run-time argument rather than a
+    parameter because both forms are needed in the same step and
+    instantiating the kernel twice would only grow the binary.
+    """
+    if rows <= 0 or nb <= 0:
+        return
+
+    @always_inline
+    def fill[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var a, var dst, var k, var nb, var trans}:
+        var at = coord_to_index_list(coord)
+        var i = at[1] if trans else at[0]
+        var j = at[0] if trans else at[1]
+        var value = Scalar[dtype](0)
+        if i == j:
+            value = Scalar[dtype](1)
+        elif i > j:
+            value = a[Coord(k + i, k + j)]
+        dst.store[1](coord, value)
+
+    if trans:
+        elementwise[simd_width=1, target=target](fill, Coord(nb, rows), ctx)
+    else:
+        elementwise[simd_width=1, target=target](fill, Coord(rows, nb), ctx)
+
+
 def trsm_diag[
     dtype: DType,
     ALayout: TensorLayout,

@@ -34,7 +34,7 @@ modules matter when reading or extending.
 | `triangular` | `solve_triangular`, `forward_substitution`, `back_substitution`, `tridiagonal_solve` | `solve_banded` |
 | `cholesky` | `cholesky`, `cholesky_solve`, `slogdet_cholesky` | `_decomp_cholesky` |
 | `lu` | `lu`, `lu_factor`, `PivotedLU`, `TensorLU`, `det` | `_decomp_lu` |
-| `qr` | `qr`, `lstsq` | `_decomp_qr` |
+| `qr` | `qr`, `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `eigen` | `eigh`, `eigvals`, `svd` | `_decomp`, `_decomp_svd` |
 | `basic` | `solve`, `inverse`, `pinv` | `_basic` |
 | `misc` | `norm`, `cond`, `trace`, `fro`, `inf` | `_misc` |
@@ -60,9 +60,10 @@ the cost of the GPU.
 Over `Tensor`: `matmul` (compile-time and run-time shapes), `matvec`,
 `batched_matmul`, the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`,
 `outer`), blocked `cholesky`, `lu_factor` (returning a reusable
-`TensorLU`) and `solve`, and the solves those unlock:
-`solve_triangular`, `cholesky_solve`, `inverse` and `det`, plus the
-scalar summaries `norm` (`fro`/`1`/`inf`) and `trace`. Each takes a
+`TensorLU`), `qr_factor` (returning a reusable `TensorQR`) and `solve`,
+and the solves those unlock: `solve_triangular`, `cholesky_solve`,
+`inverse`, `det` and the least-squares `TensorQR.solve`, plus the scalar
+summaries `norm` (`fro`/`1`/`inf`) and `trace`. Each takes a
 `gpu: Bool` parameter that chooses MAX's target, and everything blocked a
 `block` size that tunes the panel.
 
@@ -99,12 +100,20 @@ mutable view cannot be built from an immutable binding.
 
 ## Not here yet
 
-`qr`, `svd`, `eigh`, `cond` and `pinv` have no `Tensor` overload, so past
-the crossover in `docs/performance.md` they are genuinely missing rather
-than one import away. `cond` is `svd`'s dependent and moves when it does. MAX's own `linalg.qr_factorization` does not close
-that gap: it is on the older `LayoutTensor`, and numax's interop is
-`TileTensor` only. `tridiagonal_solve` will stay `Array`-only -- Thomas is
-already linear and has nothing to hand a GEMM.
+`svd`, `eigh`, `cond` and `pinv` have no `Tensor` overload, so past the
+crossover in `docs/performance.md` they are genuinely missing rather than
+one import away. `cond` is `svd`'s dependent and moves when it does.
+`tridiagonal_solve` will stay `Array`-only -- Thomas is already linear and
+has nothing to hand a GEMM.
+
+`qr` is the one name where the two tiers are spelled differently.
+`qr_factor` returns a `TensorQR` rather than a `(R, Q)` tuple, because a
+`Tuple` of two `Tensor`s cannot be destructured in Mojo 1.0 -- `Tensor` is
+`Movable`, tuple unpacking wants `ImplicitlyCopyable` -- so a tuple-shaped
+`Tensor` overload of `qr` would hand back a pair no caller could take
+apart. `TensorQR.r()` and `.q()` materialize either factor and
+`.apply_q_transpose`/`.solve` skip `Q` entirely, which is LAPACK's split
+and the more useful surface anyway.
 """
 
 from .basic import inverse, pinv, solve
@@ -122,7 +131,7 @@ from .cholesky import cholesky, cholesky_solve, slogdet_cholesky
 from .eigen import eigh, eigvals, svd
 from .lu import PivotedLU, TensorLU, det, lu, lu_factor
 from .misc import cond, fro, inf, norm, trace
-from .qr import lstsq, qr
+from .qr import TensorQR, lstsq, qr, qr_factor
 from .triangular import (
     back_substitution,
     forward_substitution,
