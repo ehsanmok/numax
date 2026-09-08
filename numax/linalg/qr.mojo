@@ -51,7 +51,7 @@ comptime _MIN_GEMM_COLS = 2
 """The narrowest right-hand side a block reflector's products are allowed
 to have, and the reason a one-column update is padded to two.
 
-Working around a MAX defect, recorded in `.cursor/rules/max-feedback.mdc`:
+Working around a MAX defect:
 `linalg.matmul` at `float64` with a single output column takes its GEMV
 path, which reads past the end of the vector when the inner dimension is
 not a multiple of four and segfaults. A blocked QR hits it constantly --

@@ -973,8 +973,7 @@ def transpose[
     `max.algorithm.elementwise` gather -- one output element per lane,
     `dst[i, j] = src[j, i]` -- which is a naive transpose rather than a
     shared-memory tiled one, and is what should be replaced by MAX's
-    kernel once that kernel runs on a device. Recorded in
-    `.cursor/rules/max-feedback.mdc`.
+    kernel once that kernel runs on a device.
 
     Takes `a` mutably even though it only reads it: `view()` hands back a
     `TileTensor` that can write, and a mutable view cannot be built from an

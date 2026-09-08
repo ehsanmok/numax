@@ -7,8 +7,7 @@ agree bit for bit -- a reassociated floating-point sum -- the tolerance is
 stated rather than assumed away.
 
 CPU only, because the tests aggregate runs on GPU-less CI. The `target="gpu"`
-path of the same functions is exercised by hand on real hardware; see
-`.cursor/rules/max-feedback.mdc`.
+path of the same functions is exercised by hand on real hardware.
 """
 
 from max.gpu.host import DeviceContext

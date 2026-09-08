@@ -18,9 +18,9 @@ is that plus launch latency, and the two do not have the same fix.
 **`float32` only, and not by choice.** `linalg.matmul` does not compile for
 GPU at `float64` -- MAX's GEMV path reduces through `warp.shuffle`, which
 has no `float64` case, and because numax's operands are runtime-shaped
-every branch of the dispatch gets instantiated whether it runs or not. The
-defect is written up in `.cursor/rules/max-feedback.mdc`. So a `float64`
-factorization on an accelerator is not slow in numax, it is a compile
+every branch of the dispatch gets instantiated whether it runs or not. So
+a `float64` factorization on an accelerator is not slow in numax, it is a
+compile
 error, and this file is `float32` for the same reason the CPU file is.
 
 Every measurement synchronizes inside the timed region, so each row is one

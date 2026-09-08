@@ -202,7 +202,7 @@ def test_transpose_default_is_the_host_path() raises:
 
     The `True` branch is a different implementation -- an `elementwise`
     gather rather than `linalg.transpose`, because every path MAX's kernel
-    can reach is host code (`.cursor/rules/max-feedback.mdc`) -- so it
+    can reach is host code -- so it
     cannot be checked here: no CI runner has a device. What is checkable is
     that adding the parameter did not move the default off the MAX call.
     """

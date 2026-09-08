@@ -35,7 +35,7 @@ QR, and a `float64` recomputation for the BLAS-1 reductions.
 
 **`float32`, deliberately.** The GPU sibling of this file cannot be
 anything else -- `linalg.matmul` does not compile for GPU at `float64`,
-recorded in `.cursor/rules/max-feedback.mdc` -- and a CPU table at
+because its GEMV path reduces through `warp.shuffle` -- and a CPU table at
 `float64` beside a GPU table at `float32` would compare two different
 computations. Both files run the same one.
 

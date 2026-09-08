@@ -16,8 +16,8 @@ step would put a device synchronization inside the loop.
 
 **Every one of these takes the whole matrix plus offsets, never a
 sub-view.** That is not a style choice. MAX's `matmul` ignores the row
-stride of its arguments (`.cursor/rules/max-feedback.mdc` has the
-measurement: a tile view is accepted, then read as if contiguous), so a
+stride of its arguments -- a tile view is accepted, then read as if it were
+contiguous, which silently mixes rows -- so a
 blocked algorithm cannot pass tile views to it and has to pack instead --
 and once packing is on the table, the panel kernels may as well address the
 original matrix directly and save the copy. Offsets are `Int` arguments;

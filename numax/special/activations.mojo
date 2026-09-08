@@ -124,9 +124,9 @@ def softmax[
     caller-provided scratch buffers, none of which are needed now.
 
     Tier 2 because MAX's target-parameterized entry point is out of reach at
-    the pin, so this is the host one. `.cursor/rules/max-feedback.mdc` has
-    the detail: the overload taking a `target` also takes its input as a
-    fused closure in a *compile-time* parameter, whose implicit `__origins__`
+    the pin, so this is the host one. The overload taking a `target` also
+    takes its input as a fused closure in a *compile-time* parameter, whose
+    implicit `__origins__`
     the compiler cannot infer across the module boundary, and there is no
     keyword to bind it by hand. The overload numax can call takes tensors and
     has no `target`. So a device-resident softmax is still hand-launched from

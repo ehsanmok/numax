@@ -92,7 +92,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 
 | Area | Home | Notes |
 |---|---|---|
-| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` on the host and to an `elementwise` gather on a device, because every path `linalg.transpose` can reach is a host memcpy (`.cursor/rules/max-feedback.mdc`); `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
+| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` on the host and to an `elementwise` gather on a device, because every path `linalg.transpose` can reach is a host memcpy; `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
 | Elementwise math | `numax/core/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
 | Arithmetic and operators | `numax/core/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
 | Comparison and logic | `numax/core/logic.mojo` | Truth is a `Static[DType.bool]`, so a comparison composes with `logical_and` |
@@ -121,7 +121,7 @@ no reason to name them.
 expected to have it: `numax.special.activations.softmax` is a delegation, MAX's
 `nn.softmax` with numax's tensors passed straight through. Only the CPU
 overload is reachable at the pin, for the `input_fn`-origins reason
-`.cursor/rules/max-feedback.mdc` records; a device-resident softmax is still
+`numax/special/activations.mojo` records; a device-resident softmax is still
 hand-launched from `numax.core.tensor`'s row primitives, which is what
 `examples/intermediate/softmax.mojo` shows.
 

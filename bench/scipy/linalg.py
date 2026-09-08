@@ -5,8 +5,9 @@ definitions -- the two files are meant to be read side by side, so anything
 that would change a number is spelled the same way in both:
 
 - `float32`, because the GPU half of this comparison cannot be anything
-  else (`.cursor/rules/max-feedback.mdc`: `linalg.matmul` does not compile
-  for GPU at `float64`), and a `float64` CPU row beside a `float32` GPU row
+  else (`linalg.matmul` does not compile for GPU at `float64`, since its
+  GEMV path reduces through `warp.shuffle`), and a `float64` CPU row
+  beside a `float32` GPU row
   would be two different computations.
 - The SPD matrix is `1/(1 + |i - j|)` off the diagonal and `n` on it; the
   general matrix is `((37i + 11j) mod 17) / 16 - 0.5` off the diagonal and

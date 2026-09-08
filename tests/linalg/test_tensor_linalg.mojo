@@ -789,8 +789,8 @@ def test_cholesky_solve_reproduces_the_right_hand_side() raises:
     var solved = cholesky_solve[DType.float64, 5, False, 2](factor, b).to_host()
 
     # The product is formed here rather than with `matvec`, which segfaults
-    # at `float64` when `n` is not a multiple of four -- see
-    # `.cursor/rules/max-feedback.mdc`. Five rows of five is cheap.
+    # at `float64` when `n` is not a multiple of four. Five rows of five is
+    # cheap.
     for i in range(5):
         var total = Float64(0)
         for j in range(5):

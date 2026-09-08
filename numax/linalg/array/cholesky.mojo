@@ -95,7 +95,8 @@ def slogdet_cholesky[T: FloatLike, n: Int](lower: Array[T, n * n]) -> T:
     general matrix and returns it as `(sign, logabsdet)`. A Cholesky factor
     only exists for a positive-definite `A`, so the sign is always `+1` and
     only the logarithm is returned. The general `slogdet` over any square
-    matrix belongs with the rest of the `scipy.linalg` depth in v0.2.
+    matrix is not implemented; `det` over an LU factorization is the
+    nearest thing numax has.
 
     The quantity a Gaussian process log-likelihood actually needs, and the
     reason to compute it this way rather than as `ln(det(A))`: for even a
