@@ -196,6 +196,34 @@ def test_transpose_is_its_own_inverse() raises:
             assert_equal(v2[r, c], v[r, c])
 
 
+def test_transpose_default_is_the_host_path() raises:
+    """`transpose` gained a `gpu` parameter, and `False` has to still mean
+    what the unparameterized spelling meant.
+
+    The `True` branch is a different implementation -- an `elementwise`
+    gather rather than `linalg.transpose`, because every path MAX's kernel
+    can reach is host code (`.cursor/rules/max-feedback.mdc`) -- so it
+    cannot be checked here: no CI runner has a device. What is checkable is
+    that adding the parameter did not move the default off the MAX call.
+    """
+    var ctx = DeviceContext(api="cpu")
+    var m = full[dtype, 2, 3](0, ctx=ctx)
+    var v = m.view()
+    var counter = 0
+    for r in range(2):
+        for c in range(3):
+            v[r, c] = Scalar[dtype](counter)
+            counter += 1
+
+    var implicit = transpose(m)
+    var explicit = transpose[dtype, 2, 3, False](m)
+    var iv = implicit.view()
+    var ev = explicit.view()
+    for r in range(3):
+        for c in range(2):
+            assert_equal(iv[r, c], ev[r, c])
+
+
 def test_squeeze_drops_a_leading_size_one_axis() raises:
     var ctx = DeviceContext(api="cpu")
     var row = full[dtype, 1, 4](0, ctx=ctx)

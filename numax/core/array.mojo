@@ -111,14 +111,17 @@ way to do. `stack` covers exactly two same-shaped tensors along a new
 leading axis (`axis=0`); `axis=1` stacking is not provided -- both are
 real, documented scope limits, not oversights.
 
-Every manipulation here runs its element walk on the host, through
-`to_host`/`copy_from_host`. On a CPU context that is the memory itself and
-costs nothing; on a GPU context it stages a round trip, which is the wrong
-shape for a large device-resident tensor.
+Every manipulation here except `transpose` runs its element walk on the
+host, through `to_host`/`copy_from_host`. On a CPU context that is the
+memory itself and costs nothing; on a GPU context it stages a round trip,
+which is the wrong shape for a large device-resident tensor. `transpose`
+is the exception because a blocked factorization needs `L.T` on the device
+it factored on; `transpose[..., gpu=True]` is an `elementwise` gather and
+never touches the host.
 # ponytail: host-staged manipulation walks, correct on both devices but a
-# round trip on GPU -- give `transpose`/`stack`/`concatenate` device kernels
-# (or route them into `nn.concat`/`linalg.transpose`) if a profile ever shows
-# one of them on a hot device path.
+# round trip on GPU -- give `stack`/`concatenate` device kernels (or route
+# them into `nn.concat`) if a profile ever shows one of them on a hot device
+# path. `transpose` already has one.
 """
 
 from std.collections import Array
@@ -128,6 +131,7 @@ from layout import Coord, TileTensor
 from layout.coord import DynamicCoord
 from layout.tile_layout import row_major, TensorLayout
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
+from max.algorithm.functional import elementwise
 from linalg.transpose import transpose as _max_transpose
 from std.utils import IndexList
 
@@ -946,14 +950,30 @@ def empty_like[
 
 
 def transpose[
-    dtype: DType, rows: Int, cols: Int
+    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
 ](mut a: Shaped[dtype, rows, cols]) raises -> Shaped[dtype, cols, rows]:
     """An owned-copy transpose of a 2D tensor, on `a`'s own device.
 
-    The permutation itself is `linalg.transpose` -- MAX's own kernel, which
-    dispatches to SIMD-shuffle tile kernels and runs on either device. numax
-    only allocates the destination and names the axis permutation; an
-    earlier version here walked the elements one at a time on the host.
+    On the host the permutation is `linalg.transpose` -- MAX's own kernel.
+    numax only allocates the destination and names the axis permutation; an
+    earlier version here walked the elements one at a time.
+
+    **`gpu=True` does not call MAX**, and this is the one place in numax
+    where a `gpu` parameter changes which library does the work.
+    `linalg.transpose` takes a `DeviceContext` and accepts device tensors,
+    but every path it can reach is a host implementation: its rank-2 tiled
+    kernel is disabled upstream (a `TODO` in `transpose.mojo` waiting on
+    modular#15947), so a rank-2 call falls through to `transpose_strided`,
+    which `unsafe_memcpy`s raw pointers and parallelizes with
+    `sync_parallelize`. Handed a CUDA buffer that aborts with
+    `enqueue_cpu_range is only supported on CPU DeviceContexts`, and at
+    small sizes it takes the serial branch and reads a device pointer from
+    the host instead. So the device path here is an
+    `max.algorithm.elementwise` gather -- one output element per lane,
+    `dst[i, j] = src[j, i]` -- which is a naive transpose rather than a
+    shared-memory tiled one, and is what should be replaced by MAX's
+    kernel once that kernel runs on a device. Recorded in
+    `.cursor/rules/max-feedback.mdc`.
 
     Takes `a` mutably even though it only reads it: `view()` hands back a
     `TileTensor` that can write, and a mutable view cannot be built from an
@@ -971,11 +991,23 @@ def transpose[
     var result = Shaped[dtype, cols, rows](ctx)
     var src = a.view()
     var dst = result.view()
-    var perms = List[Int]()
-    perms.append(1)
-    perms.append(0)
-    _max_transpose(dst, src, perms.unsafe_ptr(), ctx)
-    ctx.synchronize()
+
+    comptime if gpu:
+
+        @always_inline
+        def step[w: Int, alignment: Int = 1](coord: Coord) {var src, var dst}:
+            var i = coord[0]
+            var j = coord[1]
+            dst[Coord(i, j)] = src[Coord(j, i)]
+
+        elementwise[simd_width=1, target="gpu"](step, Coord(cols, rows), ctx)
+        ctx.synchronize()
+    else:
+        var perms = List[Int]()
+        perms.append(1)
+        perms.append(0)
+        _max_transpose(dst, src, perms.unsafe_ptr(), ctx)
+        ctx.synchronize()
     return result^
 
 

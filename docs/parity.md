@@ -29,7 +29,7 @@ Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
 | Area | Names | Root |
 |---|---|---|
 | Matmul | `matmul`, `batched_matmul`, `gemv`, `grouped_matmul`, vendor cuBLAS/rocBLAS | `linalg` |
-| Transpose | `transpose` (n-D), `matrix_band_part` | `linalg` |
+| Transpose | `transpose` (n-D, **host only** -- see the defect note below), `matrix_band_part` | `linalg` |
 | Reductions | `ReduceSum`/`ReduceMax`/`ReduceMin`/`ReduceProduct`, `MinMax`, `ArgMax`, `ArgMin`, `Welford` (online mean/variance), `OnlineLogSumExp` (flash softmax), driven by the `rowwise` CPU/GPU scaffolder | `algorithm.reduce_op`, `algorithm.rowwise` |
 | Drivers | `elementwise`, `parallelize`, `stencil` | `max.algorithm` |
 | Shape ops | `reshape`, `slice`, `concat`, `split`, `tile`, `broadcast`, `pad`, `arange` | `nn` |
@@ -92,7 +92,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 
 | Area | Home | Notes |
 |---|---|---|
-| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose`; `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
+| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` on the host and to an `elementwise` gather on a device, because every path `linalg.transpose` can reach is a host memcpy (`.cursor/rules/max-feedback.mdc`); `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
 | Elementwise math | `numax/core/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
 | Arithmetic and operators | `numax/core/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
 | Comparison and logic | `numax/core/logic.mojo` | Truth is a `Shaped[DType.bool]`, so a comparison composes with `logical_and` |
