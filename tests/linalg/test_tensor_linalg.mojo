@@ -20,12 +20,10 @@ from std.collections import Array
 from numax.linalg import (
     asum,
     axpy,
-    back_substitution,
     batched_matmul,
     cholesky,
     cholesky_solve,
     det,
-    forward_substitution,
     dot,
     inverse,
     lu_factor,
@@ -33,14 +31,28 @@ from numax.linalg import (
     matvec,
     norm,
     nrm2,
-    lstsq,
     outer,
-    qr,
     qr_factor,
     solve,
     solve_triangular,
     trace,
 )
+from numax.linalg.array import back_substitution, forward_substitution
+from numax.linalg.array import asum as array_asum
+from numax.linalg.array import axpy as array_axpy
+from numax.linalg.array import cholesky as array_cholesky
+from numax.linalg.array import cholesky_solve as array_cholesky_solve
+from numax.linalg.array import det as array_det
+from numax.linalg.array import dot as array_dot
+from numax.linalg.array import inverse as array_inverse
+from numax.linalg.array import lstsq as array_lstsq
+from numax.linalg.array import matmul as array_matmul
+from numax.linalg.array import norm as array_norm
+from numax.linalg.array import nrm2 as array_nrm2
+from numax.linalg.array import outer as array_outer
+from numax.linalg.array import qr as array_qr
+from numax.linalg.array import solve as array_solve
+from numax.linalg.array import trace as array_trace
 from numax.linalg.misc import fro, inf
 
 comptime P = Plain[DType.float64, 1]
@@ -91,7 +103,7 @@ def test_tensor_matmul_agrees_with_array_matmul() raises:
     for i in range(9):
         aa[i] = P(entries[i])
         ab[i] = P(entries[i])
-    var array_product = matmul[P, 3](aa, ab)
+    var array_product = array_matmul[P, 3](aa, ab)
 
     for i in range(9):
         assert_almost_equal(
@@ -332,7 +344,7 @@ def test_cholesky_agrees_with_the_array_tier() raises:
     var lifted = array_zeros[P, 25]()
     for i in range(25):
         lifted[i] = P(entries[i])
-    var array_factor = cholesky[P, 5](lifted)
+    var array_factor = array_cholesky[P, 5](lifted)
 
     for i in range(25):
         assert_almost_equal(
@@ -469,7 +481,7 @@ def test_solve_agrees_with_the_array_tier() raises:
     var lifted_b = array_zeros[P, 4]()
     for i in range(4):
         lifted_b[i] = P(rhs[i])
-    var array_x = solve[P, 4](lifted_a, lifted_b)
+    var array_x = array_solve[P, 4](lifted_a, lifted_b)
 
     for i in range(4):
         assert_almost_equal(
@@ -541,7 +553,7 @@ def test_lu_factor_det_agrees_with_the_array_tier() raises:
     var lifted = array_zeros[P, 16]()
     for i in range(16):
         lifted[i] = P(entries[i])
-    var array_det = Float64(det[P, 4](lifted).v)
+    var array_det = Float64(array_det[P, 4](lifted).v)
 
     assert_almost_equal(tensor_det, array_det, atol=1e-9)
 
@@ -575,7 +587,7 @@ def test_tensor_dot_agrees_with_the_array_dot() raises:
     var x = Shaped[DType.float64, n](ctx, xv.copy())
     var y = Shaped[DType.float64, n](ctx, yv.copy())
 
-    var want = dot(_array_of[n](xv), _array_of[n](yv)).v
+    var want = array_dot(_array_of[n](xv), _array_of[n](yv)).v
     assert_almost_equal(dot(x, y), want, atol=1e-9)
 
 
@@ -586,8 +598,8 @@ def test_tensor_nrm2_and_asum_agree_with_the_array_versions() raises:
     var x = Shaped[DType.float64, n](ctx, xv.copy())
     var arr = _array_of[n](xv)
 
-    assert_almost_equal(nrm2(x), nrm2(arr).v, atol=1e-9)
-    assert_almost_equal(asum(x), asum(arr).v, atol=1e-9)
+    assert_almost_equal(nrm2(x), array_nrm2(arr).v, atol=1e-9)
+    assert_almost_equal(asum(x), array_asum(arr).v, atol=1e-9)
 
 
 def test_tensor_axpy_agrees_with_the_array_axpy() raises:
@@ -603,7 +615,7 @@ def test_tensor_axpy_agrees_with_the_array_axpy() raises:
     var alpha = Scalar[DType.float64](-1.75)
 
     var got = axpy(alpha, x, y).to_host()
-    var want = axpy(P(alpha), _array_of[n](xv), _array_of[n](yv))
+    var want = array_axpy(P(alpha), _array_of[n](xv), _array_of[n](yv))
     for i in range(n):
         assert_almost_equal(got[i], want[i].v, atol=1e-12)
 
@@ -617,7 +629,7 @@ def test_tensor_outer_agrees_with_the_array_outer() raises:
     var b = Shaped[DType.float64, n](ctx, bv.copy())
 
     var got = outer(a, b).to_host()
-    var want = outer(_array_of[n](av), _array_of[n](bv))
+    var want = array_outer(_array_of[n](av), _array_of[n](bv))
     for i in range(n * n):
         assert_almost_equal(got[i], want[i].v, atol=1e-12)
 
@@ -799,8 +811,10 @@ def test_cholesky_solve_agrees_with_the_array_tier() raises:
     var lifted = array_zeros[P, 25]()
     for i in range(25):
         lifted[i] = P(entries[i])
-    var array_factor = cholesky[P, 5](lifted)
-    var want = cholesky_solve[P, 5](array_factor, _array_of[5](rhs.copy()))
+    var array_factor = array_cholesky[P, 5](lifted)
+    var want = array_cholesky_solve[P, 5](
+        array_factor, _array_of[5](rhs.copy())
+    )
 
     for i in range(5):
         assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-10)
@@ -898,7 +912,7 @@ def test_inverse_agrees_with_the_array_tier() raises:
     var lifted = array_zeros[P, 16]()
     for i in range(16):
         lifted[i] = P(entries[i])
-    var want = inverse[P, 4](lifted)
+    var want = array_inverse[P, 4](lifted)
 
     for i in range(16):
         assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-10)
@@ -926,7 +940,7 @@ def test_tensor_trace_agrees_with_the_array_trace() raises:
     var lifted = array_zeros[P, 16]()
     for i in range(16):
         lifted[i] = P(entries[i])
-    assert_almost_equal(got, Float64(trace[P, 4](lifted).v), atol=1e-12)
+    assert_almost_equal(got, Float64(array_trace[P, 4](lifted).v), atol=1e-12)
 
 
 def test_tensor_frobenius_norm_agrees_with_the_array_norm() raises:
@@ -938,7 +952,9 @@ def test_tensor_frobenius_norm_agrees_with_the_array_norm() raises:
     var lifted = array_zeros[P, 16]()
     for i in range(16):
         lifted[i] = P(entries[i])
-    assert_almost_equal(got, Float64(norm[P, 4, fro](lifted).v), atol=1e-10)
+    assert_almost_equal(
+        got, Float64(array_norm[P, 4, fro](lifted).v), atol=1e-10
+    )
 
 
 def test_tensor_induced_norms_agree_with_the_array_norms() raises:
@@ -956,14 +972,14 @@ def test_tensor_induced_norms_agree_with_the_array_norms() raises:
     var a1 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
     assert_almost_equal(
         Float64(norm[DType.float64, 4, 1](a1)),
-        Float64(norm[P, 4, 1](lifted).v),
+        Float64(array_norm[P, 4, 1](lifted).v),
         atol=1e-12,
     )
 
     var a2 = Shaped[DType.float64, 4, 4](ctx, entries.copy())
     assert_almost_equal(
         Float64(norm[DType.float64, 4, inf](a2)),
-        Float64(norm[P, 4, inf](lifted).v),
+        Float64(array_norm[P, 4, inf](lifted).v),
         atol=1e-12,
     )
 
@@ -1068,7 +1084,7 @@ def test_tensor_qr_agrees_with_the_array_tier_up_to_column_signs() raises:
     var lifted = array_zeros[P, 16]()
     for i in range(16):
         lifted[i] = P(entries[i])
-    var array_factored = qr[P, 4](lifted)
+    var array_factored = array_qr[P, 4](lifted)
     var want = array_factored[0].copy()
 
     for i in range(16):
@@ -1135,7 +1151,7 @@ def test_tensor_qr_solve_agrees_with_the_array_lstsq() raises:
     var lifted_rhs = array_zeros[P, 6]()
     for i in range(6):
         lifted_rhs[i] = P(rhs[i])
-    var want = lstsq[P, 6, 3](lifted, lifted_rhs)
+    var want = array_lstsq[P, 6, 3](lifted, lifted_rhs)
 
     for i in range(3):
         assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-10)

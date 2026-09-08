@@ -193,7 +193,8 @@ own GPU-launchable versions.
 
 ## `numax.linalg`
 
-Two tiers under one set of names, resolved by argument type.
+Two tiers sharing one set of names, one tier per import.
+`numax.linalg` is the `Tensor` tier; `numax.linalg.array` is the other one.
 
 The `Array[T, n*n]` tier is comptime-sized and register-resident, not heap
 allocated. That is what makes `cholesky` differentiable at `Dual` and
@@ -204,6 +205,11 @@ The `Tensor` tier goes through MAX and is the one to use past roughly 8x8
 (see [performance.md](performance.md)). It is `dtype`-monomorphic, so no
 conformer passes through it — which is why the `Array` tier exists beside
 it rather than being replaced by it. `to_tensor`/`to_array` cross over.
+
+The flat surface is the `Tensor` tier alone, so `from numax import solve`
+means one thing. A file wanting both tiers of a name aliases one of them
+(`from numax.linalg.array import cholesky as chol_a`), which is what
+Mojo's one-owning-module-per-name rule costs here.
 
 | Area | Surface — over `Tensor` |
 |---|---|
@@ -218,7 +224,7 @@ Every `Tensor` entry point takes `gpu: Bool` (which picks MAX's `target`)
 and the factorizations take a `block` size; `block=n` recovers the
 unblocked algorithm, which is what the tests pin the blocked path against.
 
-| Area | Surface — over `Array[T, n*n]` |
+| Area | Surface — over `Array[T, n*n]`, from `numax.linalg.array` |
 |---|---|
 | Factorizations | `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd` |
 | Solves | `solve`, `lstsq`, `cholesky_solve`, `tridiagonal_solve`, `forward_substitution`, `back_substitution` |
@@ -232,13 +238,14 @@ unblocked algorithm, which is what the tests pin the blocked path against.
 All under [`numax/linalg/`](../numax/linalg/), one module per operation
 family the way `scipy.linalg` splits `_decomp_lu`, `_decomp_cholesky` and
 `_basic` behind a flat public namespace: `blas`, `triangular`, `cholesky`,
-`lu`, `qr`, `eigen`, `basic`, `misc`. Both tiers of an operation are
-neighbours in its module, because Mojo wants a single owning module per
-name and the five names that exist at both tiers share theirs. Import from
-`numax.linalg` and the split does not show. Every function's docstring
-records its own error behaviour and which MAX kernel, if any, it delegates
-to; every module's docstring records the tier and the MAX disposition for
-the family.
+`lu`, `qr`, `basic`, `misc`, plus `panel` for the tile kernels the
+factorizations step with. [`array/`](../numax/linalg/array/) mirrors that
+split for the other tier and adds `eigen`, which is `Array`-only. Mojo
+wants a single owning module per name, so a name is defined once per tier
+and never twice within one. Every function's docstring records its own
+error behaviour and which MAX kernel, if any, it delegates to; every
+module's docstring records the tier and the MAX disposition for the
+family.
 
 The `Array` tier is tier 1 except the pivoted row: choosing a pivot by
 magnitude is a data-dependent branch, so `PivotedLU` gives up the GPU and

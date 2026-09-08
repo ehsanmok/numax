@@ -26,7 +26,7 @@ from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
 from numax import Plain
-from numax.linalg import matmul as numax_matmul
+from numax.linalg.array import matmul as numax_matmul
 
 comptime dtype = DType.float32
 comptime width = simd_width_of[dtype]()

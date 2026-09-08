@@ -1,86 +1,39 @@
 """Cholesky factorization and the solves that reuse it.
 `scipy.linalg`'s `cholesky`/`cho_solve` pair.
 
-**Two tiers under one name.** MAX ships no Cholesky at any size -- its only
+**The `Tensor` tier.** MAX ships no Cholesky at any size -- its only
 factorization is `qr_factorization`, on the older `LayoutTensor`, which
-numax denies rather than bridges -- so both tiers are numax's.
+numax denies rather than bridges -- so this is numax's, as is the
+`FloatLike`-generic tier in `numax.linalg.array.cholesky`.
 
-Over `Tensor`, `cholesky` is right-looking and blocked: each step factors
+`cholesky` here is right-looking and blocked: each step factors
 one `block x block` diagonal panel, solves the panel below it, then
 subtracts `L21 @ L21.T` from what remains. That subtraction is the entire
 cubic cost and it is a matrix product, so it goes to `blas.matmul` and
 inherits MAX's dispatch. Tier 2, host-orchestrated, and it raises on a
 matrix that is not positive definite.
 
-Over `Array[T, n*n]`, `cholesky` is tier 1 and differentiates: calling it
-at `Dual` gives the derivative of a factorization with no adjoint rule
-written anywhere, which is the concrete payoff of the conformer layer --
-Gaussian process marginal likelihoods, Kalman updates and multivariate
-normal densities all bottom out in `chol(A)` and its log-determinant. It
-floors the diagonal instead of raising, because a tier-1 kernel cannot
-branch on a value.
+The `Array` tier is where a Cholesky differentiates -- calling it at
+`Dual` gives the derivative of a factorization with no adjoint rule
+written anywhere -- and it floors the diagonal rather than raising,
+because a tier-1 kernel cannot branch on a value.
 
 Neither tier pivots, and neither needs to: a symmetric positive definite
 matrix does not require it. That is a theorem, not luck.
 """
 
 from layout import Coord, TileTensor
-from layout.tile_layout import TensorLayout, row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_layout import row_major
 from linalg.matmul import matmul as _max_matmul
-from std.collections import Array
 from std.sys.info import align_of
 from std.utils import IndexList
 
 from ..core.array import Shaped, tril, zeros, zeros_dyn
-from ..core.numeric import FloatLike, guard_nonzero
 
 from .blas import _target
-from .common import _PIVOT_FLOOR, _Dense, _zeros
+from .common import _Dense
 from .panel import _PANEL_THREADS, pack_block, potrf_diag, trsm_right_lower_t
-from .triangular import (
-    back_substitution,
-    forward_substitution,
-    solve_triangular,
-)
-
-
-def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
-    """The lower-triangular `L` with `L @ L.T = A`, for symmetric positive
-    definite `A`.
-
-    Only the lower triangle of `A` is read, so a caller holding just that
-    half can leave the rest uninitialized. The returned upper triangle is
-    zero.
-
-    Diagonal entries are floored away from zero before the square root, so
-    a matrix that isn't quite positive definite produces a finite (wrong)
-    answer rather than a NaN that would then spread through every
-    subsequent column. There is no error flag -- checking for one would be
-    a per-lane branch.
-
-    MAX ships no Cholesky, so past the crossover the answer is the
-    `Tensor` overload of this name at the bottom of the file: blocked, with
-    its trailing update in MAX's `matmul`. It also raises on a matrix that
-    is not positive definite, which this one cannot.
-    """
-    var out = _zeros[T, n * n]()
-
-    for j in range(n):
-        var diagonal = a[j * n + j].copy()
-        for k in range(j):
-            var ljk = out[j * n + k].copy()
-            diagonal = diagonal - (ljk * ljk)
-        var ljj = guard_nonzero(diagonal, T.constant(_PIVOT_FLOOR)).sqrt()
-        out[j * n + j] = ljj.copy()
-
-        for i in range(j + 1, n):
-            var total = a[i * n + j].copy()
-            for k in range(j):
-                total = total - (out[i * n + k] * out[j * n + k])
-            out[i * n + j] = total / ljj
-
-    return out^
+from .triangular import solve_triangular
 
 
 def cholesky[
@@ -242,33 +195,6 @@ def cholesky[
 
 
 def cholesky_solve[
-    T: FloatLike, n: Int
-](lower: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
-    """Solve `A @ x = b` given `A`'s Cholesky factor `L`.
-
-    Takes the factor rather than `A` because the point of a factorization
-    is reusing it: a Gaussian process solves against the same `L` for every
-    new right-hand side.
-
-    No MAX equivalent exists to route to at any size (verified: MAX ships
-    neither `cholesky` nor a triangular solve) -- this module's own
-    register-resident version is the only one available regardless of `n`,
-    plain-`dtype` or not.
-    """
-    var y = forward_substitution[T, n](lower, b)
-
-    # `L.T` transposed on the fly rather than materialized -- the
-    # substitution only ever reads `upper[i*n+j]` for `j >= i`, which is
-    # `lower[j*n+i]`.
-    var transposed = _zeros[T, n * n]()
-    for i in range(n):
-        for j in range(n):
-            transposed[i * n + j] = lower[j * n + i].copy()
-
-    return back_substitution[T, n](transposed, y)
-
-
-def cholesky_solve[
     dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
 ](mut lower: Shaped[dtype, n, n], mut b: Shaped[dtype, n]) raises -> Shaped[
     dtype, n
@@ -315,26 +241,3 @@ def cholesky_solve[
     return solve_triangular[dtype, n, rhs, True, False, True, gpu, block](
         lower, y
     )
-
-
-def slogdet_cholesky[T: FloatLike, n: Int](lower: Array[T, n * n]) -> T:
-    """`ln(det(A))` from `A`'s Cholesky factor: `2*sum(ln(diag(L)))`.
-
-    Named for `numpy.linalg.slogdet`, which is the same quantity for a
-    general matrix and returns it as `(sign, logabsdet)`. A Cholesky factor
-    only exists for a positive-definite `A`, so the sign is always `+1` and
-    only the logarithm is returned. The general `slogdet` over any square
-    matrix belongs with the rest of the `scipy.linalg` depth in v0.2.
-
-    The quantity a Gaussian process log-likelihood actually needs, and the
-    reason to compute it this way rather than as `ln(det(A))`: for even a
-    moderately large `n` the determinant itself overflows or underflows
-    long before its logarithm becomes interesting.
-
-    No MAX equivalent at any size -- it ships neither a Cholesky to take
-    the factor from nor a log-determinant to compare against.
-    """
-    var total = T.constant(0.0)
-    for i in range(n):
-        total = total + lower[i * n + i].ln()
-    return total * T.constant(2.0)

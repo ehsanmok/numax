@@ -5,7 +5,8 @@ promises -- one call per subsystem, which fails to compile if a name is
 missing from the prelude. And that the star-import does *not* take the
 builtins with it: `min`, `max`, `sum`, `abs`, `all`, `any` and `round` must
 still mean what Mojo means by them in a file that wrote
-`from numax.prelude import *`, which is why the tensor reductions of those
+`from numax.prelude import *
+from numax.linalg.array import det as array_det`, which is why the tensor reductions of those
 names are deliberately left out.
 """
 
@@ -17,6 +18,7 @@ from std.testing import (
 )
 
 from numax.prelude import *
+from numax.linalg.array import det as array_det
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]
@@ -57,12 +59,18 @@ def test_the_conformers_are_reachable() raises:
 
 
 def test_linalg_and_the_bridge_are_reachable() raises:
+    """The prelude carries the `Tensor` tier of `numax.linalg`, and only
+    that tier -- the `Array` tier shares its names, so it is one explicit
+    import away. Both halves of that claim are asserted here."""
     var i3 = eye[3]()
-    assert_almost_equal(det[P, 3](to_array[P](i3)).v, Scalar[dtype](1.0))
+    assert_almost_equal(det[dtype, 3](i3), Scalar[dtype](1.0))
     # Frobenius norm of I3 is sqrt(3).
     assert_almost_equal(
-        norm[P, 3](to_array[P](i3)).v, Scalar[dtype](1.7320508075688772)
+        norm[dtype, 3, fro](i3), Scalar[dtype](1.7320508075688772)
     )
+
+    var lifted = to_array[P](i3)
+    assert_almost_equal(array_det[P, 3](lifted).v, Scalar[dtype](1.0))
 
 
 def test_stats_and_io_are_reachable() raises:

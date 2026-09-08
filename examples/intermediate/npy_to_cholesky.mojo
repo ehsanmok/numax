@@ -40,7 +40,7 @@ from max.gpu.host import DeviceContext
 from numax import Dual, Plain
 from numax.core.array import Tensor, to_array, to_tensor
 from numax.io import numpy  # numax's .npy reader; `np` below is NumPy itself
-from numax.linalg import cholesky, det
+from numax.linalg.array import cholesky, det
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]

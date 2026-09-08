@@ -42,6 +42,7 @@ root package re-exports all of them, so both spellings work:
 from numax.prelude import *                # the common surface, one line
 from numax import Dual, cholesky, quad     # flat, everything in one place
 from numax.linalg import cholesky          # or by subsystem
+from numax.linalg.array import cholesky    # ... or by tier
 ```
 
 `numax.prelude` leaves out the names that would shadow a Mojo builtin
@@ -52,7 +53,7 @@ is safe; its own docstring lists them and where to reach them.
 |---|---|
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows` -- is `numax.core.tensor` |
 | `numax.special` | Γ and B, `erf`, Bessel `J`/`Y`, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, activations |
-| `numax.linalg` | Two tiers under one set of names, picked by argument type. Over `Tensor`, through MAX: `matmul`/`matvec`/`batched_matmul` are MAX kernels, and `cholesky`/`lu_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM. Over `Array[T, n*n]`, `FloatLike`-generic: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
+| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul` are MAX kernels, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`inverse`/`det`/`norm`/`trace` build on those. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
 | `numax.optimize` | `newton`/`halley`/`bisection` at a fixed iteration count; `newton_tol`, `brentq`, `bfgs`, `nelder_mead`, `least_squares`, `curve_fit` to a tolerance |
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
@@ -65,8 +66,8 @@ is safe; its own docstring lists them and where to reach them.
 
 **Tier 1** is everything with a fixed iteration count and no per-lane
 branching, and therefore launchable inside a GPU thread: the special
-functions, `linalg`'s `Array` tier, the fixed-step algorithms. **Tier 2**
-is `linalg`'s `Tensor` tier (host-orchestrated, though `gpu=True` still
+functions, `numax.linalg.array`, the fixed-step algorithms. **Tier 2**
+is `numax.linalg`'s `Tensor` tier (host-orchestrated, though `gpu=True` still
 runs MAX's GPU kernels), `optimize`,
 the adaptive half of `integrate`, `sorting`, `logic`, `elementwise` and
 `ops`: `Plain`-only, host-side, free to loop or branch on data. Every
@@ -264,40 +265,33 @@ from .special.lambertw import lambertw, lambertw_m1
 from .special.legendre import legendre_p
 from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 
-# Dense linear algebra -- `numax.linalg`.
+# Dense linear algebra over `Tensor` -- `numax.linalg`. The
+# `FloatLike`-generic `Array` tier is `numax.linalg.array`, deliberately not
+# re-exported here: it shares these names, so a flat surface carrying both
+# would resolve `cholesky` by a type the reader has to look up.
 from .linalg import (
-    back_substitution,
-    cholesky,
-    cholesky_solve,
-    cond,
-    det,
+    TensorLU,
+    TensorQR,
     asum,
     axpy,
+    batched_matmul,
+    cholesky,
+    cholesky_solve,
+    det,
     dot,
-    eigh,
-    eigvals,
-    forward_substitution,
     fro,
+    inf,
     inverse,
-    slogdet_cholesky,
-    TensorQR,
-    lstsq,
-    lu,
     lu_factor,
-    PivotedLU,
     matmul,
     matvec,
     norm,
     nrm2,
     outer,
-    pinv,
-    qr,
     qr_factor,
     solve,
     solve_triangular,
-    svd,
     trace,
-    tridiagonal_solve,
 )
 
 # Minimization and scalar root finding -- `numax.optimize`.

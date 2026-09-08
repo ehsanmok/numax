@@ -192,17 +192,25 @@ re-exports all of them, so `from numax import ...` is flat and
 three places: its module, its subpackage `__init__.mojo`, and (if it belongs to
 the common surface) `numax/prelude.mojo`.
 
-**One owning module per name**, which is what decides how a subpackage is cut
-into modules. Mojo 1.0 warns on `importing 'x' from multiple modules is
-deprecated`, so a name with several overloads is defined once and overloaded
-there. Modules are therefore per operation family, never per tier:
-`numax/linalg/` is `blas`, `triangular`, `cholesky`, `lu`, `qr`, `eigen`,
-`basic`, `misc` and a private `common` — the shape `scipy.linalg` uses behind
-its flat namespace — because `matmul`, `matvec`, `cholesky`, `lu_factor` and
-`solve` each carry both an `Array` and a `Tensor` overload, and an "array
-module" beside a "tensor module" would define all five twice. The two tiers of
-an operation are neighbours in one file. Check `rg "def <name>" numax/` before
-adding a name that sounds generic.
+**One owning module per name, per tier.** Mojo 1.0 warns on
+`importing 'x' from multiple modules is deprecated`, so a name with several
+overloads is defined once and overloaded there. Within a tier, modules are
+therefore per operation family and never per operation: `numax/linalg/` is
+`blas`, `triangular`, `cholesky`, `lu`, `qr`, `basic`, `misc`, `panel` and a
+private `common`, the shape `scipy.linalg` uses behind its flat namespace.
+
+The two tiers are the one axis the split *does* follow, and it is a package
+boundary rather than a module one: `numax/linalg/array/` mirrors that same
+family split for the `Array` tier, so `cholesky` is defined in
+`linalg/cholesky.mojo` over `Tensor` and in `linalg/array/cholesky.mojo` over
+`Array`, once each. That is what lets the flat surface — `numax`,
+`numax.prelude`, `numax.linalg` — export the `Tensor` tier alone and mean one
+thing by `solve`. The cost is real and documented in
+`numax/linalg/array/__init__.mojo`: a file wanting both tiers of a name has to
+alias one (`from numax.linalg.array import cholesky as chol_a`). Nothing
+re-exports across the boundary, and a new name goes in one tier's module, that
+tier's `__init__.mojo`, and — for the `Tensor` tier only — the flat surface.
+Check `rg "def <name>" numax/` before adding a name that sounds generic.
 
 **The root docstring and the README say the same thing.** `numax/__init__.mojo`
 opens with the library's pitch — what numax is, the two axes, the subpackage

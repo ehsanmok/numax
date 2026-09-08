@@ -29,7 +29,8 @@ numax/
   core/         FloatLike + conformers (plain, dual, gradient, compensated,
                 decimal, interval, complex), the tensor engine (tensor,
                 array), and the elementwise/ops/logic/sorting surface
-  linalg/       factorizations, solves, norms, eigenvalues
+  linalg/       Tensor-tier factorizations, solves and norms, with
+                array/ holding the FloatLike-generic tier of the same names
   optimize/     minimization (optimize) and scalar root finding (solve)
   integrate/    quadrature, fixed-step and adaptive ODE, quad/solve_ivp
   interpolate/  polynomial and spline interpolation
@@ -45,9 +46,10 @@ Dependencies run one way: `core` depends on nothing else in `numax`, every
 other subpackage depends on `core`, and the few cross-subpackage edges are
 deliberate (`stats` uses `special`'s incomplete gamma and beta,
 `integrate` uses `special`'s Legendre roots and `optimize`'s Newton solver,
-`interpolate` uses `linalg`'s tridiagonal solve, and `optimize` uses
-`linalg`'s Cholesky for the damped normal equations a least-squares step
-solves).
+`interpolate` uses `linalg.array`'s tridiagonal solve, and `optimize` uses
+`linalg.array`'s Cholesky for the damped normal equations a least-squares
+step solves -- both take the `Array` tier because both are called from
+tier-1 kernels).
 
 ## The trait: `FloatLike`
 
@@ -248,15 +250,17 @@ survey of what MAX does ship.
   `FloatLike`-generic form over `List[T]`, so calling them at `Compensated`
   recovers precision a long summation loses at `Plain` — the one place this
   surface and the composable-type spine meet.
-- **`numax.linalg`** — dense linear algebra at two tiers under one set of
-  names, resolved by argument type. Over `Tensor`: `matmul`, `matvec` and
-  `batched_matmul` are MAX kernels outright, and
+- **`numax.linalg`** — dense linear algebra at two tiers sharing one set of
+  names, one tier per import. `numax.linalg` is the `Tensor` tier: `matmul`,
+  `matvec` and `batched_matmul` are MAX kernels outright, and
   `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked so their cubic term
   is a matrix product and goes back to MAX.
-  Over `Array[T, n*n]`: the same operations `FloatLike`-generic and
-  register-resident, where the point is differentiability rather than speed —
-  MAX's kernels are monomorphic in a raw `dtype`, so no `Dual` passes through
-  them. `to_tensor`/`to_array` cross between the tiers.
+  `numax.linalg.array` is the `Array[T, n*n]` tier — the same operations
+  `FloatLike`-generic and register-resident, plus `eigh`/`eigvals`/`svd`
+  which have no `Tensor` form, where the point is differentiability rather
+  than speed: MAX's kernels are monomorphic in a raw `dtype`, so no `Dual`
+  passes through them. The flat surface exports the `Tensor` tier only, so a
+  file wanting both aliases one; `to_tensor`/`to_array` cross between them.
 - **`numax.io`, `numax.stats.random`** — `nmx.save`/`nmx.load`, a binary format
   of numax's own since MAX ships no array I/O, plus `numpy.save`/`numpy.load`
   for `.npy` interchange, so a program ported from NumPy can ingest the files

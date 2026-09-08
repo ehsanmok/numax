@@ -210,32 +210,31 @@ from .special.erf import erf, erfc
 from .special.gamma import digamma, gamma, lgamma
 from .special.beta import beta
 
-# Dense linear algebra.
+# Dense linear algebra over `Tensor`. The `Array` tier is
+# `numax.linalg.array` and shares these names, so it stays out of the
+# prelude for the same reason the builtin-shadowing reductions do.
 from .linalg import (
-    cholesky,
-    det,
+    TensorLU,
+    TensorQR,
     asum,
     axpy,
     batched_matmul,
+    cholesky,
+    cholesky_solve,
+    det,
     dot,
-    eigh,
-    eigvals,
     fro,
+    inf,
     inverse,
-    TensorQR,
-    lstsq,
-    lu,
     lu_factor,
-    PivotedLU,
-    TensorLU,
     matmul,
     matvec,
     norm,
-    qr,
+    nrm2,
+    outer,
     qr_factor,
     solve,
     solve_triangular,
-    svd,
     trace,
 )
 

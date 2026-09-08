@@ -40,7 +40,7 @@ replacing an expensive kernel with a cheap one inside a hot loop.
 from std.collections import Array
 from std.math import cos as _cos_f64
 
-from ..linalg.triangular import tridiagonal_solve
+from ..linalg.array.triangular import tridiagonal_solve
 from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
 
 comptime _PI = 3.14159265358979323846

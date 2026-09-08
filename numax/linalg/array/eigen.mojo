@@ -19,10 +19,16 @@ symmetric part.
 
 from std.collections import Array
 
-from ..core.numeric import FloatLike, blend, ge_indicator, guard_nonzero, max_of
-from ..core.complex import Complex
+from ...core.numeric import (
+    FloatLike,
+    blend,
+    ge_indicator,
+    guard_nonzero,
+    max_of,
+)
+from ...core.complex import Complex
 
-from .common import _PIVOT_FLOOR, _zeros
+from ..common import _PIVOT_FLOOR, _zeros
 
 
 def _jacobi_rotation[T: FloatLike](numerator: T, denominator: T) -> Tuple[T, T]:

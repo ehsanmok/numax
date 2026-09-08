@@ -190,10 +190,11 @@ the `FloatLike` conformer rather than over a `DType`. That is what makes a
 Cholesky differentiate at `Dual` and run inside one GPU thread, one matrix
 per SIMD lane, so it is what the algorithms take: `fft`, `signal`,
 `interpolate`, and the fixed-step kernels in `optimize` and `integrate`.
-`linalg` takes both — the same names resolve to MAX's kernels on a `Tensor`
-and to the differentiable register-resident versions on an `Array`, and
-`to_tensor`/`to_array` cross between them. NumPy gets away with one array
-type because it needs neither property.
+`linalg` has both, one tier per import: `numax.linalg` is the `Tensor` tier
+and goes through MAX, `numax.linalg.array` is the differentiable
+register-resident one, they share their names, and `to_tensor`/`to_array`
+cross between them. NumPy gets away with one array type because it needs
+neither property.
 
 `TileTensor` is MAX's borrowed view, a pointer and a layout that own nothing.
 `.view()` hands one to a kernel and that is the only place it appears; you do
@@ -394,9 +395,9 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `a.astype(np.float32)` | `astype[f32](a)` | explicit: there is no dtype promotion |
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
 | `a.sum(axis=1)`, `a.mean(axis=1)` | `sum[axis=1](a)`, `mean[axis=1](a)` | same name as the whole-tensor form; one axis drops, the rest survive |
-| `np.linalg.solve(A, b)` | `solve(A, b)` on a `Tensor`, or `solve[P, n](A, b)` on an `Array` | the first is blocked pivoted LU with its trailing update in MAX's GEMM; the second differentiates |
-| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr`, `svd`, `eigh` | `cholesky` also has a blocked `Tensor` overload; `qr`/`svd`/`eigh` are `Array`-only so far |
-| `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` | no symmetry assumed; `lstsq` factors instead of forming the normal equations |
+| `np.linalg.solve(A, b)` | `solve(A, b)`, or `solve[P, n](A, b)` from `numax.linalg.array` | the first is blocked pivoted LU with its trailing update in MAX's GEMM; the second differentiates |
+| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr_factor`, and `qr`/`svd`/`eigh` from `numax.linalg.array` | `cholesky` and `qr_factor` are blocked over `Tensor`; `svd`/`eigh` are `Array`-only so far |
+| `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` from `numax.linalg.array`, or `qr_factor(A).solve(b)` over `Tensor` | no symmetry assumed; both least-squares routes factor instead of forming the normal equations |
 | `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
@@ -438,7 +439,10 @@ It deliberately leaves out the nine names that would shadow a Mojo
 builtin (`sum`, `prod`, `min`, `max`, `abs`, `all`, `any`, `round`,
 `copysign`), so a star import cannot break `min(1, 2)` in your own file.
 Those stay one explicit import away (`from numax.stats import sum`). `from numax import ...` is the
-full flat surface, and `from numax.linalg import ...` is one subsystem.
+full flat surface, and `from numax.linalg import ...` is one subsystem. The
+`Array` tier of `linalg` is outside the prelude for the same reason: it
+shares its names with the `Tensor` tier, so it is
+`from numax.linalg.array import cholesky` when that is the one you want.
 
 `f32`/`f64` are short for `DType.float32`/`.float64` and nothing else, so the
 same name works wherever a dtype belongs, across both layers:
