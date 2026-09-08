@@ -59,6 +59,11 @@ python = ">=3.11,<3.13"
 [feature.bench-python.pypi-dependencies]
 numpy = ">=2.0"
 torch = ">=2.5"
+# The LAPACK/BLAS baseline for bench/scipy/linalg.py -- reference `potrf`,
+# `getrf`, `gesv`, `geqrf` and the level-1 routines numax's `Tensor` tier is
+# named after, so the linalg comparison is against the routine rather than
+# against a NumPy ufunc.
+scipy = ">=1.14"
 # Reference values for the accuracy harness. Only needed to *regenerate*
 # bench/accuracy/reference_data.mojo, which is checked in -- `pixi run
 # accuracy` itself runs in the default Mojo environment.
@@ -88,13 +93,31 @@ bench-mlx = { cmd = "python3 gaussian.py", cwd = "bench/mlx" }
 # comparison in bench/README.md was measured.
 [feature.bench-python.target.linux-64-glibc235.pypi-dependencies]
 cupy-cuda12x = ">=13"
+# The CUDA 12 math libraries CuPy's linalg path dlopens. The wheel itself
+# only carries the kernels: `bench/cupy/gaussian.py` needs nothing else,
+# but `bench/cupy/linalg.py` is cuSOLVER/cuBLAS underneath and fails at
+# import with `libcublas.so.12: cannot open shared object file` on a host
+# whose system CUDA is 13. Pinning them here rather than relying on the
+# host's toolkit keeps the baseline reproducible on any CUDA 12-or-newer
+# driver.
+nvidia-cublas-cu12 = ">=12.4"
+nvidia-cusolver-cu12 = ">=11.6"
+nvidia-cusparse-cu12 = ">=12.3"
+nvidia-nvjitlink-cu12 = ">=12.4"
 
 [feature.bench-python.target.linux-64-glibc235.tasks]
 bench-cupy = { cmd = "python3 gaussian.py", cwd = "bench/cupy" }
+bench-cupy-linalg = { cmd = "python3 linalg.py", cwd = "bench/cupy" }
 
 [feature.bench-python.tasks]
 bench-numpy = { cmd = "python3 gaussian.py", cwd = "bench/numpy" }
 bench-torch = { cmd = "python3 gaussian.py", cwd = "bench/torch" }
+# The linalg baselines, against `bench_linalg.mojo` (scipy, CPU) and
+# `bench_linalg_gpu.mojo` (torch and cupy, CUDA). `bench-torch-linalg` is
+# here rather than under the linux-64 target because PyTorch installs
+# everywhere and the script says so and exits when there is no device.
+bench-scipy-linalg = { cmd = "python3 linalg.py", cwd = "bench/scipy" }
+bench-torch-linalg = { cmd = "python3 linalg.py", cwd = "bench/torch" }
 accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
 
 [feature.bench-rust]
