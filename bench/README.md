@@ -663,18 +663,18 @@ CPU:
 
 | op | numax | SciPy (LAPACK + Accelerate) |
 |---|---|---|
-| `matmul` (ceiling) | 1,488* | 1,306 |
-| `cholesky` | 46.0 | 248.1 |
-| `lu_factor` | 67.1 | 222.2 |
-| `solve` | 65.9 | 152.7 |
-| `qr` | 32.6 | 50.9 |
+| `matmul` (ceiling) | 1,475* | 1,393 |
+| `cholesky` | 83.4 | 280.1 |
+| `lu_factor` | 86.9 | 231.9 |
+| `solve` | 80.3 | 162.8 |
+| `qr` | 34.0 | 52.0 |
 
 Metal:
 
 | op | numax | PyTorch (MPS) |
 |---|---|---|
-| `matmul` (ceiling) | **1,812** | 1,143 |
-| `cholesky` | 61.6 | 125.0 |
+| `matmul` (ceiling) | **1,800** | 1,143 |
+| `cholesky` | 65.2 | 125.0 |
 | `lu_factor` | 18.8 | 51.5 |
 | `solve` | 16.8 | 20.9 |
 
@@ -682,10 +682,10 @@ BLAS-1, GB/s at `n = 67M`:
 
 | op | numax CPU | SciPy CPU | numax Metal | PyTorch MPS |
 |---|---|---|---|---|
-| `dot` | 111.8 | 67.4 | 115.3 | 121.8 |
-| `nrm2` | 87.3 | 27.0 | 106.2 | 4.3 |
-| `asum` | 112.5 | 60.6 | 106.2 | 39.0 |
-| `axpy` | 89.5 | 105.1 | 58.0 | 116.8 |
+| `dot` | 113.8 | 102.3 | 115.3 | 121.8 |
+| `nrm2` | 89.2 | 29.8 | 106.2 | 4.3 |
+| `asum` | 116.0 | 72.1 | 106.2 | 39.0 |
+| `axpy` | 91.5 | 109.6 | 58.0 | 116.8 |
 
 **The CPU ceiling row is not a kernel comparison.** MAX's CPU `matmul`
 dispatches to Apple's `cblas_sgemm` on macOS whenever every operand is

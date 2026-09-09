@@ -652,9 +652,9 @@ separate table and not a column of the one above:
 
 | | `matmul` (the ceiling) | `cholesky` | `lu_factor` | `solve` |
 |---|---|---|---|---|
-| numax, CPU | 1,488* | 46.0 | 67.1 | 65.9 |
-| SciPy (LAPACK + Accelerate), CPU | 1,306* | 248.1 | 222.2 | 152.7 |
-| numax, Metal | **1,812** | 61.6 | 18.8 | 16.8 |
+| numax, CPU | 1,475* | 83.4 | 86.9 | 80.3 |
+| SciPy (LAPACK + Accelerate), CPU | 1,393* | 280.1 | 231.9 | 162.8 |
+| numax, Metal | **1,800** | 65.2 | 19.0 | 16.9 |
 | PyTorch (MPS), Metal | 1,143 | 125.0 | 51.5 | 20.9 |
 
 \* Both CPU ceiling entries are the same kernel -- Apple Accelerate's

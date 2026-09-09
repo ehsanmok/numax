@@ -416,11 +416,11 @@ counterpart to be compared against.
 
 | op | numax | SciPy (LAPACK + Accelerate) | numax / SciPy |
 |---|---|---|---|
-| `matmul` (ceiling)* | 1,488 | 1,306 | 1.14 |
-| `cholesky` | 46.0 | 248.1 | 0.19 |
-| `lu_factor` | 67.1 | 222.2 | 0.30 |
-| `solve` | 65.9 | 152.7 | 0.43 |
-| `qr_factor` | 32.6 | 50.9 | 0.64 |
+| `matmul` (ceiling)* | 1,475 | 1,393 | 1.06 |
+| `cholesky` | 83.4 | 280.1 | 0.30 |
+| `lu_factor` | 86.9 | 231.9 | 0.37 |
+| `solve` | 80.3 | 162.8 | 0.49 |
+| `qr_factor` | 34.0 | 52.0 | 0.65 |
 
 \* Not a kernel comparison: both are Apple Accelerate's `cblas_sgemm`. See
 the first bullet below.
@@ -429,8 +429,8 @@ the first bullet below.
 
 | op | numax | PyTorch (MPS) | numax / PyTorch |
 |---|---|---|---|
-| `matmul` (ceiling) | 1,812 | 1,143 | **1.59** |
-| `cholesky` | 61.6 | 125.0 | 0.49 |
+| `matmul` (ceiling) | 1,800 | 1,143 | **1.57** |
+| `cholesky` | 65.2 | 125.0 | 0.52 |
 | `lu_factor` | 18.8 | 51.5 | 0.36 |
 | `solve` | 16.8 | 20.9 | 0.80 |
 
@@ -438,10 +438,10 @@ the first bullet below.
 
 | op | numax CPU | SciPy CPU | numax Metal | PyTorch MPS |
 |---|---|---|---|---|
-| `dot` | 111.8 | 67.4 | 115.3 | 121.8 |
-| `nrm2` | 87.3 | 27.0 | 106.2 | 4.3 |
-| `asum` | 112.5 | 60.6 | 106.2 | 39.0 |
-| `axpy` | 89.5 | 105.1 | 58.0 | 116.8 |
+| `dot` | 113.8 | 102.3 | 115.3 | 121.8 |
+| `nrm2` | 89.2 | 29.8 | 106.2 | 4.3 |
+| `asum` | 116.0 | 72.1 | 106.2 | 39.0 |
+| `axpy` | 91.5 | 109.6 | 58.0 | 116.8 |
 
 What this machine says:
 
@@ -468,7 +468,7 @@ What this machine says:
   `ReduceSum` under MAX's `rowwise` scaffolder threads and `sdot`/`snrm2`
   do not. On Metal `nrm2` is 25x PyTorch's, which is a statement about
   PyTorch's MPS reduction rather than about numax.
-- **`solve` on Metal is at 0.80 of PyTorch**, the closest any factorization
+- **`solve` on Metal is at 0.81 of PyTorch**, the closest any factorization
   comes to parity on either processor.
 - **The factorizations otherwise trail, and the ceiling row is why they
   cannot be read as a fraction of it.** See the next section: a blocked
@@ -476,14 +476,30 @@ What this machine says:
   and the two run at very different speeds.
 - `cholesky` and `lu_factor` move by 5-10% between runs at `n = 1024` on
   this box. Read them as ranges, not points.
-- These are the numbers *after* three changes made in response to them:
-  `pack_block` copying at the SIMD width, `trsm_right_lower_t`'s inner dot
-  product vectorized, and the block defaults retuned to the optima those
-  two moved. `cholesky` at `n = 1024` was 34.4 GFLOP/s before them and is
-  46-52 after; `axpy` was 70.2 GB/s on the host and 23.9 on Metal, and is
-  90.3 and 57.3. The `bench_linalg.mojo` block sweep is what found the new
-  optima and it still runs, so the next change to the panel or the trsm
-  should re-run it rather than assume these defaults survive.
+- **The host factorizations are 1.2-1.8x faster than when this page first
+  carried them**, and the rows above are the current numbers. `cholesky`
+  went 46.0 -> 83.4, `lu_factor` 67.1 -> 86.9, `solve` 65.9 -> 80.3, over
+  six changes measured one at a time: `pack_block` copying at the SIMD
+  width, `trsm_right_lower_t`'s inner dot vectorized, the trailing update
+  restricted to the lower triangle, the panel solves handed to
+  `parallelize` because `elementwise` was running them on one core, LU's
+  panel made recursive, and the block defaults retuned after each. The
+  `parallelize` one was worth more than the other five together. `axpy`
+  moved separately, 70.2 -> 91.5 GB/s on the host and 23.9 -> 58.0 on
+  Metal, by not zeroing a buffer it overwrites.
+- Every block default was measured after the change that moved it, and
+  each change moved it again -- `cholesky`'s host block went 32 -> 48 -> 64
+  over three commits as successive terms got cheaper. The
+  `bench_linalg.mojo` sweep is what found each, and it still runs, so the
+  next change to a panel or a solve should re-run it rather than assume
+  these survive.
+- **What is left, in the order the profile puts it.** Cholesky is bounded
+  by its trailing GEMM at ~68% of a much shorter run, and with the flops
+  already halved the rest of that distance is GEMM shape rather than waste.
+  LU is still bounded by its panel even after the recursion. QR is
+  untouched by any of this and is the one factorization still carrying
+  known cleanups: nine launches per block step, `T` rebuilt on every `q()`
+  and `solve()`, and `V` packed twice per panel.
 
 ### The ceiling row is not the ceiling a blocked factorization can reach
 
