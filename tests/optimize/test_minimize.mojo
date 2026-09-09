@@ -1,4 +1,7 @@
-"""Tests for `numax.optimize.array.minimize` and the `cg` method it adds.
+"""Tests for `numax.optimize.array`'s SciPy-shaped entry points.
+
+Covers `minimize` and the `cg` method it adds, and `minimize_scalar` with
+the three one-variable minimizers underneath it.
 
 Three claims, and they are different in kind.
 
@@ -25,7 +28,16 @@ from std.testing import (
 )
 
 from numax import FloatLike, Plain
-from numax.optimize.array import bfgs, cg, minimize, nelder_mead
+from numax.optimize.array import (
+    bfgs,
+    brent,
+    cg,
+    fminbound,
+    golden,
+    minimize,
+    minimize_scalar,
+    nelder_mead,
+)
 
 comptime P = Plain[DType.float64, 1]
 
@@ -224,6 +236,185 @@ def test_cg_reports_the_gradient_norm_it_converged_on() raises:
     var result = cg[3, quadratic_bowl](_bowl_start())
     assert_true(result.converged)
     assert_true(result.grad_norm < 1e-8)
+
+
+# --- the one-variable minimizers -------------------------------------------
+
+
+def shifted_parabola[U: FloatLike](x: U) -> U:
+    """`(x - 3)^2 + 2`, minimum `2` at `x = 3` -- and the minimum is far
+    outside the default `(0, 1)` starting pair, which is the point: those
+    two numbers are a direction, not a bracket."""
+    var d = x - U.constant(3.0)
+    return d * d + U.constant(2.0)
+
+
+def quartic_well[U: FloatLike](x: U) -> U:
+    """`x^4 - 3x^2 + x`, whose global minimum is near `-1.30`. Not
+    quadratic anywhere near it, so a parabolic step has to be corrected."""
+    var x2 = x * x
+    return x2 * x2 - U.constant(3.0) * x2 + x
+
+
+def descending[U: FloatLike](x: U) -> U:
+    """`-x`, which has no minimum at all. The bracketing search must give
+    up rather than run away."""
+    return -x
+
+
+def test_brent_finds_a_minimum_far_outside_the_starting_pair() raises:
+    var result = brent[shifted_parabola]()
+    assert_true(result.converged)
+    assert_almost_equal(result.x, 3.0, atol=1e-6)
+    assert_almost_equal(result.f_x, 2.0, atol=1e-12)
+
+
+def test_golden_agrees_with_brent() raises:
+    """Two different refinements of the same bracket. They take different
+    numbers of evaluations -- that is why both exist -- so only the answer
+    is compared."""
+    var by_brent = brent[quartic_well](-2.0, -1.0)
+    var by_golden = golden[quartic_well](-2.0, -1.0)
+    assert_true(by_brent.converged)
+    assert_true(by_golden.converged)
+    assert_almost_equal(by_brent.x, by_golden.x, atol=1e-6)
+
+
+def test_brent_beats_golden_on_evaluation_count() raises:
+    """The reason to default to `brent`: interpolation converges faster
+    than a fixed 0.618 shrink on a function smooth near its minimum."""
+    var by_brent = brent[shifted_parabola]()
+    var by_golden = golden[shifted_parabola]()
+    assert_true(by_brent.converged)
+    assert_true(by_golden.converged)
+    assert_true(by_brent.iterations < by_golden.iterations)
+
+
+def test_an_unbounded_descent_is_reported_not_run_away_from() raises:
+    var result = brent[descending]()
+    assert_true(not result.converged)
+    assert_equal(result.iterations, 0)
+
+
+def test_fminbound_keeps_the_answer_inside_the_bounds() raises:
+    """The minimum of `(x-3)^2 + 2` is at 3, which is outside `[-1, 1]`.
+    A bounded search must return the boundary, not walk to 3."""
+    var result = fminbound[shifted_parabola](-1.0, 1.0)
+    assert_true(result.converged)
+    assert_true(result.x <= 1.0)
+    assert_almost_equal(result.x, 1.0, atol=1e-4)
+
+
+def test_fminbound_finds_an_interior_minimum() raises:
+    var result = fminbound[shifted_parabola](0.0, 10.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.x, 3.0, atol=1e-4)
+
+
+# --- minimize_scalar dispatches to exactly those ---------------------------
+
+
+def test_minimize_scalar_brent_is_exactly_brent() raises:
+    var direct = brent[quartic_well](-2.0, -1.0)
+    var dispatched = minimize_scalar[quartic_well, method="brent"](
+        bracket=(-2.0, -1.0)
+    )
+    assert_equal(direct.x, dispatched.x)
+    assert_equal(direct.f_x, dispatched.f_x)
+    assert_equal(direct.iterations, dispatched.iterations)
+
+
+def test_minimize_scalar_defaults_to_brent_with_the_default_bracket() raises:
+    var direct = brent[shifted_parabola]()
+    var dispatched = minimize_scalar[shifted_parabola]()
+    assert_equal(direct.x, dispatched.x)
+    assert_equal(direct.iterations, dispatched.iterations)
+
+
+def test_minimize_scalar_golden_is_exactly_golden() raises:
+    var direct = golden[quartic_well](-2.0, -1.0)
+    var dispatched = minimize_scalar[quartic_well, method="golden"](
+        bracket=(-2.0, -1.0)
+    )
+    assert_equal(direct.x, dispatched.x)
+    assert_equal(direct.iterations, dispatched.iterations)
+
+
+def test_minimize_scalar_bounded_is_exactly_fminbound() raises:
+    var direct = fminbound[shifted_parabola](-1.0, 1.0)
+    var dispatched = minimize_scalar[shifted_parabola, method="bounded"](
+        bounds=(-1.0, 1.0)
+    )
+    assert_equal(direct.x, dispatched.x)
+    assert_equal(direct.iterations, dispatched.iterations)
+
+
+def test_bounded_without_bounds_raises() raises:
+    var raised = False
+    try:
+        _ = minimize_scalar[shifted_parabola, method="bounded"]()
+    except e:
+        raised = True
+        assert_true("requires 'bounds'" in String(e))
+    assert_true(raised)
+
+
+def test_a_bracket_is_not_silently_accepted_as_bounds() raises:
+    """Passing `bounds` to a bracketing method must raise. Reinterpreting
+    one as the other is how a constrained problem quietly returns an answer
+    outside its range."""
+    var raised = False
+    try:
+        _ = minimize_scalar[shifted_parabola, method="brent"](
+            bounds=(-1.0, 1.0)
+        )
+    except e:
+        raised = True
+        assert_true("bounds" in String(e))
+    assert_true(raised)
+
+
+def test_reversed_bounds_raise() raises:
+    var raised = False
+    try:
+        _ = minimize_scalar[shifted_parabola, method="bounded"](
+            bounds=(1.0, -1.0)
+        )
+    except e:
+        raised = True
+        assert_true("increasing" in String(e))
+    assert_true(raised)
+
+
+def test_minimize_scalar_rejects_an_unknown_method() raises:
+    var raised = False
+    try:
+        _ = minimize_scalar[shifted_parabola, method="Brent"]()
+    except e:
+        raised = True
+        assert_true("unknown method" in String(e))
+    assert_true(raised)
+
+
+def test_scalar_tol_defaults_per_method() raises:
+    """`brent` defaults to sqrt(eps); `bounded` to SciPy's looser 1e-5.
+    Passing each explicitly must be indistinguishable from passing
+    nothing."""
+    var brent_default = minimize_scalar[shifted_parabola, method="brent"]()
+    var brent_explicit = minimize_scalar[shifted_parabola, method="brent"](
+        tol=1.48e-8, max_iter=500
+    )
+    assert_equal(brent_default.x, brent_explicit.x)
+    assert_equal(brent_default.iterations, brent_explicit.iterations)
+
+    var bounded_default = minimize_scalar[shifted_parabola, method="bounded"](
+        bounds=(0.0, 10.0)
+    )
+    var bounded_explicit = minimize_scalar[shifted_parabola, method="bounded"](
+        bounds=(0.0, 10.0), tol=1e-5, max_iter=500
+    )
+    assert_equal(bounded_default.x, bounded_explicit.x)
+    assert_equal(bounded_default.iterations, bounded_explicit.iterations)
 
 
 def main() raises:

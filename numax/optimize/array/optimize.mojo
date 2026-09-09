@@ -257,6 +257,417 @@ def brentq[
     return OptimizeResult(hi, f_hi, max_iter, False)
 
 
+# The golden ratio's two useful constants. `_GOLDEN_SECTION` is `2 - phi`,
+# the fraction of a bracket a golden-section step moves; `_GOLDEN_GROW` is
+# `phi` itself, the factor the bracketing search expands by.
+comptime _GOLDEN_SECTION = 0.3819660112501051
+comptime _GOLDEN_GROW = 1.618033988749895
+
+# The best a minimizer can locate `x` to. Near a minimum `f` is quadratic, so
+# a change in `x` of `d` moves `f` by `O(d^2)`: once `d` falls below
+# `sqrt(eps)` the change is below the noise in `f` itself and no further
+# progress is real. This is `sqrt(2.22e-16)`, and it is why the scalar
+# minimizers default to a tolerance eight orders looser than the root
+# finders in this module -- `brentq` locates a *crossing*, which has no such
+# floor.
+comptime _MINIMIZER_TOL = 1.48e-8
+
+
+@fieldwise_init
+struct _Bracket(Copyable, Movable):
+    """Three points with `f(b)` below both `f(a)` and `f(c)`, which is what
+    guarantees a minimum lies between `a` and `c`. `found` is false when the
+    search ran out of expansions, which means `f` decreased monotonically
+    the whole way and has no minimum in that direction."""
+
+    var a: Float64
+    var b: Float64
+    var c: Float64
+    var f_b: Float64
+    var evaluations: Int
+    var found: Bool
+
+
+def _bracket_minimum[
+    f: def[U: FloatLike](U) thin -> U,
+](start: Float64, second: Float64) -> _Bracket:
+    """Expand `[start, second]` downhill until it brackets a minimum.
+
+    Orient the interval so `f` decreases from `a` to `b`, then keep stepping
+    a golden ratio further in that direction until `f` turns back up. SciPy
+    accelerates this with a parabolic extrapolation and a growth limit; this
+    does not, and the cost is a few extra evaluations on a long shallow
+    descent rather than a different answer -- the bracket either exists in
+    that direction or it does not.
+
+    An unbounded descent is reported (`found=False`) rather than raised,
+    matching how everything else in this module reports rather than throws.
+    """
+    var a = start
+    var b = second
+    var f_a = f[_P](_P(a)).v
+    var f_b = f[_P](_P(b)).v
+    var evaluations = 2
+
+    # Walk downhill: `b` must be the lower of the two.
+    if f_a < f_b:
+        var swap_x = a
+        a = b
+        b = swap_x
+        var swap_f = f_a
+        f_a = f_b
+        f_b = swap_f
+
+    var c = b + _GOLDEN_GROW * (b - a)
+    var f_c = f[_P](_P(c)).v
+    evaluations += 1
+
+    for _ in range(80):
+        if f_c >= f_b:
+            return _Bracket(a, b, c, f_b, evaluations, True)
+        a = b
+        f_a = f_b
+        b = c
+        f_b = f_c
+        c = b + _GOLDEN_GROW * (b - a)
+        f_c = f[_P](_P(c)).v
+        evaluations += 1
+
+    return _Bracket(a, b, c, f_b, evaluations, False)
+
+
+def _brent_on_interval[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    lower: Float64,
+    upper: Float64,
+    start: Float64,
+    tol: Float64,
+    max_iter: Int,
+) -> OptimizeResult:
+    """Brent's minimization on `[lower, upper]`, starting from `start`.
+
+    The shared engine under `brent` and `fminbound`; the two differ only in
+    how they arrive at the interval. Parabolic interpolation through the
+    three best points so far, falling back to a golden-section step whenever
+    the parabola would land outside the interval, would not at least halve
+    the step before last, or is simply not yet available. That fallback is
+    what bounds the worst case: golden section alone converges linearly, and
+    the interpolation only ever accelerates it.
+
+    Derivative-free on purpose. `f` is evaluated at `Plain` only -- a
+    minimizer with an exact gradient is `bfgs` or `cg`, and for one variable
+    the bracket is the more robust structure anyway, since it cannot leave
+    the interval the way a Newton step can.
+    """
+    var a = lower
+    var b = upper
+
+    # `x` is the best point, `w` the second best, `v` the previous `w`.
+    var x = start
+    var w = start
+    var v = start
+    var f_x = f[_P](_P(x)).v
+    var f_w = f_x
+    var f_v = f_x
+
+    var step: Float64 = 0
+    var previous_step: Float64 = 0
+
+    for iteration in range(max_iter):
+        var middle = (a + b) / 2
+        var tol1 = tol * abs(x) + 1e-11
+        var tol2 = 2 * tol1
+        if abs(x - middle) <= tol2 - (b - a) / 2:
+            return OptimizeResult(x, f_x, iteration, True)
+
+        var take_golden = True
+        if abs(previous_step) > tol1:
+            # Fit a parabola through (x, f_x), (w, f_w), (v, f_v).
+            var t1 = (x - w) * (f_x - f_v)
+            var t2 = (x - v) * (f_x - f_w)
+            var numerator = (x - v) * t2 - (x - w) * t1
+            var denominator = 2 * (t2 - t1)
+            if denominator > 0:
+                numerator = -numerator
+            denominator = abs(denominator)
+            var before_last = previous_step
+            previous_step = step
+
+            # Accept the parabolic step only if it lands inside the
+            # interval and is less than half the step before last --
+            # otherwise the parabola is not describing this function and
+            # the fallback is the honest move.
+            if (
+                numerator > denominator * (a - x)
+                and numerator < denominator * (b - x)
+                and abs(numerator) < abs(denominator * before_last / 2)
+            ):
+                step = numerator / denominator
+                var landing = x + step
+                if landing - a < tol2 or b - landing < tol2:
+                    step = tol1 if middle - x >= 0 else -tol1
+                take_golden = False
+
+        if take_golden:
+            # Step into the *larger* of the two sub-intervals, which is the
+            # one on the far side of the midpoint from `x`. Stepping the
+            # other way shrinks the side already known to be small and the
+            # search stalls against the near bound.
+            previous_step = (a - x) if x >= middle else (b - x)
+            step = _GOLDEN_SECTION * previous_step
+
+        # Never step by less than `tol1`: a shorter one cannot be resolved.
+        var trial: Float64
+        if abs(step) >= tol1:
+            trial = x + step
+        else:
+            trial = x + (tol1 if step >= 0 else -tol1)
+        var f_trial = f[_P](_P(trial)).v
+
+        if f_trial <= f_x:
+            if trial >= x:
+                a = x
+            else:
+                b = x
+            v = w
+            f_v = f_w
+            w = x
+            f_w = f_x
+            x = trial
+            f_x = f_trial
+        else:
+            if trial < x:
+                a = trial
+            else:
+                b = trial
+            if f_trial <= f_w or w == x:
+                v = w
+                f_v = f_w
+                w = trial
+                f_w = f_trial
+            elif f_trial <= f_v or v == x or v == w:
+                v = trial
+                f_v = f_trial
+
+    return OptimizeResult(x, f_x, max_iter, False)
+
+
+def brent[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    xa: Float64 = 0,
+    xb: Float64 = 1,
+    tol: Float64 = _MINIMIZER_TOL,
+    max_iter: Int = 500,
+) -> OptimizeResult:
+    """Minimize a one-variable `f` by Brent's method. `scipy.optimize.brent`,
+    and `scipy.optimize.minimize_scalar(method="Brent")`.
+
+    `xa` and `xb` are a *downhill direction*, not a bracket: the search
+    expands from them until it finds three points that do bracket a minimum,
+    then interpolates within those. That is why the defaults `(0, 1)` are
+    usable on a problem whose minimum is at 300 -- they only have to say
+    which way to walk. Pass a real bracket when one is known and the
+    expansion phase costs nothing.
+
+    `converged=False` means one of two different things, and the caller can
+    tell them apart from `iterations`: `0` means no bracket was found at all
+    (`f` decreased for 80 golden expansions, so it is unbounded below in
+    that direction), and anything else means the cap was reached with the
+    interval still wider than `tol`.
+
+    The tolerance is on `x` and defaults to `sqrt(eps)` for the reason
+    `_MINIMIZER_TOL` documents: asking for less is asking for digits that a
+    quadratic minimum does not have.
+    """
+    var bracket = _bracket_minimum[f](xa, xb)
+    if not bracket.found:
+        return OptimizeResult(bracket.b, bracket.f_b, 0, False)
+    var lower = min(bracket.a, bracket.c)
+    var upper = max(bracket.a, bracket.c)
+    return _brent_on_interval[f](lower, upper, bracket.b, tol, max_iter)
+
+
+def golden[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    xa: Float64 = 0,
+    xb: Float64 = 1,
+    tol: Float64 = _MINIMIZER_TOL,
+    max_iter: Int = 500,
+) -> OptimizeResult:
+    """Minimize a one-variable `f` by golden-section search.
+    `scipy.optimize.golden`, and `minimize_scalar(method="Golden")`.
+
+    The same bracketing phase as `brent`, then the plainest possible
+    refinement: keep the two interior points at the golden ratio, discard
+    the worse end, and repeat. Each iteration costs exactly one evaluation
+    and shrinks the interval by a fixed factor of 0.618, so the iteration
+    count is knowable in advance from the starting width and `tol`.
+
+    `brent` is the one to reach for by default -- it takes this same step
+    whenever interpolation is not available and beats it whenever it is.
+    `golden` is here because that predictable linear shrink is occasionally
+    what is wanted, and because it has no failure mode of its own to reason
+    about.
+    """
+    var bracket = _bracket_minimum[f](xa, xb)
+    if not bracket.found:
+        return OptimizeResult(bracket.b, bracket.f_b, 0, False)
+
+    var lower = min(bracket.a, bracket.c)
+    var upper = max(bracket.a, bracket.c)
+    return _golden_on_interval[f](lower, upper, tol, max_iter)
+
+
+def _golden_on_interval[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    lower: Float64, upper: Float64, tol: Float64, max_iter: Int
+) -> OptimizeResult:
+    """Golden-section refinement of a known interval. Shared by `golden` and
+    nothing else so far; kept separate so `golden`'s own body is the
+    bracketing decision and this is the loop."""
+    comptime shrink = 0.6180339887498949
+
+    var a = lower
+    var b = upper
+    var x1 = b - shrink * (b - a)
+    var x2 = a + shrink * (b - a)
+    var f1 = f[_P](_P(x1)).v
+    var f2 = f[_P](_P(x2)).v
+
+    for iteration in range(max_iter):
+        if abs(b - a) < tol:
+            var best = x1 if f1 < f2 else x2
+            var f_best = f1 if f1 < f2 else f2
+            return OptimizeResult(best, f_best, iteration, True)
+        if f1 < f2:
+            b = x2
+            x2 = x1
+            f2 = f1
+            x1 = b - shrink * (b - a)
+            f1 = f[_P](_P(x1)).v
+        else:
+            a = x1
+            x1 = x2
+            f1 = f2
+            x2 = a + shrink * (b - a)
+            f2 = f[_P](_P(x2)).v
+
+    var best = x1 if f1 < f2 else x2
+    var f_best = f1 if f1 < f2 else f2
+    return OptimizeResult(best, f_best, max_iter, False)
+
+
+def fminbound[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    lower: Float64,
+    upper: Float64,
+    tol: Float64 = 1e-5,
+    max_iter: Int = 500,
+) -> OptimizeResult:
+    """Minimize a one-variable `f` *inside* `[lower, upper]`.
+    `scipy.optimize.fminbound`, and `minimize_scalar(method="Bounded")`.
+
+    The same engine as `brent` with the bracketing phase removed, because
+    the bounds already are the interval and the answer is not allowed to
+    leave it. That is the whole difference, and it is the right choice
+    whenever `f` is undefined or meaningless outside a range -- a bracket
+    search would happily walk out of it.
+
+    The minimum may sit *on* a bound, in which case the returned `x`
+    approaches it from inside and never crosses.
+
+    `tol` defaults to `1e-5` rather than `brent`'s `sqrt(eps)`, which is
+    SciPy's choice for this method and is kept for parity. Pass
+    `tol=1.48e-8` for the tighter one.
+    """
+    var start = lower + _GOLDEN_SECTION * (upper - lower)
+    return _brent_on_interval[f](lower, upper, start, tol, max_iter)
+
+
+def minimize_scalar[
+    f: def[U: FloatLike](U) thin -> U,
+    method: StaticString = "brent",
+](
+    bracket: Optional[Tuple[Float64, Float64]] = None,
+    bounds: Optional[Tuple[Float64, Float64]] = None,
+    tol: Optional[Float64] = None,
+    max_iter: Optional[Int] = None,
+) raises -> OptimizeResult:
+    """Minimize a one-variable `f`. `scipy.optimize.minimize_scalar`.
+
+    | `method` | Runs | Wants |
+    | --- | --- | --- |
+    | `"brent"` (default) | `brent` | `bracket`, a downhill direction; defaults to `(0, 1)` |
+    | `"golden"` | `golden` | the same |
+    | `"bounded"` | `fminbound` | `bounds`, and they are mandatory |
+
+    **`bracket` and `bounds` are not the same argument.** A `bracket` says
+    which way to walk and the search may leave it; `bounds` are a
+    constraint the answer may not leave. Passing `bracket` to `"bounded"`,
+    or omitting `bounds` from it, raises -- silently reinterpreting one as
+    the other is how a constrained problem quietly returns an
+    out-of-range answer.
+
+    **`tol` defaults per method.** `"brent"` and `"golden"` use
+    `sqrt(eps)`, the floor a quadratic minimum imposes on locating `x`;
+    `"bounded"` uses SciPy's looser `1e-5` for that method. See `minimize`
+    for why the defaults are per method rather than shared, and for why an
+    unrecognized `method` raises rather than failing to compile.
+    """
+    comptime if method == "brent" or method == "golden":
+        if bounds:
+            raise Error(
+                "minimize_scalar: method '",
+                method,
+                (
+                    "' takes 'bracket', not 'bounds' -- a bracket is a"
+                    " direction to search in and may be left, bounds are a"
+                    " constraint that may not. Use method='bounded' to"
+                    " constrain the answer."
+                ),
+            )
+        var start: Float64 = 0
+        var second: Float64 = 1
+        if bracket:
+            start = bracket.value()[0]
+            second = bracket.value()[1]
+        var resolved_tol = tol.value() if tol else _MINIMIZER_TOL
+        var resolved_iter = max_iter.value() if max_iter else 500
+        comptime if method == "brent":
+            return brent[f](start, second, resolved_tol, resolved_iter)
+        else:
+            return golden[f](start, second, resolved_tol, resolved_iter)
+    elif method == "bounded":
+        if not bounds:
+            raise Error(
+                "minimize_scalar: method 'bounded' requires 'bounds'"
+                " -- there is nothing to bound the search to otherwise."
+            )
+        var pair = bounds.value()
+        if not (pair[0] < pair[1]):
+            raise Error(
+                "minimize_scalar: 'bounds' must be increasing, got a lower"
+                " bound at or above the upper one"
+            )
+        return fminbound[f](
+            pair[0],
+            pair[1],
+            tol.value() if tol else 1e-5,
+            max_iter.value() if max_iter else 500,
+        )
+    else:
+        raise Error(
+            "minimize_scalar: unknown method '",
+            method,
+            "'; expected 'brent', 'golden' or 'bounded'",
+        )
+
+
 def bfgs[
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,

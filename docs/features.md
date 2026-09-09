@@ -277,6 +277,9 @@ bookkeeping is host-side and the QR is not.
 |---|---|---|
 | `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/array/solve.mojo`](../numax/optimize/array/solve.mojo) |
 | `newton_tol`, `brentq` — scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `minimize_scalar` — `scipy.optimize.minimize_scalar`, dispatching on `method=` to the three below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `brent`, `golden` — one-variable minimization from a downhill *direction*, which the search expands into a bracket | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `fminbound` — the same engine constrained to `[lower, upper]`, which the answer may not leave | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `minimize` — `scipy.optimize.minimize`, dispatching on `method=` to the three below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `bfgs` — quasi-Newton minimization to a tolerance, returning `MinimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `cg` — Polak-Ribière conjugate gradients under a strong-Wolfe line search; one direction vector rather than an `n × n` inverse Hessian | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
@@ -290,11 +293,14 @@ from one call per iteration for the same reason, where a forward difference
 would cost `n_params + 1`. A central difference cannot beat about `ε^(2/3)` relative
 accuracy; AD has neither the truncation nor the cancellation term.
 
-`minimize` is the SciPy-shaped entry point and spells its methods the way
-SciPy does — `minimize[2, rosenbrock, method="nelder-mead"](x0)`. `tol` and
+`minimize` and `minimize_scalar` are the SciPy-shaped entry points and spell
+their methods the way SciPy does — `minimize[2, rosenbrock, method="nelder-mead"](x0)`. `tol` and
 `max_iter` default *per method* rather than globally, because the three do
 not measure the same thing: `bfgs` and `cg` stop on `max|∇f| < 1e-8`,
-`nelder_mead` on a simplex spread below `1e-10`. An unrecognized method
+`nelder_mead` on a simplex spread below `1e-10`; `brent` and `golden` use
+`sqrt(eps)`, the floor a quadratic minimum puts on locating `x` at all,
+while `fminbound` keeps SciPy's looser `1e-5` for that method. An
+unrecognized method
 raises rather than failing to compile, which is a Mojo limitation and not a
 choice — a `where` clause cannot compare `StaticString`s, and an untaken
 `comptime if` branch is still constraint-checked, so neither the signature
