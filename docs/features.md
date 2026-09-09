@@ -276,7 +276,10 @@ bookkeeping is host-side and the QR is not.
 | Surface — over `Array[T, n]`, from `numax.optimize.array` | Tier | Where |
 |---|---|---|
 | `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/array/solve.mojo`](../numax/optimize/array/solve.mojo) |
-| `newton_tol`, `brentq` — scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `root_scalar` — `scipy.optimize.root_scalar`, dispatching on `method=` to the five below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `brentq`, `bisect_tol` — bracketed scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `newton_tol`, `halley_tol` — from a single guess, with `f′` and `f″` exact from `Dual` and `Dual[Dual]` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `secant` — the one root finder here that uses no derivative at all, for objectives whose derivative lies | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `minimize_scalar` — `scipy.optimize.minimize_scalar`, dispatching on `method=` to the three below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `brent`, `golden` — one-variable minimization from a downhill *direction*, which the search expands into a bracket | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `fminbound` — the same engine constrained to `[lower, upper]`, which the answer may not leave | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
@@ -293,15 +296,21 @@ from one call per iteration for the same reason, where a forward difference
 would cost `n_params + 1`. A central difference cannot beat about `ε^(2/3)` relative
 accuracy; AD has neither the truncation nor the cancellation term.
 
-`minimize` and `minimize_scalar` are the SciPy-shaped entry points and spell
-their methods the way SciPy does — `minimize[2, rosenbrock, method="nelder-mead"](x0)`. `tol` and
+`minimize`, `minimize_scalar` and `root_scalar` are the SciPy-shaped entry
+points and spell their methods the way SciPy does — `minimize[2, rosenbrock, method="nelder-mead"](x0)`. `tol` and
 `max_iter` default *per method* rather than globally, because the three do
 not measure the same thing: `bfgs` and `cg` stop on `max|∇f| < 1e-8`,
 `nelder_mead` on a simplex spread below `1e-10`; `brent` and `golden` use
 `sqrt(eps)`, the floor a quadratic minimum puts on locating `x` at all,
-while `fminbound` keeps SciPy's looser `1e-5` for that method. An
-unrecognized method
-raises rather than failing to compile, which is a Mojo limitation and not a
+while `fminbound` keeps SciPy's looser `1e-5` for that method.
+
+`root_scalar` splits its arguments the way SciPy does and refuses to blur
+them: a `bracket` is an interval the search may not leave, an `x0` is a
+guess it may. A bracketing method handed only `x0`, or a guess method handed
+a `bracket`, raises rather than quietly promising a guarantee it does not
+have.
+
+An unrecognized method raises rather than failing to compile, which is a Mojo limitation and not a
 choice — a `where` clause cannot compare `StaticString`s, and an untaken
 `comptime if` branch is still constraint-checked, so neither the signature
 nor the dead branch can reject the value. What it will never do is fall

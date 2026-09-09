@@ -14,9 +14,9 @@ make:
 
 This surface is the `Tensor` one, and so far it carries `least_squares`,
 `curve_fit` and the `TensorFitResult` they return. Scalar root finding
-(`newton`, `halley`, `bisection`, `brentq`, `newton_tol`), `minimize`
-(`bfgs`, `cg`, `nelder_mead`) and `minimize_scalar` (`brent`, `golden`,
-`fminbound`) are `Array`-tier only: they work on a handful of scalars, which is the shape a
+(`root_scalar` over `brentq`, `bisect_tol`, `newton_tol`, `halley_tol` and
+`secant`), `minimize` (`bfgs`, `cg`, `nelder_mead`) and `minimize_scalar`
+(`brent`, `golden`, `fminbound`) are `Array`-tier only: they work on a handful of scalars, which is the shape a
 `Tensor` exists to not be.
 """
 

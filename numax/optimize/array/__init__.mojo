@@ -15,13 +15,16 @@ export the `Tensor` tier; this subpackage is the other one, the same split
 | Module | Holds |
 | --- | --- |
 | `solve` | `newton`, `halley`, `bisection` |
-| `optimize` | `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`), `newton_tol`, `brentq`, `least_squares`, `curve_fit`, `OptimizeResult`, `MinimizeResult` |
+| `optimize` | `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`), `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `least_squares`, `curve_fit`, `OptimizeResult`, `MinimizeResult` |
 
 Two halves, split by whether the iteration count is known up front.
 `solve`'s `newton`/`halley`/`bisection` run a fixed number of steps with no
 data-dependent branching, so they are **tier 1** and GPU-launchable inside a
 kernel body. The rest converge to a tolerance and are **tier 2**,
-`Plain`-only and host-side.
+`Plain`-only and host-side -- including `newton_tol`, `halley_tol` and
+`bisect_tol`, which are those same three algorithms with a convergence test
+and a status instead of a fixed trip count. Both of each pair ship; they are
+alternatives, not replacements.
 
 ## Why this tier exists at all
 
@@ -54,16 +57,20 @@ from .optimize import (
     MinimizeResult,
     OptimizeResult,
     bfgs,
+    bisect_tol,
     brent,
     brentq,
     cg,
     curve_fit,
     fminbound,
     golden,
+    halley_tol,
     least_squares,
     minimize,
     minimize_scalar,
     nelder_mead,
     newton_tol,
+    root_scalar,
+    secant,
 )
 from .solve import bisection, halley, newton

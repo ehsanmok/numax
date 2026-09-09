@@ -1,7 +1,8 @@
 """Tests for `numax.optimize.array`'s SciPy-shaped entry points.
 
-Covers `minimize` and the `cg` method it adds, and `minimize_scalar` with
-the three one-variable minimizers underneath it.
+Covers `minimize` and the `cg` method it adds, `minimize_scalar` with the
+three one-variable minimizers underneath it, and `root_scalar` with the five
+root finders underneath that.
 
 Three claims, and they are different in kind.
 
@@ -30,13 +31,19 @@ from std.testing import (
 from numax import FloatLike, Plain
 from numax.optimize.array import (
     bfgs,
+    bisect_tol,
     brent,
+    brentq,
     cg,
     fminbound,
     golden,
+    halley_tol,
     minimize,
     minimize_scalar,
     nelder_mead,
+    newton_tol,
+    root_scalar,
+    secant,
 )
 
 comptime P = Plain[DType.float64, 1]
@@ -415,6 +422,144 @@ def test_scalar_tol_defaults_per_method() raises:
     )
     assert_equal(bounded_default.x, bounded_explicit.x)
     assert_equal(bounded_default.iterations, bounded_explicit.iterations)
+
+
+# --- root_scalar and the tolerance siblings it adds -------------------------
+
+
+def cos_minus_x[U: FloatLike](x: U) -> U:
+    """`cos(x) - x`, whose root is the Dottie number, 0.7390851332151607."""
+    return x.cos() - x
+
+
+comptime DOTTIE = 0.7390851332151607
+
+
+def test_halley_tol_converges_faster_than_newton_tol() raises:
+    """Cubic against quadratic: from the same start, Halley must reach the
+    same root in strictly fewer steps. That is the only reason to pay for a
+    second derivative."""
+    var by_newton = newton_tol[cos_minus_x](0.5)
+    var by_halley = halley_tol[cos_minus_x](0.5)
+    assert_true(by_newton.converged)
+    assert_true(by_halley.converged)
+    assert_almost_equal(by_halley.x, DOTTIE, atol=1e-14)
+    assert_true(by_halley.iterations < by_newton.iterations)
+
+
+def test_secant_finds_the_root_without_a_derivative() raises:
+    var result = secant[cos_minus_x](0.5)
+    assert_true(result.converged)
+    assert_almost_equal(result.x, DOTTIE, atol=1e-12)
+
+
+def test_secant_accepts_an_explicit_second_point() raises:
+    var result = secant[cos_minus_x](0.0, x1=2.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.x, DOTTIE, atol=1e-12)
+
+
+def test_bisect_tol_halves_to_the_root() raises:
+    var result = bisect_tol[cos_minus_x](0.0, 2.0)
+    assert_true(result.converged)
+    assert_almost_equal(result.x, DOTTIE, atol=1e-11)
+
+
+def test_bisect_tol_reports_a_bracket_without_a_sign_change() raises:
+    """`cos(x) - x` is positive at both 0.0 and 0.5, so there is no
+    guarantee to be had and the fixed-iteration sibling could not say so."""
+    var result = bisect_tol[cos_minus_x](0.0, 0.5)
+    assert_true(not result.converged)
+    assert_equal(result.iterations, 0)
+
+
+def test_brentq_beats_bisect_tol_on_the_same_bracket() raises:
+    """The reason `root_scalar` defaults to brentq: same bracket, same
+    guarantee, superlinear instead of one bit per iteration."""
+    var by_brentq = brentq[cos_minus_x](0.0, 2.0)
+    var by_bisect = bisect_tol[cos_minus_x](0.0, 2.0)
+    assert_true(by_brentq.converged)
+    assert_true(by_bisect.converged)
+    assert_true(by_brentq.iterations < by_bisect.iterations)
+
+
+def test_all_five_methods_find_the_same_root() raises:
+    var by_brentq = root_scalar[cos_minus_x](bracket=(0.0, 2.0))
+    var by_bisect = root_scalar[cos_minus_x, method="bisect"](
+        bracket=(0.0, 2.0)
+    )
+    var by_newton = root_scalar[cos_minus_x, method="newton"](x0=0.5)
+    var by_halley = root_scalar[cos_minus_x, method="halley"](x0=0.5)
+    var by_secant = root_scalar[cos_minus_x, method="secant"](x0=0.5)
+
+    assert_almost_equal(by_brentq.x, DOTTIE, atol=1e-11)
+    assert_almost_equal(by_bisect.x, DOTTIE, atol=1e-11)
+    assert_almost_equal(by_newton.x, DOTTIE, atol=1e-11)
+    assert_almost_equal(by_halley.x, DOTTIE, atol=1e-11)
+    assert_almost_equal(by_secant.x, DOTTIE, atol=1e-11)
+
+
+def test_root_scalar_dispatches_to_exactly_the_named_function() raises:
+    var direct_brentq = brentq[cos_minus_x](0.0, 2.0)
+    var via_brentq = root_scalar[cos_minus_x, method="brentq"](
+        bracket=(0.0, 2.0)
+    )
+    assert_equal(direct_brentq.x, via_brentq.x)
+    assert_equal(direct_brentq.iterations, via_brentq.iterations)
+
+    var direct_halley = halley_tol[cos_minus_x](0.5)
+    var via_halley = root_scalar[cos_minus_x, method="halley"](x0=0.5)
+    assert_equal(direct_halley.x, via_halley.x)
+    assert_equal(direct_halley.iterations, via_halley.iterations)
+
+    var direct_secant = secant[cos_minus_x](0.5)
+    var via_secant = root_scalar[cos_minus_x, method="secant"](x0=0.5)
+    assert_equal(direct_secant.x, via_secant.x)
+    assert_equal(direct_secant.iterations, via_secant.iterations)
+
+
+def test_a_bracketing_method_without_a_bracket_raises() raises:
+    var raised = False
+    try:
+        _ = root_scalar[cos_minus_x, method="brentq"](x0=0.5)
+    except e:
+        raised = True
+        assert_true("requires 'bracket'" in String(e))
+    assert_true(raised)
+
+
+def test_a_guess_method_without_x0_raises() raises:
+    var raised = False
+    try:
+        _ = root_scalar[cos_minus_x, method="newton"](bracket=(0.0, 2.0))
+    except e:
+        raised = True
+        assert_true("requires 'x0'" in String(e))
+    assert_true(raised)
+
+
+def test_a_guess_method_given_a_bracket_raises() raises:
+    """Newton may leave any interval it starts in, so accepting a bracket
+    would promise a guarantee it does not have."""
+    var raised = False
+    try:
+        _ = root_scalar[cos_minus_x, method="newton"](
+            x0=0.5, bracket=(0.0, 2.0)
+        )
+    except e:
+        raised = True
+        assert_true("not a 'bracket'" in String(e))
+    assert_true(raised)
+
+
+def test_root_scalar_rejects_an_unknown_method() raises:
+    var raised = False
+    try:
+        _ = root_scalar[cos_minus_x, method="brent"](bracket=(0.0, 2.0))
+    except e:
+        raised = True
+        assert_true("unknown method" in String(e))
+    assert_true(raised)
 
 
 def main() raises:

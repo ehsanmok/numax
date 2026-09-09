@@ -405,7 +405,8 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.integrate.solve_ivp` | `solve_ivp`, or `rk4` for fixed steps | |
 | `solve_ivp(method="BDF")` | `solve_ivp_stiff` | implicit, so the step size follows accuracy rather than stability |
 | `scipy.interpolate.CubicSpline` | `CubicSpline[T, n]` | built once, `__call__` evaluates |
-| `scipy.optimize.brentq` / `minimize` | `brentq[f](a, b)` / `minimize[n, f](x0)` | no `jac` argument at all — the gradient comes from `Gradient` |
+| `scipy.optimize.root_scalar` / `minimize` | `root_scalar[f](bracket=(a, b))` / `minimize[n, f](x0)` | no `jac`, `fprime` or `fprime2` argument anywhere — every derivative comes from `Dual` or `Gradient` |
+| `scipy.optimize.minimize_scalar` | `minimize_scalar[f]()` | `brent`, `golden`, `bounded`; a bracket is a direction, bounds are a constraint |
 | `minimize(method="Nelder-Mead")` / `"CG"` | `minimize[n, f, method="nelder-mead"]` / `method="cg"` | SciPy's own method spelling; `bfgs`, `cg` and `nelder_mead` are also callable by name |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |

@@ -139,6 +139,153 @@ def newton_tol[
     return OptimizeResult(x, f[_P](_P(x)).v, max_iter, False)
 
 
+def halley_tol[
+    f: def[U: FloatLike](U) thin -> U,
+](x0: Float64, tol: Float64 = 1e-12, max_iter: Int = 32) -> OptimizeResult:
+    """Halley's method on `f`, iterating until the step is smaller than
+    `tol`.
+
+    The tier-2 sibling of `numax.optimize.array.halley`, standing to it
+    exactly as `newton_tol` stands to `newton`: same mathematics, a
+    convergence test instead of a fixed trip count, and a status to check.
+
+    Both derivatives come from one evaluation at `Dual[Dual[_P]]` -- the
+    outer `Dual` differentiating the inner one is the second derivative --
+    so the caller still writes one function and no `fprime2` is passed.
+    Cubic convergence near a simple root, which is why the iteration cap is
+    half `newton_tol`'s: if it is going to converge it does so in very few
+    steps, and if it is not, more of them will not help.
+
+    Reported the same way as `newton_tol`: a vanishing denominator means the
+    step is undefined, and that returns `converged=False` at the last good
+    iterate rather than producing an infinity.
+    """
+    comptime _D = Dual[_P]
+    comptime _DD = Dual[_D]
+
+    var x = x0
+    for i in range(max_iter):
+        var seed = _DD(_D(_P(x), _P.one()), _D(_P.one(), _P.constant(0.0)))
+        var r = f[_DD](seed)
+        var value = r.value.value.v
+        var d1 = r.deriv.value.v
+        var d2 = r.deriv.deriv.v
+
+        var denominator = 2 * d1 * d1 - value * d2
+        if denominator == 0:
+            return OptimizeResult(x, value, i + 1, False)
+        var step = 2 * value * d1 / denominator
+        x = x - step
+        if abs(step) < tol:
+            return OptimizeResult(x, f[_P](_P(x)).v, i + 1, True)
+    return OptimizeResult(x, f[_P](_P(x)).v, max_iter, False)
+
+
+def secant[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    x0: Float64,
+    x1: Optional[Float64] = None,
+    tol: Float64 = 1e-12,
+    max_iter: Int = 64,
+) -> OptimizeResult:
+    """The secant method: Newton with the derivative replaced by the slope
+    through the last two iterates.
+
+    **This is the one root finder here that does not use a derivative, and
+    it is not the default for that reason.** `newton_tol` gets `f'` exactly
+    from a `Dual`, at no extra evaluation, so the usual argument for the
+    secant method -- that derivatives are expensive or unavailable --
+    does not apply to a `FloatLike` kernel. It converges at order 1.618
+    against Newton's 2 and can divide by a vanishing difference of two
+    nearly equal values, which is a cancellation Newton does not have.
+
+    What it is for is the objective whose derivative exists but lies: the
+    branchless blends numax's own kernels are built from have kinks, and a
+    derivative at a kink points somewhere the step should not go. That is
+    the same reason `nelder_mead` sits beside `bfgs`. SciPy reaches this as
+    `newton` without an `fprime`, and it is spelled separately here because
+    a caller should be choosing it rather than falling into it.
+
+    `x1` defaults to a small relative perturbation of `x0`, SciPy's choice,
+    scaled so it is nonzero even at `x0 = 0`.
+    """
+    var a = x0
+    var b: Float64
+    if x1:
+        b = x1.value()
+    else:
+        b = a * (1 + 1e-4) + (1e-4 if a >= 0 else -1e-4)
+
+    var f_a = f[_P](_P(a)).v
+    var f_b = f[_P](_P(b)).v
+
+    for i in range(max_iter):
+        var difference = f_b - f_a
+        if difference == 0:
+            return OptimizeResult(b, f_b, i + 1, False)
+        var step = f_b * (b - a) / difference
+        a = b
+        f_a = f_b
+        b = b - step
+        f_b = f[_P](_P(b)).v
+        if abs(step) < tol:
+            return OptimizeResult(b, f_b, i + 1, True)
+    return OptimizeResult(b, f_b, max_iter, False)
+
+
+def bisect_tol[
+    f: def[U: FloatLike](U) thin -> U,
+](
+    a: Float64,
+    b: Float64,
+    tol: Float64 = 1e-12,
+    max_iter: Int = 128,
+) -> OptimizeResult:
+    """Bisection on `[a, b]`, halving until the bracket is narrower than
+    `tol`.
+
+    The tier-2 sibling of `numax.optimize.array.bisection`. The tier-1 one
+    is branchless and blends both endpoint updates on a `0`/`1` indicator,
+    because SIMD lanes bisecting different problems disagree about which
+    endpoint moves; this one is on the host with one problem in hand, so it
+    branches, stops on the bracket width, and can say whether the bracket
+    straddled a root at all -- which a fixed-work algorithm has no channel
+    to report.
+
+    `brentq` is the better choice on the same input and is what
+    `root_scalar` defaults to: it keeps the same bracket and the same
+    guarantee while interpolating, so it converges superlinearly where this
+    converges by exactly one bit per iteration. Bisection is here for the
+    case where that one-bit-per-iteration *predictability* is the point, and
+    because a caller comparing methods should be able to name it.
+    """
+    var lo = a
+    var hi = b
+    var f_lo = f[_P](_P(lo)).v
+    var f_hi = f[_P](_P(hi)).v
+
+    if f_lo == 0:
+        return OptimizeResult(lo, f_lo, 0, True)
+    if f_hi == 0:
+        return OptimizeResult(hi, f_hi, 0, True)
+    if (f_lo > 0) == (f_hi > 0):
+        return OptimizeResult(lo, f_lo, 0, False)
+
+    for i in range(max_iter):
+        var mid = (lo + hi) / 2
+        var f_mid = f[_P](_P(mid)).v
+        if f_mid == 0 or (hi - lo) / 2 < tol:
+            return OptimizeResult(mid, f_mid, i + 1, True)
+        if (f_mid > 0) == (f_lo > 0):
+            lo = mid
+            f_lo = f_mid
+        else:
+            hi = mid
+    var mid = (lo + hi) / 2
+    return OptimizeResult(mid, f[_P](_P(mid)).v, max_iter, False)
+
+
 def brentq[
     f: def[U: FloatLike](U) thin -> U,
 ](
@@ -257,6 +404,124 @@ def brentq[
     return OptimizeResult(hi, f_hi, max_iter, False)
 
 
+def root_scalar[
+    f: def[U: FloatLike](U) thin -> U,
+    method: StaticString = "brentq",
+](
+    x0: Optional[Float64] = None,
+    x1: Optional[Float64] = None,
+    bracket: Optional[Tuple[Float64, Float64]] = None,
+    tol: Optional[Float64] = None,
+    max_iter: Optional[Int] = None,
+) raises -> OptimizeResult:
+    """Find a root of a one-variable `f`. `scipy.optimize.root_scalar`.
+
+    | `method` | Runs | Wants | Uses |
+    | --- | --- | --- | --- |
+    | `"brentq"` (default) | `brentq` | `bracket` | no derivative |
+    | `"bisect"` | `bisect_tol` | `bracket` | no derivative |
+    | `"newton"` | `newton_tol` | `x0` | `f'`, exactly, from `Dual` |
+    | `"halley"` | `halley_tol` | `x0` | `f'` and `f''`, from `Dual[Dual]` |
+    | `"secant"` | `secant` | `x0`, optionally `x1` | no derivative |
+
+    **The split is `bracket` against `x0`, and the wrong one raises.** The
+    two families have genuinely different guarantees: a bracketed method
+    cannot leave an interval known to contain a sign change, so it always
+    converges to something; a guess-based one can walk into a different
+    basin or diverge. Defaulting a missing `bracket` to some interval around
+    `x0` would hand back the first family's name with the second family's
+    behaviour, so a missing argument is an error naming the one that was
+    wanted.
+
+    **`"brentq"` is the default and is what to reach for whenever a bracket
+    exists** -- it keeps the bracket and interpolates inside it, so it has
+    bisection's guarantee and better than bisection's rate. Reach for
+    `"newton"` when only a guess is available and `f` is smooth, and for
+    `"halley"` when it is smooth enough that a third order pays for the
+    second derivative.
+
+    There is no `fprime`/`fprime2` argument, and that is the tier's whole
+    point: `f` is a `FloatLike` kernel, so `"newton"` evaluates it at `Dual`
+    and `"halley"` at `Dual[Dual]`, and both derivatives are exact rather
+    than differenced. `numax.optimize.array` has fixed-iteration siblings of
+    all three for use inside a GPU kernel body, under `newton`, `halley` and
+    `bisection`.
+
+    See `minimize` for why an unrecognized `method` raises rather than
+    failing to compile.
+    """
+    comptime if method == "brentq" or method == "bisect":
+        if not bracket:
+            raise Error(
+                "root_scalar: method '",
+                method,
+                (
+                    "' requires 'bracket', a pair straddling a sign change."
+                    " Methods taking a single guess 'x0' are 'newton', 'halley'"
+                    " and 'secant'."
+                ),
+            )
+        var pair = bracket.value()
+        var resolved_tol = tol.value() if tol else 1e-12
+        comptime if method == "brentq":
+            return brentq[f](
+                pair[0],
+                pair[1],
+                resolved_tol,
+                max_iter.value() if max_iter else 128,
+            )
+        else:
+            return bisect_tol[f](
+                pair[0],
+                pair[1],
+                resolved_tol,
+                max_iter.value() if max_iter else 128,
+            )
+    elif method == "newton" or method == "halley" or method == "secant":
+        if not x0:
+            raise Error(
+                "root_scalar: method '",
+                method,
+                (
+                    "' requires 'x0', a starting guess. Methods taking a"
+                    " bracketing pair are 'brentq' and 'bisect'."
+                ),
+            )
+        if bracket:
+            raise Error(
+                "root_scalar: method '",
+                method,
+                (
+                    "' takes a guess 'x0', not a 'bracket' -- it may leave any"
+                    " interval it starts in. Use 'brentq' or 'bisect' to keep"
+                    " the root bracketed."
+                ),
+            )
+        var start = x0.value()
+        var resolved_tol = tol.value() if tol else 1e-12
+        comptime if method == "newton":
+            return newton_tol[f](
+                start, resolved_tol, max_iter.value() if max_iter else 64
+            )
+        elif method == "halley":
+            return halley_tol[f](
+                start, resolved_tol, max_iter.value() if max_iter else 32
+            )
+        else:
+            return secant[f](
+                start,
+                x1,
+                resolved_tol,
+                max_iter.value() if max_iter else 64,
+            )
+    else:
+        raise Error(
+            "root_scalar: unknown method '",
+            method,
+            "'; expected 'brentq', 'bisect', 'newton', 'halley' or 'secant'",
+        )
+
+
 # The golden ratio's two useful constants. `_GOLDEN_SECTION` is `2 - phi`,
 # the fraction of a bracket a golden-section step moves; `_GOLDEN_GROW` is
 # `phi` itself, the factor the bracketing search expands by.
@@ -278,13 +543,15 @@ struct _Bracket(Copyable, Movable):
     """Three points with `f(b)` below both `f(a)` and `f(c)`, which is what
     guarantees a minimum lies between `a` and `c`. `found` is false when the
     search ran out of expansions, which means `f` decreased monotonically
-    the whole way and has no minimum in that direction."""
+    the whole way and has no minimum in that direction.
+
+    `f_b` rides along because the caller needs a value to report on that
+    failure path, where there is no interval left to refine."""
 
     var a: Float64
     var b: Float64
     var c: Float64
     var f_b: Float64
-    var evaluations: Int
     var found: Bool
 
 
@@ -307,33 +574,29 @@ def _bracket_minimum[
     var b = second
     var f_a = f[_P](_P(a)).v
     var f_b = f[_P](_P(b)).v
-    var evaluations = 2
 
-    # Walk downhill: `b` must be the lower of the two.
+    # Walk downhill: `b` must be the lower of the two. Past this point only
+    # `f_b` is carried -- the expansion below compares each new outer point
+    # against `b`, never against `a`.
     if f_a < f_b:
         var swap_x = a
         a = b
         b = swap_x
-        var swap_f = f_a
-        f_a = f_b
-        f_b = swap_f
+        f_b = f_a
 
     var c = b + _GOLDEN_GROW * (b - a)
     var f_c = f[_P](_P(c)).v
-    evaluations += 1
 
     for _ in range(80):
         if f_c >= f_b:
-            return _Bracket(a, b, c, f_b, evaluations, True)
+            return _Bracket(a, b, c, f_b, True)
         a = b
-        f_a = f_b
         b = c
         f_b = f_c
         c = b + _GOLDEN_GROW * (b - a)
         f_c = f[_P](_P(c)).v
-        evaluations += 1
 
-    return _Bracket(a, b, c, f_b, evaluations, False)
+    return _Bracket(a, b, c, f_b, False)
 
 
 def _brent_on_interval[
