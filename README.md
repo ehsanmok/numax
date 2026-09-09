@@ -646,16 +646,38 @@ at `float64`. GFLOP/s at `n = 1024`, higher is better:
 | numax, A10G | 20,459 | 51.0 | 30.6 | 28.1 |
 | PyTorch (cuSOLVER), A10G | 15,342 | 595.0 | 282.9 | 257.6 |
 
-Read that as one claim and one gap. The `matmul` row is the claim: numax's
+The same four on an **Apple M3 Pro** and its 18-core Metal GPU, against
+Accelerate and PyTorch's MPS backend -- a different machine, so it is a
+separate table and not a column of the one above:
+
+| | `matmul` (the ceiling) | `cholesky` | `lu_factor` | `solve` |
+|---|---|---|---|---|
+| numax, CPU | **1,457** | 30.4 | 70.5 | 59.2 |
+| SciPy (LAPACK + Accelerate), CPU | 1,306 | 248.1 | 222.2 | 152.7 |
+| numax, Metal | **1,788** | 56.1 | 18.8 | 16.8 |
+| PyTorch (MPS), Metal | 1,143 | 125.0 | 51.5 | 20.9 |
+
+Read those as one claim and one gap. The `matmul` row is the claim: numax's
 factorizations put their whole `O(n^3)` term through `linalg.matmul`, and
-MAX's GEMM is at 79% of OpenBLAS on the host and *ahead* of cuBLAS's FP32
-path on the device. The factorization rows are the gap, and it is not the
-multiply -- each block step is a single-block panel kernel plus a host
-launch, so cuSOLVER's 6-12x is a parallel panel. BLAS-1 goes the other way:
-`dot` and `nrm2` on `Tensor` beat OpenBLAS's own `sdot`/`snrm2` by 2.5-5x on
-the host, because `ReduceSum` under MAX's `rowwise` scaffolder threads and
-they do not. ROCm and Metal are reached by the same `target="gpu"` with no
-per-architecture code in numax, and are **unmeasured** here.
+MAX's GEMM is at 79% of OpenBLAS on the EPYC, *ahead* of cuBLAS's FP32 path
+on the A10G, and ahead of both vendors on the M3 Pro -- 1,457 against
+Accelerate's 1,306 and 1,788 against PyTorch's 1,143. The factorization
+rows are the gap, and it is not the multiply: each block step is a
+single-block panel kernel plus a host launch, so cuSOLVER's 6-12x is a
+parallel panel. Note also that the ceiling row is a *square* GEMM while a
+blocked factorization only ever issues a rank-`block` one, which on this
+machine runs 5-9x slower -- so the fraction of the ceiling a factorization
+reaches overstates how much it is leaving behind.
+[`docs/performance.md`](docs/performance.md) has that measurement.
+
+BLAS-1 goes the other way: `dot` and `nrm2` on `Tensor` beat OpenBLAS's own
+`sdot`/`snrm2` by 2.5-5x on the EPYC and Accelerate's by 1.7-3.2x on the M3
+Pro, because `ReduceSum` under MAX's `rowwise` scaffolder threads and they
+do not. On Metal, **MLX has no GPU linalg at all** -- it refuses `cholesky`,
+`lu_factor`, `qr` and `solve` on a GPU stream -- so numax's device-resident
+factorizations have no MLX counterpart there. ROCm is reached by the same
+`target="gpu"` with no per-architecture code in numax, and is
+**unmeasured**.
 
 ## Accuracy
 

@@ -394,15 +394,118 @@ Note also the `n = 16M` row of the raw tables: 16M `float32` is exactly
 report 264-362 GB/s. That is a cache number and it is in the harness on
 purpose, sitting next to a memory-resident one.
 
+### The same sweep on an Apple M3 Pro
+
+The linalg tables above are an EPYC host and an A10G. This one is the
+**Apple M3 Pro** this library is developed on -- 12 cores (6P + 6E), an
+18-core GPU, 36 GB unified, ~150 GB/s -- and it is a different machine, so
+nothing here may be read across into the tables above. `float32`,
+`n = 1024`, GFLOP/s from the same LAPACK counts.
+
+Two things about the baselines matter before the numbers. SciPy here links
+**Apple Accelerate**, not OpenBLAS, so LAPACK runs on the AMX coprocessor
+and every CPU row is a harder target than the EPYC table's: Accelerate's
+`cholesky` is 248 GFLOP/s where OpenBLAS's was 99.5. And on the GPU side
+**MLX has no linalg on the device at all** -- `cholesky`, `lu_factor`,
+`qr` and `solve` each refuse a GPU stream with "not yet supported on the
+GPU" -- so PyTorch's MPS backend is the only Metal baseline there is, and
+numax's factorizations being device-resident on Metal has no MLX
+counterpart to be compared against.
+
+**CPU -- Apple M3 Pro, SciPy 1.18.1 on Accelerate:**
+
+| op | numax | SciPy (LAPACK + Accelerate) | numax / SciPy |
+|---|---|---|---|
+| `matmul` (ceiling) | 1,457 | 1,306 | **1.12** |
+| `cholesky` | 30.4 | 248.1 | 0.12 |
+| `lu_factor` | 70.5 | 222.2 | 0.32 |
+| `solve` | 59.2 | 152.7 | 0.39 |
+| `qr_factor` | 34.4 | 50.9 | 0.68 |
+
+**Metal -- the same machine's 18-core GPU, PyTorch 2.13.0 on MPS:**
+
+| op | numax | PyTorch (MPS) | numax / PyTorch |
+|---|---|---|---|
+| `matmul` (ceiling) | 1,788 | 1,143 | **1.56** |
+| `cholesky` | 56.1 | 125.0 | 0.45 |
+| `lu_factor` | 18.8 | 51.5 | 0.36 |
+| `solve` | 16.8 | 20.9 | 0.80 |
+
+**BLAS-1, GB/s at `n = 67M`** (256 MiB, past any cache on this box):
+
+| op | numax CPU | SciPy CPU | numax Metal | PyTorch MPS |
+|---|---|---|---|---|
+| `dot` | 111.8 | 67.4 | 115.3 | 121.8 |
+| `nrm2` | 87.3 | 27.0 | 106.2 | 4.3 |
+| `asum` | 112.5 | 60.6 | 106.2 | 39.0 |
+| `axpy` | 89.5 | 105.1 | 58.0 | 116.8 |
+
+What this machine says:
+
+- **MAX's GEMM beats both vendors here.** 1,457 against Accelerate's 1,306
+  on the CPU and 1,788 against PyTorch's 1,143 on Metal. On the EPYC it was
+  0.79x of OpenBLAS, so this is not a general claim about MAX's GEMM -- it
+  is this machine's, and it removes any reading of the factorization rows
+  that blames the multiply.
+- **The BLAS-1 reductions beat Accelerate by 1.7-3.2x**, the same result
+  the EPYC table reports against OpenBLAS and for the same reason:
+  `ReduceSum` under MAX's `rowwise` scaffolder threads and `sdot`/`snrm2`
+  do not. On Metal `nrm2` is 25x PyTorch's, which is a statement about
+  PyTorch's MPS reduction rather than about numax.
+- **`solve` on Metal is at 0.80 of PyTorch**, the closest any factorization
+  comes to parity on either processor.
+- **The factorizations otherwise trail, and the ceiling row is why they
+  cannot be read as a fraction of it.** See the next section: a blocked
+  factorization's trailing update is a rank-`block` GEMM, not a square one,
+  and the two run at very different speeds.
+- `cholesky` moves by about 10% between runs at `n = 1024` on this box
+  (30.4-34.2 across the runs taken here). Read it as a range.
+
+### The ceiling row is not the ceiling a blocked factorization can reach
+
+Every table above opens with `linalg.matmul` at `n x n x n` and invites
+reading the gap to it as the panel's cost. That overstates the panel,
+because a blocked factorization never issues a square GEMM: its trailing
+update is rank-`block`. Measured through Accelerate on the M3 Pro, at
+`n = 1024`:
+
+| GEMM shape | GFLOP/s |
+|---|---|
+| `1024 x 1024 x 1024` -- the ceiling row as written | 1,355 |
+| `1024 x 128 x 1024` | 668 |
+| `1024 x 64 x 1024` | 470 |
+| `1024 x 32 x 1024` -- `cholesky`'s default block | 248 |
+| `1024 x 16 x 1024` -- `lu_factor`'s and `qr_factor`'s | 149 |
+
+So a `block = 32` factorization gives up 5.4x against the advertised
+ceiling before its panel costs anything, and a `block = 16` one 9x. The
+same effect is worse on Metal, where rank-16 measures 168 GFLOP/s against
+the square 2,394.
+
+This sharpens the panel diagnosis rather than replacing it. The block
+sweep finds its optimum at a *small* block even though each doubling of
+`block` buys roughly 1.7x on the GEMM, which means the panel term has to
+be steeper than a reading of the square ceiling alone would suggest. But
+"reaches 12% of the ceiling" is not a claim the square row can support,
+and the honest denominator for `cholesky` at `block = 32` is 248, not
+1,355.
+
 ### What is not measured
 
-This box is an NVIDIA A10G on x86_64. **ROCm and Metal are not measured
-here at all.** Both are reached the same way -- numax passes
-`target="gpu"` and `linalg.matmul` dispatches Apple simdgroup, CDNA or
-RDNA underneath, with no per-architecture code anywhere in numax -- so the
-*coverage* is inherited from MAX's dispatch. That is a statement about
-what compiles and runs, not about what it costs: nothing on this page
-should be read as an AMD or Apple number.
+**ROCm is not measured anywhere on this page.** It is reached the same way
+Metal and CUDA are -- numax passes `target="gpu"` and `linalg.matmul`
+dispatches Apple simdgroup, CDNA or RDNA underneath, with no
+per-architecture code anywhere in numax -- so the *coverage* is inherited
+from MAX's dispatch. That is a statement about what compiles and runs, not
+about what it costs, and nothing here should be read as an AMD number.
+
+Metal *is* measured now, in the M3 Pro section above; it was not before,
+and the reason was partly that neither harness could reach it.
+`bench-linalg-gpu` failed to build on Metal at all -- the factorization
+and BLAS-1 halves together exceeded what Apple's compiler will put in one
+metallib -- and the PyTorch linalg baseline was CUDA-only in four places.
+Both are fixed, and BLAS-1 is now `bench-blas1-gpu`, its own file for that
+reason.
 
 ## Bench tasks
 
@@ -414,13 +517,14 @@ pixi run bench-elementwise # CPU: serial vs. threaded at six sizes
 pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
 pixi run bench-matmul   # CPU: the Array tier's matmul vs. MAX's linalg.matmul
 pixi run bench-linalg   # CPU: the Tensor tier vs. the linalg.matmul ceiling
-pixi run bench-linalg-gpu # the same sweep on a device (CUDA/Metal)
+pixi run bench-linalg-gpu # the factorizations on a device (CUDA/Metal)
+pixi run bench-blas1-gpu # BLAS-1 on a device; separate, see the Metal note above
 pixi run bench-numpy    # cross-language: NumPy, CPU
 pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
 pixi run bench-cupy     # cross-language: CuPy, GPU (Linux/CUDA only)
-pixi run -e bench-python bench-scipy-linalg # linalg baseline: LAPACK, CPU
-pixi run -e bench-python bench-torch-linalg # linalg baseline: cuSOLVER, CUDA
+pixi run -e bench-python bench-scipy-linalg # linalg baseline: LAPACK (OpenBLAS or Accelerate), CPU
+pixi run -e bench-python bench-torch-linalg # linalg baseline: cuSOLVER on CUDA, MPS on Metal
 pixi run -e bench-python bench-cupy-linalg  # linalg baseline: cuSOLVER, CUDA
 pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON/AVX2)
 pixi run accuracy       # CPU: max error per function vs. checked-in mpmath refs
