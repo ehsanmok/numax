@@ -215,9 +215,18 @@ def _apply_block_reflector[
             value = c[Coord(row0 + at[0], col0 + at[1])]
         staged.store[1](coord, value)
 
-    elementwise[simd_width=1, target=_target[gpu]()](
-        stage, Coord(rows, padded), ctx
-    )
+    # With no pad column to fill this is exactly `pack_block`, whose copy
+    # walks `j` contiguously in both source and destination and so takes the
+    # native SIMD width. `_MIN_GEMM_COLS` is 2, so the scalar zero-filling
+    # walk is reached only by a `width == 1` tail.
+    if padded == width:
+        pack_block[target=_target[gpu]()](
+            c, staged, row0, col0, rows, width, ctx
+        )
+    else:
+        elementwise[simd_width=1, target=_target[gpu]()](
+            stage, Coord(rows, padded), ctx
+        )
 
     # `W = V^T C`.
     var w: _Dense[dtype] = TileTensor(

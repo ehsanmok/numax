@@ -420,7 +420,7 @@ counterpart to be compared against.
 | `cholesky` | 83.4 | 280.1 | 0.30 |
 | `lu_factor` | 86.9 | 231.9 | 0.37 |
 | `solve` | 80.3 | 162.8 | 0.49 |
-| `qr_factor` | 34.0 | 52.0 | 0.65 |
+| `qr_factor` | 37.6 | 52.0 | 0.72 |
 
 \* Not a kernel comparison: both are Apple Accelerate's `cblas_sgemm`. See
 the first bullet below.
@@ -484,7 +484,9 @@ What this machine says:
   restricted to the lower triangle, the panel solves handed to
   `parallelize` because `elementwise` was running them on one core, LU's
   panel made recursive, and the block defaults retuned after each. The
-  `parallelize` one was worth more than the other five together. `axpy`
+  `parallelize` one was worth more than the other five together. A seventh
+  change then moved `qr_factor` 34.0 -> 37.6 on its own, by staging `C`
+  through `pack_block` instead of a scalar `elementwise` walk. `axpy`
   moved separately, 70.2 -> 91.5 GB/s on the host and 23.9 -> 58.0 on
   Metal, by not zeroing a buffer it overwrites.
 - Every block default was measured after the change that moved it, and
@@ -493,13 +495,23 @@ What this machine says:
   `bench_linalg.mojo` sweep is what found each, and it still runs, so the
   next change to a panel or a solve should re-run it rather than assume
   these survive.
+- **QR's block sweep has inverted on this machine.** `block = 16` now
+  beats `block = 4` at `n = 1024` -- 37.6 GFLOP/s against 26.8, where the
+  EPYC sweep below had the small block ahead. The panel work is what moved
+  it, so the "pass `block` explicitly for a large QR" advice in the EPYC
+  section is an EPYC statement and should not be read across.
 - **What is left, in the order the profile puts it.** Cholesky is bounded
   by its trailing GEMM at ~68% of a much shorter run, and with the flops
   already halved the rest of that distance is GEMM shape rather than waste.
-  LU is still bounded by its panel even after the recursion. QR is
-  untouched by any of this and is the one factorization still carrying
-  known cleanups: nine launches per block step, `T` rebuilt on every `q()`
-  and `solve()`, and `V` packed twice per panel.
+  LU is still bounded by its panel even after the recursion. QR has had its
+  staging copy widened and carries two remaining items, neither of them the
+  cleanup they were filed as: `T` rebuilt on every `q()` and `solve()` is
+  argued against by `numax/linalg/qr.mojo`'s own docstring (`nb^3 / 3`
+  against the products it enables) and needs measuring before it is
+  changed, and `V` packed twice per panel is structural -- `v` feeds
+  `V Y` and `v_t` feeds `V^T C`, and `matmul` transposes `b` and never
+  `a`, so one materialized orientation is unavoidable. The nine launches
+  per block step are still nine.
 
 ### The ceiling row is not the ceiling a blocked factorization can reach
 
