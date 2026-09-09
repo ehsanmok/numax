@@ -235,7 +235,7 @@ def bench_cholesky[n: Int, block: Int = 48](ctx: DeviceContext) raises:
     _row(label, n, ns, Float64(n) ** 3 / 3.0, worst)
 
 
-def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
+def bench_lu[n: Int, block: Int = 24](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
@@ -267,7 +267,7 @@ def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
     _row(label, n, ns, 2.0 * Float64(n) ** 3 / 3.0, worst)
 
 
-def bench_solve[n: Int, block: Int = 16](ctx: DeviceContext) raises:
+def bench_solve[n: Int, block: Int = 24](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
     var b = _ramp[n](ctx, 5)
 
@@ -469,11 +469,11 @@ def main() raises:
     bench_cholesky[1024, 32](ctx)
     bench_cholesky[1024, 48](ctx)
     bench_cholesky[1024, 64](ctx)
-    bench_lu[512, 8](ctx)
     bench_lu[512, 16](ctx)
+    bench_lu[512, 24](ctx)
     bench_lu[512, 32](ctx)
-    bench_lu[1024, 8](ctx)
     bench_lu[1024, 16](ctx)
+    bench_lu[1024, 24](ctx)
     bench_lu[1024, 32](ctx)
     bench_qr[512, 512, 4](ctx)
     bench_qr[512, 512, 16](ctx)

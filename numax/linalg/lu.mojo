@@ -143,7 +143,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return out^
 
     def solve[
-        block: Int = 16
+        block: Int = 16 if Self.gpu else 24
     ](mut self, mut b: Static[Self.dtype, Self.n]) raises -> Static[
         Self.dtype, Self.n
     ] where Self.dtype.is_floating_point():
@@ -201,7 +201,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return x^
 
     def solve[
-        rhs: Int, block: Int = 16
+        rhs: Int, block: Int = 16 if Self.gpu else 24
     ](mut self, mut b: Static[Self.dtype, Self.n, rhs]) raises -> Static[
         Self.dtype, Self.n, rhs
     ] where Self.dtype.is_floating_point():
@@ -277,7 +277,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
 
 def lu_factor[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 24
 ](mut a: Static[dtype, n, n]) raises -> TensorLU[
     dtype, n, gpu
 ] where dtype.is_floating_point():
@@ -318,11 +318,31 @@ def lu_factor[
     recursive panel (LAPACK's `getrf2`); its docstring in `panel.mojo` has
     the detail.
 
-    That ceiling is why `block` defaults to `16` here and `32` in
-    `cholesky`: the panel term is linear in `block` and this panel is the
-    expensive one, so the optimum sits lower. Both defaults are measured
-    (`bench/bench_linalg.mojo` sweeps `block`), and a caller who knows its
-    shape should tune it.
+    That ceiling is why `block` stays smaller here than in `cholesky`: the
+    panel term is linear in `block` and this panel is the expensive one, so
+    the optimum sits lower. `24` on the host, `16` on a device, both
+    measured (`bench/bench_linalg.mojo` sweeps `block`).
+
+    Profiled at `n = 1024`, `block = 16`, `float32` on an Apple M3 Pro, the
+    split is `getrf_panel` 42%, this trsm 21%, `matmul` 35%, packing 2% --
+    so unlike `cholesky`, where the panel is 1.3% and the claim was simply
+    wrong, the panel really is the largest single term here.
+
+    The host default moved from `16` to `24` when `pack_block` started
+    copying at the SIMD width, which cheapened the per-step overhead a
+    wider block pays. Mean GFLOP/s over three runs:
+
+        n      block=16   block=24   block=32
+        128       10.2       10.1        9.5
+        256       23.7       22.6       20.4
+        512       32.2       35.9       38.9
+        1024      64.7       70.0       70.2
+
+    `24` is never worse than 5% and up to 11% better; `32` is better again
+    from `n = 512` up and 14% worse at `256`, so a caller factoring large
+    matrices should pass it. On Metal the sweep is flat to within noise
+    (4.6-4.8 GFLOP/s at `n = 512`, 16.1-18.6 at `1024`), so `16` stands
+    there rather than being tuned to a difference that is not there.
     """
     var ctx = a.context()
     var work = Static[dtype, n, n](ctx)
@@ -437,7 +457,7 @@ def lu_factor[
 
 
 def det[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 24
 ](mut a: Static[dtype, n, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():
