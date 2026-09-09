@@ -27,6 +27,7 @@ from numax.core.sorting import (
     searchsorted,
     sort,
     take,
+    top_k,
     unique,
     select,
 )
@@ -443,6 +444,76 @@ def test_ravel_and_diagflat_keep_a_run_time_length() raises:
     assert_almost_equal(square[4], 3.0)
     assert_almost_equal(square[8], 4.0)
     assert_almost_equal(square[1], 0.0)
+
+
+def test_top_k_returns_the_largest_with_their_indices() raises:
+    # torch.topk([3, 1, 4, 1, 5], 3) -> values [5, 4, 3], indices [4, 2, 0]
+    var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
+    var got = top_k[k=3](a)
+    var values = got[0].to_host()
+    var indices = got[1].to_host()
+    assert_almost_equal(values[0], 5.0)
+    assert_almost_equal(values[1], 4.0)
+    assert_almost_equal(values[2], 3.0)
+    assert_equal(Int(indices[0]), 4)
+    assert_equal(Int(indices[1]), 2)
+    assert_equal(Int(indices[2]), 0)
+
+
+def test_top_k_smallest_inverts_the_order() raises:
+    # torch.topk(..., largest=False) -- the two 1.0s, at their own positions
+    var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
+    var got = top_k[k=2, largest=False](a)
+    var values = got[0].to_host()
+    var indices = got[1].to_host()
+    assert_almost_equal(values[0], 1.0)
+    assert_almost_equal(values[1], 1.0)
+    assert_equal(Int(indices[0]), 1)
+    assert_equal(Int(indices[1]), 3)
+
+
+def test_top_k_indices_address_the_original() raises:
+    # the claim that makes the indices useful: a[idx[i]] is values[i]
+    var a = mk[6]([2.5, 9.0, -1.0, 7.25, 0.0, 9.5])
+    var got = top_k[k=4](a)
+    var values = got[0].to_host()
+    var indices = got[1].to_host()
+    var original = a.to_host()
+    for i in range(4):
+        assert_almost_equal(values[i], original[Int(indices[i])])
+
+
+def test_top_k_is_row_wise_at_rank_two() raises:
+    # torch.topk(a, 2, dim=-1) -- the last axis, not the flattened tensor,
+    # which is the one place this module is not flat
+    var ctx = DeviceContext(api="cpu")
+    var source: List[Float64] = [1.0, 9.0, 3.0, 7.0, 8.0, 2.0, 6.0, 4.0]
+    var elements = List[Scalar[dtype]](capacity=8)
+    for i in range(8):
+        elements.append(Scalar[dtype](source[i]))
+    var m = Static[dtype, 2, 4](ctx, elements^)
+    var got = top_k[k=2](m)
+    var values = got[0].to_host()
+    var indices = got[1].to_host()
+    # row 0: 9 at column 1, then 7 at column 3
+    assert_almost_equal(values[0], 9.0)
+    assert_almost_equal(values[1], 7.0)
+    assert_equal(Int(indices[0]), 1)
+    assert_equal(Int(indices[1]), 3)
+    # row 1: 8 at column 0, then 6 at column 2
+    assert_almost_equal(values[2], 8.0)
+    assert_almost_equal(values[3], 6.0)
+    assert_equal(Int(indices[2]), 0)
+    assert_equal(Int(indices[3]), 2)
+
+
+def test_top_k_at_k_equals_n_is_a_full_sort() raises:
+    # the boundary the `where` clause allows: k == n agrees with `sort`
+    var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
+    var descending = top_k[k=5](a)[0].to_host()
+    var ascending = sort(a).to_host()
+    for i in range(5):
+        assert_almost_equal(descending[i], ascending[4 - i])
 
 
 def main() raises:

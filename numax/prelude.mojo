@@ -196,6 +196,7 @@ from .core.sorting import (
     select,
     sort,
     take,
+    top_k,
     unique,
 )
 

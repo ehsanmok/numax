@@ -245,6 +245,7 @@ from .core.sorting import (
     searchsorted,
     sort,
     take,
+    top_k,
     unique,
     select,
 )

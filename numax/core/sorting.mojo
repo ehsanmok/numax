@@ -6,8 +6,14 @@ based on a comparison; `unique` produces an output whose *length* depends on
 the input values. None of that can appear in a `FloatLike`-generic kernel --
 a `Self` may hold a SIMD vector whose lanes disagree about which branch they
 want, and there is no per-lane `select` on the trait. So everything here is
-`Plain`-only, host-side, and not GPU-launchable. See
-`docs/architecture.md`'s "Two tiers".
+`Plain`-only, and none of it is launchable *inside* a kernel body the way
+the `FloatLike` tier is. See `docs/architecture.md`'s "Two tiers".
+
+That is a statement about numax's own comparison walks, which run on a host
+copy. It is not a claim that nothing here reaches a device: `top_k` is a
+whole delegation to `nn.top_k`, which ships a real GPU kernel, so it takes
+the `gpu: Bool` parameter the rest of the delegating surface takes and
+leaves the data where it lives.
 
 That restriction was previously stated as a blanket exclusion: sorting was
 "not absorbed", full stop, and `numax.stats.median` reached
@@ -20,9 +26,12 @@ trait*; a NumPy caller still gets `sort`, `argsort`, `searchsorted` and
 ## MAX-first, and where it runs out
 
 `nn.argsort` exists and is rank-1, index-returning, CPU + GPU. It is the
-right thing for a caller already holding a `TileTensor` on a device. What it
-does not give is a *value* sort, an n-dimensional sort, `searchsorted`, or
-`unique` -- and it returns indices into a tensor rather than a sorted copy.
+right thing for a caller already holding a `TileTensor` on a device.
+`nn.top_k` exists too, and is the better-shaped of the two: any axis, both
+targets, values and indices out together, so `top_k` below is pure
+delegation. What neither gives is a *value* sort, an n-dimensional sort,
+`searchsorted`, or `unique` -- and `argsort` returns indices into a tensor
+rather than a sorted copy.
 `std.builtin.sort` (stable, comparator-driven, over a `Span`) is what the
 functions here are built on, since these walks run on a host copy of the
 tensor's elements (`Tensor.to_host`) and that is
@@ -38,16 +47,21 @@ depend on the values at all.
 
 ## Flat, not axis-wise
 
-Every function here treats its input as flat row-major, matching
-`numpy.sort(a, axis=None)` rather than the default `axis=-1`. Axis-wise
-sorting would need the same `outer`/`length`/`inner` decomposition
+Every function numax *writes* here treats its input as flat row-major,
+matching `numpy.sort(a, axis=None)` rather than the default `axis=-1`.
+Axis-wise sorting would need the same `outer`/`length`/`inner` decomposition
 `numax.core.tensor.reduce_axis` uses; it is a straightforward extension and is
 not written yet, so the flat behavior is stated rather than implied.
+
+`top_k` is the exception, and deliberately: `nn.top_k` takes an axis, so its
+rank-2 form works row-wise like `torch.topk(a, k, dim=-1)`. Flattening it
+would be numax discarding a capability MAX already has.
 """
 
 from std.builtin.sort import sort as _std_sort
 
 from nn.argsort import argsort as _nn_argsort
+from nn.topk import top_k as _max_top_k
 from std.collections import Array
 
 from layout.tile_layout import TensorLayout, row_major
@@ -350,3 +364,89 @@ def select[
     for i in range(n):
         out[i] = x_values[i] if mask[i] else y_values[i]
     return Tensor[dtype, LayoutType](x.context(), condition.layout, out^)
+
+
+def _top_k_into[
+    dtype: DType,
+    SrcLayout: TensorLayout,
+    DstLayout: TensorLayout,
+    IdxLayout: TensorLayout,
+    largest: Bool,
+    gpu: Bool,
+](
+    mut a: Tensor[dtype, SrcLayout],
+    mut values: Tensor[dtype, DstLayout],
+    mut indices: Tensor[DType.int64, IdxLayout],
+    k: Int,
+    axis: Int,
+    sorted: Bool,
+) raises:
+    """`nn.top_k` with numax's tensors passed straight through.
+
+    The whole delegation: MAX takes the input, the two destinations, the
+    axis, a `sorted` flag and a `DeviceContext`, and picks its own CPU or
+    GPU implementation from `target`. Unlike `argsort` above there is no
+    host round trip here -- `nn.top_k`'s device path is a real kernel, not a
+    host fallback, so `gpu=True` keeps the data where it already is.
+    """
+    var ctx = a.context()
+    var source = a.view()
+    var out_vals = values.view()
+    var out_idxs = indices.view()
+    _max_top_k[largest=largest, target="gpu" if gpu else "cpu"](
+        source, k, axis, out_vals, out_idxs, sorted, ctx
+    )
+    ctx.synchronize()
+
+
+def top_k[
+    dtype: DType,
+    n: Int,
+    k: Int,
+    largest: Bool = True,
+    gpu: Bool = False,
+](mut a: Static[dtype, n], sorted: Bool = True) raises -> Tuple[
+    Static[dtype, k], Static[DType.int64, k]
+] where (k > 0 and k <= n):
+    """The `k` largest elements of `a` and where they came from.
+    `numpy.argpartition` paired with its values, or `torch.topk`.
+
+    Returns `(values, indices)`; `largest=False` gives the `k` smallest.
+    `sorted` orders the result by value, which is MAX's own flag and is
+    stable when it is set.
+
+    A whole delegation to `nn.top_k`, so unlike `argsort` this one has a
+    real device path: `gpu=True` runs MAX's GPU kernel over the tensor where
+    it already lives, with no host copy in either direction.
+    """
+    var ctx = a.context()
+    var values = Static[dtype, k]._uninitialized(ctx)
+    var indices = Static[DType.int64, k]._uninitialized(ctx)
+    _top_k_into[dtype, _, _, _, largest, gpu](a, values, indices, k, 0, sorted)
+    return (values^, indices^)
+
+
+def top_k[
+    dtype: DType,
+    rows: Int,
+    cols: Int,
+    k: Int,
+    largest: Bool = True,
+    gpu: Bool = False,
+](mut a: Static[dtype, rows, cols], sorted: Bool = True) raises -> Tuple[
+    Static[dtype, rows, k], Static[DType.int64, rows, k]
+] where (k > 0 and k <= cols):
+    """The `k` largest elements of each **row** of `a`, and their columns.
+    `torch.topk(a, k, dim=-1)`.
+
+    The rank-1 form above documents the flags. This one takes the last axis
+    rather than treating the matrix as flat, which is the one place this
+    module departs from its own "flat, not axis-wise" rule -- `nn.top_k`
+    takes an axis, so routing it flat would be numax throwing away a
+    capability MAX already has.
+    """
+    var ctx = a.context()
+    var values = Static[dtype, rows, k]._uninitialized(ctx)
+    var indices = Static[DType.int64, rows, k]._uninitialized(ctx)
+    _top_k_into[dtype, _, _, _, largest, gpu](a, values, indices, k, 1, sorted)
+    return (values^, indices^)
