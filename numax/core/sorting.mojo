@@ -124,6 +124,10 @@ def argsort[
     var indices_view = indices.view()
     _nn_argsort(indices_view, flat_view)
 
+    # `view()` erases the origin, so `flat` is not kept alive by
+    # `flat_view` and destruction is ASAP. See `numax.linalg.qr`.
+    _ = flat^
+
     var order = List[Int](capacity=n)
     var raw = indices.to_host()
     for i in range(n):

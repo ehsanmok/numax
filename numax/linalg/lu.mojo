@@ -411,6 +411,13 @@ def lu_factor[
 
     ctx.synchronize()
 
+    # `view()` erases the origin, so none of these is kept alive by its
+    # view and destruction is ASAP. See `numax.linalg.qr`.
+    _ = info^
+    _ = left_operand^
+    _ = right_operand^
+    _ = scratch^
+
     # The interchange list is `n` int32s, so reading it back to count the
     # parity is `O(n)` of transfer against the factorization's `O(n^3)`.
     # `pivots` is over-allocated by `_PANEL_THREADS` because

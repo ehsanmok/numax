@@ -93,6 +93,11 @@ def trace[
         return tile
 
     _fused_sum[dtype, n, gpu](dv, out.view(), identity, ctx)
+
+    # `view()` erases the origin, so `diagonal` is not kept alive by `dv`
+    # and destruction is ASAP. See `numax.linalg.qr`.
+    _ = diagonal^
+
     return out.to_host()[0]
 
 
@@ -167,6 +172,10 @@ def norm[
         sum_axis[axis=0, target=_target[gpu]()](mv, sums.view(), ctx)
     else:
         sum_axis[axis=1, target=_target[gpu]()](mv, sums.view(), ctx)
+
+    # `view()` erases the origin, so `magnitudes` is not kept alive by
+    # `mv` and destruction is ASAP. See `numax.linalg.qr`.
+    _ = magnitudes^
 
     var out = Static[dtype, 1](ctx)
     max_axis[axis=0, target=_target[gpu]()](sums.view(), out.view(), ctx)

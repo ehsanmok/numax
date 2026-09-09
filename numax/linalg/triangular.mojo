@@ -205,6 +205,11 @@ def _trsm[
 
     ctx.synchronize()
 
+    # `view()` erases the origin, so neither scratch tensor is kept alive
+    # by its view and destruction is ASAP. See `numax.linalg.qr`.
+    _ = operand^
+    _ = scratch^
+
 
 def solve_triangular[
     dtype: DType,

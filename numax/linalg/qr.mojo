@@ -614,4 +614,9 @@ def qr_factor[
         k += nb
 
     ctx.synchronize()
+
+    # `view()` erases the origin, so `scratch` is not kept alive by `sv`
+    # and destruction is ASAP, the same hazard `TensorQR.solve` names.
+    _ = scratch^
+
     return TensorQR[dtype, m, n, gpu](factored^, taus^, block)

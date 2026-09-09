@@ -180,6 +180,11 @@ def cholesky[
 
     ctx.synchronize()
 
+    # `view()` erases the origin, so neither scratch tensor is kept alive
+    # by its view and destruction is ASAP. See `numax.linalg.qr`.
+    _ = operand^
+    _ = scratch^
+
     var flag = Int(info.to_host()[0])
     if flag != 0:
         raise Error(
