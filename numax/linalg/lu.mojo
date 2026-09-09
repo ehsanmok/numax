@@ -43,6 +43,7 @@ from .blas import _target
 from .common import _Dense
 from .panel import (
     _PANEL_THREADS,
+    getrf2,
     getrf_panel,
     laswp,
     laswp_matrix,
@@ -277,7 +278,11 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
 
 def lu_factor[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
+    dtype: DType,
+    n: Int,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+    base: Int = 16,
 ](mut a: Static[dtype, n, n]) raises -> TensorLU[
     dtype, n, gpu
 ] where dtype.is_floating_point():
@@ -317,6 +322,34 @@ def lu_factor[
     equivalent because its panel is only `block x block`. The upgrade is a
     recursive panel (LAPACK's `getrf2`); its docstring in `panel.mojo` has
     the detail.
+
+    **The panel is recursive.** `getrf2` in `numax.linalg.panel` splits the
+    panel's columns until a half is `base` wide, turning the left half's
+    effect on the right half into `linalg.matmul` at every level. That
+    matters here because the panel was 57.9% of this factorization when
+    profiled at `n = 1024`, `block = 32`, and it is the one phase that runs
+    on a single thread on the host.
+
+    It is worth less than the old note promised, and the honest numbers are
+    these. On an Apple M3 Pro at `float32`, `block = 32`, alternating runs
+    against the non-recursive panel: at `n = 1024`, 83.7 GFLOP/s mean
+    against 77.6, and at `n = 2048`, 132.1 against 117.4. So roughly 8-13%
+    on the mean, and the ranges at `n = 1024` overlap, so by this repo's
+    usual bar that is not a confirmed win. What is unambiguous is the
+    spread: the recursive panel held 130.7-133.2 at `n = 2048` where the
+    single-block one ranged 108.2-135.3 over the same three samples.
+
+    The 6-12x that `docs/performance.md` once projected for this was a
+    cuSOLVER comparison on a GPU, where a single-block panel wastes a whole
+    device. On a twelve-core host the single-block panel was never that far
+    off, and most of what looked like panel cost turned out to be
+    `elementwise` not threading the panel *solve* -- a different routine,
+    fixed separately, and worth far more.
+
+    `base` is a parameter because the recursion is launch-neutral by
+    construction -- `n / base` leaves against `n / block` panels -- so
+    `base == block` recovers the non-recursive algorithm exactly, and is the
+    control every measurement above is against.
 
     That ceiling is why `block` stays smaller here than in `cholesky`: the
     panel term is linear in `block` and this panel is the expensive one, so
@@ -367,27 +400,34 @@ def lu_factor[
     while k < n:
         var nb = min(block, n - k)
 
-        comptime if gpu:
-            ctx.enqueue_function[
-                getrf_panel[
-                    dtype,
-                    ALayout=type_of(wv).LayoutType,
-                    PLayout=type_of(pv).LayoutType,
-                    ILayout=type_of(iv).LayoutType,
-                    gpu=True,
-                ]
-            ](
-                wv,
-                pv,
-                iv,
-                Int32(k),
-                Int32(nb),
-                Int32(n),
-                grid_dim=1,
-                block_dim=_PANEL_THREADS,
-            )
-        else:
-            getrf_panel(wv, pv, iv, Int32(k), Int32(nb), Int32(n))
+        var panel_left: _Dense[dtype] = TileTensor(
+            lv.ptr_at_offset(Coord(0, 0)), row_major(Coord(n, block))
+        )
+        var panel_right: _Dense[dtype] = TileTensor(
+            rv.ptr_at_offset(Coord(0, 0)), row_major(Coord(block, n))
+        )
+        var panel_product: _Dense[dtype] = TileTensor(
+            sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+        )
+        getrf2[
+            dtype,
+            ALayout=type_of(wv).LayoutType,
+            PLayout=type_of(pv).LayoutType,
+            ILayout=type_of(iv).LayoutType,
+            gpu=gpu,
+        ](
+            wv,
+            pv,
+            iv,
+            panel_left,
+            panel_right,
+            panel_product,
+            k,
+            nb,
+            n,
+            base,
+            ctx,
+        )
 
         trsm_left_lower_unit[target=_target[gpu]()](wv, k, nb, n, ctx)
 

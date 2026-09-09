@@ -50,14 +50,18 @@ parallelism through GEMM. Nothing above changes when that lands.
 """
 
 from layout import Coord, TileTensor, coord_to_index_list
-from layout.tile_layout import TensorLayout
+from layout.tile_layout import TensorLayout, row_major
+from linalg.matmul import matmul as _max_matmul
 from layout.tile_tensor import PointerStorage
 from max.algorithm.functional import elementwise, parallelize
 from max.gpu import barrier
 from max.gpu.host import DeviceContext
 from std.gpu import block_dim, thread_idx
 from std.math import sqrt
-from std.sys.info import simd_width_of
+from std.sys.info import align_of, simd_width_of
+from std.utils import IndexList
+
+from .common import _Dense
 
 
 comptime _PANEL_THREADS = 256
@@ -326,6 +330,152 @@ def getrf_panel[
                 )
             i += nt
         _sync[gpu]()
+
+
+comptime _MIN_SPLIT = 4
+"""The narrowest panel `getrf2` will split.
+
+Below this the recursion's own GEMM is a couple of columns wide and its
+three launches cost more than the rank-one updates they replace. It also
+keeps the split clear of a one-column output, which sends `matmul` down the
+GEMV path that `numax.linalg.qr`'s `_MIN_GEMM_COLS` records as a segfault
+at `float64`.
+"""
+
+
+def getrf2[
+    dtype: DType,
+    ALayout: TensorLayout,
+    PLayout: TensorLayout,
+    ILayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    pivots: _View[DType.int32, PLayout],
+    info: _View[DType.int32, ILayout],
+    left: _Dense[dtype],
+    right: _Dense[dtype],
+    product: _Dense[dtype],
+    k: Int,
+    nb: Int,
+    n: Int,
+    base: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """LAPACK's `getrf2`: the panel at columns `k..k+nb`, split until it
+    fits `base`, with the two halves joined by a GEMM.
+
+    **What this is for.** `getrf_panel` below is a single-block kernel whose
+    panel spans the full remaining height, so it costs `O(n * block^2)` per
+    step on one SM -- and on the host, where `_lanes` is 1, on one thread.
+    Profiled at `n = 1024`, `block = 32`, `float32`, it was 57.9% of a whole
+    LU. This splits the panel's columns in half, factors the left half, and
+    turns the left half's effect on the right half into `linalg.matmul`,
+    recursively, until a half is narrow enough that `getrf_panel` is the
+    cheaper way to finish it. The recursion's cubic term therefore lands in
+    MAX's GEMM, which is threaded, instead of in one scalar loop.
+
+    **The launch count does not fall, and that is not the point.** A
+    recursion with cutoff `base` has `n / base` leaves over the whole
+    factorization against today's `n / block` panels, so it is launch-neutral
+    at `base == block` and worse below it. What it buys is that the serial
+    residue stops scaling with `block`: it becomes `O(n^2 * base / 2)` rather
+    than `O(n^2 * block / 2)`, which is what lets `block` grow to a size the
+    trailing GEMM prefers.
+
+    **Pivoting is numax's convention, not LAPACK's, and it shortens this.**
+    `getrf_panel` applies each interchange across all `n` columns as it finds
+    it, so a row swapped inside the left half is already swapped everywhere
+    -- including in the right half and in the already-written columns of `L`.
+    LAPACK needs a pivot-replay pass on each side of the split; this needs
+    none, and the body is just recurse-left, solve, GEMM, recurse-right.
+
+    `left`, `right` and `product` are the caller's scratch, reused at every
+    level. Their shapes shrink as the recursion descends, so each level
+    rebuilds its own view over the same pointer; the buffers must be sized
+    for the widest level, which is the caller's `n x block`, `block x n` and
+    `n x n`. Stream ordering is what makes the reuse safe -- a deeper level's
+    GEMM completes before the shallower one that follows it is enqueued.
+    """
+    if nb <= base or nb < _MIN_SPLIT:
+        comptime if gpu:
+            ctx.enqueue_function[
+                getrf_panel[
+                    dtype,
+                    ALayout=ALayout,
+                    PLayout=PLayout,
+                    ILayout=ILayout,
+                    gpu=True,
+                ]
+            ](
+                a,
+                pivots,
+                info,
+                Int32(k),
+                Int32(nb),
+                Int32(n),
+                grid_dim=1,
+                block_dim=_PANEL_THREADS,
+            )
+        else:
+            getrf_panel(a, pivots, info, Int32(k), Int32(nb), Int32(n))
+        return
+
+    var half = nb // 2
+
+    getrf2[dtype, ALayout, PLayout, ILayout, gpu](
+        a, pivots, info, left, right, product, k, half, n, base, ctx
+    )
+
+    # `U12 := L11^-1 A12`, over the panel's own right half only. The columns
+    # past `k + nb` belong to the caller's trailing block and are its GEMM's.
+    trsm_left_lower_unit[target="gpu" if gpu else "cpu"](
+        a, k, half, k + nb, ctx
+    )
+
+    var rows = n - k - half
+    var cols = nb - half
+    if rows > 0 and cols > 0:
+        var r0 = k + half
+
+        var l21: _Dense[dtype] = TileTensor(
+            left.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, half))
+        )
+        var u12: _Dense[dtype] = TileTensor(
+            right.ptr_at_offset(Coord(0, 0)), row_major(Coord(half, cols))
+        )
+        pack_block[target="gpu" if gpu else "cpu"](
+            a, l21, r0, k, rows, half, ctx
+        )
+        pack_block[target="gpu" if gpu else "cpu"](
+            a, u12, k, r0, half, cols, ctx
+        )
+
+        var out: _Dense[dtype] = TileTensor(
+            product.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, cols))
+        )
+
+        @parameter
+        @always_inline
+        @__copy_capture(a, r0)
+        def subtract[
+            _dtype: DType,
+            width: SIMDLength,
+            *,
+            alignment: Int = align_of[SIMD[_dtype, width]](),
+        ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
+            var at = Coord(r0 + idx[0], r0 + idx[1])
+            a.store[width](
+                at, a.load[width](at) - rebind[SIMD[dtype, width]](value)
+            )
+
+        _max_matmul[
+            elementwise_lambda_fn=subtract, target="gpu" if gpu else "cpu"
+        ](out, l21, u12, ctx)
+
+    getrf2[dtype, ALayout, PLayout, ILayout, gpu](
+        a, pivots, info, left, right, product, k + half, nb - half, n, base, ctx
+    )
 
 
 def laswp[

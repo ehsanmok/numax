@@ -12,11 +12,15 @@ whole reason it exists is that MAX's `matmul` will not read that block in
 place.
 """
 
+from layout import Coord, TileTensor
+from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.array import Static, zeros
+from numax.core.array import Static, zeros, zeros_dyn
+from numax.linalg.common import _Dense
 from numax.linalg.panel import (
+    getrf2,
     _PANEL_THREADS,
     getrf_panel,
     pack_block,
@@ -26,6 +30,20 @@ from numax.linalg.panel import (
 )
 
 comptime dtype = DType.float64
+
+
+def _pivot_matrix[n: Int]() raises -> List[Scalar[dtype]]:
+    """A general matrix whose column magnitudes are well separated, so the
+    largest entry in any column is unambiguous and two implementations that
+    search it must agree on the pivot exactly rather than by luck."""
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        for j in range(n):
+            var v = Float64((i * 7 + j * 3) % 11) + 1.0
+            if i == j:
+                v = v + Float64(n)
+            values[i * n + j] = Scalar[dtype](v * (1.0 + 0.25 * Float64(i)))
+    return values^
 
 
 def _cpu() raises -> DeviceContext:
@@ -343,6 +361,103 @@ def test_pack_block_transposed_copies_a_ragged_width() raises:
                 Float64(values[(2 + j) * n + 3 + i]),
                 atol=0,
             )
+
+
+def test_getrf2_agrees_with_the_single_block_panel_at_every_base() raises:
+    """The recursive panel and the one it replaces factor the same columns
+    into the same `L`, `U` and pivots.
+
+    `base >= nb` takes the base case on the first test, which *is*
+    `getrf_panel`, so that run is the control every other base is pinned
+    against. The factor is compared with a tolerance because the recursion
+    reassociates -- its rank-one updates become a GEMM -- but the pivots are
+    compared exactly: the matrix below has well-separated column magnitudes,
+    so no two candidates can legitimately tie and a different pivot means a
+    different search, not a different rounding.
+
+    `nb = 7` is prime, so every level of the split is ragged and `half`
+    never equals `nb - half`.
+    """
+    comptime n = 12
+    comptime nb = 7
+    var ctx = _cpu()
+
+    var want_a = Static[dtype, n, n](ctx, _pivot_matrix[n]())
+    var want_p = zeros[DType.int32, n + _PANEL_THREADS](ctx)
+    var want_i = zeros[DType.int32, 1](ctx)
+    var left0 = zeros_dyn[dtype, 2](n, nb, ctx=ctx)
+    var right0 = zeros_dyn[dtype, 2](nb, n, ctx=ctx)
+    var prod0 = zeros_dyn[dtype, 2](n, n, ctx=ctx)
+    var wl0: _Dense[dtype] = TileTensor(
+        left0.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, nb))
+    )
+    var wr0: _Dense[dtype] = TileTensor(
+        right0.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, n))
+    )
+    var wp0: _Dense[dtype] = TileTensor(
+        prod0.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    )
+    getrf2(
+        want_a.view(),
+        want_p.view(),
+        want_i.view(),
+        wl0,
+        wr0,
+        wp0,
+        0,
+        nb,
+        n,
+        nb,
+        ctx,
+    )
+    ctx.synchronize()
+    var want = want_a.to_host()
+    var want_pivots = want_p.to_host()
+    _ = left0^
+    _ = right0^
+    _ = prod0^
+
+    for base in [1, 2, 3, 4, 5]:
+        var got_a = Static[dtype, n, n](ctx, _pivot_matrix[n]())
+        var got_p = zeros[DType.int32, n + _PANEL_THREADS](ctx)
+        var got_i = zeros[DType.int32, 1](ctx)
+        var left = zeros_dyn[dtype, 2](n, nb, ctx=ctx)
+        var right = zeros_dyn[dtype, 2](nb, n, ctx=ctx)
+        var prod = zeros_dyn[dtype, 2](n, n, ctx=ctx)
+        var wl: _Dense[dtype] = TileTensor(
+            left.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, nb))
+        )
+        var wr: _Dense[dtype] = TileTensor(
+            right.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, n))
+        )
+        var wp: _Dense[dtype] = TileTensor(
+            prod.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+        )
+        getrf2(
+            got_a.view(),
+            got_p.view(),
+            got_i.view(),
+            wl,
+            wr,
+            wp,
+            0,
+            nb,
+            n,
+            base,
+            ctx,
+        )
+        ctx.synchronize()
+        var got = got_a.to_host()
+        var got_pivots = got_p.to_host()
+
+        # Every column, not just the panel's: interchanges are applied
+        # across the full width as they are found, so the right recursion
+        # permutes rows of already-written `L` and of the untouched
+        # trailing columns. A replay bug shows up outside the panel.
+        for i in range(n * n):
+            assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-10)
+        for j in range(nb):
+            assert_equal(Int(got_pivots[j]), Int(want_pivots[j]))
 
 
 def main() raises:
