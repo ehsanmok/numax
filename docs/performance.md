@@ -416,18 +416,18 @@ counterpart to be compared against.
 
 | op | numax | SciPy (LAPACK + Accelerate) | numax / SciPy |
 |---|---|---|---|
-| `matmul` (ceiling) | 1,457 | 1,306 | **1.12** |
-| `cholesky` | 30.4 | 248.1 | 0.12 |
-| `lu_factor` | 70.5 | 222.2 | 0.32 |
-| `solve` | 59.2 | 152.7 | 0.39 |
-| `qr_factor` | 34.4 | 50.9 | 0.68 |
+| `matmul` (ceiling) | 1,488 | 1,306 | **1.14** |
+| `cholesky` | 46.0 | 248.1 | 0.19 |
+| `lu_factor` | 67.1 | 222.2 | 0.30 |
+| `solve` | 65.9 | 152.7 | 0.43 |
+| `qr_factor` | 32.6 | 50.9 | 0.64 |
 
 **Metal -- the same machine's 18-core GPU, PyTorch 2.13.0 on MPS:**
 
 | op | numax | PyTorch (MPS) | numax / PyTorch |
 |---|---|---|---|
-| `matmul` (ceiling) | 1,788 | 1,143 | **1.56** |
-| `cholesky` | 56.1 | 125.0 | 0.45 |
+| `matmul` (ceiling) | 1,812 | 1,143 | **1.59** |
+| `cholesky` | 61.6 | 125.0 | 0.49 |
 | `lu_factor` | 18.8 | 51.5 | 0.36 |
 | `solve` | 16.8 | 20.9 | 0.80 |
 
@@ -458,8 +458,16 @@ What this machine says:
   cannot be read as a fraction of it.** See the next section: a blocked
   factorization's trailing update is a rank-`block` GEMM, not a square one,
   and the two run at very different speeds.
-- `cholesky` moves by about 10% between runs at `n = 1024` on this box
-  (30.4-34.2 across the runs taken here). Read it as a range.
+- `cholesky` and `lu_factor` move by 5-10% between runs at `n = 1024` on
+  this box. Read them as ranges, not points.
+- These are the numbers *after* three changes made in response to them:
+  `pack_block` copying at the SIMD width, `trsm_right_lower_t`'s inner dot
+  product vectorized, and the block defaults retuned to the optima those
+  two moved. `cholesky` at `n = 1024` was 34.4 GFLOP/s before them and is
+  46-52 after; `axpy` was 70.2 GB/s on the host and 23.9 on Metal, and is
+  90.3 and 57.3. The `bench_linalg.mojo` block sweep is what found the new
+  optima and it still runs, so the next change to the panel or the trsm
+  should re-run it rather than assume these defaults survive.
 
 ### The ceiling row is not the ceiling a blocked factorization can reach
 

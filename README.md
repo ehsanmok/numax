@@ -652,16 +652,16 @@ separate table and not a column of the one above:
 
 | | `matmul` (the ceiling) | `cholesky` | `lu_factor` | `solve` |
 |---|---|---|---|---|
-| numax, CPU | **1,457** | 30.4 | 70.5 | 59.2 |
+| numax, CPU | **1,488** | 46.0 | 67.1 | 65.9 |
 | SciPy (LAPACK + Accelerate), CPU | 1,306 | 248.1 | 222.2 | 152.7 |
-| numax, Metal | **1,788** | 56.1 | 18.8 | 16.8 |
+| numax, Metal | **1,812** | 61.6 | 18.8 | 16.8 |
 | PyTorch (MPS), Metal | 1,143 | 125.0 | 51.5 | 20.9 |
 
 Read those as one claim and one gap. The `matmul` row is the claim: numax's
 factorizations put their whole `O(n^3)` term through `linalg.matmul`, and
 MAX's GEMM is at 79% of OpenBLAS on the EPYC, *ahead* of cuBLAS's FP32 path
-on the A10G, and ahead of both vendors on the M3 Pro -- 1,457 against
-Accelerate's 1,306 and 1,788 against PyTorch's 1,143. The factorization
+on the A10G, and ahead of both vendors on the M3 Pro -- 1,488 against
+Accelerate's 1,306 and 1,812 against PyTorch's 1,143. The factorization
 rows are the gap, and it is not the multiply: each block step is a
 single-block panel kernel plus a host launch, so cuSOLVER's 6-12x is a
 parallel panel. Note also that the ceiling row is a *square* GEMM while a

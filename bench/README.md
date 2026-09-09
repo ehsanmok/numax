@@ -663,18 +663,18 @@ CPU:
 
 | op | numax | SciPy (LAPACK + Accelerate) |
 |---|---|---|
-| `matmul` (ceiling) | **1,457** | 1,306 |
-| `cholesky` | 30.4 | 248.1 |
-| `lu_factor` | 70.5 | 222.2 |
-| `solve` | 59.2 | 152.7 |
-| `qr` | 34.4 | 50.9 |
+| `matmul` (ceiling) | **1,488** | 1,306 |
+| `cholesky` | 46.0 | 248.1 |
+| `lu_factor` | 67.1 | 222.2 |
+| `solve` | 65.9 | 152.7 |
+| `qr` | 32.6 | 50.9 |
 
 Metal:
 
 | op | numax | PyTorch (MPS) |
 |---|---|---|
-| `matmul` (ceiling) | **1,788** | 1,143 |
-| `cholesky` | 56.1 | 125.0 |
+| `matmul` (ceiling) | **1,812** | 1,143 |
+| `cholesky` | 61.6 | 125.0 |
 | `lu_factor` | 18.8 | 51.5 |
 | `solve` | 16.8 | 20.9 |
 
