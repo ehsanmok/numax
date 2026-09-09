@@ -300,6 +300,45 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
         ctx.enqueue_memset(self.buffer, Scalar[Self.dtype](0))
         ctx.synchronize()
 
+    @staticmethod
+    def _uninitialized(
+        ctx: DeviceContext, layout: Self.LayoutType
+    ) raises -> Self:
+        """The allocation above with the zeroing taken out: a tensor whose
+        elements are whatever was already in the memory.
+
+        **Kernel-author only, and sound under one precondition:** the next
+        thing to touch this buffer must be work enqueued on `ctx` that
+        writes *every* element. An `elementwise` pass over the whole shape
+        qualifies. A partial write does not, and neither does a host read
+        through `__getitem__` or `to_host`, nor a launch on a different
+        context -- `enqueue_create_buffer` is itself queued and nothing
+        here synchronizes it.
+
+        Private for that reason. Public `empty` zero-initializes and says
+        so, and the precondition is one a call site inside `numax` can
+        check and a caller of `empty` cannot.
+
+        What it saves is the two lines the constructor above ends with. The
+        `enqueue_memset` is a full pass over a buffer the kernel is about
+        to overwrite, and the `synchronize` is a device round trip per
+        allocation -- at `n = 16M` those were 4.7 ms of `axpy`'s 8.5 ms
+        against 4.3 ms for the kernel itself.
+
+        Unlike the zeroing constructor this works at `DType.bool`, which
+        `enqueue_memset` cannot compile for. Nothing relies on that yet.
+        """
+        return Self(
+            ctx.enqueue_create_buffer[Self.dtype](layout.size()),
+            layout,
+            ctx.api() == "cpu",
+        )
+
+    @staticmethod
+    def _uninitialized(ctx: DeviceContext) raises -> Self:
+        """`_uninitialized` at a compile-time shape. See above."""
+        return Self._uninitialized(ctx, Self._static_layout())
+
     def __init__(
         out self,
         ctx: DeviceContext,

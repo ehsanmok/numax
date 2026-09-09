@@ -620,6 +620,50 @@ def test_tensor_axpy_agrees_with_the_array_axpy() raises:
         assert_almost_equal(got[i], want[i].v, atol=1e-12)
 
 
+def test_tensor_axpy_writes_every_element_of_its_result() raises:
+    """`axpy` allocates its result without zeroing it, so this asserts the
+    kernel really does cover the whole vector.
+
+    The precondition `Tensor._uninitialized` is sound under is that the
+    next thing to touch the buffer writes *every* element. Nothing else in
+    the suite can catch a violation: a zeroed buffer plus a partial write
+    reads as a plausible answer, and the arithmetic tests all use ramps
+    whose true values are nowhere near zero only by luck. Here the check is
+    structural -- a length that is not a multiple of any SIMD width, so the
+    `elementwise` tail is exercised, and every element compared against the
+    closed form rather than against another implementation.
+    """
+    comptime n = 37
+    var ctx = _cpu()
+    var xv = _ramp[n](1.0, 0.5)
+    var yv = _ramp[n](7.0, -0.25)
+    var x = Static[DType.float64, n](ctx, xv.copy())
+    var y = Static[DType.float64, n](ctx, yv.copy())
+    var alpha = Scalar[DType.float64](-1.75)
+
+    var got = axpy(alpha, x, y).to_host()
+    for i in range(n):
+        assert_almost_equal(got[i], Float64(alpha) * xv[i] + yv[i], atol=1e-12)
+
+
+def test_tensor_outer_writes_every_element_of_its_result() raises:
+    """The rank-2 counterpart of the test above, at extents that share no
+    factor with a SIMD width, so neither the row tail nor the last row can
+    be skipped without this failing."""
+    comptime m = 11
+    comptime n = 13
+    var ctx = _cpu()
+    var av = _ramp[m](2.0, 0.75)
+    var bv = _ramp[n](-3.0, 0.5)
+    var a = Static[DType.float64, m](ctx, av.copy())
+    var b = Static[DType.float64, n](ctx, bv.copy())
+
+    var got = outer(a, b).to_host()
+    for i in range(m):
+        for j in range(n):
+            assert_almost_equal(got[i * n + j], av[i] * bv[j], atol=1e-12)
+
+
 def test_tensor_outer_agrees_with_the_array_outer() raises:
     comptime n = 8
     var ctx = _cpu()

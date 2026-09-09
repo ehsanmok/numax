@@ -232,7 +232,11 @@ def axpy[
     other.
     """
     var ctx = x.context()
-    var out = Static[dtype, n](ctx)
+    # Not zeroed: the `elementwise` pass below writes every element of
+    # `out` before anything reads one, so the ordinary constructor's
+    # memset would be a full pass over a buffer about to be overwritten,
+    # and its synchronize a device round trip for nothing.
+    var out = Static[dtype, n]._uninitialized(ctx)
     var xv = x.view()
     var yv = y.view()
     var ov = out.view()
@@ -268,7 +272,9 @@ def outer[
     `a` and `b` may have different lengths, as `numpy.outer` allows.
     """
     var ctx = a.context()
-    var out = Static[dtype, m, n](ctx)
+    # Not zeroed, for the reason `axpy` above gives: the `elementwise`
+    # pass writes every element of `out` before anything reads one.
+    var out = Static[dtype, m, n]._uninitialized(ctx)
     var av = a.view()
     var bv = b.view()
     var ov = out.view()
