@@ -145,6 +145,14 @@ overload is reachable at the pin, for the `input_fn`-origins reason
 hand-launched from `numax.core.tensor`'s row primitives, which is what
 `examples/intermediate/softmax.mojo` shows.
 
+`max.algorithm.dual_elementwise` was checked as a way to fuse chained maps into
+one launch and is denied twice over. It ships only the compile-time-parameter
+form, so a closure fails with "failed to infer parameter `__origins__`" while a
+non-capturing function cannot reach the tensors at all -- its body is handed
+only a coordinate. And it fuses two *independent* elementwise operations into
+one launch rather than two chained ones, so it does not address the chained
+case even where it compiles.
+
 MAX's `nn` versions of `arange`/`reshape`/`concat`/`split` were checked and are
 not usable as array functions: `nn.arange` returns one SIMD vector for an
 index rather than filling a tensor, `nn.concat` wants a pre-sized output plus a
