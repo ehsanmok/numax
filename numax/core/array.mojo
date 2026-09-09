@@ -133,6 +133,12 @@ from layout.tile_layout import row_major, TensorLayout
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from max.algorithm.functional import elementwise
 from linalg.transpose import transpose as _max_transpose
+from nn.pad import (
+    pad_constant as _max_pad_constant,
+    pad_reflect as _max_pad_reflect,
+    pad_repeat as _max_pad_repeat,
+)
+from nn.pad_gpu import pad_constant as _max_pad_constant_gpu
 from std.utils import IndexList
 
 from .numeric import FloatLike
@@ -1625,6 +1631,150 @@ def triu[
     The mirror of `tril` and the same MAX kernel.
     """
     return _band_part[dtype, rows, cols, gpu](a, 0, -1)
+
+
+comptime pad_constant = 0
+"""`mode` for `pad`: fill the border with a constant. The default, and the
+only mode with a device path."""
+comptime pad_reflect = 1
+"""`mode` for `pad`: mirror the interior across the border, excluding the
+edge element itself. `numpy.pad`'s `reflect`. Host only."""
+comptime pad_edge = 2
+"""`mode` for `pad`: repeat the border element outwards. `numpy.pad`'s
+`edge`, MAX's `pad_repeat`. Host only."""
+
+
+def _pad_into[
+    dtype: DType,
+    SrcLayout: TensorLayout,
+    DstLayout: TensorLayout,
+    rank: Int,
+    mode: Int,
+    gpu: Bool,
+](
+    mut src: Tensor[dtype, SrcLayout],
+    mut dst: Tensor[dtype, DstLayout],
+    var widths: Array[Int, 2 * rank],
+    src_shape: IndexList[rank],
+    dst_shape: IndexList[rank],
+    constant: Scalar[dtype],
+) raises:
+    """The `nn` padding kernels, with the widths staged the way MAX wants.
+
+    MAX reads the `(before, after)` pairs through a raw pointer rather than
+    taking them as arguments, and dereferences them while building the
+    launch, so `widths` is a stack `Array` viewed as a `TileTensor` and its
+    storage is handed over directly. Device-resident widths would fault the
+    same way `_band_part`'s counts do.
+
+    The two halves of this delegation are spelled differently, which is
+    upstream's shape and not a choice here. `nn.pad` takes `TileTensor` in
+    and out and has no `DeviceContext` at all, so it is the host path for
+    all three modes. `nn.pad_gpu` is the device path, covers `constant`
+    alone, and takes raw pointers plus `IndexList` shapes -- a pointer and a
+    shape being exactly what `Tensor`'s own `DeviceBuffer` already holds, so
+    this is not the `LayoutTensor` bridge the boundary rule denies.
+    """
+    var pads = TileTensor(widths, row_major[2 * rank]())
+
+    comptime if gpu:
+        var ctx = src.context()
+        _max_pad_constant_gpu(
+            dst.buffer.unsafe_ptr(),
+            dst_shape,
+            src.buffer.unsafe_ptr(),
+            src_shape,
+            pads._storage,
+            constant,
+            ctx,
+        )
+        ctx.synchronize()
+    else:
+        var source = src.view()
+        var target = dst.view()
+        comptime if mode == pad_constant:
+            _max_pad_constant(target, source, pads._storage, constant)
+        elif mode == pad_reflect:
+            _max_pad_reflect(target, source, pads._storage)
+        else:
+            _max_pad_repeat(target, source, pads._storage)
+
+    # `_storage` erases the origin, so `pads` does not keep `widths` alive
+    # and MAX would read a dead stack slot. See `numax.linalg.qr`.
+    _ = widths^
+
+
+def pad[
+    dtype: DType,
+    n: Int,
+    before: Int,
+    after: Int,
+    mode: Int = pad_constant,
+    gpu: Bool = False,
+](mut a: Static[dtype, n], constant: Scalar[dtype] = 0) raises -> Static[
+    dtype, before + n + after
+] where (mode == pad_constant or mode == pad_reflect or mode == pad_edge) and (
+    mode == pad_constant or not gpu
+):
+    """`a` widened by `before` elements in front and `after` behind.
+    `numpy.pad(a, (before, after), mode)` at rank 1.
+
+    The widths are compile-time parameters because the padded extent is part
+    of the return type; `constant` is a run-time argument because it is not.
+
+    `gpu=True` is available for the constant mode only -- MAX's device
+    padding kernel implements no other -- and the `where` clause above turns
+    the other two into a compile error rather than a silent host fallback.
+    """
+    var out = Static[dtype, before + n + after]._uninitialized(a.context())
+    var widths: Array[Int, 2] = [before, after]
+    _pad_into[dtype, _, _, 1, mode, gpu](
+        a,
+        out,
+        widths^,
+        IndexList[1](n),
+        IndexList[1](before + n + after),
+        constant,
+    )
+    return out^
+
+
+def pad[
+    dtype: DType,
+    rows: Int,
+    cols: Int,
+    top: Int,
+    bottom: Int,
+    left: Int,
+    right: Int,
+    mode: Int = pad_constant,
+    gpu: Bool = False,
+](
+    mut a: Static[dtype, rows, cols], constant: Scalar[dtype] = 0
+) raises -> Static[dtype, top + rows + bottom, left + cols + right] where (
+    mode == pad_constant or mode == pad_reflect or mode == pad_edge
+) and (
+    mode == pad_constant or not gpu
+):
+    """`a` widened by `top`/`bottom` rows and `left`/`right` columns.
+    `numpy.pad(a, ((top, bottom), (left, right)), mode)` at rank 2.
+
+    The rank-1 form above documents why the widths are parameters and why
+    `gpu=True` is constant-only.
+    """
+    comptime out_rows = top + rows + bottom
+    comptime out_cols = left + cols + right
+    var out = Static[dtype, out_rows, out_cols]._uninitialized(a.context())
+    var widths: Array[Int, 4] = [top, bottom, left, right]
+    _pad_into[dtype, _, _, 2, mode, gpu](
+        a,
+        out,
+        widths^,
+        IndexList[2](rows, cols),
+        IndexList[2](out_rows, out_cols),
+        constant,
+    )
+    return out^
 
 
 def vander[

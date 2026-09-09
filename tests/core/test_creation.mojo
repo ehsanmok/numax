@@ -22,6 +22,9 @@ from numax.core.array import (
     hstack,
     identity,
     meshgrid,
+    pad,
+    pad_edge,
+    pad_reflect,
     tri,
     tril,
     triu,
@@ -192,6 +195,87 @@ def test_hstack_joins_columns() raises:
     assert_equal(values[2], 20.0)
     assert_equal(values[3], 3.0)
     assert_equal(values[4], 30.0)
+
+
+def _row[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
+    var ctx = DeviceContext(api="cpu")
+    var elements = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        elements.append(Scalar[dtype](values[i]))
+    return Static[dtype, n](ctx, elements^)
+
+
+def test_pad_constant_matches_numpy() raises:
+    # numpy.pad([1, 2, 3], (1, 2), constant_values=5)
+    var a = _row[3]([1.0, 2.0, 3.0])
+    var padded = pad[before=1, after=2](a, 5.0)
+    assert_equal(padded.num_elements, 6)
+    var got = padded.to_host()
+    var want: List[Float64] = [5.0, 1.0, 2.0, 3.0, 5.0, 5.0]
+    for i in range(6):
+        assert_equal(got[i], want[i])
+
+
+def test_pad_defaults_to_zero() raises:
+    # numpy.pad([1, 2], (2, 0)) -- the constant defaults to 0, as NumPy's does
+    var a = _row[2]([1.0, 2.0])
+    var got = pad[before=2, after=0](a).to_host()
+    assert_equal(got[0], 0.0)
+    assert_equal(got[1], 0.0)
+    assert_equal(got[2], 1.0)
+    assert_equal(got[3], 2.0)
+
+
+def test_pad_reflect_mirrors_the_interior() raises:
+    # numpy.pad([1, 2, 3], (1, 2), "reflect") -- the edge element is not
+    # repeated, which is what separates this mode from `edge`
+    var a = _row[3]([1.0, 2.0, 3.0])
+    var got = pad[before=1, after=2, mode=pad_reflect](a).to_host()
+    var want: List[Float64] = [2.0, 1.0, 2.0, 3.0, 2.0, 1.0]
+    for i in range(6):
+        assert_equal(got[i], want[i])
+
+
+def test_pad_edge_repeats_the_border() raises:
+    # numpy.pad([1, 2, 3], (1, 2), "edge") -- MAX spells this `pad_repeat`
+    var a = _row[3]([1.0, 2.0, 3.0])
+    var got = pad[before=1, after=2, mode=pad_edge](a).to_host()
+    var want: List[Float64] = [1.0, 1.0, 2.0, 3.0, 3.0, 3.0]
+    for i in range(6):
+        assert_equal(got[i], want[i])
+
+
+def test_pad_rank_two_widens_both_axes() raises:
+    # numpy.pad([[1, 2], [3, 4]], ((1, 0), (1, 1)), constant_values=9)
+    var m = _m[2, 2]([1.0, 2.0, 3.0, 4.0])
+    var padded = pad[top=1, bottom=0, left=1, right=1](m, 9.0)
+    assert_equal(padded.num_elements, 12)
+    var got = padded.to_host()
+    var want: List[Float64] = [
+        9.0,
+        9.0,
+        9.0,
+        9.0,
+        9.0,
+        1.0,
+        2.0,
+        9.0,
+        9.0,
+        3.0,
+        4.0,
+        9.0,
+    ]
+    for i in range(12):
+        assert_equal(got[i], want[i])
+
+
+def test_pad_by_zero_is_a_copy() raises:
+    # the degenerate case the shape arithmetic has to get right: no widening
+    var m = _m[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var got = pad[top=0, bottom=0, left=0, right=0](m).to_host()
+    var original = m.to_host()
+    for i in range(6):
+        assert_equal(got[i], original[i])
 
 
 def main() raises:
