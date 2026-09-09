@@ -46,8 +46,8 @@ and this one runs anywhere. Run with `pixi run bench-linalg`.
 """
 
 from max.gpu.host import DeviceContext
+from std.benchmark import keep, run
 from std.math import sqrt
-from std.time import perf_counter_ns
 
 from numax.core.array import Static, transpose
 from numax.linalg import (
@@ -66,12 +66,16 @@ from numax.linalg import (
 comptime dtype = DType.float32
 comptime warmup_iters = 2
 
+comptime budget_secs = 1.0
+"""Seconds `std.benchmark.run` may spend on one measurement.
 
-def _iters(work: Int) -> Int:
-    """Iteration count scaled to keep each measurement around a tenth of a
-    second, floored at three so the smallest sizes still average."""
-    var scaled = 400_000_000 // work
-    return max(3, min(200, scaled))
+The iteration count is `run`'s to choose, not this file's. It keeps
+halving its estimate until a batch clears `min_runtime_secs` and then
+averages until either `max_iters` or this budget runs out, which is what a
+hand-rolled count scaled by the cubic work can only approximate -- and
+approximated badly at the small sizes, where three iterations of a 0.1 ms
+factorization measured mostly timer noise.
+"""
 
 
 def _spd_entry(i: Int, j: Int, n: Int) -> Float64:
@@ -176,15 +180,17 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
     """
     var a = _general[n](ctx)
     var b = _general_offset[n](ctx)
-    var iters = _iters(2 * n * n * n)
 
-    for _ in range(warmup_iters):
-        _ = matmul[dtype, n, n, n](a, b)
+    def work() raises {mut a, mut b}:
+        var c = matmul[dtype, n, n, n](a, b)
+        keep(c.buffer.unsafe_ptr())
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = matmul[dtype, n, n, n](a, b)
-    var ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
 
     var product = matmul[dtype, n, n, n](a, b).to_host()
     var worst = Float64(0)
@@ -201,15 +207,17 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
 
 def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     var a = _spd[n](ctx)
-    var iters = _iters(n * n * n // 3)
 
-    for _ in range(warmup_iters):
-        _ = cholesky[dtype, n, False, block](a)
+    def work() raises {mut a}:
+        var l = cholesky[dtype, n, False, block](a)
+        keep(l.buffer.unsafe_ptr())
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = cholesky[dtype, n, False, block](a)
-    var ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
 
     # `L @ L.T` against `A`, both on the device, so the residual measures
     # the factorization and not a host copy.
@@ -229,15 +237,17 @@ def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
 
 def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
-    var iters = _iters(2 * n * n * n // 3)
 
-    for _ in range(warmup_iters):
-        _ = lu_factor[dtype, n, False, block](a)
+    def work() raises {mut a}:
+        var f = lu_factor[dtype, n, False, block](a)
+        keep(f.factored.buffer.unsafe_ptr())
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = lu_factor[dtype, n, False, block](a)
-    var ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
 
     # One factorization, one solve, and the residual of the original
     # system -- the only check that exercises both triangular halves and
@@ -260,15 +270,17 @@ def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
 def bench_solve[n: Int, block: Int = 16](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
     var b = _ramp[n](ctx, 5)
-    var iters = _iters(2 * n * n * n // 3)
 
-    for _ in range(warmup_iters):
-        _ = solve[dtype, n, False, block](a, b)
+    def work() raises {mut a, mut b}:
+        var x = solve[dtype, n, False, block](a, b)
+        keep(x.buffer.unsafe_ptr())
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = solve[dtype, n, False, block](a, b)
-    var ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
 
     var x = solve[dtype, n, False, block](a, b)
     var residual = matvec(a, x).to_host()
@@ -287,15 +299,17 @@ def bench_qr[
     m: Int, n: Int, block: Int = 16
 ](ctx: DeviceContext) raises where m >= n:
     var a = _general_rect[m, n](ctx)
-    var iters = _iters(2 * m * n * n - 2 * n * n * n // 3)
 
-    for _ in range(warmup_iters):
-        _ = qr_factor[dtype, m, n, False, block](a)
+    def work() raises {mut a}:
+        var f = qr_factor[dtype, m, n, False, block](a)
+        keep(f.factored.buffer.unsafe_ptr())
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = qr_factor[dtype, m, n, False, block](a)
-    var ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
 
     var factored = qr_factor[dtype, m, n, False, block](a)
     var r = factored.r()
@@ -319,33 +333,55 @@ def bench_qr[
 def bench_blas1[n: Int](ctx: DeviceContext) raises:
     var x = _ramp[n](ctx, 1)
     var y = _ramp[n](ctx, 2)
-    var iters = _iters(n)
 
-    for _ in range(warmup_iters):
-        _ = dot(x, y)
-        _ = nrm2(x)
-        _ = asum(x)
-        _ = axpy(Scalar[dtype](2.5), x, y)
+    # `keep` on each result matters more here than above: three of these
+    # four return a scalar the caller drops, which is the shape an
+    # optimizer is most likely to fold away entirely.
+    def dot_work() raises {mut x, mut y}:
+        keep(dot(x, y))
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = dot(x, y)
-    var dot_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    def nrm2_work() raises {mut x}:
+        keep(nrm2(x))
 
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = nrm2(x)
-    var nrm2_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    def asum_work() raises {mut x}:
+        keep(asum(x))
 
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = asum(x)
-    var asum_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    def axpy_work() raises {mut x, mut y}:
+        var s = axpy(Scalar[dtype](2.5), x, y)
+        keep(s.buffer.unsafe_ptr())
 
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = axpy(Scalar[dtype](2.5), x, y)
-    var axpy_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    var dot_ns = (
+        run(
+            dot_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+        ).mean()
+        * 1e9
+    )
+    var nrm2_ns = (
+        run(
+            nrm2_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+        ).mean()
+        * 1e9
+    )
+    var asum_ns = (
+        run(
+            asum_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+        ).mean()
+        * 1e9
+    )
+    var axpy_ns = (
+        run(
+            axpy_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+        ).mean()
+        * 1e9
+    )
 
     # `float64` recomputations of all four, on the host, from the same
     # entries. The reductions are the ones worth checking: MAX's tree

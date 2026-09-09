@@ -25,8 +25,8 @@ part of CI, which has no GPU runners. Run with `pixi run bench-blas1-gpu`.
 """
 
 from max.gpu.host import DeviceContext
+from std.benchmark import keep, run
 from std.math import sqrt
-from std.time import perf_counter_ns
 
 from numax.core.array import Static
 from numax.linalg import asum, axpy, dot, nrm2
@@ -34,12 +34,14 @@ from numax.linalg import asum, axpy, dot, nrm2
 comptime dtype = DType.float32
 comptime warmup_iters = 2
 
+comptime budget_secs = 1.0
+"""Seconds `std.benchmark.run` may spend on one measurement.
 
-def _iters(work: Int) -> Int:
-    """Iteration count scaled to keep each measurement around a tenth of a
-    second, floored at three so the smallest sizes still average."""
-    var scaled = 400_000_000 // work
-    return max(3, min(200, scaled))
+`max_batch_size=1` goes with it, so each sample is one
+launch-through-completion round trip rather than a batch amortized across
+one synchronize -- the same shape the factorization file and
+`../torch/linalg.py` use.
+"""
 
 
 def _ramp[n: Int](ctx: DeviceContext, salt: Int) raises -> Static[dtype, n]:
@@ -66,35 +68,59 @@ def _band_row(name: String, n: Int, ns: Float64, bytes: Int, err: Float64):
 def bench_blas1[n: Int](ctx: DeviceContext) raises:
     var x = _ramp[n](ctx, 1)
     var y = _ramp[n](ctx, 2)
-    var iters = _iters(n)
 
-    for _ in range(warmup_iters):
-        _ = dot[dtype, n, True](x, y)
-        _ = nrm2[dtype, n, True](x)
-        _ = asum[dtype, n, True](x)
-        _ = axpy[dtype, n, True](Scalar[dtype](2.5), x, y)
-    ctx.synchronize()
+    # `keep` matters most for the three that return a scalar the caller
+    # drops, which is the shape an optimizer is likeliest to fold away.
+    def dot_work() raises {mut x, mut y}:
+        keep(dot[dtype, n, True](x, y))
 
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = dot[dtype, n, True](x, y)
-    var dot_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    def nrm2_work() raises {mut x}:
+        keep(nrm2[dtype, n, True](x))
 
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = nrm2[dtype, n, True](x)
-    var nrm2_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+    def asum_work() raises {mut x}:
+        keep(asum[dtype, n, True](x))
 
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = asum[dtype, n, True](x)
-    var asum_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
-
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = axpy[dtype, n, True](Scalar[dtype](2.5), x, y)
+    def axpy_work() raises {mut x, mut y, imm ctx}:
+        var s = axpy[dtype, n, True](Scalar[dtype](2.5), x, y)
+        keep(s.buffer.unsafe_ptr())
         ctx.synchronize()
-    var axpy_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
+
+    var dot_ns = (
+        run(
+            dot_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+            max_batch_size=1,
+        ).mean()
+        * 1e9
+    )
+    var nrm2_ns = (
+        run(
+            nrm2_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+            max_batch_size=1,
+        ).mean()
+        * 1e9
+    )
+    var asum_ns = (
+        run(
+            asum_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+            max_batch_size=1,
+        ).mean()
+        * 1e9
+    )
+    var axpy_ns = (
+        run(
+            axpy_work,
+            num_warmup_iters=warmup_iters,
+            max_runtime_secs=budget_secs,
+            max_batch_size=1,
+        ).mean()
+        * 1e9
+    )
 
     # The three reductions return a `Scalar`, so they synchronize on their
     # own way out; `axpy` returns a tensor and gets an explicit one above.
