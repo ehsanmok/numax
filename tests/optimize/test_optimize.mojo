@@ -12,7 +12,7 @@ from std.math import cos as cos_f64, exp as exp_f64, pi, sin as sin_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Gradient, Plain
-from numax.optimize import (
+from numax.optimize.array import (
     bfgs,
     brentq,
     curve_fit,
@@ -100,7 +100,7 @@ def test_newton_tol_agrees_with_the_tier_one_sibling() raises:
     # numax.optimize.newton runs a fixed 20 iterations of the same
     # mathematics. On a well-behaved root the two must land in the same
     # place -- that is what makes them siblings rather than alternatives.
-    from numax.optimize import newton
+    from numax.optimize.array import newton
 
     var fixed = newton[P, cos_minus_x](P.constant(0.5))
     var adaptive = newton_tol[cos_minus_x](0.5)

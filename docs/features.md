@@ -258,15 +258,28 @@ runs MAX's GPU kernels.
 
 ## `numax.optimize`
 
-Two halves, split by whether the iteration count is known up front.
+Two tiers, one import each. `numax.optimize` is the `Tensor` one and holds
+the nonlinear fits; `numax.optimize.array` holds everything that works on a
+handful of scalars, split in turn by whether the iteration count is known up
+front.
 
-| Surface | Tier | Where |
+| Surface — over `Tensor`, from `numax.optimize` | Tier | Where |
 |---|---|---|
-| `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/solve.mojo`](../numax/optimize/solve.mojo) |
-| `newton_tol`, `brentq` — scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
-| `bfgs` — quasi-Newton minimization to a tolerance, returning `MinimizeResult` | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
-| `least_squares`, `curve_fit` — Levenberg-Marquardt, the second with the data as a runtime argument | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
-| `nelder_mead` — derivative-free simplex, for objectives whose gradient exists but should not be trusted | 2 | [`optimize/optimize.mojo`](../numax/optimize/optimize.mojo) |
+| `least_squares`, `curve_fit` — Levenberg-Marquardt, the damped step through `numax.linalg.lstsq`'s blocked device-resident QR rather than the normal equations, returning `TensorFitResult` | 2 | [`optimize/least_squares.mojo`](../numax/optimize/least_squares.mojo) |
+
+This tier takes the Jacobian as an argument, which the `Array` tier does not
+— a `Tensor` is `dtype`-monomorphic, so no `Gradient` fits in one, and a
+finite difference would be a silent accuracy regression against the sibling
+of the same name. It earns its keep when the residual vector is long: the
+bookkeeping is host-side and the QR is not.
+
+| Surface — over `Array[T, n]`, from `numax.optimize.array` | Tier | Where |
+|---|---|---|
+| `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/array/solve.mojo`](../numax/optimize/array/solve.mojo) |
+| `newton_tol`, `brentq` — scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `bfgs` — quasi-Newton minimization to a tolerance, returning `MinimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `least_squares`, `curve_fit` — Levenberg-Marquardt, the second with the data as a runtime argument | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `nelder_mead` — derivative-free simplex, for objectives whose gradient exists but should not be trusted | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 
 The objective is an ordinary `FloatLike` kernel, so `bfgs` evaluates it at
 `Gradient` and gets every partial derivative *exactly* — there is no `jac`

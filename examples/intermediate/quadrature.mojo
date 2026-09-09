@@ -32,10 +32,11 @@ from numax import (
     hermite_h,
     laguerre_l,
     legendre_p,
-    newton,
     simpson,
     trapezoid,
 )
+
+from numax.optimize.array import newton
 
 comptime dtype = DType.float64
 comptime width = 1

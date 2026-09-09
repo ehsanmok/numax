@@ -9,7 +9,8 @@ from std.math import cos as cos_f64
 from std.math import sqrt as sqrt_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
-from numax import Dual, FloatLike, Plain, bisection, halley, newton
+from numax import Dual, FloatLike, Plain
+from numax.optimize.array import bisection, halley, newton
 
 comptime dtype = DType.float64
 comptime width = 1

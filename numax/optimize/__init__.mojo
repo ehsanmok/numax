@@ -1,31 +1,23 @@
-"""numax.optimize: minimization and scalar root finding.
-
-Two halves, split by whether the iteration count is known up front.
-`solve`'s `newton`/`halley`/`bisection` run a fixed number of steps with
-no data-dependent branching, so they are tier 1 and GPU-launchable. The
-rest converge to a tolerance and are tier 2, `Plain`-only and host-side.
+"""numax.optimize: minimization, root finding and nonlinear fitting.
 
 ```mojo
-from numax.optimize import newton, brentq, bfgs
+from numax.optimize import least_squares, curve_fit
 ```
 
-The objective is an ordinary `FloatLike` kernel, so `bfgs` evaluates it
-at `Gradient` and gets every partial derivative exactly -- there is no
-`jac` argument to pass. `least_squares` and `curve_fit` get the whole
-Jacobian the same way, from one call per iteration rather than the
-`n_params + 1` a finite difference would cost. `nelder_mead` ignores the
-derivative on purpose, for objectives built from branchless blends whose
-kinks make it misleading.
+Two tiers, one import each, the same split `numax.linalg` and `numax.fft`
+make:
+
+| Import | Holds | Good for |
+| --- | --- | --- |
+| `numax.optimize` | `Tensor`, `Plain`-only, tier 2 | fits whose residual vector is long: the damped step goes through `numax.linalg.lstsq`'s blocked device-resident QR |
+| `numax.optimize.array` | `Array[T, n]`, `FloatLike`-generic | everything else, and the only tier that takes no Jacobian -- it reads one off `Gradient` exactly |
+
+This surface is the `Tensor` one, and so far it carries `least_squares`,
+`curve_fit` and the `TensorFitResult` they return. Scalar root finding
+(`newton`, `halley`, `bisection`, `brentq`, `newton_tol`) and the
+derivative-free and quasi-Newton minimizers (`bfgs`, `nelder_mead`) are
+`Array`-tier only: they work on a handful of scalars, which is the shape a
+`Tensor` exists to not be.
 """
 
-from .optimize import (
-    MinimizeResult,
-    OptimizeResult,
-    bfgs,
-    brentq,
-    curve_fit,
-    least_squares,
-    nelder_mead,
-    newton_tol,
-)
-from .solve import bisection, halley, newton
+from .least_squares import TensorFitResult, curve_fit, least_squares

@@ -29,8 +29,8 @@ GPU-launchable, which is what "tier 2" means.
 from std.collections import Array
 
 from numax import Dual, FloatLike, Gradient, Plain
-from numax.optimize import bfgs, brentq, newton_tol
-from numax.optimize import newton
+from numax.optimize.array import bfgs, brentq, newton_tol
+from numax.optimize.array import newton
 
 comptime P = Plain[DType.float64, 1]
 comptime G = Gradient[P, 2]

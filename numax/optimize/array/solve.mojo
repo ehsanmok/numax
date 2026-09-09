@@ -40,8 +40,8 @@ work, not lost accuracy -- Newton at a converged root computes a correction
 of zero.
 """
 
-from ..core.dual import Dual
-from ..core.numeric import FloatLike, blend, ge_indicator, guard_nonzero
+from ...core.dual import Dual
+from ...core.numeric import FloatLike, blend, ge_indicator, guard_nonzero
 
 comptime _DERIVATIVE_FLOOR = 1e-300
 
