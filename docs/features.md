@@ -277,6 +277,7 @@ bookkeeping is host-side and the QR is not.
 |---|---|---|
 | `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/array/solve.mojo`](../numax/optimize/array/solve.mojo) |
 | `root_scalar` — `scipy.optimize.root_scalar`, dispatching on `method=` to the five below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `root` — `scipy.optimize.root` for a square vector system, `method="lm"` over `least_squares` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `brentq`, `bisect_tol` — bracketed scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `newton_tol`, `halley_tol` — from a single guess, with `f′` and `f″` exact from `Dual` and `Dual[Dual]` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
 | `secant` — the one root finder here that uses no derivative at all, for objectives whose derivative lies | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |

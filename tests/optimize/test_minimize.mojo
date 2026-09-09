@@ -1,8 +1,8 @@
 """Tests for `numax.optimize.array`'s SciPy-shaped entry points.
 
 Covers `minimize` and the `cg` method it adds, `minimize_scalar` with the
-three one-variable minimizers underneath it, and `root_scalar` with the five
-root finders underneath that.
+three one-variable minimizers underneath it, `root_scalar` with the five
+root finders underneath that, and `root` for a vector system.
 
 Three claims, and they are different in kind.
 
@@ -41,7 +41,9 @@ from numax.optimize.array import (
     minimize,
     minimize_scalar,
     nelder_mead,
+    least_squares,
     newton_tol,
+    root,
     root_scalar,
     secant,
 )
@@ -556,6 +558,96 @@ def test_root_scalar_rejects_an_unknown_method() raises:
     var raised = False
     try:
         _ = root_scalar[cos_minus_x, method="brent"](bracket=(0.0, 2.0))
+    except e:
+        raised = True
+        assert_true("unknown method" in String(e))
+    assert_true(raised)
+
+
+# --- root, for a vector system ----------------------------------------------
+
+
+def intersecting_curves[U: FloatLike](v: Array[U, 2]) -> Array[U, 2]:
+    """`x^2 + y^2 - 4 = 0`, `x - y = 0`: a circle meeting the diagonal, so
+    the root nearest a positive start is `(sqrt(2), sqrt(2))`."""
+    var out = Array[U, 2](fill=U.constant(0.0))
+    out[0] = v[0] * v[0] + v[1] * v[1] - U.constant(4.0)
+    out[1] = v[0] - v[1]
+    return out^
+
+
+def no_root[U: FloatLike](v: Array[U, 2]) -> Array[U, 2]:
+    """`x^2 + 1 = 0`, `y = 0`. The first equation has no real solution, so
+    the best any method can do is the nearest stationary point of the
+    residual norm -- at `x = 0`, where the cost is `0.5`, not zero."""
+    var out = Array[U, 2](fill=U.constant(0.0))
+    out[0] = v[0] * v[0] + U.one()
+    out[1] = v[1].copy()
+    return out^
+
+
+def test_root_solves_a_square_system() raises:
+    var start = Array[Float64, 2](fill=0)
+    start[0] = 1.0
+    start[1] = 3.0
+    var result = root[2, intersecting_curves](start^)
+
+    assert_true(result.converged)
+    assert_almost_equal(result.x[0], 1.4142135623730951, atol=1e-8)
+    assert_almost_equal(result.x[1], 1.4142135623730951, atol=1e-8)
+    # A real root, so the cost is at zero and not merely stationary.
+    assert_true(result.f_x < 1e-16)
+
+
+def test_root_is_exactly_least_squares_on_the_same_system() raises:
+    """`root` is a reuse, not a second implementation. It must return what
+    `least_squares` returns when the residuals are `f` itself."""
+    var start = Array[Float64, 2](fill=0)
+    start[0] = 1.0
+    start[1] = 3.0
+    var second = Array[Float64, 2](fill=0)
+    second[0] = 1.0
+    second[1] = 3.0
+
+    var by_root = root[2, intersecting_curves](start^)
+    var by_lsq = least_squares[2, 2, intersecting_curves](second^)
+
+    assert_equal(by_root.x[0], by_lsq.x[0])
+    assert_equal(by_root.x[1], by_lsq.x[1])
+    assert_equal(by_root.f_x, by_lsq.f_x)
+    assert_equal(by_root.iterations, by_lsq.iterations)
+
+
+def test_a_system_with_no_root_is_told_apart_by_the_cost() raises:
+    """The documented trap. The convergence test is a stationary point of
+    the residual norm, which a rootless system reaches too, so `f_x` is the
+    field that distinguishes them.
+
+    This system stalls rather than converging -- at a minimum whose cost is
+    `O(1)`, further steps improve it below what a `float64` comparison can
+    resolve, so the damping loop gives up. That is the second of the two
+    failure modes the docstring describes, and it is asserted here so the
+    docstring stays honest about which one shows up."""
+    var start = Array[Float64, 2](fill=0)
+    start[0] = 1.0
+    start[1] = 1.0
+    var result = root[2, no_root](start^)
+
+    assert_true(not result.converged)
+    assert_almost_equal(result.x[0], 0.0, atol=1e-6)
+    # `x^2 + 1` is 1 at the stationary point, so the cost is 1/2 -- nowhere
+    # near the zero a genuine root gives, which is the whole signal.
+    assert_almost_equal(result.f_x, 0.5, atol=1e-5)
+    assert_true(result.f_x > 0.49)
+
+
+def test_root_rejects_an_unknown_method() raises:
+    var start = Array[Float64, 2](fill=0)
+    start[0] = 1.0
+    start[1] = 3.0
+    var raised = False
+    try:
+        _ = root[2, intersecting_curves, method="hybr"](start^)
     except e:
         raised = True
         assert_true("unknown method" in String(e))

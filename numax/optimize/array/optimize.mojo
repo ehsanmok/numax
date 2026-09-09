@@ -1562,6 +1562,63 @@ def _wolfe_step[
     return lo
 
 
+def root[
+    n: Int,
+    f: def[U: FloatLike](Array[U, n]) thin -> Array[U, n],
+    method: StaticString = "lm",
+](
+    x0: Array[Float64, n],
+    tol: Optional[Float64] = None,
+    max_iter: Optional[Int] = None,
+) raises -> MinimizeResult[n]:
+    """Solve `f(x) = 0` for a vector `x`. `scipy.optimize.root`.
+
+    `"lm"`, the only method, is `least_squares` applied to `f` itself: a
+    square system's root is exactly a zero of `sum(f(x)**2)`, and
+    Levenberg-Marquardt is the method that gets there from a poor start
+    where a plain Newton step diverges. This is a genuine reuse rather than
+    a second implementation -- the Jacobian is `f` evaluated once at
+    `Gradient[_P, n]`, exactly as it is there, so there is no `jac`
+    argument here either.
+
+    **Check `f_x`, not `converged`.** The convergence test is
+    `max|J.T f| < tol`, the first-order condition for a *minimum* of the sum
+    of squares, and a system with no root still has such minima -- the
+    nearest point where the residual norm stops falling. So `f_x`, the cost
+    `sum(f(x)**2) / 2`, is the field that distinguishes them: near zero
+    means a root was found, materially above zero means the iteration
+    reached the closest it can get and there is no solution there.
+
+    What actually happens on a rootless system is the second failure mode
+    rather than the first, and it is worth knowing which. At a minimum where
+    the cost is `O(1)`, successive steps improve it by `O(eps)` relative,
+    which is below what a `float64` comparison can see -- so the damping
+    loop stops finding a step it can call an improvement and returns
+    `converged=False` at the stalled point. Either way the answer is in
+    `f_x`; `converged` alone will not tell a root from the nearest thing to
+    one.
+
+    `"hybr"`, SciPy's default -- Powell's hybrid dogleg -- is not here yet.
+    It maintains a trust region rather than a damping parameter, which is a
+    different step-acceptance policy and not a variation on this one.
+
+    See `minimize` for why an unrecognized `method` raises rather than
+    failing to compile.
+    """
+    comptime if method == "lm":
+        return least_squares[n, n, f](
+            x0,
+            tol.value() if tol else 1e-10,
+            max_iter.value() if max_iter else 100,
+        )
+    else:
+        raise Error(
+            "root: unknown method '",
+            method,
+            "'; expected 'lm'. 'hybr' is not implemented -- see the docstring.",
+        )
+
+
 def _value_and_grad[
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,

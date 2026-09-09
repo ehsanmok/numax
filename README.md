@@ -408,6 +408,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.optimize.root_scalar` / `minimize` | `root_scalar[f](bracket=(a, b))` / `minimize[n, f](x0)` | no `jac`, `fprime` or `fprime2` argument anywhere — every derivative comes from `Dual` or `Gradient` |
 | `scipy.optimize.minimize_scalar` | `minimize_scalar[f]()` | `brent`, `golden`, `bounded`; a bracket is a direction, bounds are a constraint |
 | `minimize(method="Nelder-Mead")` / `"CG"` | `minimize[n, f, method="nelder-mead"]` / `method="cg"` | SciPy's own method spelling; `bfgs`, `cg` and `nelder_mead` are also callable by name |
+| `scipy.optimize.root` | `root[n, f](x0)` | `method="lm"`, over the same `least_squares`; check `f_x`, not `converged` |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
 | `np.fft.fft`, `np.fft.rfft` | `fft`, `rfft` | power of two either way. `numax.fft` is the `Tensor` tier, a real/imaginary pair across `log2(n) + 1` device stages; `numax.fft.array` is `Array[Complex[T], n]` and differentiates |
