@@ -359,10 +359,11 @@ Three things to read out of those, in order of how much they matter:
    58.31 at 32; `qr_factor` 168 ms at `block=4` against 203 at 8, 359 at 16
    and 1502 at 128. Bigger blocks make the panel quadratically more
    expensive faster than they make the GEMM more efficient, which is the
-   signature of point 2. `cholesky` and `lu_factor` keep their tuned
-   defaults (32 and 16); `qr_factor`'s default of 16 is right at
-   `n <= 512` and leaves about 2x on the table at `n = 1024`, so a large
-   QR should pass `block` explicitly.
+   signature of point 2. This sweep predates the panel work, and the
+   defaults have moved since: `cholesky` and `lu_factor` are now 64 and 32
+   on the host, 32 and 16 on a device. `qr_factor` stays at 16, which the
+   EPYC sweep found right at `n <= 512` and about 2x off at `n = 1024` --
+   an EPYC statement, since the M3 Pro sweep has since inverted it.
 
 ### BLAS-1 on `Tensor`
 
@@ -449,8 +450,8 @@ What this machine says:
   `matmul` dispatches to Apple's `cblas_sgemm` whenever the target is macOS
   and every operand is `float32`
   (`linalg/matmul/cpu/apple_accelerate.mojo`), which is exactly this table.
-  So numax and SciPy are calling the *same* GEMM here and the 1,488 against
-  1,306 is call overhead, not a better multiply. The dtype sweep shows it
+  So numax and SciPy are calling the *same* GEMM here and the 1,475 against
+  1,393 is call overhead, not a better multiply. The dtype sweep shows it
   plainly: at `float64`, where the gate does not fire and MAX uses its own
   kernel, MAX is 264 GFLOP/s against Accelerate's `dgemm` at 365 -- 0.72x,
   in line with the 0.79x of OpenBLAS on the EPYC. A 5.6x `float32`/`float64`
@@ -460,7 +461,7 @@ What this machine says:
   machine numax's factorizations and LAPACK's are built on the identical
   GEMM, so the whole `cholesky` gap of 46 against 248 belongs to the blocked
   algorithm around it and none of it to the multiply.
-- **MAX's Metal GEMM does beat PyTorch's**, 1,812 against 1,143. The
+- **MAX's Metal GEMM does beat PyTorch's**, 1,800 against 1,143. The
   Accelerate gate is under `matmul/cpu/`, so the device path is MAX's own
   kernel and this one is a like-for-like comparison.
 - **The BLAS-1 reductions beat Accelerate by 1.7-3.2x**, the same result

@@ -663,10 +663,10 @@ separate table and not a column of the one above:
 Read those as one claim and one gap. The `matmul` row is the claim: numax's
 factorizations put their whole `O(n^3)` term through `linalg.matmul`, and
 MAX's GEMM is at 79% of OpenBLAS on the EPYC, *ahead* of cuBLAS's FP32 path
-on the A10G, and ahead of PyTorch's Metal kernel on the M3 Pro -- 1,812
+on the A10G, and ahead of PyTorch's Metal kernel on the M3 Pro -- 1,800
 against 1,143. **The M3 Pro's CPU row is not a kernel comparison**: MAX
 dispatches to Apple's `cblas_sgemm` on macOS at `float32`, so numax and SciPy
-are calling the same GEMM there and the 14% is call overhead. That makes the
+are calling the same GEMM there and the 6% is call overhead. That makes the
 gap statement sharper rather than weaker -- on that machine the multiply
 underneath both is identical, so every bit of the factorization gap is the
 blocked algorithm around it.
