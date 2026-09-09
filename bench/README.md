@@ -663,7 +663,7 @@ CPU:
 
 | op | numax | SciPy (LAPACK + Accelerate) |
 |---|---|---|
-| `matmul` (ceiling) | **1,488** | 1,306 |
+| `matmul` (ceiling) | 1,488* | 1,306 |
 | `cholesky` | 46.0 | 248.1 |
 | `lu_factor` | 67.1 | 222.2 |
 | `solve` | 65.9 | 152.7 |
@@ -687,8 +687,17 @@ BLAS-1, GB/s at `n = 67M`:
 | `asum` | 112.5 | 60.6 | 106.2 | 39.0 |
 | `axpy` | 89.5 | 105.1 | 58.0 | 116.8 |
 
-**MAX's GEMM beats both vendors on this machine**, which it did not on the
-EPYC (0.79x of OpenBLAS there). The BLAS-1 reductions beat Accelerate by
+**The CPU ceiling row is not a kernel comparison.** MAX's CPU `matmul`
+dispatches to Apple's `cblas_sgemm` on macOS whenever every operand is
+`float32` (`linalg/matmul/cpu/apple_accelerate.mojo`), which is exactly this
+table, so numax and SciPy are calling the same GEMM and the 14% is call
+overhead. At `float64`, where the gate does not fire, MAX's own kernel is 264
+GFLOP/s against Accelerate's `dgemm` at 365 -- 0.72x, matching the 0.79x of
+OpenBLAS on the EPYC. The upshot is cleaner than a win: on this machine the
+factorization gap is entirely the blocked algorithm, since the multiply
+underneath is literally LAPACK's own. **MAX's Metal GEMM does beat PyTorch's**
+1,812 to 1,143 -- the Accelerate gate is CPU-only, so that one is
+like-for-like. The BLAS-1 reductions beat Accelerate by
 1.7-3.2x, the same result and the same reason as the EPYC table. `solve` on
 Metal reaches 0.80 of PyTorch, the closest any factorization gets to parity
 on either processor. `cholesky` moves ~10% between runs at `n = 1024` here;

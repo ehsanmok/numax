@@ -416,11 +416,14 @@ counterpart to be compared against.
 
 | op | numax | SciPy (LAPACK + Accelerate) | numax / SciPy |
 |---|---|---|---|
-| `matmul` (ceiling) | 1,488 | 1,306 | **1.14** |
+| `matmul` (ceiling)* | 1,488 | 1,306 | 1.14 |
 | `cholesky` | 46.0 | 248.1 | 0.19 |
 | `lu_factor` | 67.1 | 222.2 | 0.30 |
 | `solve` | 65.9 | 152.7 | 0.43 |
 | `qr_factor` | 32.6 | 50.9 | 0.64 |
+
+\* Not a kernel comparison: both are Apple Accelerate's `cblas_sgemm`. See
+the first bullet below.
 
 **Metal -- the same machine's 18-core GPU, PyTorch 2.13.0 on MPS:**
 
@@ -442,11 +445,24 @@ counterpart to be compared against.
 
 What this machine says:
 
-- **MAX's GEMM beats both vendors here.** 1,457 against Accelerate's 1,306
-  on the CPU and 1,788 against PyTorch's 1,143 on Metal. On the EPYC it was
-  0.79x of OpenBLAS, so this is not a general claim about MAX's GEMM -- it
-  is this machine's, and it removes any reading of the factorization rows
-  that blames the multiply.
+- **The CPU ceiling row is Accelerate, reached through MAX.** MAX's CPU
+  `matmul` dispatches to Apple's `cblas_sgemm` whenever the target is macOS
+  and every operand is `float32`
+  (`linalg/matmul/cpu/apple_accelerate.mojo`), which is exactly this table.
+  So numax and SciPy are calling the *same* GEMM here and the 1,488 against
+  1,306 is call overhead, not a better multiply. The dtype sweep shows it
+  plainly: at `float64`, where the gate does not fire and MAX uses its own
+  kernel, MAX is 264 GFLOP/s against Accelerate's `dgemm` at 365 -- 0.72x,
+  in line with the 0.79x of OpenBLAS on the EPYC. A 5.6x `float32`/`float64`
+  ratio where the lane count alone predicts 2x is the signature.
+
+  That is a better statement of the problem than a win would be: on this
+  machine numax's factorizations and LAPACK's are built on the identical
+  GEMM, so the whole `cholesky` gap of 46 against 248 belongs to the blocked
+  algorithm around it and none of it to the multiply.
+- **MAX's Metal GEMM does beat PyTorch's**, 1,812 against 1,143. The
+  Accelerate gate is under `matmul/cpu/`, so the device path is MAX's own
+  kernel and this one is a like-for-like comparison.
 - **The BLAS-1 reductions beat Accelerate by 1.7-3.2x**, the same result
   the EPYC table reports against OpenBLAS and for the same reason:
   `ReduceSum` under MAX's `rowwise` scaffolder threads and `sdot`/`snrm2`

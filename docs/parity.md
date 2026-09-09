@@ -28,7 +28,7 @@ Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
 
 | Area | Names | Root |
 |---|---|---|
-| Matmul | `matmul`, `batched_matmul`, `gemv`, `grouped_matmul`, vendor cuBLAS/rocBLAS | `linalg` |
+| Matmul | `matmul`, `batched_matmul`, `gemv`, `grouped_matmul`, vendor cuBLAS/rocBLAS, **Apple Accelerate `cblas_sgemm` on macOS at `float32`** | `linalg` |
 | Transpose | `transpose` (n-D, **host only** -- see the defect note below), `matrix_band_part` | `linalg` |
 | Reductions | `ReduceSum`/`ReduceMax`/`ReduceMin`/`ReduceProduct`, `MinMax`, `ArgMax`, `ArgMin`, `Welford` (online mean/variance), `OnlineLogSumExp` (flash softmax), driven by the `rowwise` CPU/GPU scaffolder | `algorithm.reduce_op`, `algorithm.rowwise` |
 | Drivers | `elementwise`, `parallelize`, `stencil` | `max.algorithm` |
@@ -59,8 +59,28 @@ reduce_sum` fails with "unable to locate module 'reductions'". Composing
 `rowwise` with a `reduce_op` monoid is the supported spelling here, and it
 loses nothing, since `Welford` and `OnlineLogSumExp` are already at the pin.
 
+One dispatch fact worth knowing when reading any CPU benchmark on Apple
+silicon: `linalg/matmul/cpu/apple_accelerate.mojo` routes to Apple's
+`cblas_sgemm` whenever the target is macOS *and* every operand is `float32`.
+So a `float32` CPU `matmul` on a Mac is Accelerate, and a comparison against
+SciPy there is measuring call overhead rather than two kernels. At `float64`
+the gate does not fire and MAX's own kernel runs, at 0.72x of Accelerate's
+`dgemm` (264 against 365 GFLOP/s at `n = 1024` on an M3 Pro).
+
 **Not available, so numax writes it:**
 
+- **No symmetric or triangular BLAS-3 at all.** Searched at the `max ==26.5`
+  pin across `linalg`, `nn`, `layout` and the top-level `algorithm` root:
+  there is no `syrk`, `symm`, `trmm`, `trsm` or `potrf`. The only `syrk`
+  symbols in the tree are unwired FFI declarations in the private
+  `_cublas`/`_rocblas` shims, which are vendor- and architecture-specific and
+  so denied on the same grounds as any other per-arch path. `matrix_band_part`
+  is a materializing band *mask*, not a triangle-restricted product, and
+  costs an extra full pass. Neither `grouped_matmul` (ragged `M` only, with
+  `N`/`K` shared and static across groups, GPU-only) nor `batched_matmul`
+  (uniform shapes) can batch differently-shaped block updates. So numax's
+  blocked `cholesky` writes its own tiled symmetric trailing update --
+  **extend**.
 - **`scipy.linalg`, almost all of it.** One decomposition ships,
   `qr_factorization` (Householder, CPU-only, scalar loops), and it is on the
   older `LayoutTensor`, which numax denies rather than bridges — interop is
