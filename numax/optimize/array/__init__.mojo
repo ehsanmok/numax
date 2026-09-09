@@ -15,7 +15,7 @@ export the `Tensor` tier; this subpackage is the other one, the same split
 | Module | Holds |
 | --- | --- |
 | `solve` | `newton`, `halley`, `bisection` |
-| `optimize` | `newton_tol`, `brentq`, `bfgs`, `nelder_mead`, `least_squares`, `curve_fit`, `OptimizeResult`, `MinimizeResult` |
+| `optimize` | `minimize` and the methods it dispatches to (`bfgs`, `cg`, `nelder_mead`), `newton_tol`, `brentq`, `least_squares`, `curve_fit`, `OptimizeResult`, `MinimizeResult` |
 
 Two halves, split by whether the iteration count is known up front.
 `solve`'s `newton`/`halley`/`bisection` run a fixed number of steps with no
@@ -55,8 +55,10 @@ from .optimize import (
     OptimizeResult,
     bfgs,
     brentq,
+    cg,
     curve_fit,
     least_squares,
+    minimize,
     nelder_mead,
     newton_tol,
 )

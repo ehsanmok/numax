@@ -405,8 +405,8 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.integrate.solve_ivp` | `solve_ivp`, or `rk4` for fixed steps | |
 | `solve_ivp(method="BDF")` | `solve_ivp_stiff` | implicit, so the step size follows accuracy rather than stability |
 | `scipy.interpolate.CubicSpline` | `CubicSpline[T, n]` | built once, `__call__` evaluates |
-| `scipy.optimize.brentq` / `minimize` | `brentq[f](a, b)` / `bfgs[n, f](x0)` | `bfgs` needs no `jac` |
-| `minimize(method="Nelder-Mead")` | `nelder_mead[n, f](x0)` | compares values only, for objectives with kinks |
+| `scipy.optimize.brentq` / `minimize` | `brentq[f](a, b)` / `minimize[n, f](x0)` | no `jac` argument at all — the gradient comes from `Gradient` |
+| `minimize(method="Nelder-Mead")` / `"CG"` | `minimize[n, f, method="nelder-mead"]` / `method="cg"` | SciPy's own method spelling; `bfgs`, `cg` and `nelder_mead` are also callable by name |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
 | `np.fft.fft`, `np.fft.rfft` | `fft`, `rfft` | power of two either way. `numax.fft` is the `Tensor` tier, a real/imaginary pair across `log2(n) + 1` device stages; `numax.fft.array` is `Array[Complex[T], n]` and differentiates |
@@ -518,7 +518,7 @@ def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
     var b = v[1] - v[0] * v[0]
     return a * a + U.constant(100.0) * b * b
 
-var minimized = bfgs[2, rosenbrock](start)     # no `jac` argument
+var minimized = minimize[2, rosenbrock](start)  # no `jac` argument
 ```
 
 A central difference cannot beat about $\varepsilon^{2/3}$ relative accuracy:

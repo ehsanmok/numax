@@ -305,15 +305,7 @@ def bfgs[
 
     for iteration in range(max_iter):
         # One call: value and every partial derivative, exactly.
-        var seeded = Array[Gradient[_P, n_vars], n_vars](
-            fill=Gradient[_P, n_vars].constant(0.0)
-        )
-        for i in range(n_vars):
-            seeded[i] = Gradient[_P, n_vars].variable(_P(x[i]), i)
-        var evaluated = f[Gradient[_P, n_vars]](seeded^)
-        f_x = evaluated.value.v
-        for i in range(n_vars):
-            grad[i] = evaluated.grad[i].v
+        f_x = _value_and_grad[n_vars, f](x, grad)
 
         grad_norm = 0
         for i in range(n_vars):
@@ -339,10 +331,10 @@ def bfgs[
         for _ in range(60):
             for i in range(n_vars):
                 candidate[i] = x[i] + step * p[i]
-            var as_plain = Array[_P, n_vars](fill=_P.constant(0.0))
-            for i in range(n_vars):
-                as_plain[i] = _P(candidate[i])
-            if f[_P](as_plain^).v <= f_x + Float64(1e-4) * step * directional:
+            if (
+                _evaluate_at[n_vars, f](candidate)
+                <= f_x + Float64(1e-4) * step * directional
+            ):
                 accepted = True
                 break
             step = step / 2
@@ -360,15 +352,11 @@ def bfgs[
         for i in range(n_vars):
             s[i] = candidate[i] - x[i]
 
-        var seeded_new = Array[Gradient[_P, n_vars], n_vars](
-            fill=Gradient[_P, n_vars].constant(0.0)
-        )
-        for i in range(n_vars):
-            seeded_new[i] = Gradient[_P, n_vars].variable(_P(candidate[i]), i)
-        var evaluated_new = f[Gradient[_P, n_vars]](seeded_new^)
+        var grad_new = Array[Float64, n_vars](fill=0)
+        _ = _value_and_grad[n_vars, f](candidate, grad_new)
         var y = Array[Float64, n_vars](fill=0)
         for i in range(n_vars):
-            y[i] = evaluated_new.grad[i].v - grad[i]
+            y[i] = grad_new[i] - grad[i]
 
         var sy: Float64 = 0
         for i in range(n_vars):
@@ -402,6 +390,142 @@ def bfgs[
                 updated -= (s[i] * hy[j] + hy[i] * s[j]) / sy
                 updated += s[i] * s[j] * (1 + yhy / sy) / sy
                 h[i * n_vars + j] = updated
+
+    return MinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
+
+
+def cg[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](
+    x0: Array[Float64, n_vars],
+    tol: Float64 = 1e-8,
+    max_iter: Int = 200,
+) -> MinimizeResult[n_vars]:
+    """Minimize `f` by nonlinear conjugate gradients (Polak-Ribiere).
+    `scipy.optimize.minimize(method="CG")`.
+
+    The same exact gradient `bfgs` uses, from one `Gradient[_P, n_vars]`
+    evaluation per iteration. What differs is the memory: `bfgs` carries an
+    `n_vars x n_vars` inverse Hessian and this carries one direction vector,
+    so the per-iteration cost is `O(n_vars)` against `O(n_vars^2)`. It is
+    the method to reach for when `n_vars` is large enough that the matrix is
+    the expense, and the one to avoid otherwise -- without curvature
+    information it takes more iterations to get to the same place.
+
+    **The line search is not `bfgs`'s.** `bfgs` backtracks on the Armijo
+    condition alone, which is enough there because `H` supplies the scale of
+    a good step. CG has no such model, and a backtracking search can only
+    ever *shorten* its trial step, so a CG that starts at 1 and halves
+    stalls in a curved valley with the gradient still large -- measurably:
+    on Rosenbrock from `(-1.2, 1)` it is still at `f = 4.1` after 5,000
+    iterations. `_wolfe_step` supplies the strong Wolfe conditions instead,
+    which is what nonlinear CG actually requires, and the same problem then
+    converges. That helper's docstring carries the details.
+
+    Two standard safeguards, both of which matter more here than the
+    formula does:
+
+    - The `beta` is Polak-Ribiere **clamped at zero** (`PR+`). A negative
+      `beta` means the previous direction is no longer helping, and using
+      it unclamped is what makes plain Polak-Ribiere fail to converge on
+      some problems; clamping restarts at steepest descent instead.
+    - The direction is reset to steepest descent every `n_vars` iterations
+      regardless. Conjugacy is a property of a quadratic, and it decays on
+      anything else, so a periodic restart bounds how stale the direction
+      can get.
+
+    A direction that is not downhill at all -- which rounding can produce
+    near the minimum -- is also reset rather than searched along, since the
+    line search would reject every step and report a false failure.
+
+    Convergence is `max|grad| < tol`, the same test and the same default as
+    `bfgs`, so the two are directly comparable. `nelder_mead`'s is not; see
+    its docstring.
+    """
+
+    var x = x0.copy()
+    var grad = Array[Float64, n_vars](fill=0)
+    var f_x = _value_and_grad[n_vars, f](x, grad)
+    var grad_norm: Float64 = 0
+    for i in range(n_vars):
+        grad_norm = max(grad_norm, abs(grad[i]))
+
+    var direction = Array[Float64, n_vars](fill=0)
+    for i in range(n_vars):
+        direction[i] = -grad[i]
+
+    # The previous accepted step and the slope it was accepted at, which
+    # together set the next iteration's first trial step. Zero means "no
+    # previous step yet"; see the guess below.
+    var previous_step: Float64 = 0
+    var previous_directional: Float64 = 0
+
+    for iteration in range(max_iter):
+        if grad_norm < tol:
+            return MinimizeResult[n_vars](x^, f_x, grad_norm, iteration, True)
+
+        var directional: Float64 = 0
+        for i in range(n_vars):
+            directional += grad[i] * direction[i]
+
+        # Rounding near the minimum can leave the carried direction
+        # pointing uphill. Steepest descent always points downhill unless
+        # the gradient is zero, which the tolerance test above already
+        # caught, so this restart cannot loop.
+        if directional >= 0:
+            directional = 0
+            for i in range(n_vars):
+                direction[i] = -grad[i]
+                directional -= grad[i] * grad[i]
+
+        # The first trial step. `bfgs` can start at 1 every iteration because
+        # its `H` carries the problem's scale; CG carries none, so the guess
+        # is Nocedal & Wright (3.60) -- the previous step rescaled by the
+        # ratio of the slopes -- with the first iteration falling back to a
+        # step that moves `x` by about one unit.
+        var guess: Float64
+        if previous_step > 0 and directional < 0:
+            guess = previous_step * previous_directional / directional
+        else:
+            var longest: Float64 = 0
+            for i in range(n_vars):
+                longest = max(longest, abs(direction[i]))
+            guess = 1 / longest if longest > 1 else 1
+
+        var step = _wolfe_step[n_vars, f](x, direction, f_x, directional, guess)
+        if step <= 0:
+            return MinimizeResult[n_vars](
+                x^, f_x, grad_norm, iteration + 1, False
+            )
+        var candidate = Array[Float64, n_vars](fill=0)
+        for i in range(n_vars):
+            candidate[i] = x[i] + step * direction[i]
+        previous_step = step
+        previous_directional = directional
+
+        var grad_new = Array[Float64, n_vars](fill=0)
+        var f_new = _value_and_grad[n_vars, f](candidate, grad_new)
+
+        # Polak-Ribiere: beta = grad_new . (grad_new - grad) / (grad . grad),
+        # clamped at zero, and forced to zero on the periodic restart.
+        var numerator: Float64 = 0
+        var denominator: Float64 = 0
+        for i in range(n_vars):
+            numerator += grad_new[i] * (grad_new[i] - grad[i])
+            denominator += grad[i] * grad[i]
+        var beta: Float64 = 0
+        if denominator > 0 and (iteration + 1) % n_vars != 0:
+            beta = max(Float64(0), numerator / denominator)
+
+        for i in range(n_vars):
+            direction[i] = -grad_new[i] + beta * direction[i]
+            x[i] = candidate[i]
+            grad[i] = grad_new[i]
+        f_x = f_new
+        grad_norm = 0
+        for i in range(n_vars):
+            grad_norm = max(grad_norm, abs(grad[i]))
 
     return MinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
 
@@ -557,6 +681,238 @@ def nelder_mead[
     return MinimizeResult[n_vars](
         best^, values[0], grad_norm, iteration, converged
     )
+
+
+def minimize[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+    method: StaticString = "bfgs",
+](
+    x0: Array[Float64, n_vars],
+    tol: Optional[Float64] = None,
+    max_iter: Optional[Int] = None,
+) raises -> MinimizeResult[n_vars]:
+    """Minimize `f` from `x0`. `scipy.optimize.minimize`.
+
+    The SciPy-shaped entry point over the minimizers in this module, with
+    SciPy's own method spelling:
+
+    | `method` | Runs | Uses the gradient |
+    | --- | --- | --- |
+    | `"bfgs"` (default) | `bfgs` | yes, exactly, plus an `n x n` inverse Hessian |
+    | `"cg"` | `cg` | yes, exactly, no matrix |
+    | `"nelder-mead"` | `nelder_mead` | no, on purpose |
+
+    Each is also callable directly under its own name, and that is the
+    better spelling when the method is not a choice the caller is making --
+    `bfgs[2, rosenbrock](start)` says which algorithm runs without a reader
+    resolving a string.
+
+    **`tol` and `max_iter` default per method, not globally.** Passing
+    nothing gives each method the default its own docstring documents, and
+    that is deliberate: the three do not measure the same quantity. `bfgs`
+    and `cg` test `max|grad| < 1e-8`; `nelder_mead` tests the spread of
+    function values across the simplex against `1e-10`, because a method
+    with no derivative has nothing else to look at. A single shared default
+    would silently change one method's stopping rule, so there is no
+    `tol: Float64 = 1e-8` here.
+
+    **An unrecognized `method` raises rather than failing to compile**, and
+    that is a Mojo limitation rather than a choice. `method` is a
+    compile-time parameter and `comptime if method == "bfgs"` dispatches on
+    it fine, but a `where` clause listing the alternatives cannot be
+    discharged: both the `StringLiteral` -> `StaticString` conversion and
+    `StringSpan.__eq__` are non-builtin calls, which constraint evaluation
+    refuses. Nor can the unreachable branch reject the value at compile time
+    -- an untaken `comptime if` branch is still constraint-checked, so a
+    deliberately unsatisfiable call there rejects the *valid* methods too.
+    What is left is this: a typo is an `Error` naming the bad method on the
+    first call, never a silent fallthrough to a different algorithm.
+    """
+    comptime if method == "bfgs":
+        return bfgs[n_vars, f](
+            x0,
+            tol.value() if tol else 1e-8,
+            max_iter.value() if max_iter else 200,
+        )
+    elif method == "cg":
+        return cg[n_vars, f](
+            x0,
+            tol.value() if tol else 1e-8,
+            max_iter.value() if max_iter else 200,
+        )
+    elif method == "nelder-mead":
+        return nelder_mead[n_vars, f](
+            x0,
+            tol.value() if tol else 1e-10,
+            max_iter.value() if max_iter else 1000,
+        )
+    else:
+        raise Error(
+            "minimize: unknown method '",
+            method,
+            "'; expected 'bfgs', 'cg' or 'nelder-mead'",
+        )
+
+
+def _slope_along[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](
+    x: Array[Float64, n_vars],
+    direction: Array[Float64, n_vars],
+    alpha: Float64,
+    mut value: Float64,
+) -> Float64:
+    """`phi'(alpha)` for `phi(alpha) = f(x + alpha * direction)`, with
+    `phi(alpha)` left in `value`.
+
+    One `Gradient` evaluation gives both, so a line search that needs the
+    slope costs no more than one that needs only the value -- which is what
+    makes a Wolfe search affordable here and is the reason `_wolfe_step`
+    exists rather than a cheaper backtracking loop.
+    """
+    var trial = Array[Float64, n_vars](fill=0)
+    for i in range(n_vars):
+        trial[i] = x[i] + alpha * direction[i]
+    var grad = Array[Float64, n_vars](fill=0)
+    value = _value_and_grad[n_vars, f](trial, grad)
+    var slope: Float64 = 0
+    for i in range(n_vars):
+        slope += grad[i] * direction[i]
+    return slope
+
+
+def _wolfe_step[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](
+    x: Array[Float64, n_vars],
+    direction: Array[Float64, n_vars],
+    f_x: Float64,
+    directional: Float64,
+    first_guess: Float64,
+) -> Float64:
+    """A step length satisfying the **strong Wolfe** conditions, or `0` if
+    none was found. Nocedal & Wright algorithms 3.5 and 3.6.
+
+    Two conditions, and `cg` needs both where `bfgs` needs only the first:
+
+    - **Armijo** (`c1 = 1e-4`): the step must reduce `f` by at least a
+      fraction of what the slope predicted. This alone is what `bfgs`
+      backtracks for, and it is enough there because `H` supplies the scale
+      of a good step.
+    - **Curvature** (`c2 = 0.1`): the slope at the new point must be
+      flatter than at the old one, `|phi'(a)| <= c2 * |phi'(0)|`. Nonlinear
+      CG needs this. Without it the Polak-Ribiere direction is not
+      guaranteed to be a descent direction at all, and in practice the
+      steps collapse: a backtracking search only ever *shortens* a trial
+      step, so once CG needs a longer one -- which it does in a curved
+      valley, having no curvature model to lengthen it for free -- it stalls
+      with the gradient still large. `c2 = 0.1` rather than BFGS's usual
+      `0.9` is the standard CG choice, and it is the tighter one.
+
+    The shape is the textbook two-phase search: **bracket** by increasing
+    the trial step until an interval known to contain an acceptable point
+    appears, then **zoom** into that interval by bisection. Bisection rather
+    than interpolation on purpose -- it cannot produce a point outside the
+    bracket, and the extra iterations are cheap next to an evaluation of
+    `f`.
+    """
+    comptime c1 = 1e-4
+    comptime c2 = 0.1
+
+    var lo: Float64 = 0
+    var lo_value = f_x
+    var hi: Float64 = 0
+    var bracketed = False
+
+    var previous = Float64(0)
+    var previous_value = f_x
+    var alpha = first_guess
+
+    # Phase 1: bracket.
+    for attempt in range(40):
+        var value = f_x
+        var slope = _slope_along[n_vars, f](x, direction, alpha, value)
+
+        if value > f_x + c1 * alpha * directional or (
+            attempt > 0 and value >= previous_value
+        ):
+            # `alpha` is too long: an acceptable point lies between the
+            # previous trial and this one.
+            lo = previous
+            lo_value = previous_value
+            hi = alpha
+            bracketed = True
+            break
+        if abs(slope) <= -c2 * directional:
+            return alpha
+        if slope >= 0:
+            # The slope has turned uphill, so the minimum along the ray was
+            # passed; the bracket is this interval reversed.
+            lo = alpha
+            lo_value = value
+            hi = previous
+            bracketed = True
+            break
+        previous = alpha
+        previous_value = value
+        alpha = alpha * 2
+
+    if not bracketed:
+        return 0
+
+    # Phase 2: zoom.
+    for _ in range(60):
+        var mid = (lo + hi) / 2
+        if mid <= 0:
+            return 0
+        var value = f_x
+        var slope = _slope_along[n_vars, f](x, direction, mid, value)
+
+        if value > f_x + c1 * mid * directional or value >= lo_value:
+            hi = mid
+        else:
+            if abs(slope) <= -c2 * directional:
+                return mid
+            if slope * (hi - lo) >= 0:
+                hi = lo
+            lo = mid
+            lo_value = value
+
+    # The bracket collapsed without meeting the curvature condition. `lo` is
+    # still an Armijo-acceptable point whenever it is not the origin, so
+    # return it rather than reporting failure on a step that does decrease
+    # the objective.
+    return lo
+
+
+def _value_and_grad[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+](x: Array[Float64, n_vars], mut grad: Array[Float64, n_vars]) -> Float64:
+    """`f(x)` and every partial derivative at `x`, from one evaluation.
+
+    The whole point of the conformer tier in one function: seeding each
+    coordinate as a `Gradient[_P, n_vars]` variable and calling `f` once
+    returns the value and all `n_vars` partials by the chain rule, exactly.
+    A forward difference would cost `n_vars + 1` calls and cap accuracy near
+    `sqrt(eps)`.
+
+    `grad` is filled in place rather than returned beside the value because
+    a caller that already owns the destination -- which every driver here
+    does, across iterations -- should not allocate a second one per step.
+    """
+    var seeded = Array[Gradient[_P, n_vars], n_vars](
+        fill=Gradient[_P, n_vars].constant(0.0)
+    )
+    for i in range(n_vars):
+        seeded[i] = Gradient[_P, n_vars].variable(_P(x[i]), i)
+    var evaluated = f[Gradient[_P, n_vars]](seeded^)
+    for i in range(n_vars):
+        grad[i] = evaluated.grad[i].v
+    return evaluated.value.v
 
 
 def _evaluate_at[
