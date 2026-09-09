@@ -503,6 +503,12 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         )
         ctx.synchronize()
 
+        # `view()` erases the origin, so `projected` is not kept alive by
+        # `pv` and destruction is ASAP: without this, its buffer is freed
+        # while `narrow` still reads through `pv`, and the allocator's
+        # free-list pointer lands in element zero.
+        _ = projected^
+
         var upper = self.r()
         return solve_triangular[
             Self.dtype, Self.n, True, False, False, Self.gpu, block
