@@ -37,12 +37,20 @@ path 18.2. So a Cholesky row reporting ~1 at `n = 1024` is reporting the
 check, and the CPU file -- where the same factorization at the same size
 reports 1.2e-4 -- is the one to read for accuracy.
 
+**The BLAS-1 table lives in `bench_blas1_gpu.mojo`**, and the reason is a
+build limit rather than a methodological one: the two halves together
+instantiate more GPU kernels than Apple's Metal compiler will put in one
+metallib, so the combined file failed with "Metal Compiler failed to
+compile metallib" before running anything. Either half builds alone --
+established by bisection, at every size and every factorization -- so
+splitting them is what makes the device numbers reachable on Metal at all.
+CUDA built either way, and neither table's numbers change.
+
 Needs a real device -- CUDA or Metal, whichever `DeviceContext` finds. Not
 part of CI, which has no GPU runners. Run with `pixi run bench-linalg-gpu`.
 """
 
 from max.gpu.host import DeviceContext
-from std.math import sqrt
 from std.time import perf_counter_ns
 
 from numax.core.array import Static, transpose
@@ -137,20 +145,6 @@ def _row(name: String, n: Int, ns: Float64, flops: Float64, resid: Float64):
         flops / (ns / 1e9) / 1e9,
         "\t",
         resid,
-    )
-
-
-def _band_row(name: String, n: Int, ns: Float64, bytes: Int, err: Float64):
-    print(
-        name,
-        "\t",
-        n,
-        "\t",
-        ns / 1e3,
-        "\t",
-        Float64(bytes) / (ns / 1e9) / 1e9,
-        "\t",
-        err,
     )
 
 
@@ -304,78 +298,6 @@ def bench_qr[
     _row(label, n, ns, flops, worst)
 
 
-def bench_blas1[n: Int](ctx: DeviceContext) raises:
-    var x = _ramp[n](ctx, 1)
-    var y = _ramp[n](ctx, 2)
-    var iters = _iters(n)
-
-    for _ in range(warmup_iters):
-        _ = dot[dtype, n, True](x, y)
-        _ = nrm2[dtype, n, True](x)
-        _ = asum[dtype, n, True](x)
-        _ = axpy[dtype, n, True](Scalar[dtype](2.5), x, y)
-    ctx.synchronize()
-
-    var t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = dot[dtype, n, True](x, y)
-    var dot_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
-
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = nrm2[dtype, n, True](x)
-    var nrm2_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
-
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = asum[dtype, n, True](x)
-    var asum_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
-
-    t0 = perf_counter_ns()
-    for _ in range(iters):
-        _ = axpy[dtype, n, True](Scalar[dtype](2.5), x, y)
-        ctx.synchronize()
-    var axpy_ns = Float64(perf_counter_ns() - t0) / Float64(iters)
-
-    # The three reductions return a `Scalar`, so they synchronize on their
-    # own way out; `axpy` returns a tensor and gets an explicit one above.
-    var want_dot = Float64(0)
-    var want_dot_abs = Float64(0)
-    var want_sq = Float64(0)
-    var want_abs = Float64(0)
-    for i in range(n):
-        var xi = Float64((i * 37 + 11) % 17) - 8.0
-        var yi = Float64((i * 37 + 22) % 17) - 8.0
-        want_dot += xi * yi
-        want_dot_abs += abs(xi * yi)
-        want_sq += xi * xi
-        want_abs += abs(xi)
-    var want_nrm2 = sqrt(want_sq)
-
-    var got_dot = Float64(dot[dtype, n, True](x, y))
-    var got_nrm2 = Float64(nrm2[dtype, n, True](x))
-    var got_asum = Float64(asum[dtype, n, True](x))
-    var summed = axpy[dtype, n, True](Scalar[dtype](2.5), x, y).to_host()
-    var worst_axpy = Float64(0)
-    for i in range(n):
-        var xi = Float64((i * 37 + 11) % 17) - 8.0
-        var yi = Float64((i * 37 + 22) % 17) - 8.0
-        var diff = abs(Float64(summed[i]) - (2.5 * xi + yi))
-        if diff > worst_axpy:
-            worst_axpy = diff
-
-    # The three reductions report error relative to the quantity that
-    # bounds a floating-point sum -- `sum |x_i y_i|` for `dot`, the value
-    # itself for the two positive sums -- rather than to the result, which
-    # for a cancelling dot product would divide by nearly nothing.
-    _band_row(
-        "dot", n, dot_ns, 2 * n * 4, abs(got_dot - want_dot) / want_dot_abs
-    )
-    _band_row("nrm2", n, nrm2_ns, n * 4, abs(got_nrm2 - want_nrm2) / want_nrm2)
-    _band_row("asum", n, asum_ns, n * 4, abs(got_asum - want_abs) / want_abs)
-    _band_row("axpy", n, axpy_ns, 3 * n * 4, worst_axpy)
-
-
 def main() raises:
     var ctx = DeviceContext()
     print("dtype =", dtype, " GPU API:", ctx.api())
@@ -397,11 +319,3 @@ def main() raises:
     bench_solve[1024](ctx)
     bench_qr[256, 256](ctx)
     bench_qr[512, 512](ctx)
-
-    print()
-    print("BLAS-1 (us is per call, GB/s over the traffic the op must move)")
-    print("op\tn\tus\tGB/s\terror")
-    bench_blas1[1 << 16](ctx)
-    bench_blas1[1 << 20](ctx)
-    bench_blas1[1 << 24](ctx)
-    bench_blas1[1 << 26](ctx)

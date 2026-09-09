@@ -392,6 +392,10 @@ bench-gpu = "mojo -I . bench/bench_tensor_map_gpu.mojo"
 # numax made: `linalg.matmul` does not compile for GPU at `float64`, since
 # its GEMV path reduces through `warp.shuffle`. Needs a real device.
 bench-linalg-gpu = "mojo -I . bench/bench_linalg_gpu.mojo"
+# The BLAS-1 half of the same sweep, a separate file because the two halves
+# together instantiate more GPU kernels than Apple's Metal compiler will put
+# in one metallib. Needs a real device, like its sibling.
+bench-blas1-gpu = "mojo -I . bench/bench_blas1_gpu.mojo"
 # Diagnoses *why* the GPU path lands where it does: bandwidth vs arithmetic,
 # per-thread width, block size, and sync accounting. Metal hardware too.
 bench-roofline = "mojo -I . bench/bench_gpu_roofline.mojo"
