@@ -13,7 +13,7 @@ type the reader has to look up. `numax.linalg`, `numax.prelude` and
 
 | Module | Holds |
 | --- | --- |
-| `blas` | `dot`, `nrm2`, `asum`, `axpy`, `outer`, `matvec`, `matmul` |
+| `blas` | `dot`, `nrm2`, `asum`, `axpy`, `outer`, `matvec`, `matmul`, `inner`, `kron`, `matrix_power` |
 | `triangular` | `forward_substitution`, `back_substitution`, `tridiagonal_solve` |
 | `cholesky` | `cholesky`, `cholesky_solve`, `slogdet_cholesky` |
 | `lu` | `lu`, `lu_factor`, `PivotedLU`, `det` |
@@ -57,7 +57,18 @@ tier's `norm` is being called.
 """
 
 from .basic import inverse, pinv, solve
-from .blas import asum, axpy, dot, matmul, matvec, nrm2, outer
+from .blas import (
+    asum,
+    axpy,
+    dot,
+    inner,
+    kron,
+    matmul,
+    matrix_power,
+    matvec,
+    nrm2,
+    outer,
+)
 from .cholesky import cholesky, cholesky_solve, slogdet_cholesky
 from .eigen import eigh, eigvals, svd
 from .lu import PivotedLU, det, lu, lu_factor

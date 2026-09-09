@@ -399,6 +399,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr_factor`, and `qr`/`svd`/`eigh` from `numax.linalg.array` | `cholesky` and `qr_factor` are blocked over `Tensor`; `svd`/`eigh` are `Array`-only so far |
 | `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` from `numax.linalg.array`, or `qr_factor(A).solve(b)` over `Tensor` | no symmetry assumed; both least-squares routes factor instead of forming the normal equations |
 | `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
+| `np.kron`, `np.linalg.matrix_power`, `np.inner` | `kron`, `matrix_power[dtype, n, p]`, `inner` | `inner` is `a @ b.T` without materializing the transpose |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |

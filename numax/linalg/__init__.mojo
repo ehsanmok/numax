@@ -29,7 +29,7 @@ modules matter when reading or extending.
 
 | Module | Holds | SciPy counterpart |
 | --- | --- | --- |
-| `blas` | `matmul`, `matvec`, `batched_matmul`, `dot`, `nrm2`, `asum`, `axpy`, `outer` | `scipy.linalg.blas`, `numpy.linalg.matmul` |
+| `blas` | `matmul`, `matvec`, `batched_matmul`, `inner`, `kron`, `matrix_power`, `dot`, `nrm2`, `asum`, `axpy`, `outer` | `scipy.linalg.blas`, `numpy.linalg.matmul` |
 | `triangular` | `solve_triangular` | `solve_banded` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
 | `lu` | `lu_factor`, `TensorLU`, `det` | `_decomp_lu` |
@@ -137,7 +137,10 @@ from .blas import (
     axpy,
     batched_matmul,
     dot,
+    inner,
+    kron,
     matmul,
+    matrix_power,
     matvec,
     nrm2,
     outer,

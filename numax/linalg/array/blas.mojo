@@ -139,3 +139,93 @@ def matmul[
             for j in range(n):
                 out[i * n + j] = out[i * n + j] + aik * b[k * n + j]
     return out^
+
+
+def inner[
+    T: FloatLike, n: Int
+](a: Array[T, n * n], b: Array[T, n * n]) -> Array[T, n * n]:
+    """`A @ B.T` for two row-major `n x n` matrices. `numpy.inner` at
+    rank 2.
+
+    `out[i, j]` is the inner product of `a`'s row `i` with `b`'s row `j`,
+    so both operands are indexed by their rows -- the Gram-matrix shape.
+    Square-only, like `matmul` beside it and for the same reason: the
+    non-square case needs two extent parameters and the `Tensor` overload
+    in `numax.linalg.blas` is where it lives.
+
+    Reading `b` by rows is what makes this cheaper here than `matmul`
+    against a transposed copy: both operands are walked contiguously, where
+    `matmul`'s `b` is walked down a column.
+
+    Rank 1 is `dot` and is not duplicated under this name.
+    """
+    var out = _zeros[T, n * n]()
+    for i in range(n):
+        for j in range(n):
+            var total = T.constant(0.0)
+            for k in range(n):
+                total = total + a[i * n + k] * b[j * n + k]
+            out[i * n + j] = total^
+    return out^
+
+
+def kron[
+    T: FloatLike, m: Int, n: Int
+](a: Array[T, m * m], b: Array[T, n * n]) -> Array[T, (m * n) * (m * n)]:
+    """The Kronecker product `numpy.kron(a, b)`: every entry of `a` scaling
+    a whole copy of `b`.
+
+    `out[i*n + r, j*n + c] = a[i, j] * b[r, c]`, an `(m*n) x (m*n)` result
+    from two square operands. Square-only for the same reason `matmul` is;
+    `numax.linalg.blas.kron` takes four extents.
+
+    Tier 1: the trip count is `(m*n)^2`, all of it compile-time, and
+    nothing branches. So this differentiates at `Dual` and runs inside a
+    kernel body, which the `Tensor` overload does not -- a Kronecker
+    product of two small matrices per SIMD lane is a shape that tier cannot
+    express at all.
+    """
+    var out = _zeros[T, (m * n) * (m * n)]()
+    comptime side = m * n
+    for i in range(m):
+        for j in range(m):
+            for r in range(n):
+                for c in range(n):
+                    out[(i * n + r) * side + (j * n + c)] = (
+                        a[i * m + j] * b[r * n + c]
+                    )
+    return out^
+
+
+def matrix_power[
+    T: FloatLike, n: Int, power: Int
+](a: Array[T, n * n]) -> Array[T, n * n] where power >= 0:
+    """`A` raised to a non-negative integer `power`.
+    `numpy.linalg.matrix_power`.
+
+    Exponentiation by squaring, with `power` a compile-time parameter, so
+    the chain of `O(log(power))` products is fixed at compile time and this
+    stays tier 1 -- it differentiates at `Dual` and runs inside a kernel
+    body. `power == 0` is the identity and does not read `a`.
+
+    Negative powers are excluded by the `where` clause rather than routed
+    through an inverse, matching the `Tensor` overload. Write
+    `matrix_power[T, n, -power](inverse(a))` at the call site, where the
+    inversion is visible.
+    """
+    var result = _zeros[T, n * n]()
+    for i in range(n):
+        result[i * n + i] = T.one()
+
+    comptime if power == 0:
+        return result^
+
+    var base = a.copy()
+    var remaining = power
+    while remaining > 0:
+        if remaining % 2 == 1:
+            result = matmul[T, n](result, base)
+        remaining = remaining // 2
+        if remaining > 0:
+            base = matmul[T, n](base, base)
+    return result^

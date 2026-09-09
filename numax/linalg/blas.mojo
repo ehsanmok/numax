@@ -33,7 +33,7 @@ to MAX, and leave the `Array` tier to the thing only it can do: run
 
 from algorithm import rowwise
 from algorithm.reduce_op import ReduceSum
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major
 from layout.tile_tensor import PointerStorage
 from linalg.bmm import batched_matmul as _max_batched_matmul
@@ -44,7 +44,7 @@ from std.math import sqrt as _sqrt
 from std.sys.info import simd_width_of
 from std.utils import IndexList
 
-from ..core.array import Dynamic, Static, zeros_dyn
+from ..core.array import Dynamic, Static, copy, zeros_dyn
 
 
 @always_inline
@@ -346,6 +346,162 @@ def matmul[
     var c = result.view()
     _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
     ctx.synchronize()
+    return result^
+
+
+def inner[
+    dtype: DType, m: Int, k: Int, n: Int, gpu: Bool = False
+](mut a: Static[dtype, m, k], mut b: Static[dtype, n, k]) raises -> Static[
+    dtype, m, n
+]:
+    """`a @ b.T`, the matrix of inner products between the rows of `a` and
+    the rows of `b`. `numpy.inner` at rank 2.
+
+    Note the shape: `b` is `n x k`, not `k x n`. Both operands are indexed
+    by their *rows*, so `out[i, j]` is the inner product of `a`'s row `i`
+    with `b`'s row `j` -- which is what makes this the natural spelling for
+    a Gram matrix or a pairwise-similarity block, where transposing at the
+    call site would be an extra pass over the data.
+
+    And it is exactly that pass this saves: `linalg.matmul` takes
+    `transpose_b` as a compile-time parameter and reads `b` transposed in
+    place, so no transposed copy is ever materialized. That is the same
+    facility `cholesky`'s trailing update uses. There is no `transpose_a`
+    to match, which is why `numpy.inner`'s mirror image is not here.
+
+    **Rank 1 is `dot`, deliberately not duplicated here.** `numpy.inner` on
+    two vectors is their dot product, and numax already has that name for
+    it at both tiers; a second spelling would be one more name meaning
+    exactly what an existing one means.
+    """
+    var ctx = a.context()
+    var result = Static[dtype, m, n](ctx)
+    var c = result.view()
+    _max_matmul[transpose_b=True, target=_target[gpu]()](
+        c, a.view(), b.view(), ctx
+    )
+    ctx.synchronize()
+    return result^
+
+
+def kron[
+    dtype: DType, m: Int, n: Int, p: Int, q: Int, gpu: Bool = False
+](mut a: Static[dtype, m, n], mut b: Static[dtype, p, q]) raises -> Static[
+    dtype, m * p, n * q
+]:
+    """The Kronecker product `numpy.kron(a, b)`: every entry of `a` scaling
+    a whole copy of `b`, tiled into an `(m*p) x (n*q)` result.
+
+    MAX ships nothing of the kind -- searched across `linalg`, `nn`,
+    `algorithm` and `layout` at the pin -- so this is an `elementwise` map
+    over the output, the same shape `outer` above uses. Each output
+    coordinate splits into a block index and an offset within the block,
+    which is the whole definition:
+
+    `out[i*p + r, j*q + c] = a[i, j] * b[r, c]`
+
+    The map is over the *output*, so `a` is read `p*q` times and `b` is
+    read `m*n` times rather than either being materialized in tiles. That
+    is the right trade here: the reads are cached and the alternative is an
+    `(m*p) x (n*q)` staging buffer.
+
+    Written width-1. The output's row stride is `n*q` while `b`'s is `q`,
+    so consecutive output columns walk `b` contiguously only within a
+    block and wrap at every block edge; a wider store would have to special
+    -case that boundary for no gain, since the multiplier `a[i, j]` changes
+    there too.
+    """
+    var ctx = a.context()
+    var out = Static[dtype, m * p, n * q]._uninitialized(ctx)
+    var av = a.view()
+    var bv = b.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
+        # `Coord`'s elements carry no `//` or `%` and do not convert to
+        # `Int` directly, so the split runs on the `IndexList` --
+        # `panel.mojo` reaches for the same helper wherever it needs
+        # arithmetic on a coordinate.
+        var at = coord_to_index_list(coord)
+        var row = at[0]
+        var col = at[1]
+        ov.store[w](
+            coord,
+            av[Coord(row // p, col // q)] * bv[Coord(row % p, col % q)],
+        )
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        step, Coord(m * p, n * q), ctx
+    )
+    return out^
+
+
+def matrix_power[
+    dtype: DType, n: Int, power: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where power >= 0:
+    """`a` raised to a non-negative integer `power`.
+    `numpy.linalg.matrix_power`.
+
+    Exponentiation by squaring, so `power` costs `O(log(power))` matrix
+    products rather than `power - 1` of them, each one `linalg.matmul`.
+    `power` is a compile-time parameter, so the squaring chain is decided at
+    compile time and the loop below is over a known number of steps.
+
+    `power == 0` is the identity, as NumPy defines it, and does not look at
+    `a` at all.
+
+    **Negative powers are a `where` clause rather than an overload.**
+    NumPy's `matrix_power` accepts them and means `matrix_power(inv(a),
+    -power)`. Spelling that at the call site costs one visible `inverse`
+    and keeps this module from depending on `numax.linalg.basic`, which
+    depends on `lu`, which depends on this one -- a cycle for a
+    convenience. The compile error names the constraint, so a caller who
+    wants it is told what to write.
+    """
+    var ctx = a.context()
+
+    comptime if power == 0:
+        var identity = Static[dtype, n, n](ctx)
+        var host = List[Scalar[dtype]](length=n * n, fill=0)
+        for i in range(n):
+            host[i * n + i] = 1
+        identity.copy_from_host(host)
+        return identity^
+
+    # `result` accumulates the answer and `base` the repeated squares.
+    # `remaining` is consumed a bit at a time, so both are run-time values
+    # even though `power` is not -- the trip count is still known.
+    var result = Static[dtype, n, n](ctx)
+    var seeded = False
+    var base = Static[dtype, n, n](ctx)
+    base.copy_from_host(a.to_host())
+
+    var remaining = power
+    while remaining > 0:
+        if remaining % 2 == 1:
+            if seeded:
+                result = matmul[dtype, n, n, n, gpu](result, base)
+            else:
+                result.copy_from_host(base.to_host())
+                seeded = True
+        remaining = remaining // 2
+        if remaining > 0:
+            # `matmul(base, base)` is rejected: it takes both operands
+            # mutably, and Mojo will not pass one binding through two `mut`
+            # arguments. So the squaring step needs a second tensor holding
+            # the same values, and `numax.core.array.copy` is the only way
+            # to make one -- it round-trips through the host, since MAX
+            # exposes no device-to-device copy numax has found.
+            #
+            # The ceiling: `floor(log2(power))` host round trips per call,
+            # which is 1 at `power = 2 or 3` and 2 at `power = 4..7`. It is
+            # bounded and small, but on a device tensor it is real. A
+            # device-resident `copy` removes it without changing anything
+            # here.
+            var mirror = copy(base)
+            base = matmul[dtype, n, n, n, gpu](base, mirror)
+
     return result^
 
 

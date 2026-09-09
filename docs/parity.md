@@ -101,6 +101,28 @@ exist.
   (uniform shapes) can batch differently-shaped block updates. So numax's
   blocked `cholesky` writes its own tiled symmetric trailing update --
   **extend**.
+- **No Kronecker product, matrix power, or row-wise inner product.**
+  Searched at the `max ==26.5` pin across `linalg`, `nn`, `algorithm` and
+  `layout`: `kron`, `matrix_power`, `inner`, `vdot`, `tensordot` and
+  `slogdet` return nothing, and the only `outer_product` in the tree is
+  `layout.math.outer_product_acc`, already denied above for being
+  `LayoutTensor` and accumulate-only. So numax writes all three --
+  **extend** for `kron` (an `elementwise` map over the output, MAX's idiom)
+  and **delegate underneath** for the other two, since `inner` is
+  `linalg.matmul` with its own `transpose_b` parameter and `matrix_power`
+  is a squaring chain of `linalg.matmul` calls. `numpy.inner` at rank 1 is
+  `dot`, which numax already has, so only the rank-2 form is added.
+- **`vdot` and `multi_dot` are not absorbed, and each for a structural
+  reason.** `vdot` differs from `dot` only by conjugating its first
+  argument, and there is no complex `Tensor` -- so at this tier it would be
+  a second name meaning exactly what `dot` means, which is the property
+  `numax/prelude.mojo` protects. `multi_dot` chooses an association order
+  for a chain of *differently shaped* products, and numax carries a
+  tensor's shape in its type, so the chain cannot be held in one
+  homogeneously typed container to begin with. `cross`, `tensordot`,
+  `tensorsolve` and `tensorinv` wait on the general broadcasting and rank-n
+  reductions listed under "What is still missing"; `matrix_transpose` is
+  `numax.core.array.transpose`.
 - **`scipy.linalg`, almost all of it.** One decomposition ships,
   `qr_factorization` (Householder, CPU-only, scalar loops), and it is on the
   older `LayoutTensor`, which numax denies rather than bridges — interop is
