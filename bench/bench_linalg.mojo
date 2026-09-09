@@ -205,7 +205,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
     _row("matmul (ceiling)", n, ns, 2.0 * Float64(n) ** 3, worst)
 
 
-def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
+def bench_cholesky[n: Int, block: Int = 48](ctx: DeviceContext) raises:
     var a = _spd[n](ctx)
 
     def work() raises {mut a}:
@@ -463,11 +463,11 @@ def main() raises:
     print()
     print("Block size, at two sizes because the best block is not the same")
     print("op\tn\tms\tGFLOP/s\tmax |residual|")
-    bench_cholesky[512, 16](ctx)
     bench_cholesky[512, 32](ctx)
+    bench_cholesky[512, 48](ctx)
     bench_cholesky[512, 64](ctx)
-    bench_cholesky[1024, 16](ctx)
     bench_cholesky[1024, 32](ctx)
+    bench_cholesky[1024, 48](ctx)
     bench_cholesky[1024, 64](ctx)
     bench_lu[512, 8](ctx)
     bench_lu[512, 16](ctx)

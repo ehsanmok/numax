@@ -37,7 +37,7 @@ from .triangular import solve_triangular
 
 
 def cholesky[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32 if gpu else 48
 ](mut a: Static[dtype, n, n]) raises -> Static[
     dtype, n, n
 ] where dtype.is_floating_point():
@@ -74,13 +74,43 @@ def cholesky[
     the `O(n^2)` copy band they put on every step.
 
     `block` is a parameter so a caller can tune it or set it to `n` to get
-    the unblocked algorithm back. The default is `32`, measured rather than
-    guessed: the cost is `A * n^2 * block` for the panel solve plus
-    `B * n^3 / block` for the GEMM's own writes to `c`, so it has an
-    interior minimum, and `32` sat at or next to it at every size and on
-    both targets (`bench/bench_linalg.mojo` sweeps it). No pivoting, and
-    none is needed: a symmetric positive definite matrix does not require
-    it.
+    the unblocked algorithm back. The cost is `A * n^2 * block` for the
+    panel solve plus `B * n^3 / block` for the GEMM's own writes to `c`, so
+    it has an interior minimum, and the default is measured rather than
+    guessed -- `48` on the host, `32` on a device.
+
+    **The two targets disagree, and the default follows `gpu` rather than
+    splitting the difference.** That is not per-architecture code: `gpu` is
+    the axis this library already splits on everywhere, and no vendor is
+    named. What differs is `A`. On the host the panel solve is one thread
+    per row, so `A` is large and a wider block pays for itself through a
+    better GEMM shape; on a device the same solve is one thread per row
+    across the whole GPU, `A` is already small, and a wider block only
+    makes the panel and the launch count worse.
+
+    Measured on an Apple M3 Pro at `float32`, GFLOP/s. Host:
+
+        n     block=32   block=48   block=64
+        128       6.04       6.72       6.43
+        256      14.38      15.34      15.70
+        512      24.75      31.56      32.52
+        1024     36.77      51.90      45.22
+
+    `64` is a few percent ahead at `n = 256` and `512` and 15% behind at
+    `1024`, so `48` is the one that is never wrong by much. Metal, same
+    machine's 18-core GPU:
+
+        n     block=32   block=48   block=64   block=128
+        512      15.50         --      12.84          --
+        1024     62.93      56.11      51.39       34.63
+
+    monotonically worse as the block grows, so `32` stands there.
+
+    The host default moved from `32` when
+    `trsm_right_lower_t`'s inner dot product was vectorized: a cheaper
+    panel solve shrinks `A`, which moves the minimum right. No pivoting,
+    and none is needed: a symmetric positive definite matrix does not
+    require it.
 
     Raises when a diagonal entry comes out non-positive, which is what a
     matrix that is not positive definite looks like from in here. The check

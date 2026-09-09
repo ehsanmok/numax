@@ -794,13 +794,27 @@ def trsm_right_lower_t[
     if height <= 0:
         return
 
+    comptime lanes = simd_width_of[dtype]()
+
     @always_inline
     def solve[w: Int, alignment: Int = 1](coord: Coord) {var a, var k, var nb}:
         var row = k + nb + coord_to_index_list(coord)[0]
         for j in range(nb):
-            var total = a[Coord(row, k + j)]
-            for p in range(j):
+            # The dot product of this row's finished prefix against row
+            # `k + j` of `L`. Both walk `p` along a row, so both are
+            # contiguous and the whole thing vectorizes; only the `j` loop
+            # around it carries a dependence.
+            var acc = SIMD[dtype, lanes](0)
+            var p = 0
+            while p + lanes <= j:
+                acc += a.load[lanes](Coord(row, k + p)) * a.load[lanes](
+                    Coord(k + j, k + p)
+                )
+                p += lanes
+            var total = a[Coord(row, k + j)] - acc.reduce_add()
+            while p < j:
                 total = total - a[Coord(row, k + p)] * a[Coord(k + j, k + p)]
+                p += 1
             a.store[1](Coord(row, k + j), total / a[Coord(k + j, k + j)])
 
     elementwise[simd_width=1, target=target](solve, Coord(height), ctx)
