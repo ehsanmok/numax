@@ -89,6 +89,15 @@ scaffolder. Checking a `max.*` path is not checking the root:
 top-level `algorithm` root is where the reductions live. Reading the first as
 the second is what let numax hand-write a reduction engine MAX already
 shipped, the same `max.linalg`-vs-`linalg` distinction one paragraph up.
+
+The same trap runs one level down: **a kernel family is not one module.**
+`nn.pad` has no `target` and no `DeviceContext`, so reading it alone says
+padding is host-only — but `nn.pad_gpu` sits beside it with the device path
+for the constant mode, spelled in raw pointers instead of `TileTensor`.
+Grep the whole root for the operation's name (`rg -l pad max/kernels/src/nn/`)
+before concluding a path does not exist; a `_gpu` sibling, a differently
+spelled entry point, or a second module is the common case, not the rare one.
+
 Then label it:
 
 - **Delegate.** MAX has it, on `TileTensor`. Call it.
