@@ -57,6 +57,7 @@ from max.gpu import barrier
 from max.gpu.host import DeviceContext
 from std.gpu import block_dim, thread_idx
 from std.math import sqrt
+from std.sys.info import simd_width_of
 
 
 comptime _PANEL_THREADS = 256
@@ -885,9 +886,21 @@ def pack_block[
         comptime if trans:
             dst.store[1](coord, a[Coord(col0 + j, row0 + i)])
         else:
-            dst.store[w](coord, a.load[w](Coord(row0 + i, col0 + j)))
+            dst.store[w, alignment=alignment](
+                coord, a.load[w, alignment=alignment](Coord(row0 + i, col0 + j))
+            )
 
-    elementwise[simd_width=1, target=target](copy, Coord(rows, cols), ctx)
+    # The untransposed copy walks `j` contiguously in both source and
+    # destination, so it takes the native width; the body was already
+    # written for it and only the launch was scalar. The transposed one
+    # cannot: consecutive `j` there reads down a column of `a`, a strided
+    # gather, so it stays one element at a time.
+    comptime if trans:
+        elementwise[simd_width=1, target=target](copy, Coord(rows, cols), ctx)
+    else:
+        elementwise[simd_width=simd_width_of[dtype](), target=target](
+            copy, Coord(rows, cols), ctx
+        )
 
 
 def pack_vector[

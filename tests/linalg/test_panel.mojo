@@ -281,5 +281,69 @@ def test_pack_block_copies_a_strided_block_densely() raises:
             )
 
 
+def test_pack_block_copies_a_width_the_simd_lanes_do_not_divide() raises:
+    """A block whose column count is prime, so the widened copy's ragged
+    tail runs rather than being an even number of vectors.
+
+    `pack_block` launches its untransposed copy at the native SIMD width,
+    so `cols` divisible by that width would exercise only the whole-vector
+    path. Seven is prime and smaller than any SIMD width this runs at, so
+    the tail is the whole copy at some widths and part of it at others.
+    """
+    comptime n = 16
+    comptime rows = 5
+    comptime cols = 7
+    var ctx = _cpu()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n * n):
+        values[i] = Scalar[dtype](i)
+    var a = Static[dtype, n, n](ctx, values.copy())
+    var dst = zeros[dtype, rows, cols](ctx)
+
+    pack_block(a.view(), dst.view(), 3, 2, rows, cols, ctx)
+    ctx.synchronize()
+
+    var got = dst.to_host()
+    for i in range(rows):
+        for j in range(cols):
+            assert_almost_equal(
+                Float64(got[i * cols + j]),
+                Float64(values[(3 + i) * n + 2 + j]),
+                atol=0,
+            )
+
+
+def test_pack_block_transposed_copies_a_ragged_width() raises:
+    """The same ragged shape through the transposed branch, which stays
+    scalar because consecutive columns of `dst` read down a column of `a`.
+
+    Here so that widening the untransposed launch cannot silently widen
+    this one too: a strided gather read a vector at a time would return
+    neighbouring rows instead of the column, and the assertion below is
+    what catches it.
+    """
+    comptime n = 16
+    comptime rows = 5
+    comptime cols = 7
+    var ctx = _cpu()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n * n):
+        values[i] = Scalar[dtype](i)
+    var a = Static[dtype, n, n](ctx, values.copy())
+    var dst = zeros[dtype, rows, cols](ctx)
+
+    pack_block[trans=True](a.view(), dst.view(), 3, 2, rows, cols, ctx)
+    ctx.synchronize()
+
+    var got = dst.to_host()
+    for i in range(rows):
+        for j in range(cols):
+            assert_almost_equal(
+                Float64(got[i * cols + j]),
+                Float64(values[(2 + j) * n + 3 + i]),
+                atol=0,
+            )
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
