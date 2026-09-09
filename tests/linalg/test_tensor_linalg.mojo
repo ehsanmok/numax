@@ -247,6 +247,24 @@ def test_tril_and_triu_accept_a_non_square_matrix() raises:
         assert_almost_equal(Float64(upper[i]), want_upper[i], atol=1e-12)
 
 
+def _spd_n[n: Int]() raises -> List[Float64]:
+    """An `n x n` symmetric positive definite matrix, at any size.
+
+    The same generator `bench/bench_linalg.mojo` uses -- `1 / (1 + |i - j|)`
+    off the diagonal and `n` on it -- so it is diagonally dominant and
+    positive definite by Gershgorin, and a Cholesky of it cannot fail for a
+    reason that is really a bad test matrix.
+    """
+    var values = List[Float64](length=n * n, fill=0.0)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                values[i * n + j] = Float64(n)
+            else:
+                values[i * n + j] = 1.0 / (1.0 + Float64(abs(i - j)))
+    return values^
+
+
 def _spd_5x5() raises -> List[Float64]:
     """A symmetric positive definite 5x5, diagonally dominant by hand."""
     return [
@@ -331,6 +349,76 @@ def test_cholesky_blocking_does_not_change_the_answer() raises:
         for i in range(25):
             assert_almost_equal(
                 Float64(blocked[i]), Float64(unblocked[i]), atol=1e-12
+            )
+
+
+def test_cholesky_tiling_does_not_change_the_answer() raises:
+    """Every tile size factors the same matrix into the same `L`.
+
+    The trailing update runs as a loop over the lower block-triangle rather
+    than one GEMM, so `tile` decides how that region is cut up and must not
+    decide the answer. `tile >= n` is one tile, which is the single-GEMM
+    shape the tiled loop replaced, so this pins the new path against the old
+    one. Sizes are deliberately not multiples of each other -- a tile that
+    divides the trailing block evenly would never exercise the ragged last
+    tile, which is where an off-by-one in the row or column offset lands.
+    """
+    comptime n = 11
+    var ctx = _cpu()
+    var a1 = Static[DType.float64, n, n](ctx, _spd_n[n]())
+    var whole = cholesky[DType.float64, n, False, 3, 64](a1).to_host()
+
+    for t in [2, 3, 4, 5, 7]:
+        var a2 = Static[DType.float64, n, n](ctx, _spd_n[n]())
+        var tiled: List[Scalar[DType.float64]]
+        if t == 2:
+            tiled = cholesky[DType.float64, n, False, 3, 2](a2).to_host()
+        elif t == 3:
+            tiled = cholesky[DType.float64, n, False, 3, 3](a2).to_host()
+        elif t == 4:
+            tiled = cholesky[DType.float64, n, False, 3, 4](a2).to_host()
+        elif t == 5:
+            tiled = cholesky[DType.float64, n, False, 3, 5](a2).to_host()
+        else:
+            tiled = cholesky[DType.float64, n, False, 3, 7](a2).to_host()
+        for i in range(n * n):
+            assert_almost_equal(
+                Float64(tiled[i]), Float64(whole[i]), atol=1e-12
+            )
+
+
+def test_cholesky_reads_only_the_lower_triangle() raises:
+    """Perturbing the input above the diagonal does not move `L`.
+
+    This is the invariant the tiled trailing update could break and nothing
+    else in the suite would notice. The loop visits only the lower block
+    triangle, so a mis-indexed tile -- rows and columns transposed, or an
+    offset taken from the wrong side of the diagonal -- would start reading
+    the upper half, and every existing test uses a symmetric matrix where
+    that reads the same values. Here the two halves disagree, so it cannot.
+
+    Note the algorithm does *write* above the diagonal, inside the diagonal
+    tiles, and `tril` discards that at the end. Reading is the claim, not
+    writing.
+    """
+    comptime n = 9
+    var ctx = _cpu()
+    var clean = Static[DType.float64, n, n](ctx, _spd_n[n]())
+    var want = cholesky[DType.float64, n, False, 3, 4](clean).to_host()
+
+    var perturbed = _spd_n[n]()
+    for i in range(n):
+        for j in range(i + 1, n):
+            perturbed[i * n + j] = Scalar[DType.float64](
+                -1000.0 - Float64(i + j)
+            )
+    var dirty = Static[DType.float64, n, n](ctx, perturbed^)
+    var got = cholesky[DType.float64, n, False, 3, 4](dirty).to_host()
+
+    for i in range(n):
+        for j in range(i + 1):
+            assert_almost_equal(
+                Float64(got[i * n + j]), Float64(want[i * n + j]), atol=1e-12
             )
 
 

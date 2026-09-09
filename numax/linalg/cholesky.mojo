@@ -37,7 +37,11 @@ from .triangular import solve_triangular
 
 
 def cholesky[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32 if gpu else 48
+    dtype: DType,
+    n: Int,
+    gpu: Bool = False,
+    block: Int = 32 if gpu else 64,
+    tile: Int = 512 if gpu else 128,
 ](mut a: Static[dtype, n, n]) raises -> Static[
     dtype, n, n
 ] where dtype.is_floating_point():
@@ -53,6 +57,22 @@ def cholesky[
     subtraction is the whole cubic cost of a Cholesky, and it is a matrix
     product, so it goes to `linalg.matmul` and inherits MAX's dispatch. The
     panel work is `O(n * block^2)` and the GEMM is `O(n^3)`.
+
+    **The trailing update is symmetric, and only its lower block triangle
+    is computed.** `L21 @ L21.T` is symmetric, so a single `m x m` GEMM
+    would spend half its flops and half its epilogue traffic on a half that
+    `tril` discards at the end. BLAS calls this `syrk`; MAX ships no
+    symmetric or triangular BLAS-3 at all (searched at the `26.5` pin, see
+    `docs/parity.md`), so it is a loop here over tiles of `tile x tile`
+    covering `ti >= tj`. Diagonal tiles still compute their own full square,
+    which wastes `O(tile / m)` rather than a half.
+
+    Tiling costs launches and buys two things. The flops and the epilogue's
+    read-modify-write both halve, and -- the larger effect on the host,
+    because the update is bandwidth-bound rather than compute-bound -- the
+    throwaway product `matmul` insists on writing shrinks from `m x m` to
+    one tile. No extra packing: `L21` is packed dense once, and every tile's
+    operands are contiguous row ranges of that one buffer.
 
     **Nothing leaves the device.** The matrix is copied once on the way in
     and once on the way out and is otherwise never touched by the host: the
@@ -106,9 +126,17 @@ def cholesky[
 
     monotonically worse as the block grows, so `32` stands there.
 
-    The host default moved from `32` when
-    `trsm_right_lower_t`'s inner dot product was vectorized: a cheaper
-    panel solve shrinks `A`, which moves the minimum right. No pivoting,
+    The host default moved from `32` to `48` when `trsm_right_lower_t`'s
+    inner dot product was vectorized, and from `48` to `64` when the
+    trailing update became symmetric: both cheapen a term that a wider
+    block pays for, and each moves the minimum right.
+
+    `tile` cuts the trailing update into blocks; see the module docstring
+    for why it exists. `128` on the host, where it is worth 12-15% at
+    `n = 1024`, and `512` on a device, where it is worth nothing measurable
+    -- 63.3-63.4 GFLOP/s untiled against 60.0-63.8 tiled at `n = 1024` --
+    and is kept only because it drops the scratch allocation from `n x n`
+    to `tile x tile`, which at `n = 4096` is 64 MiB against 1 MiB. No pivoting,
     and none is needed: a symmetric positive definite matrix does not
     require it.
 
@@ -132,7 +160,13 @@ def cholesky[
     # block. It still has to exist and it still has to be the product's
     # full size, because `matmul` writes `c` whether an epilogue is given
     # or not -- measured, and the reason this is not overlaid on `work`.
-    var scratch = zeros_dyn[dtype, 2](n, n, ctx=ctx)
+    # The GEMM's own output, which nothing here reads: the epilogue takes
+    # each tile as it is computed and subtracts it into the trailing block.
+    # It still has to exist and be the product's full size, because `matmul`
+    # writes `c` whether an epilogue is given or not -- but the product is
+    # now one `tile x tile` block rather than the whole `n x n` trailing
+    # submatrix, which is most of what the tiling buys.
+    var scratch = zeros_dyn[dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
 
     var wv = work.view()
     var iv = info.view()
@@ -170,41 +204,67 @@ def cholesky[
         if m > 0:
             var base = k + nb
 
-            # Dense `m x nb` over the head of the scratch, and a second
-            # view of it, because `matmul` takes `a` and `b` mutably and
-            # rejects two live views that share an origin.
-            var left: _Dense[dtype] = TileTensor(
+            # `L21` made dense once for the whole trailing update. Every
+            # tile below is a contiguous row range of it, which is itself
+            # dense, so the tiling costs no extra packing.
+            var panel: _Dense[dtype] = TileTensor(
                 ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
             )
-            var right: _Dense[dtype] = TileTensor(
-                ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
-            )
-            pack_block[target=_target[gpu]()](wv, left, base, k, m, nb, ctx)
+            pack_block[target=_target[gpu]()](wv, panel, base, k, m, nb, ctx)
 
-            var product: _Dense[dtype] = TileTensor(
-                sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, m))
-            )
+            # `A22 -= L21 @ L21^T` is symmetric, so only the lower block
+            # triangle is computed. See the module docstring for why this
+            # is a loop over tiles rather than one GEMM.
+            var tiles = (m + tile - 1) // tile
+            for ti in range(tiles):
+                var row0 = ti * tile
+                var rows = min(tile, m - row0)
+                for tj in range(ti + 1):
+                    var col0 = tj * tile
+                    var cols = min(tile, m - col0)
 
-            @parameter
-            @always_inline
-            @__copy_capture(wv, base)
-            def subtract[
-                _dtype: DType,
-                width: SIMDLength,
-                *,
-                alignment: Int = align_of[SIMD[_dtype, width]](),
-            ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
-                var at = Coord(base + idx[0], base + idx[1])
-                wv.store[width](
-                    at,
-                    wv.load[width](at) - rebind[SIMD[dtype, width]](value),
-                )
+                    # Two views of the packed panel, because `matmul` takes
+                    # both operands mutably and rejects two live views that
+                    # share an origin.
+                    var left: _Dense[dtype] = TileTensor(
+                        ov.ptr_at_offset(Coord(row0, 0)),
+                        row_major(Coord(rows, nb)),
+                    )
+                    var right: _Dense[dtype] = TileTensor(
+                        ov.ptr_at_offset(Coord(col0, 0)),
+                        row_major(Coord(cols, nb)),
+                    )
+                    var product: _Dense[dtype] = TileTensor(
+                        sv.ptr_at_offset(Coord(0, 0)),
+                        row_major(Coord(rows, cols)),
+                    )
 
-            _max_matmul[
-                transpose_b=True,
-                elementwise_lambda_fn=subtract,
-                target=_target[gpu](),
-            ](product, left, right, ctx)
+                    var r0 = base + row0
+                    var c0 = base + col0
+
+                    @parameter
+                    @always_inline
+                    @__copy_capture(wv, r0, c0)
+                    def subtract[
+                        _dtype: DType,
+                        width: SIMDLength,
+                        *,
+                        alignment: Int = align_of[SIMD[_dtype, width]](),
+                    ](
+                        idx: IndexList[2], value: SIMD[_dtype, width]
+                    ) capturing -> None:
+                        var at = Coord(r0 + idx[0], c0 + idx[1])
+                        wv.store[width](
+                            at,
+                            wv.load[width](at)
+                            - rebind[SIMD[dtype, width]](value),
+                        )
+
+                    _max_matmul[
+                        transpose_b=True,
+                        elementwise_lambda_fn=subtract,
+                        target=_target[gpu](),
+                    ](product, left, right, ctx)
 
         k += nb
 
