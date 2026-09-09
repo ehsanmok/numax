@@ -97,7 +97,7 @@ def cholesky[
     the unblocked algorithm back. The cost is `A * n^2 * block` for the
     panel solve plus `B * n^3 / block` for the GEMM's own writes to `c`, so
     it has an interior minimum, and the default is measured rather than
-    guessed -- `48` on the host, `32` on a device.
+    guessed -- `64` on the host, `32` on a device.
 
     **The two targets disagree, and the default follows `gpu` rather than
     splitting the difference.** That is not per-architecture code: `gpu` is
@@ -155,11 +155,6 @@ def cholesky[
     # `L21` made dense for the GEMM. `n x block` covers every step's panel,
     # so it is allocated once rather than per step.
     var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
-    # The GEMM's own output, which nothing here ever reads: the epilogue
-    # takes each tile as it is computed and subtracts it into the trailing
-    # block. It still has to exist and it still has to be the product's
-    # full size, because `matmul` writes `c` whether an epilogue is given
-    # or not -- measured, and the reason this is not overlaid on `work`.
     # The GEMM's own output, which nothing here reads: the epilogue takes
     # each tile as it is computed and subtracts it into the trailing block.
     # It still has to exist and be the product's full size, because `matmul`
