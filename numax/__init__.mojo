@@ -53,7 +53,7 @@ is safe; its own docstring lists them and where to reach them.
 |---|---|
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows` -- is `numax.core.tensor` |
 | `numax.special` | Γ and B, `erf`, Bessel `J`/`Y`, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, activations |
-| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul` are MAX kernels, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`inverse`/`det`/`norm`/`trace` build on those. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
+| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul` are MAX kernels, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`norm`/`trace` build on those. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
 | `numax.optimize` | `newton`/`halley`/`bisection` at a fixed iteration count; `newton_tol`, `brentq`, `bfgs`, `nelder_mead`, `least_squares`, `curve_fit` to a tolerance |
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
@@ -293,6 +293,7 @@ from .linalg import (
     norm,
     nrm2,
     outer,
+    lstsq,
     qr_factor,
     solve,
     solve_triangular,

@@ -629,3 +629,31 @@ def qr_factor[
     _ = scratch^
 
     return TensorQR[dtype, m, n, gpu](factored^, taus^, block)
+
+
+def lstsq[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 16
+](mut a: Static[dtype, m, n], mut b: Static[dtype, m]) raises -> Static[
+    dtype, n
+] where (dtype.is_floating_point() and m >= n):
+    """The least-squares solution of the overdetermined `A x = b`: the `x`
+    minimizing `||A x - b||`. `numpy.linalg.lstsq`, first return value, and
+    the name `scipy.linalg` puts on this algorithm.
+
+    `A` is `m x n` with `m >= n`, the overdetermined shape a fit has; an
+    underdetermined system has a solution space rather than a solution.
+
+    This is `qr_factor` followed by `TensorQR.solve`, and it exists because
+    a caller fitting once should not have to know that the route goes
+    through a factorization object. Hold the `TensorQR` instead when several
+    right-hand sides share one `A` -- the factorization is the expensive
+    half and `solve` is the cheap one, so this convenience is exactly the
+    wrong shape for a loop.
+
+    Rank deficiency is not detected, the same limit the `Array` tier's
+    `lstsq` documents: a dependent column leaves a near-zero diagonal in
+    `R`, and the substitution's floor keeps the answer finite rather than
+    correct.
+    """
+    var factored = qr_factor[dtype, m, n, gpu, block](a)
+    return factored.solve[block](b)

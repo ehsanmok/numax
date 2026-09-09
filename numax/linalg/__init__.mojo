@@ -16,7 +16,7 @@ sends the cubic term back through `matmul`. This tier is
 The `FloatLike`-generic, register-resident half of the library is
 `numax.linalg.array`, one import away and covering names this surface does
 not have at all -- `eigh`, `eigvals`, `svd`, `qr` as a pair of factors,
-`lstsq`, `pinv`, `cond`, the substitutions, `tridiagonal_solve`. That
+`pinv`, `cond`, the substitutions, `tridiagonal_solve`. That
 subpackage's docstring says why it exists and what the split costs;
 `to_tensor`/`to_array` cross between the two.
 
@@ -33,7 +33,7 @@ modules matter when reading or extending.
 | `triangular` | `solve_triangular` | `solve_banded` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
 | `lu` | `lu_factor`, `TensorLU`, `det` | `_decomp_lu` |
-| `qr` | `qr_factor`, `TensorQR` | `_decomp_qr` |
+| `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm`, `trace`, `fro`, `inf` | `_misc` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
@@ -145,5 +145,5 @@ from .blas import (
 from .cholesky import cholesky, cholesky_solve
 from .lu import TensorLU, det, lu_factor
 from .misc import fro, inf, norm, trace
-from .qr import TensorQR, qr_factor
+from .qr import TensorQR, lstsq, qr_factor
 from .triangular import solve_triangular

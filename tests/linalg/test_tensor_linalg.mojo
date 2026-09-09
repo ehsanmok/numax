@@ -32,6 +32,7 @@ from numax.linalg import (
     norm,
     nrm2,
     outer,
+    lstsq,
     qr_factor,
     solve,
     solve_triangular,
@@ -1323,6 +1324,40 @@ def test_tensor_qr_of_a_square_matrix_reconstructs_it() raises:
         assert_almost_equal(
             Float64(product[i]), Float64(entries[i]), atol=1e-10
         )
+
+
+def test_lstsq_agrees_with_the_factorization_it_wraps() raises:
+    """`lstsq` is `qr_factor` followed by `TensorQR.solve`, so the two
+    spellings must produce the same vector bit for bit -- the convenience
+    exists to hide the factorization, not to run a different algorithm."""
+    var ctx = _cpu()
+    var rhs: List[Scalar[DType.float64]] = [1.0, 3.0, 5.0, 7.0, 9.0, 11.0]
+
+    var a = Static[DType.float64, 6, 3](ctx, _tall_6x3())
+    var b = Static[DType.float64, 6](ctx, rhs.copy())
+    var direct = lstsq[DType.float64, 6, 3, False, 2](a, b).to_host()
+
+    var a2 = Static[DType.float64, 6, 3](ctx, _tall_6x3())
+    var b2 = Static[DType.float64, 6](ctx, rhs.copy())
+    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a2)
+    var staged = factorization.solve[2](b2).to_host()
+
+    for i in range(3):
+        assert_almost_equal(Float64(direct[i]), Float64(staged[i]), atol=1e-12)
+
+
+def test_lstsq_recovers_an_exact_linear_fit() raises:
+    """An overdetermined system that happens to be consistent has the
+    residual zero, so least squares must return the exact solution: four
+    points on `y = 2x + 1` against a two-column design matrix."""
+    var ctx = _cpu()
+    var design = Static[DType.float64, 4, 2](
+        ctx, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0]
+    )
+    var b = Static[DType.float64, 4](ctx, [1.0, 3.0, 5.0, 7.0])
+    var fit = lstsq[DType.float64, 4, 2, False, 2](design, b).to_host()
+    assert_almost_equal(Float64(fit[0]), 1.0, atol=1e-12)
+    assert_almost_equal(Float64(fit[1]), 2.0, atol=1e-12)
 
 
 def main() raises:

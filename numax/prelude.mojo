@@ -237,6 +237,7 @@ from .linalg import (
     norm,
     nrm2,
     outer,
+    lstsq,
     qr_factor,
     solve,
     solve_triangular,
