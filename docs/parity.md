@@ -32,9 +32,9 @@ Surveyed against `max 26.5`. Import roots are top-level `layout`, `linalg`,
 | Transpose | `transpose` (n-D, **host only** -- see the defect note below), `matrix_band_part` | `linalg` |
 | Reductions | `ReduceSum`/`ReduceMax`/`ReduceMin`/`ReduceProduct`, `MinMax`, `ArgMax`, `ArgMin`, `Welford` (online mean/variance), `OnlineLogSumExp` (flash softmax), driven by the `rowwise` CPU/GPU scaffolder | `algorithm.reduce_op`, `algorithm.rowwise` |
 | Drivers | `elementwise`, `parallelize`, `stencil` | `max.algorithm` |
-| Shape ops | `reshape`, `slice`, `concat`, `split`, `tile`, `broadcast`, `pad`, `arange` | `nn` |
+| Shape ops | `reshape`, `slice`, `concat`, `split`, `tile`, `broadcast`, `pad` (three modes on the host, **`constant` only on GPU** -- see the note below), `arange` | `nn`, `nn.pad_gpu` |
 | Indexing | `gather`, `scatter_nd`, `index_tensor`, `arg_nonzero` | `nn` |
-| Ordering | `argsort` (rank-1), `top_k`; host `sort`/`partition` | `nn`, `std.builtin.sort` |
+| Ordering | `argsort` (rank-1), `top_k` (any axis, CPU and GPU); host `sort`/`partition` | `nn`, `std.builtin.sort` |
 | ML primitives | `softmax`/`logsoftmax`, `layer_norm`/`group_norm`/`rms_norm`, convolution, pooling | `nn` |
 | GPU | `DeviceContext`, buffers, streams, `GPUInfo` | `max.gpu.host` |
 | RNG | `seed`, `rand`, `randn`, Philox `Random`/`NormalRandom` | `std.random` |
@@ -66,6 +66,26 @@ So a `float32` CPU `matmul` on a Mac is Accelerate, and a comparison against
 SciPy there is measuring call overhead rather than two kernels. At `float64`
 the gate does not fire and MAX's own kernel runs, at 0.72x of Accelerate's
 `dgemm` (264 against 365 GFLOP/s at `n = 1024` on an M3 Pro).
+
+`pad` and `top_k` were searched at the pin for numax's own versions, and the
+lesson of the two is that a kernel family is not one module. `nn.top_k` is a
+whole delegate from a single entry point: it takes `largest`, a `target`, an
+axis, a `sorted` flag and a required `DeviceContext`, and dispatches a
+`parallelize`d CPU path against a real GPU one, so numax's `top_k` carries a
+`gpu` parameter like the rest of the delegations.
+
+`pad` is split across two modules that do not agree on a type. `nn.pad` is
+host only — `pad_constant`, `pad_reflect` and `pad_repeat` (NumPy's `edge`)
+take `TileTensor` in and out and have no `target` and no `DeviceContext`.
+`nn.pad_gpu` covers the device, but **only** `pad_constant`, and it takes raw
+`Pointer[Scalar[dtype]]` plus an `IndexList` shape rather than a tensor. So
+numax's `pad` can carry a `gpu` parameter for the constant mode and cannot
+for the other two, and its device path hands over a pointer where its host
+path hands over a `.view()`. A pointer and a shape are not the denied
+`LayoutTensor` bridge — they are what `Tensor`'s own `DeviceBuffer` already
+holds — but this is the one delegation whose two halves are spelled
+differently, and reading `nn/pad.mojo` alone says the GPU path does not
+exist.
 
 **Not available, so numax writes it:**
 
