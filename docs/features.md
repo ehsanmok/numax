@@ -310,16 +310,37 @@ Tier 1, 1-D.
 
 ## `numax.fft`
 
-Radix-2 Cooley-Tukey, power-of-two by construction, over `Complex` at any
-conformer. MAX ships no forward FFT to route to.
+Radix-2 Cooley-Tukey, power-of-two by construction. MAX ships **no forward
+FFT at all** — its only transform is `nn.irfft`, inverse-only,
+last-axis-only and NVIDIA-only over the private `_cufft` — so there is
+nothing to route to and both tiers here are numax's own.
 
-| Surface | Where |
+Two tiers, one import each, the same split `numax.linalg` makes. The size
+is what chooses: an `Array` holds its data in registers and a `Tensor` does
+not.
+
+| Surface — over `Tensor`, from `numax.fft` | Where |
 |---|---|
-| `fft`, `ifft` — complex forward and inverse | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
-| `rfft`, `irfft` — real input, half spectrum | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
-| `fft2`, `ifft2` — square 2-D transforms | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
-| `fftfreq`, `rfftfreq`, `fftshift` — frequency grids and centring | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
-| `circular_convolve` — convolution in the transform domain | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `fft`, `ifft` — complex forward and inverse, travelling as a `Spectrum` real/imaginary pair, since a `dtype`-monomorphic tensor cannot hold a `Complex` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `rfft` — real input, half spectrum | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `fftfreq`, `rfftfreq` — frequency grids | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+
+Tier 2: the stage loop is on the host and each of the `log2(n) + 1` stages
+is a device kernel, so the data stays device-resident between them but
+nothing here runs *inside* a kernel body. `gpu=True` is `float32` on Apple
+silicon, which is Metal's limit on `double` rather than this module's.
+
+| Surface — over `Array[Complex[T], n]`, from `numax.fft.array` | Where |
+|---|---|
+| `fft`, `ifft` — complex forward and inverse | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
+| `rfft`, `irfft` — real input, half spectrum | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
+| `fft2`, `ifft2` — square 2-D transforms | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
+| `fftfreq`, `rfftfreq`, `fftshift` — frequency grids and centring | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
+| `circular_convolve` — convolution in the transform domain | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
+
+Tier 1, and the only tier that differentiates: the butterfly is `Complex`
+arithmetic over `FloatLike`, so `fft` at `Complex[Dual[Plain]]` returns the
+transform and its derivative with no adjoint rule written anywhere.
 
 ## `numax.signal`
 

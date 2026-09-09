@@ -3,7 +3,7 @@ from std.math import cos, sin
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Complex, Dual, FloatLike, Plain
-from numax.fft import (
+from numax.fft.array import (
     circular_convolve,
     fft,
     fft2,

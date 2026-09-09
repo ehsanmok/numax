@@ -57,7 +57,7 @@ is safe; its own docstring lists them and where to reach them.
 | `numax.optimize` | `newton`/`halley`/`bisection` at a fixed iteration count; `newton_tol`, `brentq`, `bfgs`, `nelder_mead`, `least_squares`, `curve_fit` to a tolerance |
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
-| `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, `fft2`, `fftfreq`, `fftshift`/`ifftshift`, circular convolution |
+| `numax.fft` | `fft`/`ifft`, `rfft`, `fftfreq`/`rfftfreq` over `Tensor`, device-resident across `log2(n) + 1` stages; `numax.fft.array` is the register-resident tier that differentiates, and adds `irfft`, `fft2`, `fftshift` and circular convolution. MAX ships no forward transform at all |
 | `numax.signal` | `convolve`, `correlate`, `lfilter`, `firwin`, Hann/Hamming/Blackman windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), and numax's own `NMX1` `nmx.save`/`nmx.load`. Printing is `print(a)`, since `Tensor` is `Writable` |
@@ -342,20 +342,10 @@ from .interpolate.interp import (
     horner,
 )
 
-# Discrete Fourier transforms -- `numax.fft`.
-from .fft.fft import (
-    circular_convolve,
-    fft,
-    fft2,
-    fftfreq,
-    fftshift,
-    ifft,
-    ifft2,
-    ifftshift,
-    irfft,
-    rfft,
-    rfftfreq,
-)
+# Discrete Fourier transforms -- `numax.fft`, the `Tensor` tier.
+# `circular_convolve`, `fft2`/`ifft2`, `irfft` and `fftshift`/`ifftshift`
+# are `Array`-tier only, one import away at `numax.fft.array`.
+from .fft.fft import Spectrum, fft, fftfreq, ifft, rfft, rfftfreq
 
 # Convolution, correlation, windows -- `numax.signal`.
 from .signal.signal import (

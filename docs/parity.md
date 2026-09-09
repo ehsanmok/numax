@@ -114,7 +114,9 @@ exist.
   deflation, which no GEMM helps and which is tier 2 by numax's definition.
   `numax/linalg/__init__.mojo` carries the reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
-  wrapper over the *private* `_cufft` package. No forward FFT anywhere.
+  wrapper over the *private* `_cufft` package. No forward FFT anywhere, and
+  nothing at all on Metal or AMD, so `numax.fft` over `Tensor` is an
+  **extend** with no delegation underneath it.
 - **Out-of-place tensor arithmetic and explicit broadcast.** `TileTensor` has
   in-place operators only and no `broadcast_to`.
 - **Statistics and ordering past the basics.** No value-based or n-D sort, no
@@ -141,7 +143,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 | Dense linalg | `numax/linalg/` (`blas`, `triangular`, `cholesky`, `lu`, `qr`, `basic`, `misc`, `panel`) and `numax/linalg/array/` (the same split plus `eigen`) | Two tiers sharing one set of names, one tier per import. `numax.linalg` is `Tensor`: `matmul`/`matvec`/`batched_matmul` delegate to `linalg.matmul`/`bmm`, and `cholesky`/`lu_factor`/`qr_factor`/`solve`/`lstsq` are blocked and device-resident, with the `O(n^3)` trailing update fused into `linalg.matmul`'s epilogue -- MAX's only factorization, `linalg.qr_factorization`, is `LayoutTensor`-only and so denied. `numax.linalg.array` is `FloatLike`-generic and register-resident, where differentiability is the point, and is the only tier with `eigh`/`eigvals`/`svd`. `PivotedLU`/`TensorLU` are the tier-2 exceptions, since a pivot choice is a branch on data |
 | Root finding and minimization | `numax/optimize/solve.mojo`, `numax/optimize/optimize.mojo` | Fixed-iteration siblings in `solve` (tier 1), converge-to-tolerance in `optimize` (tier 2). `least_squares`/`curve_fit` take the Jacobian from `Gradient` rather than a difference |
 | Quadrature and ODE | `numax/integrate/quadrature.mojo`, `numax/integrate/ode.mojo`, `numax/integrate/integrate.mojo` | Fixed-node and fixed-step are tier 1; adaptive is tier 2, including `solve_ivp_stiff`, whose Newton iteration takes `df/dy` from `Dual` |
-| Transforms and signal | `numax/fft/fft.mojo`, `numax/signal/signal.mojo` | Power-of-two by construction. MAX's only transform is `nn.irfft` -- inverse-only, last-axis-only, NVIDIA-only -- so there is no forward FFT to route to at all. `lfilter`/`firwin` cover IIR and FIR; filter *design* past a windowed sinc is out |
+| Transforms and signal | `numax/fft/fft.mojo` and `numax/fft/array/fft.mojo`, `numax/signal/signal.mojo` | Power-of-two by construction. MAX's only transform is `nn.irfft` -- inverse-only, last-axis-only, NVIDIA-only -- so there is no forward FFT to route to at all and both tiers are numax's. Two tiers on the `numax.linalg` pattern: `numax.fft` is `Tensor`, `Plain`-only, a real/imaginary pair carried across `log2(n) + 1` device-resident stages, for sizes an `Array` cannot hold; `numax.fft.array` is the `FloatLike` tier that differentiates at `Complex[Dual]` and runs per SIMD lane inside a kernel body. `lfilter`/`firwin` cover IIR and FIR; filter *design* past a windowed sinc is out |
 | Tensor I/O | `numax/io/io.mojo`, `numax/io/npy.mojo` | Two formats: numax's own `NMX1` for numax-to-numax round trips (MAX ships no array I/O at all), and NumPy's `.npy` for interchange -- `numax.io.numpy.save` output is byte-identical to `numpy.save`, and `numax.io.numpy.load` reads `numpy.save` output, with no Python or NumPy dependency since the format is self-contained. `.npz` is out: it is a zip container |
 | Random sampling | `numax/stats/random.mojo` | Over `std.random` on the host. No `Random[FloatLike]` conformer: RNG is not differentiable, so the trait contract does not fit |
 

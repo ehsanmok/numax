@@ -272,7 +272,7 @@ from .optimize.solve import bisection, halley, newton
 from .integrate.quadrature import gauss_legendre, simpson, trapezoid
 from .integrate.ode import rk4
 from .interpolate.interp import Chebyshev, CubicSpline, horner
-from .fft.fft import fft, fftfreq, fftshift, ifft, ifftshift, irfft, rfft
+from .fft.fft import Spectrum, fft, fftfreq, ifft, rfft, rfftfreq
 
 # I/O.
 from .io.io import nmx

@@ -12,7 +12,7 @@ from std.math import cos
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Complex, Dual, FloatLike, Plain
-from numax.fft import circular_convolve, fft, ifft
+from numax.fft.array import circular_convolve, fft, ifft
 from numax.signal import (
     firwin,
     lfilter,

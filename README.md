@@ -409,7 +409,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `minimize(method="Nelder-Mead")` | `nelder_mead[n, f](x0)` | compares values only, for objectives with kinks |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
-| `np.fft.fft`, `np.fft.rfft` | `fft[T, log2n]`, `rfft` | length is `2^log2n`, over `Array[Complex[T], n]` |
+| `np.fft.fft`, `np.fft.rfft` | `fft`, `rfft` | power of two either way. `numax.fft` is the `Tensor` tier, a real/imaginary pair across `log2(n) + 1` device stages; `numax.fft.array` is `Array[Complex[T], n]` and differentiates |
 | `scipy.signal.lfilter` / `firwin` | `lfilter`, `firwin` | a recursion `convolve` cannot express, and taps to run through it |
 | `np.save` / `np.load` | `numpy.save` / `numpy.load` | real `.npy`, readable by NumPy |
 | `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit |

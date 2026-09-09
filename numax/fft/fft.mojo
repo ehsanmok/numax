@@ -1,387 +1,345 @@
-"""Radix-2 Cooley-Tukey FFT over `Complex[Inner]`, at a compile-time size.
+"""Discrete Fourier transforms over `numax.core.array.Tensor`.
 
-**This module is tier 1.** The transform size is a compile-time parameter,
-so every loop bound is known and the whole butterfly launches inside a GPU
-thread.
+**This module is tier 2.** The stage loop runs on the host and each stage is
+a device kernel, so nothing here is launchable *inside* a kernel body the
+way the `FloatLike` tier is. `numax.fft.array` is that tier, and it is the
+one that differentiates; this one is `Plain`-only and exists for the sizes
+an `Array` cannot hold. The two are cross-referenced rather than ranked:
+call the `Array` tier for a 64-point transform inside a per-lane kernel,
+call this one for a four-million-point spectrogram.
 
-The transform is `X[k] = sum_j x[j] * exp(-2*pi*i*j*k/n)` -- the standard
-sign convention, matching NumPy's `fft` and SciPy's.
+## The MAX gate
 
-Size is a compile-time parameter, and it's given as `log2n` rather than `n`
-so that "must be a power of two" is structural instead of a constraint the
-compiler would have to check (`numax.integrate.simpson` takes a panel
-count for the same reason). A caller wanting a 64-point transform writes
-`fft[Inner, 6]`.
+MAX ships **no forward transform at all**. Its only one is `nn.irfft`:
+inverse, real, last-axis, and NVIDIA-only, a thin wrapper over the private
+`_cufft` package, so there is nothing on Metal or AMD either. This module
+is therefore an **extend** in the contract's sense -- the gap is filled in
+MAX's own idiom, `gpu: Bool` selecting `target`, device-resident
+throughout -- rather than a delegation.
 
-Everything here inherits `numax`'s usual properties from `Complex`, and one
-of them is unusual for an FFT: this one differentiates. `fft` over
-`Complex[Dual[Plain[...]]]` returns the transform *and* its derivative with
-respect to whatever the input was seeded on, with no adjoint rule written
-anywhere -- the butterfly is built from `Complex` arithmetic, and `Complex`
-is built from `FloatLike` arithmetic, which `Dual` already knows how to
-differentiate. It also runs inside a single GPU thread, since the loop
-structure depends only on `n`.
+## Complex over a dtype-monomorphic tensor
 
-Two things this is deliberately not:
+A `Tensor` owns a `DeviceBuffer[dtype]` and `DType` is MAX's closed enum of
+machine scalars, so `Complex[T]` cannot live in one; that is the same
+structural fact that keeps every `FloatLike` conformer out of this tier.
+The transform therefore travels as **a pair of real tensors**, real and
+imaginary, rather than as one interleaved tensor with a trailing axis of 2.
+The pair is what `rfft` naturally produces, and it keeps every butterfly's
+reads unit-stride where interleaving would make them stride-2 gathers.
 
-- **Not a large-transform FFT.** The data lives in an `Array[Complex[Inner],
-  n]`, which is a register/stack object, and the twiddle table is built by a
-  `comptime for` over `n/2` entries, so compile time and register pressure
-  both grow with `n`. This is sized for the transforms that appear *inside*
-  a per-element kernel -- 16, 64, 256 points -- not for a 4-million-point
-  spectrogram. Nothing in the environment covers that case either: MAX
-  ships exactly one transform, `nn.irfft`, which is inverse-only,
-  last-axis-only and NVIDIA-only (a thin wrapper over the private `_cufft`
-  package). There is no forward FFT anywhere in MAX, and nothing at all on
-  Metal or AMD, so this module is the portable path rather than a
-  small-size fallback in front of a large-size one.
-- **Not radix-4 or split-radix, and `rfft` is not a specialized
-  algorithm.** `rfft` embeds the real input as complex and truncates the
-  result, which does about twice the arithmetic the standard
-  half-length-plus-post-pass trick would; radix-4 halves the number of
-  twiddle multiplies. Both are ordinary continuations of what's here
-  rather than redesigns, and at register-resident sizes neither is worth
-  a second code path.
+## The algorithm, and the launch count
+
+Bit-reversal permutation, then `log2(n)` radix-2 Cooley-Tukey stages, each
+one `elementwise` launch of `n/2` butterflies. `log2(n) + 1` launches, and
+the data never touches the host in between -- the same device-residency
+rule the blocked factorizations follow.
+
+The stages run **in place**, which is safe rather than lucky: butterfly `t`
+of a stage touches exactly the pair `(i, i + half)`, and those pairs are
+disjoint across `t`, so no two threads of a launch address the same
+element. That is what makes the permutation the only extra pass. Stockham
+autosort would fold the permutation into the stages and save that one
+launch of the `log2(n) + 1`; it is not written, because the permutation is
+a pure gather and the stages are where the arithmetic is.
+
+Twiddles come from a table of `n/2` entries built once per transform,
+`W[q] = exp(-2*pi*i*q/n)`, which every stage indexes with a stride: a stage
+of span `s` reads `W[pos * (n/s)]`. Two reasons, and neither is the obvious
+one. The table is evaluated on the host in `Float64` and rounded once into
+`dtype`, so at `float32` it is *more* accurate than computing the angle in
+the working precision inside the kernel. And Metal has no `float64`
+transcendentals at all -- `air.sin.f64` and `air.cos.f64` are rejected
+outright -- so a kernel that computes its own angles in `Float64` does not
+compile for a device at any `dtype`. The inverse transform conjugates this
+same table rather than building a second one.
+
+`gpu=True` is `float32` on Apple silicon, which is Metal's limit rather than
+this module's: Metal rejects `double` loads outright, so a `float64` tensor
+does not compile for it in any kernel numax writes (`findings.mdc` records
+the same rejection for the Bessel recurrences). CUDA has no such
+restriction.
+
+**Power-of-two only, and structurally so:** `n` is checked in a `where`
+clause, so a size that is not a power of two is a compile error rather than
+a run-time raise. Bluestein's chirp-z and mixed radix are **out of scope,
+not missing** -- they are a different algorithm with a different error
+bound, and the `Array` tier makes the same choice for the same reason.
 """
 
-from std.collections import Array
-from std.math import cos, sin
+from std.math import cos as _cos, sin as _sin
 
-from ..core.complex import Complex
-from ..core.numeric import FloatLike
+from layout import Coord, coord_to_index_list
+from max.algorithm.functional import elementwise
+from max.gpu.host import DeviceContext
+
+from ..core.array import Static, zeros
 
 comptime _TWO_PI = 6.283185307179586
 
+comptime Spectrum[dtype: DType, n: Int] = Tuple[
+    Static[dtype, n], Static[dtype, n]
+]
+"""A complex sequence over `Tensor`, as `(real, imaginary)`.
 
-def _reverse_bits(index: Int, bits: Int) -> Int:
-    """`index` with its low `bits` bits reversed.
+One value rather than two arguments so the transforms compose --
+`ifft(fft(x))` type-checks, where a pair of `mut` arguments read as aliasing
+each other when they come out of the same tuple. `numax` still owns exactly
+one tensor type; this is a pair of them, not a new one.
+"""
 
-    A scalar `Int` computation on a loop counter, identical in every SIMD
-    lane and every GPU thread, so the data-independent-control-flow rule is
-    satisfied -- this is the same kind of index arithmetic as
-    `numax.special.legendre`'s recurrence bound, not a per-lane branch.
-    """
+
+def _log2_exact(n: Int) -> Int:
+    """`log2(n)` for a power-of-two `n`, at compile time. The stage count."""
+    var bits = 0
+    var rest = n
+    while rest > 1:
+        rest >>= 1
+        bits += 1
+    return bits
+
+
+def _reverse_bits(value: Int, bits: Int) -> Int:
+    """`value`'s low `bits` bits, reversed. The permutation the first pass
+    applies."""
     var out = 0
-    var rest = index
+    var rest = value
     for _ in range(bits):
         out = (out << 1) | (rest & 1)
-        rest = rest >> 1
+        rest >>= 1
     return out
 
 
-def _twiddles[
-    T: FloatLike, log2n: Int
-]() -> Array[Complex[T], (1 << log2n) // 2]:
-    """`exp(-2*pi*i*k/n)` for `k` in `[0, n/2)`.
+def _transform[
+    dtype: DType, n: Int, gpu: Bool, inverse: Bool
+](var x: Spectrum[dtype, n]) raises -> Spectrum[dtype, n]:
+    """The shared engine: permute, then `log2(n)` in-place butterfly stages.
 
-    Built by a `comptime for` so each angle's `cos`/`sin` is evaluated by
-    the compiler in `Float64` and reaches the generated code as a
-    `dtype`-native literal. A runtime loop would need `Float64(k)` from a
-    runtime `Int`, which emits an int64-to-double conversion Metal rejects
-    outright (see `numax.special.orthopoly`'s module docstring). This is also why
-    the table is not stored as `Array[Float64, ...]` and narrowed later,
-    the way `Compensated.exp`'s coefficients once were.
+    `inverse` flips the sign of every twiddle angle and divides the result
+    by `n`, which is the only difference between the two directions and the
+    reason `ifft` is not a second implementation.
     """
-    comptime n = 1 << log2n
-    var out = Array[Complex[T], n // 2](fill=Complex[T].one())
-    comptime for k in range(n // 2):
-        comptime angle = -_TWO_PI * Float64(k) / Float64(n)
-        comptime c = cos(angle)
-        comptime s = sin(angle)
-        out[k] = Complex[T](T.constant(c), T.constant(s))
-    return out^
+    comptime bits = _log2_exact(n)
+    comptime half_n = n // 2
+    var ctx = x[0].context()
 
+    # `W[q] = exp(-2*pi*i*q/n)`, in Float64 and rounded once. Stage `span`
+    # reads `W[pos * (n // span)]`, so one table serves every stage.
+    var twiddle_re = List[Scalar[dtype]](capacity=half_n)
+    var twiddle_im = List[Scalar[dtype]](capacity=half_n)
+    for q in range(half_n):
+        var angle = -_TWO_PI * Float64(q) / Float64(n)
+        twiddle_re.append(Scalar[dtype](_cos(angle)))
+        twiddle_im.append(Scalar[dtype](_sin(angle)))
+    var wr_all = Static[dtype, half_n](ctx, twiddle_re^)
+    var wi_all = Static[dtype, half_n](ctx, twiddle_im^)
 
-def _bit_reversed[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
-    comptime n = 1 << log2n
-    var out = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for i in range(n):
-        out[_reverse_bits(i, log2n)] = x[i].copy()
-    return out^
+    var re = Static[dtype, n]._uninitialized(ctx)
+    var im = Static[dtype, n]._uninitialized(ctx)
 
+    var src_re = x[0].view()
+    var src_im = x[1].view()
+    var dst_re = re.view()
+    var dst_im = im.view()
 
-def _butterflies[
-    T: FloatLike, log2n: Int
-](
-    mut values: Array[Complex[T], 1 << log2n],
-    tw: Array[Complex[T], (1 << log2n) // 2],
-):
-    """The `log2n` decimation-in-time stages, in place on bit-reversed input.
+    @always_inline
+    def permute[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var src_re, var src_im, var dst_re, var dst_im}:
+        var i = coord_to_index_list(coord)[0]
+        var j = _reverse_bits(i, bits)
+        dst_re.store[1](Coord(i), src_re[Coord(j)])
+        dst_im.store[1](Coord(i), src_im[Coord(j)])
 
-    `stride` is how far apart this stage's twiddles sit in the shared
-    full-size table, which is what lets one table serve every stage.
-    """
-    comptime n = 1 << log2n
-    for stage in range(log2n):
-        var half = 1 << stage
-        var length = half * 2
-        var stride = n // length
-        for base in range(0, n, length):
-            for j in range(half):
-                var top = values[base + j].copy()
-                var bottom = values[base + j + half] * tw[j * stride]
-                values[base + j] = top + bottom
-                values[base + j + half] = top - bottom
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        permute, Coord(n), ctx
+    )
+
+    # One launch per stage, `half_n` butterflies each. In place: butterfly
+    # `t` owns the pair `(i, i + half)` and those are disjoint across `t`.
+    comptime for stage in range(bits):
+        comptime half = 1 << stage
+        comptime span = half << 1
+        comptime stride = n // span
+        var bre = re.view()
+        var bim = im.view()
+        var twr = wr_all.view()
+        var twi = wi_all.view()
+
+        @always_inline
+        def butterfly[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var bre, var bim, var twr, var twi}:
+            var t = coord_to_index_list(coord)[0]
+            var block = t // half
+            var pos = t % half
+            var i = block * span + pos
+            var j = i + half
+
+            var q = pos * stride
+            var wr = twr[Coord(q)]
+            var wi = twi[Coord(q)]
+            comptime if inverse:
+                wi = -wi
+
+            var ur = bre[Coord(i)]
+            var ui = bim[Coord(i)]
+            var vr = bre[Coord(j)]
+            var vi = bim[Coord(j)]
+            var tr = vr * wr - vi * wi
+            var ti = vr * wi + vi * wr
+
+            bre.store[1](Coord(i), ur + tr)
+            bim.store[1](Coord(i), ui + ti)
+            bre.store[1](Coord(j), ur - tr)
+            bim.store[1](Coord(j), ui - ti)
+
+        elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+            butterfly, Coord(half_n), ctx
+        )
+
+    comptime if inverse:
+        var nre = re.view()
+        var nim = im.view()
+        comptime scale = 1.0 / Float64(n)
+
+        @always_inline
+        def normalize[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var nre, var nim}:
+            var i = coord_to_index_list(coord)[0]
+            nre.store[1](Coord(i), nre[Coord(i)] * Scalar[dtype](scale))
+            nim.store[1](Coord(i), nim[Coord(i)] * Scalar[dtype](scale))
+
+        elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+            normalize, Coord(n), ctx
+        )
+
+    ctx.synchronize()
+
+    # `view()` erases the origin, so neither `x` nor the twiddle tables are
+    # kept alive by the views the kernels read through.
+    _ = x^
+    _ = wr_all^
+    _ = wi_all^
+
+    return (re^, im^)
 
 
 def fft[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
-    """The forward transform of `x`, unnormalized.
+    dtype: DType, n: Int, gpu: Bool = False
+](var x: Spectrum[dtype, n]) raises -> Spectrum[
+    dtype, n
+] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+    """The forward transform of the complex sequence `x`,
+    unnormalized. `numpy.fft.fft`, returned as a real/imaginary pair.
 
-    `X[k] = sum_j x[j] * exp(-2*pi*i*j*k/n)`, for `n = 2^log2n`.
+    `X[k] = sum_j x[j] * exp(-2*pi*i*j*k/n)` -- NumPy's and SciPy's sign
+    convention. `n` must be a power of two, which the `where` clause makes a
+    compile error rather than a run-time check.
+
+    `numax.fft.array.fft` is the sibling that differentiates and runs inside
+    a kernel body, at register-resident sizes.
     """
-    var values = _bit_reversed[T, log2n](x)
-    var tw = _twiddles[T, log2n]()
-    _butterflies[T, log2n](values, tw)
-    return values^
+    return _transform[dtype, n, gpu, False](x^)
 
 
 def ifft[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    dtype: DType, n: Int, gpu: Bool = False
+](var x: Spectrum[dtype, n]) raises -> Spectrum[
+    dtype, n
+] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
     """The inverse transform of `x`, normalized by `1/n`.
+    `numpy.fft.ifft`.
 
-    `ifft(fft(x)) == x` to rounding. Implemented as conjugate-forward-
-    conjugate rather than with a second twiddle table of opposite sign,
-    since a conjugation is two negations and a table is `n/2` constants.
+    The forward engine with the twiddle angles negated and a scaling pass,
+    so `ifft(fft(x))` returns `x` to rounding.
     """
-    comptime n = 1 << log2n
-    var scale = T.constant(1.0 / Float64(n))
-    var conjugated = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for i in range(n):
-        conjugated[i] = Complex[T](x[i].re.copy(), -x[i].im)
-
-    var spectrum = fft[T, log2n](conjugated)
-    var out = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for i in range(n):
-        out[i] = Complex[T](spectrum[i].re * scale, -(spectrum[i].im * scale))
-    return out^
-
-
-def circular_convolve[
-    T: FloatLike, log2n: Int
-](a: Array[Complex[T], 1 << log2n], b: Array[Complex[T], 1 << log2n]) -> Array[
-    Complex[T], 1 << log2n
-]:
-    """`ifft(fft(a) * fft(b))` -- circular convolution via the frequency
-    domain.
-
-    Circular, not linear: index arithmetic wraps modulo `n`, so a caller
-    wanting a linear convolution of two `m`-point sequences pads both to
-    `n >= 2*m` first. At the sizes this module targets the direct `O(n^2)`
-    convolution is often faster; this exists because it's the identity the
-    FFT is for, and because it differentiates like everything else here.
-    """
-    comptime n = 1 << log2n
-    var fa = fft[T, log2n](a)
-    var fb = fft[T, log2n](b)
-    var product = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for i in range(n):
-        product[i] = fa[i] * fb[i]
-    return ifft[T, log2n](product)
+    return _transform[dtype, n, gpu, True](x^)
 
 
 def rfft[
-    T: FloatLike, log2n: Int
-](x: Array[T, 1 << log2n]) -> Array[Complex[T], (1 << log2n) // 2 + 1]:
-    """The forward transform of a *real* sequence, returning only the
-    non-redundant half of the spectrum.
+    dtype: DType, n: Int, gpu: Bool = False
+](var x: Static[dtype, n]) raises -> Spectrum[
+    dtype, n // 2 + 1
+] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+    """The forward transform of a **real** sequence, returning the half
+    spectrum `X[0..n/2]`. `numpy.fft.rfft`.
 
-    A real input's spectrum is conjugate-symmetric -- `X[n-k] ==
-    conj(X[k])` -- so the second half carries no information the first does
-    not. `rfft` returns bins `0 .. n/2` inclusive: `n/2 + 1` values, of
-    which bin 0 (DC) and bin `n/2` (Nyquist) are purely real for a real
-    input.
+    The second half is the conjugate mirror of the first for real input, so
+    returning it would be returning known information.
 
-    Implemented by embedding the real sequence as complex with zero
-    imaginary parts and calling `fft`, then truncating. That does about
-    twice the arithmetic a dedicated real-input algorithm would (the
-    standard trick packs the even and odd samples into one half-length
-    complex transform), and it is the right trade here: at the sizes this
-    module targets -- transforms small enough to live in registers inside a
-    per-element kernel -- correctness and one code path matter more than a
-    factor of two, and the packing trick needs a post-processing pass whose
-    twiddle table would double the compile-time constants.
+    This embeds the input as complex with a zero imaginary part and
+    truncates the result, which does about twice the arithmetic the
+    half-length-plus-post-pass trick would. That is the same choice
+    `numax.fft.array` documents, and for the same reason: it is one code
+    path rather than two, and the transform is memory-bound at the sizes
+    this tier is for. Specializing it is a later commit, not a missing
+    feature.
     """
-    comptime n = 1 << log2n
-    var embedded = Array[Complex[T], n](fill=Complex[T].constant(0.0))
+    comptime keep = n // 2 + 1
+    var ctx = x.context()
+    var imag = zeros[dtype, n](ctx)
+    var full = _transform[dtype, n, gpu, False]((x^, imag^))
+
+    var re = Static[dtype, keep]._uninitialized(ctx)
+    var im = Static[dtype, keep]._uninitialized(ctx)
+    var fre = full[0].view()
+    var fim = full[1].view()
+    var hre = re.view()
+    var him = im.view()
+
+    @always_inline
+    def truncate[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var fre, var fim, var hre, var him}:
+        var i = coord_to_index_list(coord)[0]
+        hre.store[1](Coord(i), fre[Coord(i)])
+        him.store[1](Coord(i), fim[Coord(i)])
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        truncate, Coord(keep), ctx
+    )
+    ctx.synchronize()
+
+    # `view()` erases the origin, so `full` is not kept alive by `fre`/`fim`
+    # and its buffers would be freed while `truncate` still reads them.
+    _ = full^
+
+    return (re^, im^)
+
+
+def fftfreq[
+    dtype: DType, n: Int
+](
+    spacing: Scalar[dtype] = 1, ctx: Optional[DeviceContext] = None
+) raises -> Static[dtype, n] where dtype.is_floating_point():
+    """The frequency grid `fft` output sits on. `numpy.fft.fftfreq`.
+
+    `[0, 1, ..., n/2-1, -n/2, ..., -1] / (n * spacing)` -- the second half
+    is negative, which is what `fftshift` reorders.
+    """
+    var values = List[Scalar[dtype]](capacity=n)
+    var denominator = Scalar[dtype](n) * spacing
     for i in range(n):
-        embedded[i] = Complex[T](x[i].copy(), T.constant(0.0))
-
-    var full = fft[T, log2n](embedded)
-    var out = Array[Complex[T], n // 2 + 1](fill=Complex[T].constant(0.0))
-    for k in range(n // 2 + 1):
-        out[k] = full[k].copy()
-    return out^
-
-
-def irfft[
-    T: FloatLike, log2n: Int
-](spectrum: Array[Complex[T], (1 << log2n) // 2 + 1]) -> Array[T, 1 << log2n]:
-    """The inverse of `rfft`: rebuild the real sequence from its half
-    spectrum.
-
-    The missing half is reconstructed by conjugate symmetry rather than
-    stored, which is the whole point of the `rfft` layout. Only the real
-    part of the inverse transform is returned; for a spectrum that really
-    is conjugate-symmetric the imaginary part is zero to rounding, and
-    discarding it is what makes `irfft(rfft(x)) == x`.
-
-    A caller who hands this an arbitrary (non-symmetric) half spectrum gets
-    the transform of its symmetrized version, silently -- there is nothing
-    to check against without a branch, and the operation is still
-    well-defined.
-    """
-    comptime n = 1 << log2n
-    var full = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for k in range(n // 2 + 1):
-        full[k] = spectrum[k].copy()
-    for k in range(n // 2 + 1, n):
-        var mirrored = spectrum[n - k].copy()
-        full[k] = Complex[T](mirrored.re.copy(), -mirrored.im)
-
-    var inverted = ifft[T, log2n](full)
-    var out = Array[T, n](fill=T.constant(0.0))
-    for i in range(n):
-        out[i] = inverted[i].re.copy()
-    return out^
-
-
-def fftfreq[T: FloatLike, log2n: Int](spacing: T) -> Array[T, 1 << log2n]:
-    """The frequency of each `fft` output bin, in cycles per unit of
-    `spacing`.
-
-    Matches `numpy.fft.fftfreq`'s layout exactly, including its sign
-    convention: bins `0 .. n/2 - 1` are the non-negative frequencies
-    `k / (n*spacing)`, and bins `n/2 .. n-1` are the negative ones
-    `(k - n) / (n*spacing)`. The Nyquist bin `n/2` is therefore reported as
-    *negative*, which looks wrong and is what NumPy does -- for even `n`
-    that bin is genuinely ambiguous (`+f_nyq` and `-f_nyq` alias), and
-    matching NumPy matters more than picking a side.
-
-    `spacing` is the sample interval, so pass `1/sample_rate`.
-    """
-    comptime n = 1 << log2n
-    var out = Array[T, n](fill=T.constant(0.0))
-    var scale = T.one() / (T.constant(Float64(n)) * spacing)
-    for k in range(n):
-        var index = k if k < n // 2 else k - n
-        out[k] = T.constant(Float64(index)) * scale
-    return out^
+        var index = i if i < (n + 1) // 2 else i - n
+        values.append(Scalar[dtype](index) / denominator)
+    return Static[dtype, n](
+        ctx.value() if ctx else DeviceContext(api="cpu"), values^
+    )
 
 
 def rfftfreq[
-    T: FloatLike, log2n: Int
-](spacing: T) -> Array[T, (1 << log2n) // 2 + 1]:
-    """The frequency of each `rfft` output bin. All non-negative, matching
-    `numpy.fft.rfftfreq`: `k / (n*spacing)` for `k` in `0 .. n/2`."""
-    comptime n = 1 << log2n
-    var out = Array[T, n // 2 + 1](fill=T.constant(0.0))
-    var scale = T.one() / (T.constant(Float64(n)) * spacing)
-    for k in range(n // 2 + 1):
-        out[k] = T.constant(Float64(k)) * scale
-    return out^
-
-
-def fftshift[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
-    """Rotate a spectrum so the zero frequency sits in the middle, which is
-    how a spectrum is usually plotted. The inverse of itself for even `n`,
-    which is the only `n` this module has."""
-    comptime n = 1 << log2n
-    var out = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for k in range(n):
-        out[(k + n // 2) % n] = x[k].copy()
-    return out^
-
-
-def ifftshift[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
-    """Undo `fftshift`: move the zero frequency from the middle back to
-    index 0.
-
-    For the even `n` this module is limited to, this is the same rotation
-    `fftshift` applies, so the two agree elementwise. It exists under its
-    own name because `numpy.fft` has both and a caller undoing a shift
-    should not have to know that the two coincide here -- the day a
-    rectangular or odd-length transform arrives, they stop coinciding and
-    this is the one that stays correct.
-    """
-    comptime n = 1 << log2n
-    var out = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for k in range(n):
-        out[k] = x[(k + n // 2) % n].copy()
-    return out^
-
-
-def fft2[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[
-    Complex[T], (1 << log2n) * (1 << log2n)
-]:
-    """The two-dimensional transform of a square `n x n` array, row-major.
-
-    Row-column decomposition: transform every row, then every column. The
-    2-D DFT separates exactly, so this is not an approximation -- it is the
-    definition, evaluated in the cheaper order (`2n` transforms of length
-    `n` rather than one of length `n**2`).
-
-    Square only, and `n` a power of two, because `fft` is. A rectangular
-    transform would need two `log2n` parameters and two twiddle tables;
-    nothing in `numax` needs one yet.
-    """
-    comptime n = 1 << log2n
-    var out = Array[Complex[T], n * n](fill=Complex[T].constant(0.0))
-
-    var row = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for i in range(n):
-        for j in range(n):
-            row[j] = x[i * n + j].copy()
-        var transformed = fft[T, log2n](row)
-        for j in range(n):
-            out[i * n + j] = transformed[j].copy()
-
-    var column = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for j in range(n):
-        for i in range(n):
-            column[i] = out[i * n + j].copy()
-        var transformed = fft[T, log2n](column)
-        for i in range(n):
-            out[i * n + j] = transformed[i].copy()
-
-    return out^
-
-
-def ifft2[
-    T: FloatLike, log2n: Int
-](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[
-    Complex[T], (1 << log2n) * (1 << log2n)
-]:
-    """The inverse of `fft2`, normalized by `1/n**2`. Row-column like the
-    forward transform, using `ifft` on each pass -- so each pass
-    contributes its own `1/n` and the two compose to `1/n**2`."""
-    comptime n = 1 << log2n
-    var out = Array[Complex[T], n * n](fill=Complex[T].constant(0.0))
-
-    var row = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for i in range(n):
-        for j in range(n):
-            row[j] = x[i * n + j].copy()
-        var transformed = ifft[T, log2n](row)
-        for j in range(n):
-            out[i * n + j] = transformed[j].copy()
-
-    var column = Array[Complex[T], n](fill=Complex[T].constant(0.0))
-    for j in range(n):
-        for i in range(n):
-            column[i] = out[i * n + j].copy()
-        var transformed = ifft[T, log2n](column)
-        for i in range(n):
-            out[i * n + j] = transformed[i].copy()
-
-    return out^
+    dtype: DType, n: Int
+](
+    spacing: Scalar[dtype] = 1, ctx: Optional[DeviceContext] = None
+) raises -> Static[dtype, n // 2 + 1] where dtype.is_floating_point():
+    """The frequency grid `rfft` output sits on: `[0, 1, ..., n/2] / (n *
+    spacing)`, all non-negative. `numpy.fft.rfftfreq`."""
+    comptime keep = n // 2 + 1
+    var values = List[Scalar[dtype]](capacity=keep)
+    var denominator = Scalar[dtype](n) * spacing
+    for i in range(keep):
+        values.append(Scalar[dtype](i) / denominator)
+    return Static[dtype, keep](
+        ctx.value() if ctx else DeviceContext(api="cpu"), values^
+    )

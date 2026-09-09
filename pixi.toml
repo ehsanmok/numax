@@ -227,6 +227,7 @@ test-tensor-linalg = "mojo -I . tests/linalg/test_tensor_linalg.mojo"
 test-panel = "mojo -I . tests/linalg/test_panel.mojo"
 test-interp = "mojo -I . tests/interpolate/test_interp.mojo"
 test-fft = "mojo -I . tests/fft/test_fft.mojo"
+test-tensor-fft = "mojo -I . tests/fft/test_tensor_fft.mojo"
 test-signal = "mojo -I . tests/signal/test_signal.mojo"
 test-interval = "mojo -I . tests/core/test_interval.mojo"
 test-prelude = "mojo -I . tests/test_prelude.mojo"
@@ -282,6 +283,7 @@ tests = { depends-on = [
     "test-panel",
     "test-interp",
     "test-fft",
+    "test-tensor-fft",
     "test-signal",
     "test-interval",
     "test-prelude",
