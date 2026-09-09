@@ -223,6 +223,7 @@ test-ode = "mojo -I . tests/integrate/test_ode.mojo"
 test-optimize = "mojo -I . tests/optimize/test_optimize.mojo"
 test-minimize = "mojo -I . tests/optimize/test_minimize.mojo"
 test-tensor-least-squares = "mojo -I . tests/optimize/test_tensor_least_squares.mojo"
+test-tensor-minimize = "mojo -I . tests/optimize/test_tensor_minimize.mojo"
 test-distributions = "mojo -I . tests/stats/test_distributions.mojo"
 test-linalg = "mojo -I . tests/linalg/test_linalg.mojo"
 test-tensor-linalg = "mojo -I . tests/linalg/test_tensor_linalg.mojo"
@@ -281,6 +282,7 @@ tests = { depends-on = [
     "test-optimize",
   "test-minimize",
     "test-tensor-least-squares",
+  "test-tensor-minimize",
     "test-distributions",
     "test-linalg",
     "test-tensor-linalg",

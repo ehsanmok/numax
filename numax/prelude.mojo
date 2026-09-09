@@ -269,6 +269,7 @@ from .stats.random import (
 
 # Algorithms.
 from .optimize.least_squares import curve_fit, least_squares
+from .optimize.minimize import minimize
 from .integrate.quadrature import gauss_legendre, simpson, trapezoid
 from .integrate.ode import rk4
 from .interpolate.interp import Chebyshev, CubicSpline, horner

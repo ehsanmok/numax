@@ -265,13 +265,20 @@ front.
 
 | Surface — over `Tensor`, from `numax.optimize` | Tier | Where |
 |---|---|---|
+| `minimize` — `scipy.optimize.minimize`, `method="bfgs"` (an `n × n` inverse Hessian kept on the device) or `"cg"` (one direction vector), returning `TensorMinimizeResult` | 2 | [`optimize/minimize.mojo`](../numax/optimize/minimize.mojo) |
 | `least_squares`, `curve_fit` — Levenberg-Marquardt, the damped step through `numax.linalg.lstsq`'s blocked device-resident QR rather than the normal equations, returning `TensorFitResult` | 2 | [`optimize/least_squares.mojo`](../numax/optimize/least_squares.mojo) |
 
-This tier takes the Jacobian as an argument, which the `Array` tier does not
-— a `Tensor` is `dtype`-monomorphic, so no `Gradient` fits in one, and a
-finite difference would be a silent accuracy regression against the sibling
-of the same name. It earns its keep when the residual vector is long: the
-bookkeeping is host-side and the QR is not.
+This tier takes the derivative as an argument — `jac` for `minimize`,
+`jacobian` for the fits — which the `Array` tier does not. A `Tensor` is
+`dtype`-monomorphic, so no `Gradient` fits in one, and a finite difference
+would be a silent accuracy regression against the sibling of the same name.
+It earns its keep when the vectors are long: the driver's bookkeeping is
+host-side and `O(n)`, while BFGS's rank-two update and the fits' QR are
+neither.
+
+`"nelder-mead"` is deliberately not a `Tensor` method. Its simplex is
+`n + 1` points of `n` entries compared every iteration, which is the shape a
+`Tensor` tier exists to not be; it stays in `numax.optimize.array`.
 
 | Surface — over `Array[T, n]`, from `numax.optimize.array` | Tier | Where |
 |---|---|---|

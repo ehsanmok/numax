@@ -63,6 +63,8 @@ from max.gpu.host import DeviceContext
 from ..core.array import Static
 from ..linalg.qr import lstsq
 
+from .common import _as_tensor
+
 
 struct TensorFitResult[dtype: DType, n_params: Int](Movable):
     """What a `Tensor`-tier fit returns.
@@ -141,23 +143,6 @@ def _damped_step[
     return step^
 
 
-def _as_tensor[
-    dtype: DType, n: Int
-](values: List[Float64], ctx: DeviceContext) raises -> Static[dtype, n]:
-    """The running parameter vector, materialized for one evaluation.
-
-    The drivers below keep their parameters in a `List[Float64]` and build a
-    fresh tensor per call rather than reassigning one. That is not a style
-    choice: `Tensor.context()` hands back a handle that does not outlive the
-    tensor it came from, so `ctx = x.context()` followed by `x = ...` uses a
-    freed context and faults. `findings.mdc` records the reproducer.
-    """
-    var scalars = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        scalars.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, scalars^)
-
-
 def _cost_of(residual: List[Float64], count: Int) -> Float64:
     """`sum(r**2) / 2`, SciPy's convention for the least-squares cost."""
     var total = 0.0
@@ -208,7 +193,7 @@ def least_squares[
 
     `x0` is borrowed rather than consumed, and deliberately: it is what
     keeps the `DeviceContext` this fit allocates on alive for the whole
-    loop. See `_as_tensor`.
+    loop. See `numax.optimize.common`.
 
     The module docstring says why the Jacobian is an argument here when the
     `Array` tier's `least_squares` takes none, and when to prefer which.

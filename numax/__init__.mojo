@@ -54,7 +54,7 @@ is safe; its own docstring lists them and where to reach them.
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows` -- is `numax.core.tensor` |
 | `numax.special` | Γ and B, `erf`, Bessel `J`/`Y`, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, activations |
 | `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul` are MAX kernels, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`norm`/`trace` build on those. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `svd`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `trace`, `cond`, norms, `dot`/`nrm2`/`outer`, `matmul`, `tridiagonal_solve` |
-| `numax.optimize` | `least_squares`/`curve_fit` over `Tensor`, Levenberg-Marquardt with the damped step through `numax.linalg.lstsq`; `numax.optimize.array` is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
+| `numax.optimize` | `minimize` (`bfgs`, `cg`) and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize.array` is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
 | `numax.integrate` | Gauss-Legendre/Simpson/trapezoid and `rk4`/`dopri5` at a fixed step; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
 | `numax.fft` | `fft`/`ifft`, `rfft`, `fftfreq`/`rfftfreq` over `Tensor`, device-resident across `log2(n) + 1` stages; `numax.fft.array` is the register-resident tier that differentiates, and adds `irfft`, `fft2`, `fftshift` and circular convolution. MAX ships no forward transform at all |
@@ -300,12 +300,13 @@ from .linalg import (
     trace,
 )
 
-# Minimization and scalar root finding -- `numax.optimize`.
-# The `Tensor` tier. The scalar root finders and the quasi-Newton and
-# derivative-free minimizers are `Array`-tier only, one import away at
+# Minimization and least-squares fitting -- `numax.optimize`.
+# The `Tensor` tier. The scalar root finders and minimizers, the vector
+# `root`, and `nelder_mead` are `Array`-tier only, one import away at
 # `numax.optimize.array`, which is also where the `Gradient`-exact
 # `least_squares` and `curve_fit` live.
 from .optimize.least_squares import TensorFitResult, curve_fit, least_squares
+from .optimize.minimize import TensorMinimizeResult, minimize
 
 # Quadrature and ODE solvers -- `numax.integrate`.
 from .integrate.integrate import (
