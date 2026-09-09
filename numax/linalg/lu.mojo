@@ -143,7 +143,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return out^
 
     def solve[
-        block: Int = 16 if Self.gpu else 24
+        block: Int = 16 if Self.gpu else 32
     ](mut self, mut b: Static[Self.dtype, Self.n]) raises -> Static[
         Self.dtype, Self.n
     ] where Self.dtype.is_floating_point():
@@ -201,7 +201,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return x^
 
     def solve[
-        rhs: Int, block: Int = 16 if Self.gpu else 24
+        rhs: Int, block: Int = 16 if Self.gpu else 32
     ](mut self, mut b: Static[Self.dtype, Self.n, rhs]) raises -> Static[
         Self.dtype, Self.n, rhs
     ] where Self.dtype.is_floating_point():
@@ -277,7 +277,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
 
 def lu_factor[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 24
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
 ](mut a: Static[dtype, n, n]) raises -> TensorLU[
     dtype, n, gpu
 ] where dtype.is_floating_point():
@@ -457,7 +457,7 @@ def lu_factor[
 
 
 def det[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 24
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
 ](mut a: Static[dtype, n, n]) raises -> Scalar[
     dtype
 ] where dtype.is_floating_point():

@@ -52,7 +52,7 @@ parallelism through GEMM. Nothing above changes when that lands.
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout
 from layout.tile_tensor import PointerStorage
-from max.algorithm.functional import elementwise
+from max.algorithm.functional import elementwise, parallelize
 from max.gpu import barrier
 from max.gpu.host import DeviceContext
 from std.gpu import block_dim, thread_idx
@@ -67,6 +67,22 @@ One block, so this is the whole parallelism those two kernels get. 256 is
 eight warps on CUDA and eight SIMD groups on Metal, enough to cover the
 memory latency of a `block x block` tile without needing more shared state
 than a strided loop.
+"""
+
+
+comptime _PARALLEL_MIN_WORK = 1 << 15
+"""Flops below which a row- or column-parallel panel routine stays serial.
+
+`parallelize` pays a thread-dispatch cost per launch, and these routines
+are called once per block step, so a factorization of a small matrix issues
+many tiny launches. Measured: handing `parallelize` the 4x4 and 5x5 cases
+in `tests/linalg/` took the tensor-linalg suite from 2.7 s to 17.0 s, all
+of it dispatch. Above the threshold the same call is worth 3.2x on the
+Cholesky panel solve at `n = 1024`.
+
+The estimate each caller passes is its own work in flops, not its element
+count -- which is the mistake `elementwise`'s own heuristic makes and the
+reason these routines cannot use it.
 """
 
 
@@ -433,16 +449,33 @@ def gemv_sub[
         return
 
     @always_inline
-    def update[
-        w: Int, alignment: Int = 1
-    ](coord: Coord) {var a, var x, var row0, var col0, var cols}:
-        var row = row0 + coord_to_index_list(coord)[0]
+    @parameter
+    def update_row(index: Int):
+        var row = row0 + index
         var total = x[Coord(row)]
         for j in range(cols):
             total = total - _at[trans](a, row, col0 + j) * x[Coord(col0 + j)]
         x.store[1](Coord(row), total)
 
-    elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
+    # `parallelize` on the host, for the reason `trsm_right_lower_t` gives:
+    # one element per row is below `elementwise`'s count threshold however
+    # much work each row does, and this is the `O(n^2)` of every vector
+    # triangular solve.
+    comptime if target == "cpu":
+        if rows * cols >= _PARALLEL_MIN_WORK:
+            parallelize[update_row](rows)
+        else:
+            for index in range(rows):
+                update_row(index)
+    else:
+
+        @always_inline
+        def update[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var a, var x, var row0, var col0, var cols}:
+            update_row(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
 
 
 def geqr2_panel[
@@ -797,8 +830,9 @@ def trsm_right_lower_t[
     comptime lanes = simd_width_of[dtype]()
 
     @always_inline
-    def solve[w: Int, alignment: Int = 1](coord: Coord) {var a, var k, var nb}:
-        var row = k + nb + coord_to_index_list(coord)[0]
+    @parameter
+    def solve_row(index: Int):
+        var row = k + nb + index
         for j in range(nb):
             # The dot product of this row's finished prefix against row
             # `k + j` of `L`. Both walk `p` along a row, so both are
@@ -817,7 +851,29 @@ def trsm_right_lower_t[
                 p += 1
             a.store[1](Coord(row, k + j), total / a[Coord(k + j, k + j)])
 
-    elementwise[simd_width=1, target=target](solve, Coord(height), ctx)
+    # Not `elementwise`. Its CPU parallelization heuristic reads the element
+    # *count*, and this launch is one element per row -- a few hundred at
+    # any realistic `n` -- while each of those elements carries `nb^2 / 2`
+    # flops. Measured on a domain of exactly this shape, `elementwise` runs
+    # at 1.99 GFLOP/s and `parallelize` at 10.59, so the heuristic was
+    # leaving eleven cores idle. `parallelize` is CPU-only, so the device
+    # keeps `elementwise`, which is the right driver there anyway: a GPU
+    # launch wants one thread per row and has no such threshold.
+    comptime if target == "cpu":
+        if height * nb * nb >= _PARALLEL_MIN_WORK:
+            parallelize[solve_row](height)
+        else:
+            for index in range(height):
+                solve_row(index)
+    else:
+
+        @always_inline
+        def solve[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var a, var k, var nb}:
+            solve_row(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](solve, Coord(height), ctx)
 
 
 def trsm_left_lower_unit[
@@ -846,15 +902,36 @@ def trsm_left_lower_unit[
         return
 
     @always_inline
-    def solve[w: Int, alignment: Int = 1](coord: Coord) {var a, var k, var nb}:
-        var col = k + nb + coord_to_index_list(coord)[0]
+    @parameter
+    def solve_col(index: Int):
+        var col = k + nb + index
         for i in range(nb):
             var total = a[Coord(k + i, col)]
             for p in range(i):
                 total = total - a[Coord(k + i, k + p)] * a[Coord(k + p, col)]
             a.store[1](Coord(k + i, col), total)
 
-    elementwise[simd_width=1, target=target](solve, Coord(width), ctx)
+    # `parallelize` rather than `elementwise` on the host, for the reason
+    # `trsm_right_lower_t` above gives: one element per column is far too
+    # few for `elementwise`'s count-based threshold, however much work each
+    # column carries. The inner `p` loop is not vectorized here the way the
+    # other solve's is -- `a[k + p, col]` walks *down* a column, so
+    # consecutive `p` are a row apart.
+    comptime if target == "cpu":
+        if width * nb * nb >= _PARALLEL_MIN_WORK:
+            parallelize[solve_col](width)
+        else:
+            for index in range(width):
+                solve_col(index)
+    else:
+
+        @always_inline
+        def solve[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var a, var k, var nb}:
+            solve_col(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](solve, Coord(width), ctx)
 
 
 def pack_block[

@@ -235,7 +235,7 @@ def bench_cholesky[n: Int, block: Int = 64](ctx: DeviceContext) raises:
     _row(label, n, ns, Float64(n) ** 3 / 3.0, worst)
 
 
-def bench_lu[n: Int, block: Int = 24](ctx: DeviceContext) raises:
+def bench_lu[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
@@ -267,7 +267,7 @@ def bench_lu[n: Int, block: Int = 24](ctx: DeviceContext) raises:
     _row(label, n, ns, 2.0 * Float64(n) ** 3 / 3.0, worst)
 
 
-def bench_solve[n: Int, block: Int = 24](ctx: DeviceContext) raises:
+def bench_solve[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
     var b = _ramp[n](ctx, 5)
 

@@ -27,7 +27,7 @@ from .lu import lu_factor
 
 
 def solve[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 24
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
 ](mut a: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
     dtype, n
 ] where dtype.is_floating_point():
@@ -50,7 +50,7 @@ def solve[
 
 
 def inverse[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 24
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
 ](mut a: Static[dtype, n, n]) raises -> Static[
     dtype, n, n
 ] where dtype.is_floating_point():
