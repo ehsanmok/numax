@@ -31,7 +31,7 @@ modules matter when reading or extending.
 | --- | --- | --- |
 | `blas` | `matmul`, `matvec`, `batched_matmul`, `inner`, `kron`, `matrix_power`, `dot`, `nrm2`, `asum`, `axpy`, `outer` | `scipy.linalg.blas`, `numpy.linalg.matmul` |
 | `triangular` | `solve_triangular` | `_basic`'s `solve_triangular` |
-| `banded` | `solve_banded`, `solveh_banded`, `cholesky_banded`, `cho_solve_banded`, `solve_toeplitz` | `_banded`, `_solve_toeplitz` |
+| `banded` | `solve_banded`, `solveh_banded`, `cholesky_banded`, `cho_solve_banded`, `solve_toeplitz`, `solve_circulant` | `_banded`, `_solve_toeplitz` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
 | `lu` | `lu_factor`, `TensorLU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
@@ -138,6 +138,7 @@ from .banded import (
     cho_solve_banded,
     cholesky_banded,
     solve_banded,
+    solve_circulant,
     solveh_banded,
     solve_toeplitz,
 )

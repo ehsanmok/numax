@@ -28,7 +28,9 @@ from numax.linalg import (
     cholesky_banded,
     matvec,
     solve,
+    circulant,
     solve_banded,
+    solve_circulant,
     solve_toeplitz,
     solveh_banded,
     toeplitz,
@@ -342,6 +344,66 @@ def test_a_zero_leading_entry_raises() raises:
     var raised = False
     try:
         _ = solve_toeplitz[dtype, 3](c, r, b)
+    except e:
+        raised = True
+        assert_true("singular" in String(e))
+    assert_true(raised)
+
+
+# --- solve_circulant --------------------------------------------------------
+
+
+def test_solve_circulant_matches_the_dense_solve() raises:
+    """Three FFTs and a division against Gaussian elimination on the
+    materialized circulant. The two share no code at all."""
+    var ctx = DeviceContext(api="cpu")
+    comptime n = 4
+    var c = Static[dtype, n](ctx, [4.0, 1.0, 2.0, 0.5])
+    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var got = solve_circulant[dtype, n](c, b).to_host()
+
+    var c2 = Static[dtype, n](ctx, [4.0, 1.0, 2.0, 0.5])
+    var dense = circulant[dtype, n](c2)
+    var b2 = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var want = solve[dtype, n](dense, b2).to_host()
+
+    for i in range(n):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-10)
+
+
+def test_solve_circulant_residual_is_zero() raises:
+    """Multiply the answer back through the circulant it solved."""
+    var ctx = DeviceContext(api="cpu")
+    comptime n = 8
+    var values = [3.0, 0.5, -1.0, 0.25, 2.0, 0.125, -0.5, 1.0]
+    var c_entries = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        c_entries.append(Scalar[dtype](values[i]))
+    var c = Static[dtype, n](ctx, c_entries^)
+    var b = Static[dtype, n](ctx, [1.0, 0.0, -1.0, 2.0, 3.0, 1.0, 0.0, -2.0])
+    var x = solve_circulant[dtype, n](c, b)
+
+    var c_entries2 = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        c_entries2.append(Scalar[dtype](values[i]))
+    var c2 = Static[dtype, n](ctx, c_entries2^)
+    var dense = circulant[dtype, n](c2)
+    var residual = matvec[dtype, n, n](dense, x).to_host()
+
+    var want = [1.0, 0.0, -1.0, 2.0, 3.0, 1.0, 0.0, -2.0]
+    for i in range(n):
+        assert_almost_equal(Float64(residual[i]), want[i], atol=1e-9)
+
+
+def test_a_singular_circulant_raises() raises:
+    """A constant first column makes every eigenvalue but the first zero,
+    so `fft(c)` has zeros and the matrix is singular."""
+    var ctx = DeviceContext(api="cpu")
+    var c = Static[dtype, 4](ctx, [1.0, 1.0, 1.0, 1.0])
+    var b = Static[dtype, 4](ctx, [1.0, 2.0, 3.0, 4.0])
+    var raised = False
+    try:
+        _ = solve_circulant[dtype, 4](c, b)
     except e:
         raised = True
         assert_true("singular" in String(e))

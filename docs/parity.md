@@ -136,7 +136,10 @@ exist.
   that each touch a `bandwidth x bandwidth` corner, so there is no GEMM to
   send work to and no device residency to be had. `numax/linalg/banded.mojo`
   is therefore `Plain`-only and host-side by declaration, and says so at the
-  top: it adds names and a shape, not speed.
+  top: it adds names and a shape, not speed. `solve_circulant` is the
+  exception in that file -- a circulant is diagonalized by the DFT, so it is
+  `O(n log n)` through `numax.fft` rather than an elimination at all, and it
+  is why `linalg` depends on `fft`.
 - **None of `scipy.linalg`'s structured constructors.** Searched at the pin
   across the four roots: `toeplitz`, `hankel`, `circulant`, `block_diag`,
   `companion` and the rest return nothing. These are the **Plain-only

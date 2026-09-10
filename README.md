@@ -405,6 +405,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names, from `numax.linalg.array` | `matrix_rank` returns a count per SIMD lane |
 | `scipy.linalg.toeplitz` / `circulant` / `companion` / `block_diag` | same names | plus `hankel`, `hilbert`, `khatri_rao`, `convolution_matrix` |
 | `scipy.linalg.solve_banded` / `solveh_banded` / `solve_toeplitz` | same names | SciPy's diagonal-ordered `ab` storage verbatim; host-side by declaration |
+| `scipy.linalg.solve_circulant` | `solve_circulant` | three FFTs and a division, so power-of-two `n` |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |

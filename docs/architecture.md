@@ -49,7 +49,11 @@ deliberate (`stats` uses `special`'s incomplete gamma and beta,
 `interpolate` uses `linalg.array`'s tridiagonal solve, and `optimize` uses
 `linalg.array`'s Cholesky for the damped normal equations a least-squares
 step solves -- both take the `Array` tier because both are called from
-tier-1 kernels).
+tier-1 kernels). The fifth is newer and runs the other way: `linalg` uses
+`fft` for `solve_circulant`, since a circulant matrix is diagonalized by the
+DFT and its solve is three transforms and a division rather than an
+elimination. `fft` depends on `core` alone, so the edge introduces no
+cycle.
 
 ## The trait: `FloatLike`
 

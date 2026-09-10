@@ -311,6 +311,7 @@ from .linalg import (
     slogdet,
     solve,
     solve_banded,
+    solve_circulant,
     solve_toeplitz,
     solve_triangular,
     solveh_banded,

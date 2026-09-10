@@ -41,12 +41,16 @@ the main diagonal; `lower=True` means the lower one, with row `0` the main
 diagonal. The two are transposes of each other and the same solver runs
 underneath, since a symmetric matrix has nothing to distinguish them by.
 
-## What is not here
+`solve_circulant` is the exception to all of the above and is here anyway,
+because a circulant *is* a Toeplitz matrix and a caller looking for one will
+look here. It is not an elimination at all -- a circulant is diagonalized by
+the DFT, so the solve is three transforms and a division, `O(n log n)`
+rather than `O(n^2)`. It is the one routine in this module that is not
+host-bound, and it is why `numax.linalg` depends on `numax.fft`: a
+deliberate cross-subpackage edge, recorded in `CLAUDE.md` and
+`docs/architecture.md` alongside the four that came before it.
 
-`solve_circulant` lives in this module's neighbourhood mathematically but
-not in this file: it is an FFT rather than an elimination, so it would give
-`numax.linalg` a dependency on `numax.fft` -- an edge worth adding
-deliberately rather than as a side effect of a bug fix.
+## What is not here
 
 Banded eigenvalues (`eig_banded`, `eigvals_banded`, `eigh_tridiagonal`) are
 not here for the reason `numax/linalg/__init__.mojo` gives for the dense
@@ -56,7 +60,8 @@ a sequential sweep with data-dependent deflation.
 
 from std.math import sqrt as _sqrt
 
-from ..core.array import Static
+from ..core.array import Static, copy, zeros
+from ..fft.fft import Spectrum, fft, ifft
 
 
 def _band_index[l: Int, u: Int, n: Int](row: Int, col: Int) -> Int:
@@ -449,3 +454,93 @@ def solve_toeplitz[
     for i in range(n):
         out.append(Scalar[dtype](x[i]))
     return Static[dtype, n](ctx, out^)
+
+
+def solve_circulant[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut c: Static[dtype, n], mut b: Static[dtype, n]) raises -> Static[
+    dtype, n
+] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+    """Solve `a @ x = b` where `a` is the circulant matrix with first column
+    `c`. `scipy.linalg.solve_circulant`.
+
+    Every circulant is diagonalized by the DFT, so this is not an
+    elimination at all:
+
+    ```
+    x = ifft(fft(b) / fft(c))
+    ```
+
+    Three transforms and an elementwise division -- `O(n log n)` against a
+    dense solve's `O(n^3)` and `solve_toeplitz`'s `O(n^2)`, and the matrix
+    is never built. `numax.linalg.circulant` is the constructor for when it
+    is wanted as a matrix.
+
+    **`n` must be a power of two.** `numax.fft` is power-of-two by
+    construction -- `docs/parity.md` records that as the shape of the whole
+    subsystem rather than a gap in it -- and the `where` clause makes the
+    restriction a compile error rather than a run-time surprise. SciPy has
+    no such limit. Pad the system to a power of two, or use
+    `solve_toeplitz`, which has none.
+
+    A zero in `fft(c)` means the circulant is singular: one of its
+    eigenvalues, which are exactly the entries of `fft(c)`, is zero. That
+    raises rather than returning infinities. SciPy offers a least-squares
+    answer there instead; numax does not, since the pseudoinverse route
+    would need a tolerance policy this module has nowhere to state.
+
+    The division is done on the host. It is `O(n)` against the transforms'
+    `O(n log n)`, and it needs complex arithmetic that
+    `numax.core.ops` does not carry -- the same reason `numax.fft` returns
+    a real/imaginary pair rather than a complex tensor.
+    """
+    var ctx = c.context()
+
+    # `fft` consumes its `Spectrum`, and `c` and `b` are borrowed, so each
+    # needs an owned copy. `copy` is the explicit spelling `Tensor` requires
+    # -- it is `Movable` and not `Copyable` precisely so that duplicating a
+    # buffer is a decision rather than something that happens silently.
+    var c_spectrum = fft[dtype, n, gpu](
+        Spectrum[dtype, n](copy(c), zeros[dtype, n](ctx))
+    )
+    var b_spectrum = fft[dtype, n, gpu](
+        Spectrum[dtype, n](copy(b), zeros[dtype, n](ctx))
+    )
+
+    var c_real = c_spectrum[0].to_host()
+    var c_imag = c_spectrum[1].to_host()
+    var b_real = b_spectrum[0].to_host()
+    var b_imag = b_spectrum[1].to_host()
+
+    var quotient_real = List[Scalar[dtype]](capacity=n)
+    var quotient_imag = List[Scalar[dtype]](capacity=n)
+    for k in range(n):
+        var cr = Float64(c_real[k])
+        var ci = Float64(c_imag[k])
+        var magnitude = cr * cr + ci * ci
+        if magnitude == 0:
+            raise Error(
+                "solve_circulant: the matrix is singular -- eigenvalue ",
+                k,
+                (
+                    " of the circulant is zero. Its eigenvalues are exactly"
+                    " the entries of fft(c)."
+                ),
+            )
+        var br = Float64(b_real[k])
+        var bi = Float64(b_imag[k])
+        quotient_real.append(Scalar[dtype]((br * cr + bi * ci) / magnitude))
+        quotient_imag.append(Scalar[dtype]((bi * cr - br * ci) / magnitude))
+
+    var solved = ifft[dtype, n, gpu](
+        Spectrum[dtype, n](
+            Static[dtype, n](ctx, quotient_real^),
+            Static[dtype, n](ctx, quotient_imag^),
+        )
+    )
+    # The imaginary part is zero to rounding, `a` and `b` both being real,
+    # so the real half is the answer. Copied out of the tuple rather than
+    # moved, since a `Tuple` element cannot be transferred out of a
+    # temporary.
+    var real_part = solved[0].to_host()
+    return Static[dtype, n](ctx, real_part^)
