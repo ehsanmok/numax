@@ -354,17 +354,21 @@ def matvec[
         var av = a.view()
         var pv = padded.view()
 
+        # Width 1, for the reason `numax.linalg.special_matrices` gives:
+        # this reads its input at an index derived from the *output*
+        # coordinate, and a wider tile is not guaranteed to stay inside one
+        # row of `a` -- at small `k` it would run off the end of the source
+        # while copying the last real row, which is the very fault this
+        # function exists to avoid.
         @always_inline
         def grow[w: Int, alignment: Int = 1](coord: Coord) {var av, var pv}:
-            # Tiles run along `k`, so `i` is uniform across one and this
-            # branches per tile rather than per lane.
             var i = coord_to_index_list(coord)[0]
             if i < m:
-                pv.store[w](coord, av.load[w](coord))
+                pv.store[1](coord, av[coord])
             else:
-                pv.store[w](coord, SIMD[dtype, w](0))
+                pv.store[1](coord, Scalar[dtype](0))
 
-        elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+        elementwise[simd_width=1, target=_target[gpu]()](
             grow, Coord(m_pad, k), ctx
         )
 
@@ -383,13 +387,13 @@ def matvec[
         var rv = result.view()
         var read = wide.view()
 
+        # Width 1 for the same reason: the source is longer than the
+        # destination, so a tile sized to `m` is not a tile of `wide`.
         @always_inline
         def trim[w: Int, alignment: Int = 1](coord: Coord) {var read, var rv}:
-            rv.store[w](coord, read.load[w](coord))
+            rv.store[1](coord, read[coord])
 
-        elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
-            trim, Coord(m), ctx
-        )
+        elementwise[simd_width=1, target=_target[gpu]()](trim, Coord(m), ctx)
         return result^
 
 
