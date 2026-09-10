@@ -37,6 +37,7 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
+| `matfuncs` | `expm` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
@@ -158,6 +159,7 @@ from .blas import (
 )
 from .cholesky import cholesky, cholesky_solve
 from .lu import TensorLU, det, lu_factor, slogdet
+from .matfuncs import expm
 from .misc import fro, inf, neg_inf, norm, trace
 from .qr import TensorQR, lstsq, qr_factor
 from .special_matrices import (

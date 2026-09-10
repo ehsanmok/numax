@@ -290,6 +290,7 @@ from .linalg import (
     convolution_matrix,
     det,
     dot,
+    expm,
     fro,
     hankel,
     hilbert,

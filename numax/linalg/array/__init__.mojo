@@ -19,6 +19,7 @@ type the reader has to look up. `numax.linalg`, `numax.prelude` and
 | `lu` | `lu`, `lu_factor`, `PivotedLU`, `det`, `slogdet` |
 | `qr` | `qr`, `lstsq` |
 | `eigen` | `eigh`, `eigvals`, `eigvalsh`, `svd`, `svdvals`, `matrix_rank` |
+| `matfuncs` | `expm` (tier 1, fixed squarings), `sqrtm` (symmetric positive definite) |
 | `basic` | `solve`, `inverse`, `pinv` |
 | `misc` | `norm`, `cond`, `trace` |
 
@@ -72,6 +73,7 @@ from .blas import (
 from .cholesky import cholesky, cholesky_solve, slogdet_cholesky
 from .eigen import eigh, eigvals, eigvalsh, matrix_rank, svd, svdvals
 from .lu import PivotedLU, det, lu, lu_factor, slogdet
+from .matfuncs import expm, sqrtm
 from .misc import cond, norm, trace
 from .qr import lstsq, qr
 from .triangular import (

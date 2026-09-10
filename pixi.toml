@@ -232,6 +232,7 @@ test-slogdet = "mojo -I . tests/linalg/test_slogdet.mojo"
 test-norms-and-rank = "mojo -I . tests/linalg/test_norms_and_rank.mojo"
 test-special-matrices = "mojo -I . tests/linalg/test_special_matrices.mojo"
 test-banded = "mojo -I . tests/linalg/test_banded.mojo"
+test-matfuncs = "mojo -I . tests/linalg/test_matfuncs.mojo"
 test-panel = "mojo -I . tests/linalg/test_panel.mojo"
 test-interp = "mojo -I . tests/interpolate/test_interp.mojo"
 test-fft = "mojo -I . tests/fft/test_fft.mojo"
@@ -296,6 +297,7 @@ tests = { depends-on = [
   "test-norms-and-rank",
   "test-special-matrices",
   "test-banded",
+  "test-matfuncs",
     "test-panel",
     "test-interp",
     "test-fft",
