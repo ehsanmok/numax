@@ -426,6 +426,11 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit |
 | `np.random.default_rng(0)` | `Generator(seed=0)` | or `seed(0)` for the global stream |
 
+Every row above is runnable: `pixi run example-scipy-surface` prints the
+`scipy.optimize` and `scipy.linalg` entry points side by side with the SciPy
+they mirror ([`scipy_surface.mojo`](examples/intermediate/scipy_surface.mojo)).
+
+
 Rows that read `[f64, ...]` return a `Tensor` and rows that read `[P, ...]`
 return an `Array`, which is the split the section above lays out.
 `zeros`/`ones`/`full`/`eye` are spelled the same on both sides, so the first

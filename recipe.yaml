@@ -45,7 +45,11 @@ about:
     numax is a numerical computing library for Mojo built on MAX: special
     functions, dense linear algebra, quadrature, ODE solvers, FFTs,
     distributions, statistics, interpolation, signal processing, and a
-    NumPy-named array surface with .npy interchange.
+    NumPy-named array surface with .npy interchange. The SciPy entry points
+    are spelled the way SciPy spells them, method strings included --
+    minimize, minimize_scalar, root_scalar and root over optimize, and
+    solve_banded, solve_toeplitz, expm and the structured matrix
+    constructors over linalg.
 
     Every kernel is written once against a trait (FloatLike), so the type
     you call it with decides what comes back: a value (Plain), a derivative

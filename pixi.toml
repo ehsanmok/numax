@@ -334,6 +334,7 @@ example-gradient = "mojo -I . examples/basic/gradient.mojo"
 example-hessian = "mojo -I . examples/basic/hessian.mojo"
 example-quadrature = "mojo -I . examples/intermediate/quadrature.mojo"
 example-statistics = "mojo -I . examples/intermediate/statistics.mojo"
+example-scipy-surface = "mojo -I . examples/intermediate/scipy_surface.mojo"
 example-npy-to-cholesky = "mojo -I . examples/intermediate/npy_to_cholesky.mojo"
 example-ode = "mojo -I . examples/advanced/ode.mojo"
 example-unified-tensor-gpu = "mojo -I . examples/advanced/unified_tensor_gpu.mojo"
@@ -394,6 +395,7 @@ examples-cpu = { depends-on = [
     "example-statistics",
     "example-npy-to-cholesky",
     "example-optimize",
+    "example-scipy-surface",
     "example-wave-packet",
     "example-interference",
 ] }

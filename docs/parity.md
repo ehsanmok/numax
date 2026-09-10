@@ -160,7 +160,10 @@ exist.
   complex and there is no complex `Tensor`; `invhilbert` stays out because
   its entries exceed what `float64` represents exactly, so computing them
   there and calling the result an inverse would be a claim numax cannot
-  back.
+  back. `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`,
+  `fiedler_companion` and `leslie` are simply not written yet -- each is a
+  short index rule of the same shape as the eight that are, so they are a
+  follow-up rather than a decision.
 - **`scipy.linalg`, almost all of it.** One decomposition ships,
   `qr_factorization` (Householder, CPU-only, scalar loops), and it is on the
   older `LayoutTensor`, which numax denies rather than bridges — interop is
@@ -207,9 +210,31 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 | Tensor I/O | `numax/io/io.mojo`, `numax/io/npy.mojo` | Two formats: numax's own `NMX1` for numax-to-numax round trips (MAX ships no array I/O at all), and NumPy's `.npy` for interchange -- `numax.io.numpy.save` output is byte-identical to `numpy.save`, and `numax.io.numpy.load` reads `numpy.save` output, with no Python or NumPy dependency since the format is self-contained. `.npz` is out: it is a zip container |
 | Random sampling | `numax/stats/random.mojo` | Over `std.random` on the host. No `Random[FloatLike]` conformer: RNG is not differentiable, so the trait contract does not fit |
 
-Three names differ from NumPy's because Mojo will not allow them: `var` is a
-keyword and `std` is the standard library's package (hence `variance`,
-`stddev`), and `where` introduces constraint clauses (hence `select`).
+### Where the spelling differs, and why
+
+Every name numax adds matches SciPy or NumPy exactly. A handful of older
+ones do not, and each divergence is a decision rather than an oversight, so
+they are listed here rather than aliased -- a second name for one thing is
+the property `numax/prelude.mojo` exists to protect.
+
+**Forced by Mojo.** `var` is a keyword and `std` is the standard library's
+package, hence `variance` and `stddev`; `where` introduces constraint
+clauses, hence `select`.
+
+**Chosen.**
+
+| SciPy / NumPy | numax | Why |
+|---|---|---|
+| `inv` | `inverse` | spelled out, in the same spirit as `variance`/`stddev` above |
+| `cho_factor` / `cho_solve` | `cholesky` / `cholesky_solve` | ditto; the abbreviation saves four characters and costs a reader the expansion |
+| `qr` returning `(Q, R)` | `qr_factor` returning `TensorQR` | forced at the `Tensor` tier: a `Tuple` of two `Tensor`s cannot be destructured in Mojo 1.0, since `Tensor` is `Movable` and tuple unpacking wants `ImplicitlyCopyable`. `numax.linalg.array.qr` *is* the tuple-returning one |
+| `lu_solve(factor, b)` | `TensorLU.solve(b)` / `PivotedLU.solve(b)` | the factorization object owns its solve, so the pairing cannot be got wrong |
+| `res.fun` / `res.nit` / `res.success` | `f_x` / `iterations` / `converged` | `converged` says what it means where `success` does not; the result structs' docstrings carry the rest |
+
+Names that would have been a second spelling of an existing one are absent
+on purpose: `vdot` (`dot`, there being no complex `Tensor` to conjugate),
+`numpy.linalg.norm(v, ord=0)` (`count_nonzero`), and `numpy.inner` at rank 1
+(`dot` again).
 
 ### Not absorbed
 
