@@ -311,16 +311,86 @@ def matvec[
     row-major layout address the same memory in the same order, so this
     hands MAX a different description of bytes it was going to read
     anyway, not a copy.
+
+    **The row count is grown to a lane multiple first, when it is not one
+    already.** MAX's GEMV reduces each row on its own SIMD lane, so it
+    walks the rows in blocks of `simd_width_of[dtype]()`, and its final
+    block runs past the last row whenever `m` is not a whole number of
+    lanes -- reading as much as `(lanes - 1) * k` elements beyond the
+    matrix. Those values are discarded, so the defect stays invisible
+    until the allocation ends on a page boundary and the read faults,
+    which is what `matvec[dtype, 6, 4]` did on the Linux CI runner while
+    the same call passed everywhere else. Growing the matrix to
+    `m_pad x k` with the phantom rows zeroed turns the read the kernel
+    wants into a read numax has allocated, and the extra outputs are zeros
+    that get dropped.
+
+    The growth costs one `m_pad x k` allocation and two `elementwise`
+    passes, bounded by `lanes - 1` extra rows, and an aligned `m` skips
+    all of it at compile time and runs what it ran before -- so no
+    existing measurement moves. This is a workaround for the pinned
+    `max ==26.5`, not a design choice, and it should go when MAX's GEMV
+    masks its own tail.
     """
+    comptime lanes = simd_width_of[dtype]()
     var ctx = a.context()
-    var result = Static[dtype, m](ctx)
     var xv = x.view()
-    var yv = result.view()
     var x_col = TileTensor(xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1)))
-    var y_col = TileTensor(yv.ptr_at_offset(Coord(0)), row_major(Coord(m, 1)))
-    _max_matmul[target="gpu" if gpu else "cpu"](y_col, a.view(), x_col, ctx)
-    ctx.synchronize()
-    return result^
+
+    comptime if m % lanes == 0:
+        var result = Static[dtype, m](ctx)
+        var yv = result.view()
+        var y_col = TileTensor(
+            yv.ptr_at_offset(Coord(0)), row_major(Coord(m, 1))
+        )
+        _max_matmul[target="gpu" if gpu else "cpu"](y_col, a.view(), x_col, ctx)
+        ctx.synchronize()
+        return result^
+    else:
+        comptime m_pad = ((m + lanes - 1) // lanes) * lanes
+
+        # Not zeroed: `grow` writes every element, phantom rows included.
+        var padded = Static[dtype, m_pad, k]._uninitialized(ctx)
+        var av = a.view()
+        var pv = padded.view()
+
+        @always_inline
+        def grow[w: Int, alignment: Int = 1](coord: Coord) {var av, var pv}:
+            # Tiles run along `k`, so `i` is uniform across one and this
+            # branches per tile rather than per lane.
+            var i = coord_to_index_list(coord)[0]
+            if i < m:
+                pv.store[w](coord, av.load[w](coord))
+            else:
+                pv.store[w](coord, SIMD[dtype, w](0))
+
+        elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+            grow, Coord(m_pad, k), ctx
+        )
+
+        var wide = Static[dtype, m_pad]._uninitialized(ctx)
+        var wv = wide.view()
+        var y_col = TileTensor(
+            wv.ptr_at_offset(Coord(0)), row_major(Coord(m_pad, 1))
+        )
+        _max_matmul[target="gpu" if gpu else "cpu"](
+            y_col, padded.view(), x_col, ctx
+        )
+        ctx.synchronize()
+
+        # Not zeroed: `trim` writes every element of `result`.
+        var result = Static[dtype, m]._uninitialized(ctx)
+        var rv = result.view()
+        var read = wide.view()
+
+        @always_inline
+        def trim[w: Int, alignment: Int = 1](coord: Coord) {var read, var rv}:
+            rv.store[w](coord, read.load[w](coord))
+
+        elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+            trim, Coord(m), ctx
+        )
+        return result^
 
 
 def matmul[

@@ -162,6 +162,53 @@ def test_matvec_agrees_with_matmul_against_a_column() raises:
     assert_almost_equal(Float64(by_matvec[1]), 6.0, atol=1e-12)
 
 
+def test_matvec_when_the_row_count_is_not_a_lane_multiple() raises:
+    """The shape that segfaulted CI: `m = 6` against a 4-lane `float64`.
+
+    MAX's GEMV walks rows one per SIMD lane, so a row count that is not a
+    whole number of lanes made its last block read past the matrix. The
+    padded `matvec` overload exists for exactly this, and the values it
+    returns have to be the ones a matmul against a column gives.
+    """
+    var ctx = _cpu()
+    var values = List[Scalar[DType.float64]](capacity=24)
+    for i in range(24):
+        values.append(Scalar[DType.float64](Float64(i) - 11.0))
+    var a = Static[DType.float64, 6, 4](ctx, values.copy())
+    var x = Static[DType.float64, 4](ctx, [2.0, -1.0, 0.5, 3.0])
+    var got = matvec(a, x).to_host()
+
+    var column = Static[DType.float64, 4, 1](ctx, [2.0, -1.0, 0.5, 3.0])
+    var b = Static[DType.float64, 6, 4](ctx, values^)
+    var want = matmul(b, column).to_host()
+
+    for i in range(6):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
+
+
+def test_matvec_square_but_not_a_lane_multiple() raises:
+    """`6 x 6` -- square, and still not a lane multiple, which is the case
+    that showed the fault is about the row count and not about the matrix
+    being rectangular."""
+    var ctx = _cpu()
+    var values = List[Scalar[DType.float64]](capacity=36)
+    for i in range(36):
+        values.append(Scalar[DType.float64](Float64(i % 7) - 3.0))
+    var a = Static[DType.float64, 6, 6](ctx, values.copy())
+    var xs = List[Scalar[DType.float64]](capacity=6)
+    for i in range(6):
+        xs.append(Scalar[DType.float64](Float64(i) - 2.5))
+    var x = Static[DType.float64, 6](ctx, xs.copy())
+    var got = matvec(a, x).to_host()
+
+    var column = Static[DType.float64, 6, 1](ctx, xs^)
+    var b = Static[DType.float64, 6, 6](ctx, values^)
+    var want = matmul(b, column).to_host()
+
+    for i in range(6):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
+
+
 def test_batched_matmul_is_one_product_per_leading_index() raises:
     var ctx = _cpu()
     var a = Static[DType.float64, 2, 2, 2](
