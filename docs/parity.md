@@ -126,6 +126,17 @@ exist.
   `tensorsolve` and `tensorinv` wait on the general broadcasting and rank-n
   reductions listed under "What is still missing"; `matrix_transpose` is
   `numax.core.array.transpose`.
+- **No banded or Toeplitz solver.** Searched at the pin: `solve_banded`,
+  `solveh_banded`, `cholesky_banded` and `solve_toeplitz` return nothing
+  across the four roots, which follows from there being no dense triangular
+  solve either. numax writes them -- **diverge**, and this is the one place
+  that label is applied to something outside the `Array` tier, because the
+  thing MAX cannot express is not a conformer but a *sequential* algorithm:
+  a banded elimination is `O(n * bandwidth^2)` spread over `n` column steps
+  that each touch a `bandwidth x bandwidth` corner, so there is no GEMM to
+  send work to and no device residency to be had. `numax/linalg/banded.mojo`
+  is therefore `Plain`-only and host-side by declaration, and says so at the
+  top: it adds names and a shape, not speed.
 - **None of `scipy.linalg`'s structured constructors.** Searched at the pin
   across the four roots: `toeplitz`, `hankel`, `circulant`, `block_diag`,
   `companion` and the rest return nothing. These are the **Plain-only
