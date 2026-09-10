@@ -38,6 +38,7 @@ from max.gpu.host import DeviceContext
 from numax.core.numeric import min_of
 from numax.core.tensor import map
 from numax.linalg.array import eigh
+from numax.optimize.array import newton
 from numax.prelude import *
 
 comptime P = Plain[f64]
