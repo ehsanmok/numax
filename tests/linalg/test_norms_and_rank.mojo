@@ -95,7 +95,8 @@ def test_the_matrix_overload_still_resolves() raises:
 
 
 def _symmetric() -> Array[P, 9]:
-    """diag(2, 3, 6) rotated: eigenvalues are exactly 2, 3 and 6."""
+    """Symmetric, with eigenvalues `3 - sqrt(2)`, `5` and `3 + sqrt(2)`,
+    which sum to the trace, 11."""
     var out = Array[P, 9](fill=P.constant(0.0))
     var values = [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
     for i in range(9):

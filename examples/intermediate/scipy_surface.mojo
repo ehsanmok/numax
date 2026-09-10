@@ -12,6 +12,7 @@ minimize_scalar(f, method="bounded",       minimize_scalar[f, method="bounded"](
                 bounds=(-1, 1))                bounds=(-1.0, 1.0))
 solve_banded((1, 1), ab, b)                solve_banded[dtype, 1, 1, n](ab, b)
 expm(A)                                    expm[dtype, n](A)
+eigvalsh(A), svdvals(A), sqrtm(A)          eigvalsh[P, n](A), and so on
 ```
 
 Two differences are real and worth seeing rather than reading about.
@@ -32,9 +33,10 @@ from std.math import exp as exp_f64
 
 from max.gpu.host import DeviceContext
 
-from numax import FloatLike
+from numax import FloatLike, Plain
 from numax.core.array import Static
 from numax.linalg import expm, solve_banded, toeplitz
+from numax.linalg.array import eigvalsh, sqrtm, svdvals
 from numax.optimize.array import (
     minimize,
     minimize_scalar,
@@ -43,6 +45,7 @@ from numax.optimize.array import (
 )
 
 comptime dtype = DType.float64
+comptime P = Plain[dtype]
 
 
 def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
@@ -51,6 +54,18 @@ def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
     var a = U.one() - v[0]
     var b = v[1] - (v[0] * v[0])
     return a * a + U.constant(100.0) * b * b
+
+
+def spd() -> Array[P, 9]:
+    """A symmetric positive definite matrix, built fresh per call because
+    each of the three entry points below consumes the one it is given.
+    Its eigenvalues are `3 - sqrt(2)`, `5` and `3 + sqrt(2)`, so they sum to
+    the trace, 11, and the printed spectrum can be checked by eye."""
+    var out = Array[P, 9](fill=P.constant(0.0))
+    var entries = [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
+    for i in range(9):
+        out[i] = P.constant(entries[i])
+    return out^
 
 
 def cos_minus_x[U: FloatLike](x: U) -> U:
@@ -194,3 +209,28 @@ def main() raises:
     print("\n  expm([[0, -0.7], [0.7, 0]])  -- the rotation by 0.7 rad")
     print("    ", rotated[0], rotated[1])
     print("    ", rotated[2], rotated[3])
+
+    # eigvalsh / svdvals / sqrtm are the `Array` tier, so the first
+    # parameter is a conformer rather than a `DType`. Same SciPy names.
+    var spectrum = eigvalsh[P, 3](spd())
+    print(
+        "\n  eigvalsh(A)   w =",
+        spectrum[0].v,
+        spectrum[1].v,
+        spectrum[2].v,
+    )
+
+    var singular = svdvals[P, 3](spd())
+    print(
+        "  svdvals(A)    s =",
+        singular[0].v,
+        singular[1].v,
+        singular[2].v,
+    )
+    print("    -- in svd's order, which is not sorted")
+
+    # sqrtm is SPD-only here, and the check is that X @ X recovers A.
+    var half = sqrtm[P, 3](spd())
+    print("\n  sqrtm(A)")
+    for i in range(3):
+        print("    ", half[i * 3].v, half[i * 3 + 1].v, half[i * 3 + 2].v)

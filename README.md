@@ -390,8 +390,10 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.eye(3)` to hand to `linalg` | `eye[P, 3]()` | same names at the conformer layer, returning `Array` |
 | `a.reshape(2, 3)` | `reshape[f64, 6, 2, 3](a)`, or `reshape_dyn[rank=2](a, r, c)` | the second takes a shape you computed |
 | `a[1:3, :]`, `np.broadcast_to(a, (2, 3))` | `slice(a, [1, 0], [3, cols])`, `broadcast_to[rank=2](a, 2, 3)` | both copy rather than returning a view |
+| `np.pad(a, (before, after), mode)` | `pad[f64, n, before, after, mode](a)` | the widths are compile-time because the padded extent is part of the return type; `gpu=True` is the constant mode only, and the `where` clause makes the other modes a compile error rather than a silent host fallback |
 | `a[a > 0]`, `np.take(a, idx)` | `extract(greater(a, zeros_like(a)), a)`, `take(a, idx)` | the result is sized by the data, so it comes back `Dynamic` |
 | `a + b`, `np.exp(a)`, `np.sort(a)` | `a + b`, `exp(a)`, `sort(a)` | |
+| `np.argpartition(a, -k)`, `torch.topk` | `top_k[f64, n, k](a)` | `(values, indices)`, `largest=False` for the smallest. A whole delegation to `nn.top_k`, so `gpu=True` runs MAX's device kernel with no host copy in either direction |
 | `a.astype(np.float32)` | `astype[f32](a)` | explicit: there is no dtype promotion |
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
 | `a.sum(axis=1)`, `a.mean(axis=1)` | `sum[axis=1](a)`, `mean[axis=1](a)` | same name as the whole-tensor form; one axis drops, the rest survive |
@@ -402,11 +404,12 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.kron`, `np.linalg.matrix_power`, `np.inner` | `kron`, `matrix_power[dtype, n, p]`, `inner` | `inner` is `a @ b.T` without materializing the transpose |
 | `np.linalg.slogdet` | `slogdet(A)` | `(sign, ln\|det\|)`, for the ordinary matrices whose determinant overflows |
 | `np.linalg.norm(v, ord)` | `norm[dtype, n, ord](v)` | a vector overload beside the matrix one; `ord=0` is `count_nonzero` |
-| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names, from `numax.linalg.array` | `matrix_rank` returns a count per SIMD lane |
+| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names, from `numax.linalg.array` | `matrix_rank` returns a count per SIMD lane; `svdvals` comes back in `svd`'s order, which is not sorted |
 | `scipy.linalg.toeplitz` / `circulant` / `companion` / `block_diag` | same names | plus `hankel`, `hilbert`, `khatri_rao`, `convolution_matrix` |
 | `scipy.linalg.solve_banded` / `solveh_banded` / `solve_toeplitz` | same names | SciPy's diagonal-ordered `ab` storage verbatim; host-side by declaration |
 | `scipy.linalg.solve_circulant` | `solve_circulant` | three FFTs and a division, so power-of-two `n` |
 | `scipy.linalg.expm` | `expm(A)` | and `expm[T, n, squarings]` over `Array`, which differentiates at `Dual` |
+| `scipy.linalg.sqrtm` | `sqrtm[P, n](A)` from `numax.linalg.array` | **symmetric positive definite only**, stated rather than checked: a negative eigenvalue arrives as a NaN. The general case waits on a Schur decomposition |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |
