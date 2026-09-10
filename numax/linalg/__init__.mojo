@@ -36,6 +36,7 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
+| `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
 `common` holds the private helpers and exports nothing. `array/` mirrors
@@ -150,4 +151,14 @@ from .cholesky import cholesky, cholesky_solve
 from .lu import TensorLU, det, lu_factor, slogdet
 from .misc import fro, inf, neg_inf, norm, trace
 from .qr import TensorQR, lstsq, qr_factor
+from .special_matrices import (
+    block_diag,
+    circulant,
+    companion,
+    convolution_matrix,
+    hankel,
+    hilbert,
+    khatri_rao,
+    toeplitz,
+)
 from .triangular import solve_triangular

@@ -126,6 +126,18 @@ exist.
   `tensorsolve` and `tensorinv` wait on the general broadcasting and rank-n
   reductions listed under "What is still missing"; `matrix_transpose` is
   `numax.core.array.transpose`.
+- **None of `scipy.linalg`'s structured constructors.** Searched at the pin
+  across the four roots: `toeplitz`, `hankel`, `circulant`, `block_diag`,
+  `companion` and the rest return nothing. These are the **Plain-only
+  surface** outcome rather than extend or diverge -- MAX has no kernel,
+  *and* instantiating a Hilbert matrix at `Dual` or `Interval` adds no
+  meaning, since every entry is a constant of its index. So
+  `numax/linalg/special_matrices.mojo` is `Tensor`-only with no `Array`
+  sibling, and none is missing. `dft` stays out because its entries are
+  complex and there is no complex `Tensor`; `invhilbert` stays out because
+  its entries exceed what `float64` represents exactly, so computing them
+  there and calling the result an inverse would be a claim numax cannot
+  back.
 - **`scipy.linalg`, almost all of it.** One decomposition ships,
   `qr_factorization` (Householder, CPU-only, scalar loops), and it is on the
   older `LayoutTensor`, which numax denies rather than bridges — interop is
