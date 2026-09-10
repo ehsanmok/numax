@@ -13,6 +13,8 @@ The blocked, device-resident `Tensor` tier is `numax.linalg.lu`, whose
 
 from std.collections import Array
 
+from std.math import log as _log_f64
+
 from ...core.numeric import FloatLike, guard_nonzero
 from ...core.plain import Plain
 
@@ -116,6 +118,45 @@ struct PivotedLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
             product = product * self.factored[i * Self.n + i]
         return product^
 
+    def slogdet(
+        self,
+    ) -> Tuple[
+        Plain[Self.dtype, 1], Plain[Self.dtype, 1]
+    ] where Self.dtype.is_floating_point():
+        """`(sign, ln|det(A)|)`. `numpy.linalg.slogdet`.
+
+        Why this sits beside `det` rather than replacing it: a determinant
+        is a product of `n` diagonal entries, and for ordinary matrices that
+        product leaves `float64`'s range long before the answer stops being
+        useful -- a `200 x 200` whose diagonal averages 10 lands near
+        `1e200`, one averaging `0.1` underflows to zero. A sum of logarithms
+        does neither. Reach for `det` when `n` is small or the magnitude is
+        known, and for this otherwise.
+
+        `sign` is `+1`, `-1`, or `0` when the matrix is singular, whose
+        logarithm is then `-inf`. That is NumPy's convention, and the zero
+        is tested for rather than handed to `ln`.
+        """
+        var sign = Float64(self.sign)
+        var total = 0.0
+        for i in range(Self.n):
+            var entry = self.factored[i * Self.n + i].v
+            if entry == 0:
+                # `ln(0)` *is* the answer here, and spelling it that way
+                # avoids `Float64("-inf")`, which parses a string and so
+                # raises -- in a method that otherwise cannot.
+                return (
+                    Plain[Self.dtype, 1].constant(0.0),
+                    Plain[Self.dtype, 1].constant(_log_f64(0.0)),
+                )
+            if entry < 0:
+                sign = -sign
+            total += _log_f64(abs(Float64(entry)))
+        return (
+            Plain[Self.dtype, 1].constant(sign),
+            Plain[Self.dtype, 1].constant(total),
+        )
+
 
 def lu_factor[
     dtype: DType, n: Int
@@ -182,3 +223,28 @@ def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     for i in range(n):
         product = product * factored[i * n + i]
     return product^
+
+
+def slogdet[
+    dtype: DType, n: Int
+](a: Array[Plain[dtype, 1], n * n]) -> Tuple[
+    Plain[dtype, 1], Plain[dtype, 1]
+] where dtype.is_floating_point():
+    """`(sign, ln|det(A)|)`. `numpy.linalg.slogdet`.
+
+    **Tier 2 and `Plain`-only**, because it pivots -- the same reason
+    `lu_factor` and `PivotedLU` are, and NumPy's `slogdet` pivots too. The
+    unpivoted tier-1 `det` above is the one that differentiates; there is no
+    tier-1 `slogdet`, since reporting `sign = 0` for a singular matrix is a
+    branch on data by definition.
+
+    Factors and reads the pair off. Hold the `PivotedLU` and call
+    `.slogdet()` on it when a solve is wanted from the same factorization;
+    that method's docstring says when to prefer this over `det`.
+
+    `slogdet_cholesky` in `numax.linalg.array.cholesky` is cheaper when the
+    matrix is known symmetric positive definite: it needs only the factor's
+    diagonal and no sign at all, a determinant of such a matrix being
+    positive by construction.
+    """
+    return lu_factor[dtype, n](a).slogdet()

@@ -104,7 +104,10 @@ exist.
 - **No Kronecker product, matrix power, or row-wise inner product.**
   Searched at the `max ==26.5` pin across `linalg`, `nn`, `algorithm` and
   `layout`: `kron`, `matrix_power`, `inner`, `vdot`, `tensordot` and
-  `slogdet` return nothing, and the only `outer_product` in the tree is
+  `slogdet` return nothing -- numax now writes `slogdet` too, off the same
+  LU diagonal `det` already reads, because `det`'s product of `n` entries
+  overflows for ordinary matrices where a sum of logarithms does not. The
+  only `outer_product` in the tree is
   `layout.math.outer_product_acc`, already denied above for being
   `LayoutTensor` and accumulate-only. So numax writes all three --
   **extend** for `kron` (an `elementwise` map over the output, MAX's idiom)

@@ -228,6 +228,7 @@ test-distributions = "mojo -I . tests/stats/test_distributions.mojo"
 test-linalg = "mojo -I . tests/linalg/test_linalg.mojo"
 test-tensor-linalg = "mojo -I . tests/linalg/test_tensor_linalg.mojo"
 test-products = "mojo -I . tests/linalg/test_products.mojo"
+test-slogdet = "mojo -I . tests/linalg/test_slogdet.mojo"
 test-panel = "mojo -I . tests/linalg/test_panel.mojo"
 test-interp = "mojo -I . tests/interpolate/test_interp.mojo"
 test-fft = "mojo -I . tests/fft/test_fft.mojo"
@@ -288,6 +289,7 @@ tests = { depends-on = [
     "test-linalg",
     "test-tensor-linalg",
   "test-products",
+  "test-slogdet",
     "test-panel",
     "test-interp",
     "test-fft",

@@ -34,6 +34,7 @@ from layout.tile_layout import row_major
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
+from std.math import log as _log
 from std.sys.info import align_of
 from std.utils import IndexList
 
@@ -244,16 +245,15 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         ctx.synchronize()
         return x^
 
-    def det(
+    def _diagonal(
         mut self,
-    ) raises -> Scalar[Self.dtype] where Self.dtype.is_floating_point():
-        """`det(A)`: the product of `U`'s diagonal, times the swap parity.
+    ) raises -> List[Scalar[Self.dtype]] where Self.dtype.is_floating_point():
+        """`U`'s diagonal, on the host.
 
-        The diagonal is gathered on the device into an `n`-vector and only
-        that is read back, so the cost is `O(n)` of transfer rather than
-        the `O(n^2)` a copy of the factor would be. The product itself is
-        `n` multiplications and stays on the host, where an overflow is at
-        least visible.
+        Gathered on the device into an `n`-vector and read back, so the
+        transfer is `O(n)` rather than the `O(n^2)` a copy of the whole
+        factor would cost. Both `det` and `slogdet` want exactly this and
+        differ only in what they do with it.
         """
         var ctx = self.factored.context()
         var diagonal = Static[Self.dtype, Self.n](ctx)
@@ -269,12 +269,65 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
             gather, Coord(Self.n), ctx
         )
         ctx.synchronize()
+        return diagonal.to_host()
 
-        var values = diagonal.to_host()
+    def det(
+        mut self,
+    ) raises -> Scalar[Self.dtype] where Self.dtype.is_floating_point():
+        """`det(A)`: the product of `U`'s diagonal, times the swap parity.
+
+        The diagonal is gathered on the device into an `n`-vector and only
+        that is read back, so the cost is `O(n)` of transfer rather than
+        the `O(n^2)` a copy of the factor would be. The product itself is
+        `n` multiplications and stays on the host, where an overflow is at
+        least visible.
+        """
+        var values = self._diagonal()
         var product = Scalar[Self.dtype](self.sign)
         for i in range(Self.n):
             product *= values[i]
         return product
+
+    def slogdet(
+        mut self,
+    ) raises -> Tuple[
+        Scalar[Self.dtype], Scalar[Self.dtype]
+    ] where Self.dtype.is_floating_point():
+        """`(sign, ln|det(A)|)`. `numpy.linalg.slogdet`.
+
+        The reason to have this beside `det` rather than instead of it:
+        `det` multiplies `n` diagonal entries together, and for a matrix of
+        any size that product overflows or underflows long before the
+        answer is uninteresting -- a `200 x 200` matrix whose diagonal
+        averages 10 has a determinant around `1e200`, and one averaging
+        `0.1` underflows to zero. Summing logarithms cannot do either, so
+        this is the form to use whenever `n` is more than a few dozen and
+        the magnitude is not known in advance.
+
+        `sign` is `+1`, `-1`, or `0` when the matrix is singular, in which
+        case the logarithm is `-inf` -- NumPy's convention exactly. A zero
+        on the diagonal is the singular case and is tested for rather than
+        passed to `log`.
+
+        Shares `det`'s gather: the diagonal comes back as an `n`-vector, so
+        the transfer is `O(n)` and not a copy of the factor.
+        """
+        var values = self._diagonal()
+        var sign = Scalar[Self.dtype](self.sign)
+        var total = Scalar[Self.dtype](0)
+        for i in range(Self.n):
+            var entry = values[i]
+            if entry == 0:
+                # `ln(0)` is the answer, and spelling it that way avoids
+                # `Float64("-inf")`, which parses a string and so raises.
+                return (
+                    Scalar[Self.dtype](0),
+                    Scalar[Self.dtype](_log(Float64(0))),
+                )
+            if entry < 0:
+                sign = -sign
+            total += _log(abs(entry))
+        return (sign, total)
 
 
 def lu_factor[
@@ -494,6 +547,28 @@ def lu_factor[
     trimmed.copy_from_host(head^)
 
     return TensorLU[dtype, n, gpu](work^, trimmed^, sign)
+
+
+def slogdet[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
+](mut a: Static[dtype, n, n]) raises -> Tuple[
+    Scalar[dtype], Scalar[dtype]
+] where dtype.is_floating_point():
+    """`(sign, ln|det(a)|)`. `numpy.linalg.slogdet`.
+
+    The one-shot form: factors `a` and reads the pair off, exactly as `det`
+    below does for the determinant itself. Hold the `TensorLU` and call
+    `.slogdet()` on it when both this and a solve are wanted from one
+    factorization.
+
+    Prefer this to `det` for anything but a small matrix. `det` forms the
+    product of `n` diagonal entries, which overflows or underflows for
+    perfectly ordinary matrices well before the answer stops being useful;
+    a sum of logarithms cannot. `TensorLU.slogdet` carries the full
+    reasoning and the singular-matrix convention.
+    """
+    var factored = lu_factor[dtype, n, gpu, block](a)
+    return factored.slogdet()
 
 
 def det[

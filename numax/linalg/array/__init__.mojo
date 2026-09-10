@@ -16,7 +16,7 @@ type the reader has to look up. `numax.linalg`, `numax.prelude` and
 | `blas` | `dot`, `nrm2`, `asum`, `axpy`, `outer`, `matvec`, `matmul`, `inner`, `kron`, `matrix_power` |
 | `triangular` | `forward_substitution`, `back_substitution`, `tridiagonal_solve` |
 | `cholesky` | `cholesky`, `cholesky_solve`, `slogdet_cholesky` |
-| `lu` | `lu`, `lu_factor`, `PivotedLU`, `det` |
+| `lu` | `lu`, `lu_factor`, `PivotedLU`, `det`, `slogdet` |
 | `qr` | `qr`, `lstsq` |
 | `eigen` | `eigh`, `eigvals`, `svd` |
 | `basic` | `solve`, `inverse`, `pinv` |
@@ -71,7 +71,7 @@ from .blas import (
 )
 from .cholesky import cholesky, cholesky_solve, slogdet_cholesky
 from .eigen import eigh, eigvals, svd
-from .lu import PivotedLU, det, lu, lu_factor
+from .lu import PivotedLU, det, lu, lu_factor, slogdet
 from .misc import cond, norm, trace
 from .qr import lstsq, qr
 from .triangular import (

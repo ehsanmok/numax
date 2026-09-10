@@ -32,7 +32,7 @@ modules matter when reading or extending.
 | `blas` | `matmul`, `matvec`, `batched_matmul`, `inner`, `kron`, `matrix_power`, `dot`, `nrm2`, `asum`, `axpy`, `outer` | `scipy.linalg.blas`, `numpy.linalg.matmul` |
 | `triangular` | `solve_triangular` | `solve_banded` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
-| `lu` | `lu_factor`, `TensorLU`, `det` | `_decomp_lu` |
+| `lu` | `lu_factor`, `TensorLU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm`, `trace`, `fro`, `inf` | `_misc` |
@@ -49,7 +49,7 @@ once per tier and never twice within one.
 the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`, `outer`), blocked
 `cholesky`, `lu_factor` (returning a reusable `TensorLU`), `qr_factor`
 (returning a reusable `TensorQR`) and `solve`, the solves those unlock --
-`solve_triangular`, `cholesky_solve`, `inverse`, `det`, and the
+`solve_triangular`, `cholesky_solve`, `inverse`, `det`, `slogdet`, and the
 least-squares `TensorQR.solve` -- and the scalar summaries `norm`
 (`fro`/`1`/`inf`) and `trace`. Each takes a `gpu: Bool` parameter that
 chooses MAX's target, and everything blocked a `block` size that tunes the
@@ -146,7 +146,7 @@ from .blas import (
     outer,
 )
 from .cholesky import cholesky, cholesky_solve
-from .lu import TensorLU, det, lu_factor
+from .lu import TensorLU, det, lu_factor, slogdet
 from .misc import fro, inf, norm, trace
 from .qr import TensorQR, lstsq, qr_factor
 from .triangular import solve_triangular
