@@ -401,6 +401,8 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
 | `np.kron`, `np.linalg.matrix_power`, `np.inner` | `kron`, `matrix_power[dtype, n, p]`, `inner` | `inner` is `a @ b.T` without materializing the transpose |
 | `np.linalg.slogdet` | `slogdet(A)` | `(sign, ln\|det\|)`, for the ordinary matrices whose determinant overflows |
+| `np.linalg.norm(v, ord)` | `norm[dtype, n, ord](v)` | a vector overload beside the matrix one; `ord=0` is `count_nonzero` |
+| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names, from `numax.linalg.array` | `matrix_rank` returns a count per SIMD lane |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |

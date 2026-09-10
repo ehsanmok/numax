@@ -434,3 +434,81 @@ def svd[
             u[i * n + j] = work[i * n + j] / safe
 
     return (u^, values^, v^)
+
+
+def eigvalsh[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Array[T, n]:
+    """The eigenvalues of a symmetric `A`, without the eigenvectors.
+    `numpy.linalg.eigvalsh` / `scipy.linalg.eigvalsh`.
+
+    `eigh(a)[0]`, and honestly so: the Jacobi rotations that diagonalize `A`
+    are the same work whether or not the accumulated rotation matrix is
+    kept, so this saves the `O(n^3)` of accumulating `V` and nothing else.
+    It exists because the name is the one a caller reaches for when the
+    vectors are not wanted, not because it is a cheaper algorithm.
+
+    Tier 1, like `eigh`: a fixed `sweeps` count and no data-dependent
+    branching, so it differentiates and runs inside a kernel body.
+    """
+    return eigh[T, n, sweeps](a)[0].copy()
+
+
+def svdvals[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Array[T, n]:
+    """The singular values of `A`, without either set of vectors.
+    `scipy.linalg.svdvals`.
+
+    `svd(a)[1]`, with the same caveat `eigvalsh` carries: the one-sided
+    Jacobi sweeps are the work, and dropping `U` and `V` on the floor does
+    not shorten them. The name is the point.
+
+    Returned in the order `svd` produces, which is **not** sorted -- see
+    `svd`. Sort them if the largest is what is wanted, or call `cond`, which
+    already takes the ratio.
+    """
+    return svd[T, n, sweeps](a)[1].copy()
+
+
+def matrix_rank[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n], rcond: Float64 = 1e-12) -> T:
+    """How many singular values exceed `rcond` times the largest, as a
+    count. `numpy.linalg.matrix_rank`.
+
+    **It returns `T`, not `Int`, and that is forced rather than chosen.** At
+    `Plain[dtype, w]` each element holds a `w`-wide SIMD, so one call is `w`
+    independent matrices, and they need not have the same rank -- a single
+    `Int` could not describe them. Returning the count as a value gives each
+    lane its own, exactly, since every rank below `2^53` is a `float64`
+    integer. Read it with `.v` at `Plain`, or `Int(r.v)` where an `Int` is
+    wanted.
+
+    That shape is also what keeps this **tier 1**. The count is a sum of
+    `ge_indicator` results -- a `0`/`1` blend built from `copysign` -- so
+    nothing branches, and it differentiates and launches inside a kernel
+    body like the rest of this module. A branching version would have been
+    `Plain`-only *and* would have hit the recorded Mojo limitation that a
+    struct instantiated with a function-level `DType` parameter is not
+    accepted as a `FloatLike` argument.
+
+    `rcond` is relative to the largest singular value, matching
+    `numpy.linalg.matrix_rank` and `pinv`, which applies the identical
+    threshold to build a pseudoinverse instead of counting.
+
+    The derivative is zero almost everywhere, as it must be for a
+    step-shaped quantity: this differentiates in the sense of compiling and
+    running at `Dual`, not in the sense of a useful gradient.
+    """
+    var values = svd[T, n, sweeps](a)[1].copy()
+
+    var largest = T.constant(0.0)
+    for i in range(n):
+        largest = max_of(largest, values[i])
+    var threshold = largest * T.constant(rcond)
+
+    var rank = T.constant(0.0)
+    for i in range(n):
+        rank = rank + ge_indicator(values[i], threshold)
+    return rank^

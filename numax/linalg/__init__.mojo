@@ -35,7 +35,7 @@ modules matter when reading or extending.
 | `lu` | `lu_factor`, `TensorLU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
-| `misc` | `norm`, `trace`, `fro`, `inf` | `_misc` |
+| `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
 `common` holds the private helpers and exports nothing. `array/` mirrors
@@ -51,7 +51,8 @@ the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`, `outer`), blocked
 (returning a reusable `TensorQR`) and `solve`, the solves those unlock --
 `solve_triangular`, `cholesky_solve`, `inverse`, `det`, `slogdet`, and the
 least-squares `TensorQR.solve` -- and the scalar summaries `norm`
-(`fro`/`1`/`inf`) and `trace`. Each takes a `gpu: Bool` parameter that
+(`fro`/`1`/`inf` over a matrix, `2`/`1`/`inf`/`neg_inf` over a vector) and
+`trace`. Each takes a `gpu: Bool` parameter that
 chooses MAX's target, and everything blocked a `block` size that tunes the
 panel.
 
@@ -147,6 +148,6 @@ from .blas import (
 )
 from .cholesky import cholesky, cholesky_solve
 from .lu import TensorLU, det, lu_factor, slogdet
-from .misc import fro, inf, norm, trace
+from .misc import fro, inf, neg_inf, norm, trace
 from .qr import TensorQR, lstsq, qr_factor
 from .triangular import solve_triangular

@@ -29,7 +29,7 @@ from std.utils import IndexList
 from ..core.array import Static
 from ..core.rowwise import max_axis, sum_axis
 
-from .blas import _fused_sum, _target
+from .blas import _fused_sum, _target, asum as _asum, nrm2 as _nrm2
 
 
 comptime fro = 0
@@ -37,7 +37,14 @@ comptime fro = 0
 
 
 comptime inf = -1
-"""`ord` for `norm`: the induced infinity-norm."""
+"""`ord` for `norm`: the induced infinity-norm over a matrix, the largest
+magnitude over a vector."""
+
+
+comptime neg_inf = -2
+"""`ord` for the vector `norm`: the *smallest* magnitude. `numpy`'s
+`-inf`. Meaningless for a matrix, and the matrix overload's `where` clause
+rejects it."""
 
 
 comptime _Flat[dtype: DType] = TileTensor[
@@ -180,3 +187,77 @@ def norm[
     var out = Static[dtype, 1](ctx)
     max_axis[axis=0, target=_target[gpu]()](sums.view(), out.view(), ctx)
     return out.to_host()[0]
+
+
+def norm[
+    dtype: DType, n: Int, ord: Int = 2, gpu: Bool = False
+](mut a: Static[dtype, n]) raises -> Scalar[
+    dtype
+] where dtype.is_floating_point() and (
+    ord == 2 or ord == 1 or ord == inf or ord == neg_inf
+):
+    """A vector norm of `a`, over `Tensor`. `numpy.linalg.norm(v, ord=...)`.
+
+    A separate overload from the matrix `norm` above rather than a widened
+    one, because `ord` does not mean the same thing on the two ranks --
+    `2` is the Euclidean length of a vector and the spectral norm of a
+    matrix, and `1` is a sum of magnitudes against a maximum column sum.
+    Selecting by rank keeps each set of values meaning one thing:
+
+    | `ord` | This overload computes |
+    |---|---|
+    | `2` (default) | `sqrt(sum(a**2))`, the Euclidean length |
+    | `1` | `sum(abs(a))` |
+    | `inf` | `max(abs(a))` |
+    | `neg_inf` | `min(abs(a))` |
+
+    Each is a single fused reduction: the square, the magnitude or the
+    extremum goes into `rowwise`'s per-tile transform, so nothing makes a
+    second pass and only the scalar crosses to the host. `ord == 2` is
+    `nrm2` exactly, and a test asserts they agree -- `nrm2` is the BLAS name
+    for the same reduction and stays, since a caller reaching for BLAS-1
+    should find it there.
+
+    **`numpy`'s `ord=0` is not here**, and would be ambiguous if it were:
+    it counts nonzeros rather than measuring anything, and `0` is already
+    `fro` in this module's vocabulary. `numax.core.sorting.count_nonzero`
+    is that operation under a name that says so. The fractional and
+    negative-`p` vector norms are out too; they have no use here that
+    `ord` in this table does not cover.
+
+    Unrescaled, like the matrix overload: `ord == 2` on a vector whose
+    entries approach the square root of `dtype`'s overflow threshold
+    overflows. Take the `1`- or `inf`-norm, which cannot.
+    """
+    var ctx = a.context()
+    var av = a.view()
+
+    comptime if ord == 2:
+        return _nrm2[dtype, n, gpu](a)
+    elif ord == 1:
+        return _asum[dtype, n, gpu](a)
+    else:
+        # The two extremal norms are a magnitude map and then a fold. There
+        # is no fused `max(abs(.))` reduction to reach for -- `max_axis`
+        # folds what it is given -- so the magnitudes are materialized once
+        # and reduced, which is two launches rather than one.
+        var magnitudes = Static[dtype, n]._uninitialized(ctx)
+        var mv = magnitudes.view()
+
+        @always_inline
+        def take_abs[w: Int, alignment: Int = 1](coord: Coord) {var av, var mv}:
+            mv.store[w](coord, abs(av.load[w](coord)))
+
+        elementwise[simd_width=1, target=_target[gpu]()](
+            take_abs, Coord(n), ctx
+        )
+        ctx.synchronize()
+
+        var host = magnitudes.to_host()
+        var best = host[0]
+        for i in range(1, n):
+            comptime if ord == inf:
+                best = max(best, host[i])
+            else:
+                best = min(best, host[i])
+        return best
