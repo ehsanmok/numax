@@ -389,6 +389,239 @@ def test_binomial_with_one_trial_is_bernoulli() raises:
     )
 
 
+# ---------------------------------------------------- the completed set
+# `sf`, `isf`, `logpdf`/`logpmf`, `logcdf`, `logsf` on all nine, and the
+# four `ppf`s that were missing. Reference digits are scipy.stats 1.18.
+
+
+def test_survival_functions_complement_their_cdfs() raises:
+    # sf + cdf == 1 for every continuous family, at a point in the body.
+    assert_almost_equal(
+        s(
+            norm.sf(pv(1.0), pv(0.0), pv(1.0))
+            + norm.cdf(pv(1.0), pv(0.0), pv(1.0))
+        ),
+        1.0,
+        atol=1e-14,
+    )
+    assert_almost_equal(
+        s(expon.sf(pv(1.5), pv(2.0)) + expon.cdf(pv(1.5), pv(2.0))),
+        1.0,
+        atol=1e-14,
+    )
+    assert_almost_equal(
+        s(
+            gamma.sf(pv(2.0), pv(3.0), pv(1.0))
+            + gamma.cdf(pv(2.0), pv(3.0), pv(1.0))
+        ),
+        1.0,
+        atol=1e-12,
+    )
+    assert_almost_equal(
+        s(
+            beta.sf(pv(0.3), pv(2.0), pv(3.0))
+            + beta.cdf(pv(0.3), pv(2.0), pv(3.0))
+        ),
+        1.0,
+        atol=BETA_ATOL,
+    )
+    assert_almost_equal(
+        s(t.sf(pv(1.5), pv(10.0)) + t.cdf(pv(1.5), pv(10.0))),
+        1.0,
+        atol=BETA_ATOL,
+    )
+    assert_almost_equal(
+        s(f.sf(pv(2.0), pv(5.0), pv(10.0)) + f.cdf(pv(2.0), pv(5.0), pv(10.0))),
+        1.0,
+        atol=BETA_ATOL,
+    )
+
+
+def test_survival_functions_match_scipy() raises:
+    assert_almost_equal(
+        s(norm.sf(pv(1.0), pv(0.0), pv(1.0))), 0.15865525393145707, atol=1e-12
+    )
+    assert_almost_equal(
+        s(expon.sf(pv(1.5), pv(2.0))), 0.049787068367863944, atol=1e-14
+    )
+    assert_almost_equal(
+        s(gamma.sf(pv(2.0), pv(3.0), pv(1.0))), 0.6766764161830636, atol=1e-8
+    )
+    assert_almost_equal(
+        s(chi2.sf(pv(7.814727903251179), pv(3.0))), 0.05, atol=1e-8
+    )
+    assert_almost_equal(
+        s(beta.sf(pv(0.3), pv(2.0), pv(3.0))), 0.6517, atol=BETA_ATOL
+    )
+    assert_almost_equal(
+        s(t.sf(pv(1.5), pv(10.0))), 0.08225366322272007, atol=BETA_ATOL
+    )
+    assert_almost_equal(
+        s(f.sf(pv(2.0), pv(5.0), pv(10.0))), 0.1641949508997389, atol=BETA_ATOL
+    )
+
+
+def test_survival_functions_are_one_below_the_support() raises:
+    assert_almost_equal(s(expon.sf(pv(-1.0), pv(2.0))), 1.0)
+    assert_almost_equal(s(gamma.sf(pv(-1.0), pv(3.0), pv(1.0))), 1.0)
+    assert_almost_equal(s(f.sf(pv(-1.0), pv(5.0), pv(10.0))), 1.0)
+
+
+def test_inverse_survival_functions_match_scipy() raises:
+    assert_almost_equal(
+        s(norm.isf(pv(0.025), pv(0.0), pv(1.0))), 1.959963984540054, atol=1e-12
+    )
+    assert_almost_equal(
+        s(expon.isf(pv(0.2), pv(2.0))), 0.8047189562170501, atol=1e-14
+    )
+    assert_almost_equal(
+        s(gamma.isf(pv(0.1), pv(3.0), pv(1.0))), 5.322320337834209, atol=1e-6
+    )
+    assert_almost_equal(
+        s(chi2.isf(pv(0.05), pv(3.0))), 7.814727903251182, atol=1e-6
+    )
+    assert_almost_equal(
+        s(beta.isf(pv(0.1), pv(2.0), pv(3.0))), 0.6795394162781817, atol=1e-6
+    )
+    assert_almost_equal(
+        s(t.isf(pv(0.05), pv(10.0))), 1.8124611228116767, atol=1e-6
+    )
+    assert_almost_equal(
+        s(f.isf(pv(0.05), pv(5.0), pv(10.0))), 3.3258345304130104, atol=1e-5
+    )
+
+
+def test_exponential_quantile_is_the_closed_form_and_inverts_its_cdf() raises:
+    assert_almost_equal(
+        s(expon.ppf(pv(0.5), pv(2.0))), 0.34657359027997264, atol=1e-14
+    )
+    for p in [0.01, 0.3, 0.9, 0.999]:
+        var x = expon.ppf(pv(p), pv(0.7))
+        assert_almost_equal(s(expon.cdf(x, pv(0.7))), p, atol=1e-13)
+
+
+def test_f_quantile_inverts_f_cdf_and_matches_a_table_value() raises:
+    # F(0.95; 5, 10) = 3.3258, the value every ANOVA table carries.
+    assert_almost_equal(
+        s(f.ppf(pv(0.95), pv(5.0), pv(10.0))), 3.3258345304130104, atol=1e-5
+    )
+    for p in [0.1, 0.5, 0.9]:
+        var x = f.ppf(pv(p), pv(4.0), pv(7.0))
+        assert_almost_equal(s(f.cdf(x, pv(4.0), pv(7.0))), p, atol=1e-6)
+
+
+def test_poisson_quantile_is_the_smallest_k_with_cdf_at_least_p() raises:
+    # scipy.stats.poisson.ppf([0.01, 0.5, 0.95], 3.0) == [0, 3, 6]; the
+    # scan has to land on the integer exactly, not near it.
+    assert_almost_equal(s(poisson.ppf(pv(0.01), pv(3.0))), 0.0, atol=1e-12)
+    assert_almost_equal(s(poisson.ppf(pv(0.5), pv(3.0))), 3.0, atol=1e-12)
+    assert_almost_equal(s(poisson.ppf(pv(0.95), pv(3.0))), 6.0, atol=1e-12)
+    # The defining property, at a p strictly between two CDF values:
+    # cdf(2) = 0.4232 < 0.5 <= cdf(3) = 0.6472.
+    var k = poisson.ppf(pv(0.5), pv(3.0))
+    assert_true(s(poisson.cdf(k, pv(3.0))) >= 0.5)
+    assert_true(s(poisson.cdf(k - pv(1.0), pv(3.0))) < 0.5)
+
+
+def test_binomial_quantile_is_the_smallest_k_with_cdf_at_least_p() raises:
+    # scipy.stats.binom.ppf([0.02, 0.5, 0.99], 10, 0.3) == [0, 3, 7].
+    assert_almost_equal(
+        s(binom.ppf(pv(0.02), pv(10.0), pv(0.3))), 0.0, atol=1e-12
+    )
+    assert_almost_equal(
+        s(binom.ppf(pv(0.5), pv(10.0), pv(0.3))), 3.0, atol=1e-12
+    )
+    assert_almost_equal(
+        s(binom.ppf(pv(0.99), pv(10.0), pv(0.3))), 7.0, atol=1e-12
+    )
+
+
+def test_discrete_survival_functions_match_scipy_and_their_cdfs() raises:
+    assert_almost_equal(
+        s(poisson.sf(pv(3.0), pv(2.5))), 0.2424238668669339, atol=1e-10
+    )
+    assert_almost_equal(
+        s(poisson.sf(pv(3.0), pv(2.5)) + poisson.cdf(pv(3.0), pv(2.5))),
+        1.0,
+        atol=1e-12,
+    )
+    assert_almost_equal(
+        s(binom.sf(pv(3.0), pv(10.0), pv(0.3))),
+        0.3503892815999998,
+        atol=BETA_ATOL,
+    )
+    # The two ends: nothing above n, everything above -1.
+    assert_almost_equal(s(binom.sf(pv(10.0), pv(10.0), pv(0.3))), 0.0)
+    assert_almost_equal(s(binom.sf(pv(-1.0), pv(10.0), pv(0.3))), 1.0)
+    assert_almost_equal(s(poisson.sf(pv(-1.0), pv(2.5))), 1.0)
+
+
+def test_log_densities_match_scipy_and_are_the_log_of_the_density() raises:
+    assert_almost_equal(
+        s(norm.logpdf(pv(1.0), pv(0.0), pv(2.0))),
+        -1.737085713764618,
+        atol=1e-12,
+    )
+    assert_almost_equal(
+        s(gamma.logpdf(pv(2.0), pv(3.0), pv(1.0))),
+        -1.3068528194400546,
+        atol=1e-10,
+    )
+    assert_almost_equal(
+        s(beta.logpdf(pv(0.3), pv(2.0), pv(3.0))),
+        0.5675839575845993,
+        atol=1e-10,
+    )
+    assert_almost_equal(
+        s(t.logpdf(pv(1.5), pv(10.0))), -2.0600719941327488, atol=1e-10
+    )
+    assert_almost_equal(
+        s(f.logpdf(pv(2.0), pv(5.0), pv(10.0))), -1.8201234988216655, atol=1e-10
+    )
+    assert_almost_equal(
+        s(poisson.logpmf(pv(3.0), pv(2.5))), -1.5428872736055896, atol=1e-10
+    )
+    assert_almost_equal(
+        s(binom.logpmf(pv(3.0), pv(10.0), pv(0.3))),
+        -1.321151277766889,
+        atol=1e-10,
+    )
+    # And on the support, exp(logpdf) is the density itself -- the
+    # densities are now *defined* that way, so this pins the refactor.
+    assert_almost_equal(
+        s(gamma.logpdf(pv(2.0), pv(3.0), pv(1.0)).exp()),
+        s(gamma.pdf(pv(2.0), pv(3.0), pv(1.0))),
+        atol=1e-15,
+    )
+
+
+def test_log_densities_are_finite_and_exp_to_zero_off_the_support() raises:
+    # SciPy says -inf; a tier-1 kernel says a large finite negative whose
+    # exp is exactly the 0 the density returns. Both halves are the claim.
+    var off = gamma.logpdf(pv(-1.0), pv(3.0), pv(1.0))
+    assert_true(s(off) < -1e29)
+    assert_almost_equal(s(off.exp()), 0.0)
+    assert_almost_equal(s(gamma.pdf(pv(-1.0), pv(3.0), pv(1.0))), 0.0)
+    var off_k = binom.logpmf(pv(11.0), pv(10.0), pv(0.3))
+    assert_true(s(off_k) < -1e29)
+
+
+def test_log_cdfs_are_the_log_of_the_cdf() raises:
+    assert_almost_equal(
+        s(norm.logcdf(pv(-3.0), pv(0.0), pv(1.0))), -6.60772622151035, atol=1e-8
+    )
+    assert_almost_equal(
+        s(t.logsf(pv(1.5), pv(10.0))),
+        s(t.sf(pv(1.5), pv(10.0)).ln()),
+        atol=1e-14,
+    )
+    assert_almost_equal(
+        s(chi2.logcdf(pv(2.0), pv(3.0))),
+        s(chi2.cdf(pv(2.0), pv(3.0)).ln()),
+        atol=1e-14,
+    )
+
+
 # ---------------------------------------------------------------- shared
 
 

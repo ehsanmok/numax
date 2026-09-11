@@ -7,7 +7,9 @@ tolerance.
 
 Nine namespaces, spelled the way `scipy.stats` spells them -- `norm`,
 `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` -- each
-carrying `.pdf` (or `.pmf`), `.cdf` and `.ppf`:
+carrying the eight methods a `scipy.stats` distribution carries: `.pdf`
+(or `.pmf`) and `.logpdf` (`.logpmf`), `.cdf` and `.logcdf`, `.sf` and
+`.logsf`, `.ppf` and `.isf`:
 
 ```mojo
 from numax.stats import norm, chi2
@@ -45,6 +47,18 @@ each pair against the other rather than against a table.
   would survive multiplication by a `0` indicator.
 - Everything is scoped to valid parameters (positive shapes, `sigma > 0`,
   `0 < p < 1`); nothing validates, in keeping with the rest of `numax`.
+- Log densities are the log-space interior directly, never `ln(pdf)`, so
+  they stay finite where the density underflows -- which is what a log
+  density is for. Outside the support they return `_LOG_ZERO`, a large
+  finite negative, rather than SciPy's `-inf`: finite so a `Dual`
+  derivative through it stays finite, and chosen so that `exp` of it is
+  exactly the `0` the density returns there.
+- Survival functions read the upper tail off the complement special
+  function (`erfc`, `betaincc`, `gammainc` for the discrete upper tails)
+  where one exists, so they keep their digits where `1 - cdf` would cancel
+  them. `gamma.sf` is the exception in effect if not in spelling: numax's
+  `gammaincc` is literally `1 - gammainc`, so the name is there and the
+  tail accuracy waits on an upper-tail continued fraction.
 
 ## Quantiles
 
@@ -61,10 +75,29 @@ the exact derivative is already in hand and doesn't need a `Dual` pass.
 Seeds matter more than iteration counts for a fixed-work solver, so each
 one uses the standard published approximation for its family rather than a
 constant: Abramowitz & Stegun 26.2.23 for the normal, Wilson-Hilferty for
-the gamma, the distribution mean for the beta.
+the gamma, the distribution mean for the beta. `f.ppf` is `beta.ppf` under
+the change of variables its CDF already uses, and `expon.ppf` is closed
+form. Every `isf` is its `ppf` at `1 - p`, or the symmetric spelling of it.
+
+## Discrete quantiles
+
+`poisson.ppf` and `binom.ppf` return what SciPy returns -- the smallest
+integer `k` with `cdf(k) >= p` -- and do it branchlessly: `k` starts at
+`0` and, for a compile-time `max_k` steps, adds `1` wherever `cdf(k)` is
+still below `p`. Once the CDF has caught up the indicator is `0` and `k`
+stops. Fixed work, no per-lane branch, and no `floor`, which `FloatLike`
+does not have and which is why a Newton step on the continuous extension
+is not the route.
+
+`ponytail:` the cost is `max_k` CDF evaluations per lane -- `max_k`
+incomplete-gamma series or incomplete-beta continued fractions -- and a
+quantile above `max_k` is silently reported as `max_k`. The default of
+`64` covers a Poisson mean up to about `40` at `p = 0.999`; pass a larger
+`max_k` for a larger rate. The upgrade is a normal-approximation seed plus
+a short scan around it, once `FloatLike` can round a seed to an integer.
 """
 
-from ..special.beta import betainc
+from ..special.beta import betainc, betaincc
 from ..special.gamma import gammainc, gammaincc, lgamma
 from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
 
@@ -76,6 +109,10 @@ comptime _LN_PI = 1.1447298858494002
 # Small enough to be indistinguishable from the boundary at any supported
 # `dtype`, large enough that `ln` of it is finite in float32.
 comptime _TINY = 1e-30
+
+# What a log density returns outside its support: finite, representable at
+# float32, and with `exp` of it exactly `0` -- see the module docstring.
+comptime _LOG_ZERO = -1e30
 
 
 def _safe_ln[T: FloatLike](x: T) -> T:
@@ -131,6 +168,37 @@ struct norm:
     def ppf[T: FloatLike](p: T, mu: T, sigma: T) -> T:
         """The inverse normal CDF, for `0 < p < 1`."""
         return mu + sigma * _standard_normal_quantile(p)
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
+        """`P(X > x)`, as `0.5*erfc(z/sqrt(2))` -- the upper tail read off
+        `erfc` directly, so it keeps its digits where `1 - cdf` would
+        cancel them. `scipy.stats.norm.sf`."""
+        var z = (x - mu) / sigma
+        return T.constant(0.5) * (z / T.constant(_SQRT_2)).erfc()
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, mu: T, sigma: T) -> T:
+        """The inverse survival function, `ppf(1 - p)`; by symmetry
+        `mu - sigma * z(p)`, which loses nothing to `1 - p`."""
+        return mu - sigma * _standard_normal_quantile(p)
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
+        var z = (x - mu) / sigma
+        return (
+            -(z * z) / T.constant(2.0)
+            - _safe_ln(sigma)
+            - T.constant(0.5 * _LN_2PI)
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
+        return _safe_ln(norm.cdf(x, mu, sigma))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, mu: T, sigma: T) -> T:
+        return _safe_ln(norm.sf(x, mu, sigma))
 
 
 def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
@@ -196,6 +264,37 @@ struct expon:
         var inside = T.one() - (-(rate * max_of(x, T.constant(0.0)))).exp()
         return inside * ge_indicator(x, T.constant(0.0))
 
+    @staticmethod
+    def sf[T: FloatLike](x: T, rate: T) -> T:
+        """`exp(-rate*x)` on `x >= 0`, and `1` below it."""
+        var inside = (-(rate * max_of(x, T.constant(0.0)))).exp()
+        return blend(ge_indicator(x, T.constant(0.0)), inside, T.one())
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, rate: T) -> T:
+        """The inverse CDF, closed form: `-ln(1 - p) / rate`."""
+        return -(_safe_ln(T.one() - p)) / rate
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, rate: T) -> T:
+        """`-ln(p) / rate`, which is `ppf(1 - p)` without the `1 - p`."""
+        return -(_safe_ln(p)) / rate
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, rate: T) -> T:
+        var interior = _safe_ln(rate) - rate * max_of(x, T.constant(0.0))
+        return blend(
+            ge_indicator(x, T.constant(0.0)), interior, T.constant(_LOG_ZERO)
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, rate: T) -> T:
+        return _safe_ln(expon.cdf(x, rate))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, rate: T) -> T:
+        return _safe_ln(expon.sf(x, rate))
+
     # ----------------------------------------------------------------- gamma
 
 
@@ -211,20 +310,46 @@ struct gamma:
         the direct form needs `x^(shape-1)` and `Gamma(shape)` separately, and
         both overflow long before their ratio does.
         """
+        return gamma.logpdf(x, shape, scale).exp()
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
+        """The gamma log density; `_LOG_ZERO` below the support."""
         var z = max_of(x, T.constant(0.0)) / scale
-        var log_density = (
+        var interior = (
             (shape - T.one()) * _safe_ln(z)
             - z
             - lgamma(shape.copy())
             - _safe_ln(scale)
         )
-        return log_density.exp() * ge_indicator(x, T.constant(0.0))
+        return blend(
+            ge_indicator(x, T.constant(0.0)), interior, T.constant(_LOG_ZERO)
+        )
 
     @staticmethod
     def cdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
         """The gamma CDF -- `gammainc` under the substitution `x/scale`."""
         var z = max_of(x, T.constant(0.0)) / scale
         return gammainc(shape.copy(), z^) * ge_indicator(x, T.constant(0.0))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, shape: T, scale: T) -> T:
+        """`P(X > x)` -- `gammaincc` under the same substitution, `1` below
+        the support. See the module docstring on what `gammaincc` is."""
+        var z = max_of(x, T.constant(0.0)) / scale
+        return blend(
+            ge_indicator(x, T.constant(0.0)),
+            gammaincc(shape.copy(), z^),
+            T.one(),
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, shape: T, scale: T) -> T:
+        return _safe_ln(gamma.cdf(x, shape, scale))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, shape: T, scale: T) -> T:
+        return _safe_ln(gamma.sf(x, shape, scale))
 
     @staticmethod
     def ppf[T: FloatLike, num_iters: Int = 12](p: T, shape: T, scale: T) -> T:
@@ -252,6 +377,11 @@ struct gamma:
 
         return x^
 
+    @staticmethod
+    def isf[T: FloatLike, num_iters: Int = 12](p: T, shape: T, scale: T) -> T:
+        """`ppf(1 - p)`."""
+        return gamma.ppf[T, num_iters](T.one() - p, shape, scale)
+
     # ------------------------------------------------------------ chi-square
 
 
@@ -272,6 +402,26 @@ struct chi2:
     def ppf[T: FloatLike](p: T, df: T) -> T:
         return gamma.ppf(p, df / T.constant(2.0), T.constant(2.0))
 
+    @staticmethod
+    def sf[T: FloatLike](x: T, df: T) -> T:
+        return gamma.sf(x, df / T.constant(2.0), T.constant(2.0))
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, df: T) -> T:
+        return gamma.isf(p, df / T.constant(2.0), T.constant(2.0))
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, df: T) -> T:
+        return gamma.logpdf(x, df / T.constant(2.0), T.constant(2.0))
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, df: T) -> T:
+        return gamma.logcdf(x, df / T.constant(2.0), T.constant(2.0))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, df: T) -> T:
+        return gamma.logsf(x, df / T.constant(2.0), T.constant(2.0))
+
     # ------------------------------------------------------------------ beta
 
 
@@ -282,8 +432,13 @@ struct beta:
     @staticmethod
     def pdf[T: FloatLike](x: T, a: T, b: T) -> T:
         """The beta density on `0 < x < 1`, and `0` outside it."""
+        return beta.logpdf(x, a, b).exp()
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, a: T, b: T) -> T:
+        """The beta log density; `_LOG_ZERO` outside `[0, 1]`."""
         var xc = min_of(max_of(x, T.constant(0.0)), T.one())
-        var log_density = (
+        var interior = (
             (a - T.one()) * _safe_ln(xc)
             + (b - T.one()) * _safe_ln(T.one() - xc)
             - _log_beta(a, b)
@@ -291,13 +446,28 @@ struct beta:
         var support = ge_indicator(x, T.constant(0.0)) * ge_indicator(
             T.one(), x.copy()
         )
-        return log_density.exp() * support
+        return blend(support, interior, T.constant(_LOG_ZERO))
 
     @staticmethod
     def cdf[T: FloatLike](x: T, a: T, b: T) -> T:
         """The beta CDF -- `betainc` directly, clamped to its support."""
         var xc = min_of(max_of(x, T.constant(0.0)), T.one())
         return betainc(xc^, a, b)
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, a: T, b: T) -> T:
+        """`P(X > x)` -- `betaincc`, which is `I_{1-x}(b, a)` and so reads
+        the upper tail directly rather than as `1 - cdf`."""
+        var xc = min_of(max_of(x, T.constant(0.0)), T.one())
+        return betaincc(xc^, a, b)
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, a: T, b: T) -> T:
+        return _safe_ln(beta.cdf(x, a, b))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, a: T, b: T) -> T:
+        return _safe_ln(beta.sf(x, a, b))
 
     @staticmethod
     def ppf[T: FloatLike, num_iters: Int = 20](p: T, a: T, b: T) -> T:
@@ -322,6 +492,11 @@ struct beta:
 
         return x^
 
+    @staticmethod
+    def isf[T: FloatLike, num_iters: Int = 20](p: T, a: T, b: T) -> T:
+        """`ppf(1 - p)`."""
+        return beta.ppf[T, num_iters](T.one() - p, a, b)
+
     # ------------------------------------------------------------- Student-t
 
 
@@ -330,14 +505,31 @@ struct t:
 
     @staticmethod
     def pdf[T: FloatLike](x: T, df: T) -> T:
+        return t.logpdf(x, df).exp()
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, df: T) -> T:
         var half = (df + T.one()) / T.constant(2.0)
-        var log_density = (
+        return (
             lgamma(half.copy())
             - lgamma(df / T.constant(2.0))
             - (T.constant(0.5) * (_safe_ln(df) + T.constant(_LN_PI)))
             - (half * (T.one() + x * x / df).ln())
         )
-        return log_density.exp()
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, df: T) -> T:
+        """`P(T > x)`, which by symmetry is `cdf(-x)` -- exact, and it
+        keeps the upper tail's digits."""
+        return t.cdf(-x, df)
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, df: T) -> T:
+        return _safe_ln(t.cdf(x, df))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, df: T) -> T:
+        return _safe_ln(t.sf(x, df))
 
     @staticmethod
     def cdf[T: FloatLike](x: T, df: T) -> T:
@@ -373,6 +565,11 @@ struct t:
 
         return x^
 
+    @staticmethod
+    def isf[T: FloatLike, num_iters: Int = 12](p: T, df: T) -> T:
+        """`ppf(1 - p)`, which by symmetry is `-ppf(p)`."""
+        return -t.ppf[T, num_iters](p, df)
+
     # --------------------------------------------------------------------- F
 
 
@@ -382,9 +579,14 @@ struct f:
     @staticmethod
     def pdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
         """The F density with `df1` and `df2` degrees of freedom."""
+        return f.logpdf(x, df1, df2).exp()
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
+        """The F log density; `_LOG_ZERO` below the support."""
         var xc = max_of(x, T.constant(0.0))
         var d1x = df1 * xc
-        var log_density = (
+        var interior = (
             T.constant(0.5)
             * (
                 df1 * _safe_ln(d1x)
@@ -394,7 +596,9 @@ struct f:
             - _safe_ln(xc)
             - _log_beta(df1 / T.constant(2.0), df2 / T.constant(2.0))
         )
-        return log_density.exp() * ge_indicator(x, T.constant(0.0))
+        return blend(
+            ge_indicator(x, T.constant(0.0)), interior, T.constant(_LOG_ZERO)
+        )
 
     @staticmethod
     def cdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
@@ -404,6 +608,45 @@ struct f:
         return betainc(
             z^, df1 / T.constant(2.0), df2 / T.constant(2.0)
         ) * ge_indicator(x, T.constant(0.0))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, df1: T, df2: T) -> T:
+        """`P(F > x)` -- `betaincc` at the same `z`, `1` below the
+        support."""
+        var d1x = df1 * max_of(x, T.constant(0.0))
+        var z = d1x / (d1x + df2)
+        return blend(
+            ge_indicator(x, T.constant(0.0)),
+            betaincc(z^, df1 / T.constant(2.0), df2 / T.constant(2.0)),
+            T.one(),
+        )
+
+    @staticmethod
+    def ppf[T: FloatLike, num_iters: Int = 20](p: T, df1: T, df2: T) -> T:
+        """The inverse F CDF, through `beta.ppf`.
+
+        `Z = df1 X / (df1 X + df2)` is `Beta(df1/2, df2/2)` when `X` is
+        `F(df1, df2)` -- the same change of variables `cdf` uses, inverted:
+        `x = df2 z / (df1 (1 - z))`. `beta.ppf` keeps `z` inside
+        `(1e-8, 1 - 1e-8)`, so the division is always finite.
+        """
+        var z = beta.ppf[T, num_iters](
+            p, df1 / T.constant(2.0), df2 / T.constant(2.0)
+        )
+        return df2 * z / (df1 * (T.one() - z))
+
+    @staticmethod
+    def isf[T: FloatLike, num_iters: Int = 20](p: T, df1: T, df2: T) -> T:
+        """`ppf(1 - p)`."""
+        return f.ppf[T, num_iters](T.one() - p, df1, df2)
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, df1: T, df2: T) -> T:
+        return _safe_ln(f.cdf(x, df1, df2))
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, df1: T, df2: T) -> T:
+        return _safe_ln(f.sf(x, df1, df2))
 
     # --------------------------------------------------------------- discrete
 
@@ -419,8 +662,23 @@ struct poisson:
         extended to non-integer `k`, so this is the usual PMF wherever `k` is a
         whole number and its standard continuous extension elsewhere.
         """
-        var log_pmf = k * _safe_ln(rate) - rate - lgamma(k + T.one())
-        return log_pmf.exp() * ge_indicator(k, T.constant(0.0))
+        return poisson.logpmf(k, rate).exp()
+
+    @staticmethod
+    def logpmf[T: FloatLike](k: T, rate: T) -> T:
+        """The Poisson log PMF; `_LOG_ZERO` for `k < 0`.
+
+        The interior is evaluated at `k` clamped to the support: `lgamma`
+        has a pole at `0`, so an unclamped `k = -1` would put `+inf` on the
+        discarded side, and `inf * 0` is the NaN no indicator can remove.
+        `pmf` used to survive this because `exp(-inf)` is `0` before the
+        multiply; a log density has no such rescue.
+        """
+        var kc = max_of(k, T.constant(0.0))
+        var interior = kc * _safe_ln(rate) - rate - lgamma(kc + T.one())
+        return blend(
+            ge_indicator(k, T.constant(0.0)), interior, T.constant(_LOG_ZERO)
+        )
 
     @staticmethod
     def cdf[T: FloatLike](k: T, rate: T) -> T:
@@ -434,6 +692,41 @@ struct poisson:
             max_of(k, T.constant(0.0)) + T.one(), rate.copy()
         ) * ge_indicator(k, T.constant(0.0))
 
+    @staticmethod
+    def sf[T: FloatLike](k: T, rate: T) -> T:
+        """`P(X > k)`, which is exactly `gammainc(k+1, rate)` -- the lower
+        incomplete gamma, read directly rather than as `1 - cdf`. `1` for
+        `k < 0`."""
+        return blend(
+            ge_indicator(k, T.constant(0.0)),
+            gammainc(max_of(k, T.constant(0.0)) + T.one(), rate.copy()),
+            T.one(),
+        )
+
+    @staticmethod
+    def ppf[T: FloatLike, max_k: Int = 64](p: T, rate: T) -> T:
+        """The smallest integer `k` with `cdf(k) >= p`, as SciPy defines
+        it -- by the fixed-count branchless scan the module docstring
+        describes, capped at `max_k`."""
+        var k = T.constant(0.0)
+        for _ in range(max_k):
+            var caught_up = ge_indicator(poisson.cdf(k.copy(), rate.copy()), p)
+            k = k + (T.one() - caught_up)
+        return k^
+
+    @staticmethod
+    def isf[T: FloatLike, max_k: Int = 64](p: T, rate: T) -> T:
+        """`ppf(1 - p)`."""
+        return poisson.ppf[T, max_k](T.one() - p, rate)
+
+    @staticmethod
+    def logcdf[T: FloatLike](k: T, rate: T) -> T:
+        return _safe_ln(poisson.cdf(k, rate))
+
+    @staticmethod
+    def logsf[T: FloatLike](k: T, rate: T) -> T:
+        return _safe_ln(poisson.sf(k, rate))
+
 
 struct binom:
     """The binomial distribution. `scipy.stats.binom`."""
@@ -441,17 +734,28 @@ struct binom:
     @staticmethod
     def pmf[T: FloatLike](k: T, n: T, p: T) -> T:
         """`P(X = k)` for `n` trials with success probability `p`."""
-        var log_pmf = (
+        return binom.logpmf(k, n, p).exp()
+
+    @staticmethod
+    def logpmf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """The binomial log PMF; `_LOG_ZERO` outside `0 <= k <= n`.
+
+        The interior is evaluated at `k` clamped into `[0, n]`, for the
+        reason `poisson.logpmf` gives: `lgamma(n - k + 1)` has its pole
+        exactly one step past `n`.
+        """
+        var kc = min_of(max_of(k, T.constant(0.0)), n.copy())
+        var interior = (
             lgamma(n + T.one())
-            - lgamma(k + T.one())
-            - lgamma(n - k + T.one())
-            + k * _safe_ln(p)
-            + (n - k) * _safe_ln(T.one() - p)
+            - lgamma(kc + T.one())
+            - lgamma(n - kc + T.one())
+            + kc * _safe_ln(p)
+            + (n - kc) * _safe_ln(T.one() - p)
         )
         var support = ge_indicator(k, T.constant(0.0)) * ge_indicator(
             n, k.copy()
         )
-        return log_pmf.exp() * support
+        return blend(support, interior, T.constant(_LOG_ZERO))
 
     @staticmethod
     def cdf[T: FloatLike](k: T, n: T, p: T) -> T:
@@ -467,3 +771,42 @@ struct binom:
         var trials_left = max_of(n - kc, T.constant(1e-8))
         var upper = betainc(T.one() - p, trials_left^, kc + T.one())
         return blend(ge_indicator(k, n.copy()), T.one(), upper^)
+
+    @staticmethod
+    def sf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """`P(X > k)`, which is `I_p(k+1, n-k)` -- the upper tail read
+        straight off `betainc`. `0` at and past `k = n`, `1` below `k = 0`.
+        """
+        var kc = min_of(max_of(k, T.constant(0.0)), n.copy())
+        # As in `cdf`: the second parameter is exactly `0` at `k = n`, and
+        # `betainc` returns NaN there, which no indicator can discard.
+        var trials_left = max_of(n - kc, T.constant(1e-8))
+        var upper = betainc(p.copy(), kc + T.one(), trials_left^)
+        var above = blend(ge_indicator(k, n.copy()), T.constant(0.0), upper^)
+        return blend(ge_indicator(k, T.constant(0.0)), above^, T.one())
+
+    @staticmethod
+    def ppf[T: FloatLike, max_k: Int = 64](p: T, n: T, prob: T) -> T:
+        """The smallest integer `k` with `cdf(k) >= p`, as SciPy defines
+        it -- the module docstring's fixed-count scan, capped at `max_k`.
+        `cdf(n) == 1` exactly, so the scan stops at `n` on its own."""
+        var k = T.constant(0.0)
+        for _ in range(max_k):
+            var caught_up = ge_indicator(
+                binom.cdf(k.copy(), n.copy(), prob.copy()), p
+            )
+            k = k + (T.one() - caught_up)
+        return k^
+
+    @staticmethod
+    def isf[T: FloatLike, max_k: Int = 64](p: T, n: T, prob: T) -> T:
+        """`ppf(1 - p)`."""
+        return binom.ppf[T, max_k](T.one() - p, n, prob)
+
+    @staticmethod
+    def logcdf[T: FloatLike](k: T, n: T, p: T) -> T:
+        return _safe_ln(binom.cdf(k, n, p))
+
+    @staticmethod
+    def logsf[T: FloatLike](k: T, n: T, p: T) -> T:
+        return _safe_ln(binom.sf(k, n, p))
