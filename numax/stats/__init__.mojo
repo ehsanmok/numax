@@ -10,6 +10,8 @@ from numax.stats import mean, variance, norm, uniform, seed
 | `quantiles` | `quantile`/`percentile` under every NumPy `method`, `nanquantile`/`nanpercentile`/`nanmedian`, `iqr` -- host-side, one sort |
 | `histograms` | `histogram` (uniform, ranged, explicit edges, density, weights), `histogram2d`, `histogramdd`, `bincount`, `digitize` -- NumPy's edge rules, host-side |
 | `correlation` | `cov`, `corrcoef`, `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore` -- SciPy's p-values through `t.sf`/`norm.sf`, host-side |
+| `descriptive` | `skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `trim_mean`, `describe` -- SciPy's bias corrections and conventions, host-side |
+| `hypothesis` | `ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu` -- each a statistic and a tail of `t`/`chi2`/`f`/`norm`, host-side |
 | `nanfunctions` | `nansum`, `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax` -- `isnan`, `select` and the plain reductions, composed |
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` for a named reproducible stream |
@@ -101,6 +103,27 @@ from .correlation import (
     rankdata,
     spearmanr,
     zscore,
+)
+from .descriptive import (
+    Description,
+    describe,
+    entropy,
+    gmean,
+    hmean,
+    kurtosis,
+    sem,
+    skew,
+    trim_mean,
+)
+from .hypothesis import (
+    TestResult,
+    chisquare,
+    f_oneway,
+    ks_1samp,
+    mannwhitneyu,
+    ttest_1samp,
+    ttest_ind,
+    ttest_rel,
 )
 from .nanfunctions import (
     nanmax,

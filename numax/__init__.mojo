@@ -480,6 +480,27 @@ from .stats.correlation import (
     spearmanr,
     zscore,
 )
+from .stats.descriptive import (
+    Description,
+    describe,
+    entropy,
+    gmean,
+    hmean,
+    kurtosis,
+    sem,
+    skew,
+    trim_mean,
+)
+from .stats.hypothesis import (
+    TestResult,
+    chisquare,
+    f_oneway,
+    ks_1samp,
+    mannwhitneyu,
+    ttest_1samp,
+    ttest_ind,
+    ttest_rel,
+)
 from .stats.nanfunctions import (
     nanmax,
     nanmean,

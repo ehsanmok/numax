@@ -260,6 +260,7 @@ test-statistics-axis = "mojo -I . tests/stats/test_statistics_axis.mojo"
 test-quantiles = "mojo -I . tests/stats/test_quantiles.mojo"
 test-histograms = "mojo -I . tests/stats/test_histograms.mojo"
 test-correlation = "mojo -I . tests/stats/test_correlation.mojo"
+test-hypothesis = "mojo -I . tests/stats/test_hypothesis.mojo"
 test-sorting = "mojo -I . tests/core/test_sorting.mojo"
 test-io = "mojo -I . tests/io/test_io.mojo"
 test-npy = "mojo -I . tests/io/test_npy.mojo"
@@ -339,6 +340,7 @@ tests = { depends-on = [
     "test-quantiles",
     "test-histograms",
     "test-correlation",
+    "test-hypothesis",
     "test-sorting",
     "test-io",
     "test-npy",
