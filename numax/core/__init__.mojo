@@ -218,6 +218,7 @@ from .sorting import (
     searchsorted,
     sort,
     take,
+    take_along_axis,
     top_k,
     unique,
     select,

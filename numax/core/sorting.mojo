@@ -61,11 +61,24 @@ would be numax discarding a capability MAX already has.
 from std.builtin.sort import sort as _std_sort
 
 from nn.argsort import argsort as _nn_argsort
+from nn.gather_scatter import (
+    gather as _nn_gather,
+    gather_elements as _nn_gather_elements,
+)
 from nn.topk import top_k as _max_top_k
 from std.collections import Array
 
+from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout, row_major
-from .array import Dynamic, Static, Tensor, asarray, _dyn_shape, _product
+from .array import (
+    Dynamic,
+    Static,
+    Tensor,
+    asarray,
+    _dyn_shape,
+    _dyn_shape_from,
+    _product,
+)
 
 
 def sort[
@@ -178,6 +191,190 @@ def searchsorted[
         else:
             hi = mid
     return lo
+
+
+def searchsorted[
+    dtype: DType,
+    SortedLayout: TensorLayout,
+    QueryLayout: TensorLayout,
+    right: Bool = False,
+](
+    sorted_values: Tensor[dtype, SortedLayout],
+    values: Tensor[dtype, QueryLayout],
+) raises -> Dynamic[DType.int64, 1]:
+    """One insertion index per element of `values`.
+    `numpy.searchsorted(a, v)`.
+
+    The vectorized form of the overload above, and the one every bucketing
+    caller actually wants: a linear interpolation needs the bracketing
+    interval for each of its query points, and a histogram needs the bin
+    for each sample. Calling the scalar form in a loop re-copies
+    `sorted_values` to the host on every query, which is what this exists
+    to stop.
+
+    `right=True` is `numpy.searchsorted(a, v, side="right")`: an element
+    equal to an existing one lands *after* its equals rather than before.
+    A `Bool` rather than NumPy's `side` string, because a `StaticString`
+    parameter cannot be constrained in Mojo 1.0 and a typo would then be a
+    run-time error -- `top_k`'s `largest` makes the same trade.
+
+    `sorted_values` is assumed sorted and not checked, as in the scalar
+    overload. MAX ships no `searchsorted`, so this is numax's own.
+    """
+    var haystack = sorted_values.to_host()
+    var needles = values.to_host()
+    var n = len(haystack)
+    var out = List[Scalar[DType.int64]](length=len(needles), fill=0)
+    for q in range(len(needles)):
+        var value = needles[q]
+        var lo = 0
+        var hi = n
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            comptime if right:
+                if haystack[mid] <= value:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            else:
+                if haystack[mid] < value:
+                    lo = mid + 1
+                else:
+                    hi = mid
+        out[q] = Scalar[DType.int64](lo)
+    return Dynamic[DType.int64, 1](
+        sorted_values.context(), row_major(_dyn_shape[1](len(needles))), out^
+    )
+
+
+def take[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    IndexLayout: TensorLayout,
+    axis: Int,
+    gpu: Bool = False,
+](
+    a: Tensor[dtype, LayoutType], indices: Tensor[DType.int64, IndexLayout]
+) raises -> Dynamic[dtype, LayoutType.rank] where (
+    axis >= 0 and axis < LayoutType.rank and IndexLayout.rank == 1
+):
+    """The slices of `a` at `indices` along `axis`.
+    `numpy.take(a, indices, axis=k)`.
+
+    `take(a, [2, 0])` at `axis=0` on a `(3, 2)` gives a `(2, 2)` holding
+    rows 2 and 0 -- so this reorders, selects and duplicates rows or
+    columns, which is the operation `argsort`'s output was missing a
+    consumer for at rank > 1.
+
+    Routed to `nn.gather`, which is ONNX `Gather` and takes `axis` as a
+    compile-time parameter, a `target` and a `DeviceContext`. That is the
+    **tensor** overload of `nn.gather`, not the closure one --
+    `docs/parity.md` records why the closure form is unreachable, and this
+    one sidesteps it, so `take` carries a real `gpu` parameter.
+
+    Rank-1 `indices` only, which is ONNX `Gather`'s own restriction on the
+    shape numax passes; the flat `List[Int]` overload above is the one for
+    an already-flat selection.
+    """
+    comptime rank = LayoutType.rank
+    var count = indices.size()
+    var length = a.dim_at(axis)
+    var index_values = indices.to_host()
+    for q in range(count):
+        var at = Int(index_values[q])
+        if at < 0 or at >= length:
+            raise Error(
+                "take: index ",
+                at,
+                " is out of range for an axis of extent ",
+                length,
+            )
+
+    var in_extents = List[Int](capacity=rank)
+    var out_extents = List[Int](capacity=rank)
+    var total = 1
+    for d in range(rank):
+        in_extents.append(a.dim_at(d))
+        out_extents.append(count if d == axis else a.dim_at(d))
+        total *= out_extents[d]
+
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](length=total, fill=0)
+    var ctx = a.context()
+    _nn_gather[axis=axis, target="gpu" if gpu else "cpu"](
+        TileTensor(out, row_major(_dyn_shape_from[rank](out_extents))),
+        TileTensor(values, row_major(_dyn_shape_from[rank](in_extents))),
+        TileTensor(index_values, row_major(Coord(count))),
+        context=ctx,
+    )
+    return Dynamic[dtype, rank](
+        ctx, row_major(_dyn_shape_from[rank](out_extents)), out^
+    )
+
+
+def take_along_axis[
+    dtype: DType, LayoutType: TensorLayout, IndexLayout: TensorLayout, axis: Int
+](
+    a: Tensor[dtype, LayoutType], indices: Tensor[DType.int64, IndexLayout]
+) raises -> Dynamic[dtype, LayoutType.rank] where (
+    axis >= 0 and axis < LayoutType.rank and IndexLayout.rank == LayoutType.rank
+):
+    """One element of `a` per entry of `indices`, indexed along `axis`.
+    `numpy.take_along_axis`.
+
+    Not `take`: `take` picks whole slices with one index list shared by
+    every position, while this picks an element per position, so `indices`
+    has `a`'s rank rather than rank 1. That is what makes `argsort`'s
+    per-row output usable -- `take_along_axis(a, argsort_rows, axis=1)` is
+    each row of `a` sorted.
+
+    Routed to `nn.gather_elements`, which is ONNX `GatherElements` (Torch's
+    `gather`) and takes a `DeviceContext`. The result has `indices`'s
+    shape, which is that operator's contract and NumPy's too.
+    """
+    comptime rank = LayoutType.rank
+    var length = a.dim_at(axis)
+    var index_values = indices.to_host()
+    for q in range(len(index_values)):
+        var at = Int(index_values[q])
+        if at < 0 or at >= length:
+            raise Error(
+                "take_along_axis: index ",
+                at,
+                " is out of range for an axis of extent ",
+                length,
+            )
+
+    var in_extents = List[Int](capacity=rank)
+    var out_extents = List[Int](capacity=rank)
+    var total = 1
+    for d in range(rank):
+        in_extents.append(a.dim_at(d))
+        out_extents.append(indices.dim_at(d))
+        if d != axis and a.dim_at(d) != indices.dim_at(d):
+            raise Error(
+                "take_along_axis: extents ",
+                a.dim_at(d),
+                " and ",
+                indices.dim_at(d),
+                " differ on axis ",
+                d,
+            )
+        total *= out_extents[d]
+
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](length=total, fill=0)
+    var ctx = a.context()
+    _nn_gather_elements(
+        TileTensor(values, row_major(_dyn_shape_from[rank](in_extents))),
+        TileTensor(index_values, row_major(_dyn_shape_from[rank](out_extents))),
+        axis,
+        TileTensor(out, row_major(_dyn_shape_from[rank](out_extents))),
+        ctx,
+    )
+    return Dynamic[dtype, rank](
+        ctx, row_major(_dyn_shape_from[rank](out_extents)), out^
+    )
 
 
 def unique[

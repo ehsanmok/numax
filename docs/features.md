@@ -466,7 +466,9 @@ row-major tensor, but the surface above it is not uniformly rank-generic yet:
   second overload of its own name (`sum(a)` folds everything,
   `sum[axis=k](a)` folds one axis), and `numax.core.tensor.reduce_axis`
   folds an arbitrary `combine` the same way.
-- `numax.core.sorting` flattens.
+- `numax.core.sorting` flattens, except `take`/`take_along_axis`, which
+  gather along an axis at any rank, and `searchsorted`, which takes a whole
+  tensor of queries.
 - `transpose` permutes any rank (`transpose(a, 2, 0, 1)`), with `swapaxes`
   and `moveaxis` beside it; `concatenate`/`split`/`stack` join or cut along
   any axis at any rank through a second overload taking `axis`, keeping the

@@ -27,6 +27,7 @@ from numax.core.sorting import (
     searchsorted,
     sort,
     take,
+    take_along_axis,
     top_k,
     unique,
     select,
@@ -514,6 +515,112 @@ def test_top_k_at_k_equals_n_is_a_full_sort() raises:
     var ascending = sort(a).to_host()
     for i in range(5):
         assert_almost_equal(descending[i], ascending[4 - i])
+
+
+def _grid3[
+    rows: Int, cols: Int
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, rows, cols](ctx)
+    for i in range(rows * cols):
+        a[i] = Scalar[dtype](values[i])
+    return a^
+
+
+def test_vectorized_searchsorted_matches_the_scalar_one_per_query() raises:
+    # The claim worth pinning: the two spellings are one algorithm.
+    var bins = mk[4]([1.0, 3.0, 5.0, 7.0])
+    var queries = mk[5]([0.0, 3.0, 4.0, 7.0, 9.0])
+
+    var bulk = searchsorted(bins, queries)
+    assert_equal(bulk.size(), 5)
+    for q in range(5):
+        assert_equal(Int(bulk[q]), searchsorted(bins, queries.to_host()[q]))
+
+
+def test_vectorized_searchsorted_matches_numpy_on_both_sides() raises:
+    # numpy.searchsorted([1,3,5,7], [0,3,4,7,9]) == [0, 1, 2, 3, 4]
+    # side="right"                              == [0, 2, 2, 4, 4]
+    var bins = mk[4]([1.0, 3.0, 5.0, 7.0])
+    var queries = mk[5]([0.0, 3.0, 4.0, 7.0, 9.0])
+
+    var left = searchsorted(bins, queries)
+    var expected_left = [0, 1, 2, 3, 4]
+    for q in range(5):
+        assert_equal(Int(left[q]), expected_left[q])
+
+    var right = searchsorted[right=True](bins, queries)
+    var expected_right = [0, 2, 2, 4, 4]
+    for q in range(5):
+        assert_equal(Int(right[q]), expected_right[q])
+
+
+def test_take_along_an_axis_selects_whole_slices() raises:
+    # numpy.take(a, [2, 0], axis=0) on a (3, 2) gives rows 2 and 0.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var which = Static[DType.int64, 2](ctx, [2, 0])
+
+    var rows = take[axis=0](a, which)
+    assert_equal(rows.dim_at(0), 2)
+    assert_equal(rows.dim_at(1), 2)
+    var out = rows.to_host()
+    assert_equal(out[0], 5.0)
+    assert_equal(out[1], 6.0)
+    assert_equal(out[2], 1.0)
+    assert_equal(out[3], 2.0)
+
+
+def test_take_along_an_axis_may_duplicate_a_slice() raises:
+    # Selecting the same row twice is what makes this a gather rather than
+    # a permutation.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var which = Static[DType.int64, 3](ctx, [1, 1, 0])
+
+    var rows = take[axis=0](a, which).to_host()
+    assert_equal(rows[0], 3.0)
+    assert_equal(rows[2], 3.0)
+    assert_equal(rows[4], 1.0)
+
+
+def test_take_along_an_axis_rejects_an_out_of_range_index() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var which = Static[DType.int64, 1](ctx, [3])
+    var raised = False
+    try:
+        _ = take[axis=0](a, which)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_take_along_axis_picks_one_element_per_position() raises:
+    # numpy.take_along_axis(a, idx, axis=1) with idx shaped like a.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var idx = Static[DType.int64, 3, 2](ctx, [1, 0, 0, 1, 1, 1])
+
+    var picked = take_along_axis[axis=1](a, idx).to_host()
+    var expected = [2.0, 1.0, 3.0, 4.0, 6.0, 6.0]
+    for i in range(6):
+        assert_equal(picked[i], Scalar[dtype](expected[i]))
+
+
+def test_take_along_axis_sorts_each_row_with_argsort() raises:
+    # The reason `take_along_axis` exists: `argsort`'s per-row output had
+    # no consumer at rank > 1.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[2, 3]([3.0, 1.0, 2.0, 9.0, 7.0, 8.0])
+    var order = Static[DType.int64, 2, 3](ctx, [1, 2, 0, 1, 2, 0])
+
+    var sorted_rows = take_along_axis[axis=1](a, order).to_host()
+    assert_equal(sorted_rows[0], 1.0)
+    assert_equal(sorted_rows[1], 2.0)
+    assert_equal(sorted_rows[2], 3.0)
+    assert_equal(sorted_rows[3], 7.0)
+    assert_equal(sorted_rows[5], 9.0)
 
 
 def main() raises:
