@@ -33,7 +33,7 @@ from numax.linalg import (
     toeplitz,
 )
 from numax.linalg.array import eigvals
-from numax.signal import convolve
+from numax.signal.array import convolve
 
 comptime dtype = DType.float64
 comptime P = Plain[DType.float64, 1]

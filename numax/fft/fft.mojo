@@ -649,6 +649,15 @@ def rfft[
     this tier is for. Specializing it is a later commit, not a missing
     feature.
     """
+    return _rfft[dtype, n, gpu](x^)
+
+
+def _rfft[
+    dtype: DType, n: Int, gpu: Bool
+](var x: Static[dtype, n]) raises -> Spectrum[dtype, n // 2 + 1]:
+    """`rfft` without its `where` clause, for callers inside numax whose
+    `n` is a compile-time expression the prover cannot evaluate --
+    `next_fast_len(m + k - 1)` in `numax.signal.fftconvolve`."""
     comptime keep = n // 2 + 1
     var ctx = x.context()
     var imag = zeros[dtype, n](ctx)

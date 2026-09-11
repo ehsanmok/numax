@@ -38,7 +38,7 @@ zero means.
 from std.collections import Array
 from std.math import cos as _cos_f64, pi as _PI
 
-from ..core.numeric import FloatLike, guard_nonzero
+from ...core.numeric import FloatLike, guard_nonzero
 
 
 comptime full = 0

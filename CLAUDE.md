@@ -195,7 +195,7 @@ Subpackages mirror NumPy/SciPy names: `core`, `linalg`, `optimize`,
 `optimize` (Newton), `interpolate` → `linalg` (tridiagonal solve),
 `optimize` → `linalg` (Cholesky, for the least-squares normal equations),
 `linalg` → `fft` (`solve_circulant`, which is three transforms and a
-division rather than an elimination).
+division rather than an elimination), `signal` → `fft` (`fftconvolve`).
 
 Each subpackage re-exports its public surface and `numax/__init__.mojo`
 re-exports all of them, so `from numax import ...` is flat and

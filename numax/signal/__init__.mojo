@@ -1,24 +1,35 @@
-"""numax.signal: convolution, correlation, filtering, and windows.
+"""numax.signal: convolution, correlation, windows, filtering and spectral
+estimation.
 
 ```mojo
-from numax.signal import convolve, correlate, hann, apply_window
+from numax.signal import convolve, fftconvolve, get_window
 ```
 
-`convolve` (`mode=full` or `same`), `correlate`, `lfilter` and the
-`firwin` design that feeds it, the Hann, Hamming and Blackman windows,
-and `apply_window`. Direct sums over comptime-sized `Array`s, tier 1;
-`numax.fft.circular_convolve` is the transform-domain route.
+Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
+`numax.optimize`, `numax.integrate` and `numax.interpolate` make:
+
+| Import | Holds | Good for |
+| --- | --- | --- |
+| `numax.signal` | `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `full`/`same`/`valid` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms |
+| `numax.signal.array` | `Array[T, n]` and `FloatLike`, tier 1 | a frame inside a kernel: the direct `convolve`/`correlate`, `lfilter`, the lowpass `firwin`, and the cosine windows as compile-time tables, all differentiating at `Dual` |
+
+This surface is the `Tensor` one. `apply_window` has no `Tensor` spelling
+because `numax.core.ops.multiply` already is one.
+
+MAX ships the neural-network convolution (`nn.conv`, NHWC, channels and
+filters, GPU-only with a pack-the-filter CPU sibling) and no
+signal-processing one; `numax/signal/convolution.mojo` records why the
+1-D direct sum is written here rather than routed there, and
+`docs/parity.md` carries the disposition.
 """
 
-from .signal import (
-    apply_window,
+from .convolution import convolve, correlate, fftconvolve, full, same, valid
+from .windows import (
+    bartlett,
     blackman,
-    convolve,
-    full,
-    same,
-    correlate,
-    firwin,
+    boxcar,
+    get_window,
     hamming,
     hann,
-    lfilter,
+    kaiser,
 )

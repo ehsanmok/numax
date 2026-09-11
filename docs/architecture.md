@@ -38,7 +38,7 @@ numax/
                 polynomials, activations
   stats/        descriptive statistics, distributions, random sampling
   fft/          discrete Fourier transforms over Complex
-  signal/       convolution, correlation, windows
+  signal/       convolution, correlation, windows: over Tensor and, in array/, over Array
   io/           the NMX1 binary format and tensor printing
 ```
 
@@ -53,7 +53,8 @@ tier-1 kernels). The fifth is newer and runs the other way: `linalg` uses
 `fft` for `solve_circulant`, since a circulant matrix is diagonalized by the
 DFT and its solve is three transforms and a division rather than an
 elimination. `fft` depends on `core` alone, so the edge introduces no
-cycle.
+cycle. `signal` depends on `fft` for the same reason in the other
+direction: `fftconvolve` is three transforms and a product.
 
 ## The trait: `FloatLike`
 

@@ -428,13 +428,30 @@ transform and its derivative with no adjoint rule written anywhere.
 
 ## `numax.signal`
 
-| Surface | Where |
-|---|---|
-| `convolve` (`mode=full`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
-| `hann`, `hamming`, `blackman`, `apply_window` | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
-| `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/signal.mojo`](../numax/signal/signal.mojo) |
+Two tiers, one import each, on the `numax.linalg` pattern. MAX ships the
+neural-network convolution (`nn.conv`: NHWC, channels and filters,
+GPU-only with a pack-the-filter CPU sibling) and no signal-processing one;
+`signal/convolution.mojo` records why the 1-D sum is written rather than
+routed.
 
-Tier 1; `numax.fft.circular_convolve` is the transform-domain route.
+| Surface — over `Tensor`, from `numax.signal` | Where |
+|---|---|
+| `convolve`, `correlate` — `numpy.convolve`/`numpy.correlate` in `full` (default), `same` and `valid`, one `elementwise` launch of dot products over the overlap | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
+| `fftconvolve` — the same answer through `numax.fft`: pad to `next_fast_len(m + k - 1)`, multiply the `rfft`s, `irfft`, slice; the route for a long kernel | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
+| `boxcar`, `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `get_window` — `scipy.signal.windows` as `Tensor` factories, symmetric (`sym=True`, the factories' default) or periodic (`get_window`'s default `fftbins=True`) | [`signal/windows.mojo`](../numax/signal/windows.mojo) |
+
+Tier 2: host-driven, device-resident; the windows are host tables uploaded
+once. `apply_window` has no `Tensor` spelling because `multiply` already is
+one.
+
+| Surface — over `Array[T, n]`, from `numax.signal.array` | Where |
+|---|---|
+| `convolve` (`mode=full`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
+| `hann`, `hamming`, `blackman`, `apply_window` — compile-time tables, so they work inside a GPU kernel body | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
+| `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
+
+Tier 1; `numax.fft.array.circular_convolve` is that tier's transform-domain
+route.
 
 ## `numax.stats`
 
