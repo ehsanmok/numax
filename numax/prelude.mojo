@@ -310,6 +310,7 @@ from .fft.fft import (
     rfft2,
     rfftfreq,
 )
+from .fft.trig import dct, dst, idct, idst
 
 # I/O.
 from .io.io import nmx

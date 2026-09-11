@@ -57,7 +57,7 @@ is safe; its own docstring lists them and where to reach them.
 | `numax.optimize` | `minimize` (`bfgs`, `cg`) and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize.array` is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
 | `numax.integrate` | `trapezoid`/`simpson`/`cumulative_trapezoid` over sampled `Tensor`s with `scipy.integrate`'s signatures; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively; `numax.integrate.array` is the `FloatLike` tier that integrates a function -- Gauss-Legendre, Simpson and trapezoid at a fixed node count, `rk4`/`dopri5` at a fixed step -- and differentiates at `Dual` |
 | `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
-| `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, rectangular `fft2`/`ifft2`/`rfft2`, `fftshift`/`ifftshift`, `fftfreq`/`rfftfreq` over `Tensor` at any length -- radix-2 at a power of two, Bluestein otherwise -- device-resident across `log2(n) + 1` stages per axis; `numax.fft.array` is the register-resident tier that differentiates, and adds circular convolution. MAX ships no forward transform at all |
+| `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, rectangular `fft2`/`ifft2`/`rfft2`, `fftshift`/`ifftshift`, `fftfreq`/`rfftfreq` over `Tensor` at any length -- radix-2 at a power of two, Bluestein otherwise -- device-resident across `log2(n) + 1` stages per axis; `dct`/`idct`/`dst`/`idst` types I-IV; `numax.fft.array` is the register-resident tier that differentiates, and adds circular convolution. MAX ships no forward transform at all |
 | `numax.signal` | `convolve`, `correlate`, `lfilter`, `firwin`, Hann/Hamming/Blackman windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), and numax's own `NMX1` `nmx.save`/`nmx.load`. Printing is `print(a)`, since `Tensor` is `Writable` |
@@ -394,6 +394,7 @@ from .fft.fft import (
     rfft2,
     rfftfreq,
 )
+from .fft.trig import dct, dst, idct, idst
 
 # Convolution, correlation, windows -- `numax.signal`.
 from .signal.signal import (

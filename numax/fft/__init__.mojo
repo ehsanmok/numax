@@ -14,14 +14,16 @@ Two tiers, one import each, the same split `numax.linalg` makes:
 
 | Import | Holds | Good for |
 | --- | --- | --- |
-| `numax.fft` | `Tensor`, `Plain`-only, tier 2 | the large transform: `log2(n) + 1` device launches, no host round trip |
+| `numax.fft` | `Tensor`, `Plain`-only, tier 2 | the large transform: `log2(n) + 1` device launches, no host round trip; also the only tier with `dct`/`dst` |
 | `numax.fft.array` | `Array[Complex[T], n]`, `FloatLike`-generic, tier 1 | the small one: register-resident, differentiates at `Dual`, runs per SIMD lane inside a kernel body |
 
 This surface is the `Tensor` one, and it carries `fft`/`ifft`,
 `rfft`/`irfft`, `fft2`/`ifft2`/`rfft2` (rectangular, where the `Array`
 tier's is square), `fftshift`/`ifftshift` at rank 1 and 2,
 `fftfreq`/`rfftfreq`, `next_fast_len` -- the next power of two, the length
-this engine is fast at -- and the `Spectrum` pair they travel in.
+this engine is fast at -- and the `Spectrum` pair they travel in; and, from
+`numax.fft.trig`, the real trigonometric transforms `dct`/`idct` and
+`dst`/`idst`, types I-IV under SciPy's three norms, each one complex DFT.
 `circular_convolve` is `Array`-tier only; over `Tensor` the same identity is
 `numax.signal`'s to spell.
 """
@@ -41,3 +43,4 @@ from .fft import (
     rfft2,
     rfftfreq,
 )
+from .trig import dct, dst, idct, idst
