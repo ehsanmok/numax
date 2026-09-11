@@ -71,6 +71,7 @@ from numax import (
     elliptic_k,
     erf,
     erfc,
+    erfinv,
     gamma,
     gammainc,
     hermite_h,
@@ -252,6 +253,24 @@ def main():
     for i in range(ERFC_TAIL_N):
         s.observe(xs[i], erfc(p(xs[i])).v[0], refs[i])
     s.report("erfc (Plain->std.math), [1,6]")
+
+    # `erfinv` is numax's own: a two-region starting guess plus three
+    # Newton steps against `erf`/`erfc`, so what this measures is the floor
+    # `std.math` hands down rather than the guess, which the Newton steps
+    # square away.
+    s = Stats()
+    xs = materialize[ERFINV_MID_X]()
+    refs = materialize[ERFINV_MID_REF]()
+    for i in range(ERFINV_MID_N):
+        s.observe(xs[i], erfinv(p(xs[i])).v[0], refs[i])
+    s.report("erfinv (guess + 3 Newton), [-0.999,0.999]")
+
+    s = Stats()
+    xs = materialize[ERFINV_TAIL_X]()
+    refs = materialize[ERFINV_TAIL_REF]()
+    for i in range(ERFINV_TAIL_N):
+        s.observe(xs[i], erfinv(p(xs[i])).v[0], refs[i])
+    s.report("erfinv (guess + 3 Newton), 1-[1e-12,1e-1]")
 
     # --- gamma family -------------------------------------------------
     section("Gamma family")

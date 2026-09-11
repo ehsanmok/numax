@@ -226,7 +226,7 @@ from .special.activations import (
     swish,
     tanh,
 )
-from .special.erf import erf, erfc
+from .special.erf import erf, erfc, erfcinv, erfinv
 from .special.gamma import digamma, gamma, lgamma
 from .special.beta import beta
 

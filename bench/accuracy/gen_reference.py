@@ -91,6 +91,25 @@ def build() -> list[Case]:
     cases.append(
         Case("erfc_tail", "erfc, [1, 6]", clustered(1.0, 6.0), mp.erfc)
     )
+    cases.append(
+        Case(
+            "erfinv_mid",
+            "erfinv, [-0.999, 0.999]",
+            clustered(-0.999, 0.999),
+            mp.erfinv,
+        )
+    )
+    # Approaching 1 from below: `w = -ln(1 - y^2)` grows past the region
+    # split at `w = 5` (about `y = 0.9966`), so this sweeps the tail
+    # polynomial and the Newton correction where the argument is stiffest.
+    cases.append(
+        Case(
+            "erfinv_tail",
+            "erfinv, 1 - [1e-12, 1e-1]",
+            [1.0 - t for t in logarithmic(1e-12, 1e-1)],
+            mp.erfinv,
+        )
+    )
 
     cases.append(
         Case("gamma_pos", "gamma, [0.5, 8]", clustered(0.5, 8.0), mp.gamma)

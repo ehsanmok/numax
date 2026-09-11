@@ -176,7 +176,7 @@ differentiable or extra-precise through whichever conformer instantiates it.
 
 | Module | Surface |
 |---|---|
-| [`erf`](../numax/special/erf.mojo) | `erf`, `erfc` |
+| [`erf`](../numax/special/erf.mojo) | `erf`, `erfc`, `erfinv`, `erfcinv` -- the inverses are a two-region guess plus three Newton steps against the trait's own `erf`/`erfc`, so every conformer's inverse is consistent with its forward function |
 | [`gamma`](../numax/special/gamma.mojo) | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc` |
 | [`beta`](../numax/special/beta.mojo) | `beta`, `betainc`, `betaincc` |
 | [`bessel`](../numax/special/bessel.mojo) | `j0`, `j1`, `y0`, `y1` |

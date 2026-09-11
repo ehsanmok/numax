@@ -12,7 +12,7 @@ from numax.special import gamma, j0, erf, gaussian
 
 | Module | Contents |
 |---|---|
-| `erf` | `erf`, `erfc` |
+| `erf` | `erf`, `erfc`, `erfinv`, `erfcinv` |
 | `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc` |
 | `beta` | `beta`, `betainc`, `betaincc` |
 | `bessel` | `j0`, `j1`, `y0`, `y1` |
@@ -38,7 +38,7 @@ from .activations import (
 from .bessel import j0, j1, y0, y1
 from .beta import beta, betainc, betaincc
 from .elliptic import elliptic_e, elliptic_k
-from .erf import erf, erfc
+from .erf import erf, erfc, erfcinv, erfinv
 from .gamma import digamma, gamma, gammainc, gammaincc, lgamma
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p

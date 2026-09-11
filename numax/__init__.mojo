@@ -276,7 +276,7 @@ from .special.activations import (
 from .special.bessel import j0, j1, y0, y1
 from .special.beta import beta, betainc, betaincc
 from .special.elliptic import elliptic_e, elliptic_k
-from .special.erf import erf, erfc
+from .special.erf import erf, erfc, erfcinv, erfinv
 from .special.gamma import digamma, gamma, gammainc, gammaincc, lgamma
 from .special.lambertw import lambertw, lambertw_m1
 from .special.legendre import legendre_p

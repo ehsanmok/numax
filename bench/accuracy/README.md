@@ -80,6 +80,19 @@ No single metric is honest for every function here.
 | `erf` (Plain → `std.math`), [1e-8, 1e-2] | 1.59e-10 | 1.43e-08 | 127,720,638 |
 | `default_erf_approx` (A&S 7.1.26), [-3, 3] | 1.38e-07 | 4.35e-07 | 3,530,608,388 |
 | `erfc` (Plain → `std.math`), [1, 6] | 2.78e-17 | 5.69e-16 | 4 |
+| `erfinv` (guess + 3 Newton), [-0.999, 0.999] | 4.77e-07 | 2.61e-07 | 2,147,351,100 |
+| `erfinv` (guess + 3 Newton), 1 - [1e-12, 1e-1] | 1.19e-06 | 5.84e-07 | 3,362,763,826 |
+
+`erfinv`'s two rows are `erf`'s floor seen through a derivative. Three
+Newton steps against `erf`/`erfc` converge to the root of the *library's*
+`erf`, so the result inherits `std.math.erf`'s 2.2e-08 absolute error
+multiplied by `d erfinv/dy = sqrt(pi)/2 * exp(x^2)`: 24 at `y = 0.99`
+(giving the 4.77e-07) and 59 at the `w = 5` region split near `y = 0.996`
+(the 1.19e-06, the worst point of the tail sweep). Past the split the
+residual is read off `erfc`, whose 4-ULP relative accuracy makes the deep
+tail -- `y` within 1e-12 of 1 -- accurate to about 1e-16, so the tail row's
+maximum sits at its *near* end. A correctly rounded `erf` would collapse both
+rows to that level with no change here.
 
 Two things worth pulling out. `default_erf_approx`'s 1.38e-07 confirms the
 ~1.5e-7 bound A&S 7.1.26 documents, so that transcription is correct — this
