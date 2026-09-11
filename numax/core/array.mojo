@@ -1192,8 +1192,9 @@ def stack[
     """Stack two same-shaped rank-1 tensors along a new leading axis
     (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
 
-    `axis=1` stacking is not provided -- see this module's own docstring --
-    and neither is a variadic `stack(a, b, c)`. A variadic pack's length is
+    The `axis`-taking overload below stacks at any position and any rank;
+    this one exists for when the result's shape should stay compile-time.
+    A variadic `stack(a, b, c)` is still not provided. A variadic pack's length is
     a runtime property, but the result's leading extent is part of its
     type, so the count would have to be passed a second time as a
     parameter (`stack[dtype, n, 3](a, b, c)`) and checked against the pack
@@ -1584,10 +1585,11 @@ def concatenate[
 ](a: Static[dtype, n], b: Static[dtype, m]) raises -> Static[dtype, n + m]:
     """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
 
-    Rank-1 only, for the same reason `stack` takes exactly two rank-1
-    inputs: an axis-`k` concatenation of arbitrary-rank tensors needs a new
-    parameter pack built from an existing one with a single extent changed.
-    A real scope limit, stated rather than hidden.
+    Rank-1 with the joined length in the type, since an axis-`k`
+    concatenation of arbitrary-rank tensors would need a parameter pack
+    built from an existing one with a single extent changed. The
+    `axis`-taking overload below does that join at any rank, returning a
+    `Dynamic` rather than carrying the sum in the type.
 
     The element copy stays here rather than routing to `nn.concat`, and the
     reason is specific: `nn.concat` takes its inputs as a `StaticTuple`, so
@@ -1962,6 +1964,199 @@ def pad[
         constant,
     )
     return out^
+
+
+def _matching_extents[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout, axis: Int
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises:
+    """Raise unless `a` and `b` agree on every extent but `axis`.
+
+    The precondition both `concatenate` and `stack` need at an axis, and
+    the one whose failure would otherwise be a silently wrong shape rather
+    than an error.
+    """
+    comptime for d in range(ALayout.rank):
+        if d != axis and a.dim_at(d) != b.dim_at(d):
+            raise Error(
+                "axis ",
+                axis,
+                " join: extents ",
+                a.dim_at(d),
+                " and ",
+                b.dim_at(d),
+                " differ on axis ",
+                d,
+            )
+
+
+def concatenate[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout, axis: Int
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank
+] where (axis >= 0 and axis < ALayout.rank and ALayout.rank == BLayout.rank):
+    """Join `a` and `b` along `axis`. `numpy.concatenate((a, b), axis=k)`.
+
+    Every extent but `axis` must agree; that one sums. The result is a
+    `Dynamic` because the joined extent is a run-time sum -- the rank-1
+    overload above keeps `n + m` in the type because both are parameters
+    there.
+
+    The element copy stays here rather than routing to `nn.concat`, for the
+    reason the rank-1 overload records: `nn.concat` takes its inputs as a
+    `StaticTuple`, so every input must share one layout *type* and one
+    origin, and two separately owned buffers share neither.
+    """
+    comptime rank = ALayout.rank
+    _matching_extents[axis=axis](a, b)
+
+    var a_len = a.dim_at(axis)
+    var b_len = b.dim_at(axis)
+    var outer = 1
+    for d in range(axis):
+        outer *= a.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, rank):
+        inner *= a.dim_at(d)
+
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var joined = a_len + b_len
+    var out = List[Scalar[dtype]](length=outer * joined * inner, fill=0)
+    for o in range(outer):
+        for k in range(a_len):
+            for i in range(inner):
+                out[(o * joined + k) * inner + i] = a_values[
+                    (o * a_len + k) * inner + i
+                ]
+        for k in range(b_len):
+            for i in range(inner):
+                out[(o * joined + a_len + k) * inner + i] = b_values[
+                    (o * b_len + k) * inner + i
+                ]
+
+    var extents = List[Int](capacity=rank)
+    for d in range(rank):
+        extents.append(joined if d == axis else a.dim_at(d))
+    return Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents)), out^
+    )
+
+
+def stack[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout, axis: Int
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank + 1
+] where (axis >= 0 and axis <= ALayout.rank and ALayout.rank == BLayout.rank):
+    """Stack `a` and `b` along a *new* axis at position `axis`.
+    `numpy.stack((a, b), axis=k)`.
+
+    The difference from `concatenate` is the new axis: stacking two `(3,)`
+    at `axis=0` gives a `(2, 3)` and at `axis=1` a `(3, 2)`, where
+    concatenating them gives a `(6,)`. `axis` may equal the rank, which
+    appends the new axis at the end.
+
+    Both inputs must have identical extents -- there is no axis for them to
+    differ on.
+    """
+    comptime rank = ALayout.rank
+    comptime for d in range(rank):
+        if a.dim_at(d) != b.dim_at(d):
+            raise Error(
+                "stack: extents ",
+                a.dim_at(d),
+                " and ",
+                b.dim_at(d),
+                " differ on axis ",
+                d,
+            )
+
+    var outer = 1
+    for d in range(axis):
+        outer *= a.dim_at(d)
+    var inner = 1
+    for d in range(axis, rank):
+        inner *= a.dim_at(d)
+
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var out = List[Scalar[dtype]](length=2 * outer * inner, fill=0)
+    for o in range(outer):
+        for i in range(inner):
+            out[(o * 2) * inner + i] = a_values[o * inner + i]
+            out[(o * 2 + 1) * inner + i] = b_values[o * inner + i]
+
+    var extents = List[Int](capacity=rank + 1)
+    for d in range(rank + 1):
+        if d < axis:
+            extents.append(a.dim_at(d))
+        elif d == axis:
+            extents.append(2)
+        else:
+            extents.append(a.dim_at(d - 1))
+    return Dynamic[dtype, rank + 1](
+        a.context(), row_major(_dyn_shape_from[rank + 1](extents)), out^
+    )
+
+
+def split[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](a: Tensor[dtype, LayoutType], at: Int) raises -> Tuple[
+    Dynamic[dtype, LayoutType.rank], Dynamic[dtype, LayoutType.rank]
+] where (axis >= 0 and axis < LayoutType.rank):
+    """Cut `a` in two along `axis` at index `at`: positions `[0, at)` and
+    `[at, extent)`. The inverse of the `concatenate` above.
+
+    `at` is an ordinary argument rather than a parameter, because neither
+    output's extents are compile-time here -- the rank-1 `split` takes it as
+    a parameter precisely because they are.
+
+    Mojo 1.0 cannot destructure a `Tuple` of two `Tensor`s, so read the
+    halves as `parts[0]` and `parts[1]`.
+    """
+    comptime rank = LayoutType.rank
+    var length = a.dim_at(axis)
+    if at < 0 or at > length:
+        raise Error(
+            "split: cannot cut at ", at, " along an axis of extent ", length
+        )
+
+    var outer = 1
+    for d in range(axis):
+        outer *= a.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, rank):
+        inner *= a.dim_at(d)
+
+    var values = a.to_host()
+    var head = List[Scalar[dtype]](length=outer * at * inner, fill=0)
+    var tail = List[Scalar[dtype]](length=outer * (length - at) * inner, fill=0)
+    for o in range(outer):
+        for k in range(at):
+            for i in range(inner):
+                head[(o * at + k) * inner + i] = values[
+                    (o * length + k) * inner + i
+                ]
+        for k in range(at, length):
+            for i in range(inner):
+                tail[(o * (length - at) + (k - at)) * inner + i] = values[
+                    (o * length + k) * inner + i
+                ]
+
+    var head_extents = List[Int](capacity=rank)
+    var tail_extents = List[Int](capacity=rank)
+    for d in range(rank):
+        head_extents.append(at if d == axis else a.dim_at(d))
+        tail_extents.append(length - at if d == axis else a.dim_at(d))
+
+    var ctx = a.context()
+    return (
+        Dynamic[dtype, rank](
+            ctx, row_major(_dyn_shape_from[rank](head_extents)), head^
+        ),
+        Dynamic[dtype, rank](
+            ctx, row_major(_dyn_shape_from[rank](tail_extents)), tail^
+        ),
+    )
 
 
 def vander[

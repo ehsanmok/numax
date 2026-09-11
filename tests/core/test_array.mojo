@@ -540,5 +540,140 @@ def test_swapaxes_accepts_negative_axes() raises:
     assert_equal(s.dim_at(2), 2)
 
 
+def _grid2[
+    rows: Int, cols: Int
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, rows, cols](ctx)
+    for i in range(rows * cols):
+        a[i] = Scalar[dtype](values[i])
+    return a^
+
+
+def test_concatenate_along_an_axis_sums_only_that_extent() raises:
+    # numpy.concatenate((a, b), axis=1) on a (2, 3) and a (2, 2) gives a
+    # (2, 5) whose rows are [1, 2, 3, 7, 8] and [4, 5, 6, 9, 10].
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var b = _grid2[2, 2]([7.0, 8.0, 9.0, 10.0])
+
+    var joined = concatenate[axis=1](a, b)
+    assert_equal(joined.dim_at(0), 2)
+    assert_equal(joined.dim_at(1), 5)
+    var out = joined.to_host()
+    var expected = [1.0, 2.0, 3.0, 7.0, 8.0, 4.0, 5.0, 6.0, 9.0, 10.0]
+    for i in range(10):
+        assert_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_concatenate_along_axis_zero_stacks_rows() raises:
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var b = _grid2[1, 3]([7.0, 8.0, 9.0])
+
+    var joined = concatenate[axis=0](a, b)
+    assert_equal(joined.dim_at(0), 3)
+    assert_equal(joined.dim_at(1), 3)
+    assert_equal(joined.to_host()[6], 7.0)
+
+
+def test_concatenate_rejects_a_mismatched_other_axis() raises:
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var b = _grid2[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var raised = False
+    try:
+        _ = concatenate[axis=1](a, b)
+    except:
+        raised = True
+    assert_equal(raised, True)
+
+
+def test_stack_at_an_axis_adds_one_rather_than_growing_one() raises:
+    # numpy.stack((a, c), axis=1) on two (2, 3) gives a (2, 2, 3), where
+    # concatenating them at axis=1 would give a (2, 6).
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var c = _grid2[2, 3]([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+
+    var stacked = stack[axis=1](a, c)
+    assert_equal(stacked.dim_at(0), 2)
+    assert_equal(stacked.dim_at(1), 2)
+    assert_equal(stacked.dim_at(2), 3)
+    var out = stacked.to_host()
+    var expected = [
+        1.0,
+        2.0,
+        3.0,
+        10.0,
+        20.0,
+        30.0,
+        4.0,
+        5.0,
+        6.0,
+        40.0,
+        50.0,
+        60.0,
+    ]
+    for i in range(12):
+        assert_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_stack_at_the_trailing_position_interleaves() raises:
+    # axis == rank appends the new axis, so (3,) and (3,) give a (3, 2).
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 3](ctx)
+    var b = zeros[dtype, 3](ctx)
+    for i in range(3):
+        a[i] = Scalar[dtype](i + 1)
+        b[i] = Scalar[dtype](10 * (i + 1))
+
+    var stacked = stack[axis=1](a, b)
+    assert_equal(stacked.dim_at(0), 3)
+    assert_equal(stacked.dim_at(1), 2)
+    var out = stacked.to_host()
+    assert_equal(out[0], 1.0)
+    assert_equal(out[1], 10.0)
+    assert_equal(out[2], 2.0)
+
+
+def test_split_at_an_axis_inverts_concatenate() raises:
+    # The claim worth pinning: the two are one operation read each way.
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var b = _grid2[2, 2]([7.0, 8.0, 9.0, 10.0])
+    var joined = concatenate[axis=1](a, b)
+
+    var parts = split[axis=1](joined, 3)
+    assert_equal(parts[0].dim_at(1), 3)
+    assert_equal(parts[1].dim_at(1), 2)
+
+    var head = parts[0].to_host()
+    var source = a.to_host()
+    for i in range(6):
+        assert_equal(head[i], source[i])
+    var tail = parts[1].to_host()
+    var other = b.to_host()
+    for i in range(4):
+        assert_equal(tail[i], other[i])
+
+
+def test_split_rejects_a_cut_past_the_axis() raises:
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var raised = False
+    try:
+        _ = split[axis=1](a, 4)
+    except:
+        raised = True
+    assert_equal(raised, True)
+
+
+def test_the_rank_one_concatenate_still_keeps_its_length_in_the_type() raises:
+    # The axis overloads must not shadow the rank-1 ones, whose result
+    # length is compile-time.
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 2](ctx)
+    var b = zeros[dtype, 3](ctx)
+    a[0] = 1
+    b[0] = 9
+    var joined: Static[dtype, 5] = concatenate(a, b)
+    assert_equal(joined.to_host()[2], 9.0)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
