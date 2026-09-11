@@ -58,7 +58,7 @@ is safe; its own docstring lists them and where to reach them.
 | `numax.integrate` | `trapezoid`/`simpson`/`cumulative_trapezoid` over sampled `Tensor`s with `scipy.integrate`'s signatures; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively; `numax.integrate.array` is the `FloatLike` tier that integrates a function -- Gauss-Legendre, Simpson and trapezoid at a fixed node count, `rk4`/`dopri5` at a fixed step -- and differentiates at `Dual` |
 | `numax.interpolate` | `interp`, `horner`, and non-uniform cubic splines -- `CubicSpline` with SciPy's boundary conditions, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- over a `Tensor` of query points, any derivative order, `integrate`; the least-squares `Chebyshev.fit(x, y)` and `chebval`; 2-D `RegularGridInterpolator`; `numax.interpolate.array` is the `FloatLike` tier with Horner, cubic splines and Chebyshev fits of a function, which differentiate at `Dual` |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, rectangular `fft2`/`ifft2`/`rfft2`, `fftshift`/`ifftshift`, `fftfreq`/`rfftfreq` over `Tensor` at any length -- radix-2 at a power of two, Bluestein otherwise -- device-resident across `log2(n) + 1` stages per axis; `dct`/`idct`/`dst`/`idst` types I-IV; `numax.fft.array` is the register-resident tier that differentiates, and adds circular convolution. MAX ships no forward transform at all |
-| `numax.signal` | `convolve`/`correlate` in NumPy's three modes and `fftconvolve` over `Tensor`, the window factories in SciPy's symmetric and periodic forms, `lfilter`/`filtfilt`/`sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample` and the multiband `firwin`; `numax.signal.array` is the `FloatLike` tier with the direct sums, `lfilter`, `firwin` and compile-time windows |
+| `numax.signal` | `convolve`/`correlate` in NumPy's three modes and `fftconvolve` over `Tensor`, the window factories in SciPy's symmetric and periodic forms, `lfilter`/`filtfilt`/`sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample`, the multiband `firwin`, `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, and `butter`/`freqz`; `numax.signal.array` is the `FloatLike` tier with the direct sums, `lfilter`, `firwin` and compile-time windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), and numax's own `NMX1` `nmx.save`/`nmx.load`. Printing is `print(a)`, since `Tensor` is `Writable` |
 
@@ -422,6 +422,18 @@ from .signal.filters import (
     savgol_filter,
     sosfilt,
 )
+from .signal.spectral import (
+    STFT,
+    Periodogram,
+    Spectrogram,
+    hilbert,
+    periodogram,
+    spectrogram,
+    stft,
+    welch,
+)
+from .signal.peaks import find_peaks
+from .signal.design import FrequencyResponse, TransferFunction, butter, freqz
 
 # Statistics, distributions, sampling -- `numax.stats`.
 # The nine distribution namespaces (`norm`, `gamma`, `beta`, `chi2`, `t`,

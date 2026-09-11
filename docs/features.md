@@ -442,6 +442,10 @@ routed.
 | `lfilter`, `lfilter_zi`, `filtfilt`, `sosfilt` — the recursive filters, SciPy's transposed direct form II, odd-padded forward-backward pass, second-order cascade. **Host-side by nature**: a recurrence has no lanes to launch | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
 | `medfilt`, `detrend`, `savgol_filter` — a window per lane, one launch each; `savgol_filter` in all five of SciPy's edge modes and any derivative order, `detrend` linear or constant through two reductions | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
 | `resample`, `firwin` — Fourier resampling with SciPy's Nyquist-bin rule, and the window-method design for lowpass, highpass, bandpass, bandstop and multiband responses | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
+| `periodogram`, `welch`, `spectrogram`, `stft` — SciPy's conventions (density/spectrum scaling, one-sided doubling, constant detrend, `stft`'s zero boundary and `sum(w)` scale); every frame is one row of one batched transform on `numax.fft`'s lane engine; results are the `Periodogram`/`Spectrogram`/`STFT` structs | [`signal/spectral.mojo`](../numax/signal/spectral.mojo) |
+| `hilbert` — the analytic signal as a real/imaginary pair | [`signal/spectral.mojo`](../numax/signal/spectral.mojo) |
+| `find_peaks` — local maxima with `height`, `threshold`, `distance`, as a `List[Int]` like `nonzero` | [`signal/peaks.mojo`](../numax/signal/peaks.mojo) |
+| `butter`, `freqz` — Butterworth lowpass/highpass design on SciPy's exact route (prototype, warp, bilinear, `zpk2tf`) into a `TransferFunction`, and the response on the unit circle | [`signal/design.mojo`](../numax/signal/design.mojo) |
 
 Tier 2: host-driven, device-resident; the windows are host tables uploaded
 once. `apply_window` has no `Tensor` spelling because `multiply` already is
