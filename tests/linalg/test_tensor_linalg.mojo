@@ -186,6 +186,42 @@ def test_matvec_when_the_row_count_is_not_a_lane_multiple() raises:
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
 
 
+def _matvec_every_element_matches_matmul[m: Int, k: Int]() raises:
+    var ctx = _cpu()
+    var values = List[Scalar[DType.float64]](capacity=m * k)
+    for i in range(m * k):
+        values.append(Scalar[DType.float64](Float64(i % 5) - 2.0))
+    var xs = List[Scalar[DType.float64]](capacity=k)
+    for i in range(k):
+        xs.append(Scalar[DType.float64](Float64(i) * 0.5 - 1.0))
+    var a = Static[DType.float64, m, k](ctx, values.copy())
+    var x = Static[DType.float64, k](ctx, xs.copy())
+    var got = matvec(a, x).to_host()
+
+    var column = Static[DType.float64, k, 1](ctx, xs^)
+    var b = Static[DType.float64, m, k](ctx, values^)
+    var want = matmul(b, column).to_host()
+    for i in range(m):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
+
+
+def test_matvec_odd_rows_and_odd_columns_every_element() raises:
+    """The padded path at shapes that are padded on *every* lane width --
+    `m` odd -- against odd `k`, checking element 0 in particular.
+
+    This is the shape that returned a heap pointer in `y[0]`: the padded
+    output buffer's last use was `.view()`, so Mojo destroyed it before the
+    trimming pass read through the origin-erased view, and the queued free
+    ran at the next `synchronize`. The `m = 6` tests above are lane-aligned
+    on a 2-lane machine and never reached this path there.
+    """
+    _matvec_every_element_matches_matmul[3, 5]()
+    _matvec_every_element_matches_matmul[1, 5]()
+    _matvec_every_element_matches_matmul[5, 5]()
+    _matvec_every_element_matches_matmul[7, 3]()
+    _matvec_every_element_matches_matmul[3, 4]()
+
+
 def test_matvec_square_but_not_a_lane_multiple() raises:
     """`6 x 6` -- square, and still not a lane multiple, which is the case
     that showed the fault is about the row count and not about the matrix

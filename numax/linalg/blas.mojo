@@ -394,6 +394,11 @@ def matvec[
             rv.store[1](coord, read[coord])
 
         elementwise[simd_width=1, target=_target[gpu]()](trim, Coord(m), ctx)
+        # `wide`'s last *use* above is `.view()`, and the view is
+        # origin-erased, so without this Mojo destroys `wide` before `trim`
+        # reads through `read`: the queued free ran at the next
+        # `synchronize` and `trim` copied a heap pointer into `result[0]`.
+        _ = wide^
         return result^
 
 
