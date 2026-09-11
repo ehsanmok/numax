@@ -268,10 +268,26 @@ returns a dynamically-laid-out `TileTensor`. They are graph-operator kernels.
 
 ## What is still missing
 
-General broadcasting between two arbitrary shapes, slicing as a first-class
-owned type, and fancy indexing. `broadcast_op_axis` broadcasts only in the
-direction that pairs with a reduction, which is what softmax and per-axis
-normalization need and less than NumPy does.
+Slicing as a first-class owned type, and fancy indexing.
+
+**General broadcasting is no longer missing.** `broadcast_shapes` in
+`numax/core/array.mojo` is NumPy's right-alignment rule written down once,
+and every binary routine in `numax.core.ops`, `numax.core.elementwise` and
+`numax.core.logic` has a second overload taking two shapes it accepts. The
+broadcast walk reads through zero strides rather than materializing either
+operand, so an `(n, n)` against an `(n,)` costs index arithmetic and not a
+second square buffer. The result is a `Dynamic`, since the extents it
+computes are run-time values; the same-shape overload still matches first
+and still returns the input's own layout type, so a compile-time shape
+survives where both operands have one. `broadcast_op_axis` remains the
+route that pairs a broadcast with a reduction, which is what softmax and
+per-axis normalization need.
+
+`numpy.broadcast_arrays` has no counterpart and will not get one: it
+returns a tuple of tensors, and a `Tuple` of two `Tensor`s cannot be
+destructured in Mojo 1.0 -- the same constraint that makes `qr_factor`
+return a `TensorQR` rather than a pair. `broadcast_to` covers the single-
+operand case.
 
 What exists: `Tensor` carries its shape in its layout type, with each
 dimension independently compile-time or run-time, so an extent that depends

@@ -6,11 +6,16 @@ to agree with the function it forwards to -- the point of the operators is
 that `a + b` and `add(a, b)` are one call.
 """
 
-from std.testing import TestSuite, assert_almost_equal, assert_equal
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_true,
+)
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor, full, ones, zeros
+from numax.core.array import Static, Tensor, full, ones, zeros, zeros_dyn
 from numax.core.ops import (
     add,
     astype,
@@ -159,6 +164,82 @@ def test_astype_preserves_shape() raises:
     var converted = astype[DType.float32](a)
     assert_equal(converted.num_elements, 4)
     assert_equal(converted.rank, 2)
+
+
+def _m[
+    rows: Int, cols: Int
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
+    var ctx = DeviceContext(api="cpu")
+    var elements = List[Scalar[dtype]](capacity=rows * cols)
+    for i in range(rows * cols):
+        elements.append(Scalar[dtype](values[i]))
+    return Static[dtype, rows, cols](ctx, elements^)
+
+
+def test_broadcasting_add_stretches_a_row_across_a_matrix() raises:
+    # numpy: np.arange(6).reshape(2, 3) + np.array([10, 20, 30])
+    var a = _m[2, 3]([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+    var row = _t[3]([10.0, 20.0, 30.0])
+
+    var got = add(a, row)
+    assert_equal(got.dim_at(0), 2)
+    assert_equal(got.dim_at(1), 3)
+    var out = got.to_host()
+    var expected = [10.0, 21.0, 32.0, 13.0, 24.0, 35.0]
+    for i in range(6):
+        assert_almost_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_broadcasting_stretches_both_operands() raises:
+    # numpy: np.array([[1.], [2.], [3.]]) * np.array([10., 20., 30., 40.])
+    # -- a (3, 1) against a (4,) gives a (3, 4), neither operand's shape.
+    var col = _m[3, 1]([1.0, 2.0, 3.0])
+    var row = _t[4]([10.0, 20.0, 30.0, 40.0])
+
+    var got = multiply(col, row)
+    assert_equal(got.dim_at(0), 3)
+    assert_equal(got.dim_at(1), 4)
+    var out = got.to_host()
+    for r in range(3):
+        for c in range(4):
+            assert_almost_equal(
+                out[r * 4 + c], Scalar[dtype]((r + 1) * (c + 1) * 10)
+            )
+
+
+def test_broadcasting_agrees_with_the_same_shape_overload() raises:
+    # The claim worth pinning: broadcasting a (1, 3) up to a (2, 3) has to
+    # give exactly what the same-shape overload gives for the materialized
+    # operand, or the two spellings of `a - b` mean different things.
+    var a = _m[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var thin = _m[1, 3]([10.0, 20.0, 30.0])
+    var wide = _m[2, 3]([10.0, 20.0, 30.0, 10.0, 20.0, 30.0])
+
+    var broadcast = subtract(a, thin).to_host()
+    var direct = subtract(a, wide).to_host()
+    for i in range(6):
+        assert_equal(broadcast[i], direct[i])
+
+
+def test_broadcasting_rejects_an_incompatible_pair() raises:
+    var a = _t[3]([1.0, 2.0, 3.0])
+    var b = _t[4]([1.0, 2.0, 3.0, 4.0])
+    var raised = False
+    try:
+        _ = add(a, b)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_same_shape_overload_still_keeps_its_layout_type() raises:
+    # The broadcasting overload must not shadow the same-shape one: a
+    # `Static` in has to stay a `Static` out, or every caller holding a
+    # compile-time shape loses it.
+    var a = _t[3]([1.0, 2.0, 3.0])
+    var b = _t[3]([10.0, 20.0, 30.0])
+    var got: Static[dtype, 3] = add(a, b)
+    assert_equal(got.to_host()[2], 33.0)
 
 
 def main() raises:

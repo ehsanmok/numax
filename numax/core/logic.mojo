@@ -21,6 +21,11 @@ is what makes `greater(a, b)` compose with `logical_and`, and it is the type
 nothing in between. A tensor of values becomes a mask with
 `numax.core.ops.astype[DType.bool]`, which is where nonzero-means-true lives.
 
+Each comparison and each `logical_*` has a second overload taking two
+shapes NumPy would broadcast, returning a `Dynamic[DType.bool]` mask --
+still truth, so it still composes with `logical_and` and still feeds
+`select`.
+
 Names: `where` is a Mojo keyword, so the selection stays
 `numax.core.sorting.select`. `all` and `any` shadow the builtins of those
 names in an importing file, which is the price `numpy`'s own spelling
@@ -33,8 +38,18 @@ from std.math import (
     isnan as _std_isnan,
 )
 
-from layout.tile_layout import TensorLayout
-from .array import Static, Tensor, _product
+from layout.tile_layout import TensorLayout, row_major
+from .array import (
+    Dynamic,
+    Static,
+    Tensor,
+    _dyn_shape_from,
+    _extents_of,
+    _product,
+    _stretch_strides,
+    _strides_of,
+    broadcast_shapes,
+)
 
 
 def _eq_step[
@@ -147,6 +162,54 @@ def _compare[
     for i in range(n):
         out[i] = step[1](a_values[i], b_values[i])[0]
     return Tensor[DType.bool, LayoutType](a.context(), a.layout, out^)
+
+
+def _compare_broadcast[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    step: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[
+        DType.bool, w
+    ],
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`_compare` over two shapes NumPy would broadcast.
+
+    The truth it returns is a `Dynamic[DType.bool]` rather than a `Static`,
+    since the broadcast extents are run-time values -- but it is still a
+    boolean tensor, so it still composes with `logical_and` and still feeds
+    `numax.core.sorting.select`.
+    """
+    comptime rank = ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+    var a_extents = _extents_of(a)
+    var b_extents = _extents_of(b)
+    var extents = broadcast_shapes(a_extents, b_extents)
+    var a_strides = _stretch_strides(a_extents, _strides_of(a), rank)
+    var b_strides = _stretch_strides(b_extents, _strides_of(b), rank)
+
+    var count = 1
+    for d in range(rank):
+        count *= extents[d]
+
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var out = List[Scalar[DType.bool]](length=count, fill=False)
+    for flat in range(count):
+        var rem = flat
+        var ai = 0
+        var bi = 0
+        for k in range(rank):
+            var d = rank - 1 - k
+            var c = rem % extents[d]
+            rem //= extents[d]
+            ai += c * a_strides[d]
+            bi += c * b_strides[d]
+        out[flat] = step[1](a_values[ai], b_values[bi])[0]
+
+    return Dynamic[DType.bool, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents)), out^
+    )
 
 
 def _predicate[
@@ -370,3 +433,112 @@ def array_equal[
     """
     var same = equal[dtype, LayoutType](a, b)
     return all[LayoutType](same)
+
+
+# The broadcasting forms, matching `numax.core.ops` and
+# `numax.core.elementwise`: the same comparison at two shapes NumPy would
+# broadcast, returning a `Dynamic` mask because the broadcast extents are
+# run-time values.
+
+
+def equal[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a == b` at two broadcastable shapes. `numpy.equal`."""
+    return _compare_broadcast[dtype, ALayout, BLayout, step=_eq_step[dtype, _]](
+        a, b
+    )
+
+
+def not_equal[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a != b` at two broadcastable shapes. `numpy.not_equal`."""
+    return _compare_broadcast[dtype, ALayout, BLayout, step=_ne_step[dtype, _]](
+        a, b
+    )
+
+
+def less[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a < b` at two broadcastable shapes. `numpy.less`."""
+    return _compare_broadcast[dtype, ALayout, BLayout, step=_lt_step[dtype, _]](
+        a, b
+    )
+
+
+def less_equal[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a <= b` at two broadcastable shapes. `numpy.less_equal`."""
+    return _compare_broadcast[dtype, ALayout, BLayout, step=_le_step[dtype, _]](
+        a, b
+    )
+
+
+def greater[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a > b` at two broadcastable shapes. `numpy.greater`."""
+    return _compare_broadcast[dtype, ALayout, BLayout, step=_gt_step[dtype, _]](
+        a, b
+    )
+
+
+def greater_equal[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a >= b` at two broadcastable shapes. `numpy.greater_equal`."""
+    return _compare_broadcast[dtype, ALayout, BLayout, step=_ge_step[dtype, _]](
+        a, b
+    )
+
+
+def logical_and[
+    ALayout: TensorLayout, BLayout: TensorLayout
+](
+    a: Tensor[DType.bool, ALayout], b: Tensor[DType.bool, BLayout]
+) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a and b` at two broadcastable shapes. `numpy.logical_and`."""
+    return _compare_broadcast[DType.bool, ALayout, BLayout, step=_and_step](
+        a, b
+    )
+
+
+def logical_or[
+    ALayout: TensorLayout, BLayout: TensorLayout
+](
+    a: Tensor[DType.bool, ALayout], b: Tensor[DType.bool, BLayout]
+) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a or b` at two broadcastable shapes. `numpy.logical_or`."""
+    return _compare_broadcast[DType.bool, ALayout, BLayout, step=_or_step](a, b)
+
+
+def logical_xor[
+    ALayout: TensorLayout, BLayout: TensorLayout
+](
+    a: Tensor[DType.bool, ALayout], b: Tensor[DType.bool, BLayout]
+) raises -> Dynamic[
+    DType.bool, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`a xor b` at two broadcastable shapes. `numpy.logical_xor`."""
+    return _compare_broadcast[DType.bool, ALayout, BLayout, step=_xor_step](
+        a, b
+    )

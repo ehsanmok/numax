@@ -169,5 +169,55 @@ def test_nan_is_never_equal_to_itself() raises:
     assert_false(array_equal(a, b))
 
 
+def _matrix[
+    rows: Int, cols: Int
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
+    var ctx = DeviceContext(api="cpu")
+    var elements = List[Scalar[dtype]](capacity=rows * cols)
+    for i in range(rows * cols):
+        elements.append(Scalar[dtype](values[i]))
+    return Static[dtype, rows, cols](ctx, elements^)
+
+
+def test_greater_broadcasts_a_threshold_row_across_a_matrix() raises:
+    # numpy: np.array([[1, 5], [7, 2]]) > np.array([4, 4])
+    var a = _matrix[2, 2]([1.0, 5.0, 7.0, 2.0])
+    var threshold = _tensor[2]([4.0, 4.0])
+
+    var mask = greater(a, threshold)
+    assert_equal(mask.dim_at(0), 2)
+    assert_equal(mask.dim_at(1), 2)
+    var out = mask.to_host()
+    assert_false(out[0])
+    assert_true(out[1])
+    assert_true(out[2])
+    assert_false(out[3])
+
+
+def test_broadcast_mask_still_composes_with_logical_and() raises:
+    # The property that makes truth a boolean tensor rather than 0/1: two
+    # broadcast masks combine without anything in between.
+    var a = _matrix[2, 2]([1.0, 5.0, 7.0, 2.0])
+    var lo = _tensor[2]([0.0, 0.0])
+    var hi = _tensor[2]([6.0, 6.0])
+
+    var inside = logical_and(greater(a, lo), less(a, hi)).to_host()
+    assert_true(inside[0])
+    assert_true(inside[1])
+    assert_false(inside[2])
+    assert_true(inside[3])
+
+
+def test_broadcast_comparison_agrees_with_the_same_shape_overload() raises:
+    var a = _matrix[2, 2]([1.0, 5.0, 7.0, 2.0])
+    var thin = _matrix[1, 2]([4.0, 4.0])
+    var wide = _matrix[2, 2]([4.0, 4.0, 4.0, 4.0])
+
+    var broadcast = less_equal(a, thin).to_host()
+    var direct = less_equal(a, wide).to_host()
+    for i in range(4):
+        assert_equal(broadcast[i], direct[i])
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

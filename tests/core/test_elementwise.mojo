@@ -230,5 +230,50 @@ def test_gradient_scales_with_spacing() raises:
         assert_almost_equal(g[i], 2.0)
 
 
+def _m2[
+    rows: Int, cols: Int
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
+    var ctx = DeviceContext(api="cpu")
+    var elements = List[Scalar[dtype]](capacity=rows * cols)
+    for i in range(rows * cols):
+        elements.append(Scalar[dtype](values[i]))
+    return Static[dtype, rows, cols](ctx, elements^)
+
+
+def test_maximum_broadcasts_a_row_across_a_matrix() raises:
+    # numpy: np.maximum([[1, 5, 3], [7, 2, 9]], [4, 4, 4])
+    var a = _m2[2, 3]([1.0, 5.0, 3.0, 7.0, 2.0, 9.0])
+    var floor_ = _t[3]([4.0, 4.0, 4.0])
+
+    var got = maximum(a, floor_)
+    assert_equal(got.dim_at(0), 2)
+    assert_equal(got.dim_at(1), 3)
+    var out = got.to_host()
+    var expected = [4.0, 5.0, 4.0, 7.0, 4.0, 9.0]
+    for i in range(6):
+        assert_almost_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_hypot_broadcasts_a_column_against_a_row() raises:
+    # A (2, 1) against a (2,) gives a (2, 2): the classic 3-4-5 and 6-8-10.
+    var col = _m2[2, 1]([3.0, 6.0])
+    var row = _t[2]([4.0, 8.0])
+
+    var got = hypot(col, row).to_host()
+    assert_almost_equal(got[0], 5.0)
+    assert_almost_equal(got[3], 10.0)
+
+
+def test_broadcast_minimum_agrees_with_the_same_shape_overload() raises:
+    var a = _m2[2, 3]([1.0, 5.0, 3.0, 7.0, 2.0, 9.0])
+    var thin = _m2[1, 3]([4.0, 4.0, 4.0])
+    var wide = _m2[2, 3]([4.0, 4.0, 4.0, 4.0, 4.0, 4.0])
+
+    var broadcast = minimum(a, thin).to_host()
+    var direct = minimum(a, wide).to_host()
+    for i in range(6):
+        assert_equal(broadcast[i], direct[i])
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

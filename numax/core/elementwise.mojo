@@ -18,6 +18,12 @@ would make every one of the seven conformers implement them.
 nothing is lost. `nextafter` is absent from `std.math` under the pinned
 toolchain and is therefore not provided.
 
+Every two-argument routine here has a second overload taking two shapes
+NumPy would broadcast -- `arctan2` of a column against a row, `maximum` of
+a matrix against its per-column maxima. It returns a `Dynamic`, since the
+broadcast extents are run-time values; the same-shape overload still
+matches first and still returns the input's own layout type.
+
 `tanh` is the one name this module shares with `numax.special.activations`,
 which has the `FloatLike` scalar of the same name. The root package exports
 the activation, because that is the one a kernel calls; the tensor form here
@@ -57,8 +63,18 @@ from std.math import (
     trunc as _std_trunc,
 )
 
-from layout.tile_layout import TensorLayout
-from .array import Static, Tensor, _product
+from layout.tile_layout import TensorLayout, row_major
+from .array import (
+    Dynamic,
+    Static,
+    Tensor,
+    _dyn_shape_from,
+    _extents_of,
+    _product,
+    _stretch_strides,
+    _strides_of,
+    broadcast_shapes,
+)
 
 
 def _unary[
@@ -88,6 +104,55 @@ def _binary[
     for i in range(n):
         out[i] = op(a_values[i], b_values[i])
     return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
+
+
+def _binary_broadcast[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    op: def(Scalar[dtype], Scalar[dtype]) thin -> Scalar[dtype],
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """`_binary` over two shapes NumPy would broadcast.
+
+    The same walk `numax.core.ops._zip_broadcast` runs and for the same
+    reason -- a stretched axis gets stride 0 rather than a materialized
+    operand. Two copies of eight lines, rather than one module importing
+    the other's private helper, keeps `elementwise` and `ops` independent
+    the way they already are.
+    """
+    comptime rank = ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+    var a_extents = _extents_of(a)
+    var b_extents = _extents_of(b)
+    var extents = broadcast_shapes(a_extents, b_extents)
+    var a_strides = _stretch_strides(a_extents, _strides_of(a), rank)
+    var b_strides = _stretch_strides(b_extents, _strides_of(b), rank)
+
+    var count = 1
+    for d in range(rank):
+        count *= extents[d]
+
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var out = List[Scalar[dtype]](length=count, fill=0)
+    for flat in range(count):
+        var rem = flat
+        var ai = 0
+        var bi = 0
+        for k in range(rank):
+            var d = rank - 1 - k
+            var c = rem % extents[d]
+            rem //= extents[d]
+            ai += c * a_strides[d]
+            bi += c * b_strides[d]
+        out[flat] = op(a_values[ai], b_values[bi])
+
+    var result = Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents))
+    )
+    result.copy_from_host(out)
+    return result^
 
 
 def _exp_op[
@@ -646,3 +711,76 @@ def gradient[
     for i in range(1, n - 1):
         out[i] = (values[i + 1] - values[i - 1]) / (spacing + spacing)
     return Static[dtype, n](a.context(), out^)
+
+
+# The broadcasting forms, matching `numax.core.ops`: same operation, two
+# shapes NumPy would broadcast rather than one shape twice, and a `Dynamic`
+# result because the broadcast extents are run-time values.
+
+
+def arctan2[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+] where dtype.is_floating_point():
+    """Elementwise `atan2(a, b)` at two broadcastable shapes."""
+    return _binary_broadcast[dtype, ALayout, BLayout, op=_arctan2_op[dtype]](
+        a, b
+    )
+
+
+def hypot[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+] where dtype.is_floating_point():
+    """Elementwise `sqrt(a*a + b*b)` at two broadcastable shapes."""
+    return _binary_broadcast[dtype, ALayout, BLayout, op=_hypot_op[dtype]](a, b)
+
+
+def copysign[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+] where dtype.is_floating_point():
+    """Elementwise `copysign` at two broadcastable shapes."""
+    return _binary_broadcast[dtype, ALayout, BLayout, op=_copysign_op[dtype]](
+        a, b
+    )
+
+
+def remainder[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+] where dtype.is_floating_point():
+    """Elementwise IEEE remainder at two broadcastable shapes."""
+    return _binary_broadcast[dtype, ALayout, BLayout, op=_remainder_op[dtype]](
+        a, b
+    )
+
+
+def maximum[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """Elementwise larger of the two, at two broadcastable shapes.
+
+    `numpy.maximum`."""
+    return _binary_broadcast[dtype, ALayout, BLayout, op=_maximum_op[dtype]](
+        a, b
+    )
+
+
+def minimum[
+    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
+]:
+    """Elementwise smaller of the two, at two broadcastable shapes.
+
+    `numpy.minimum`."""
+    return _binary_broadcast[dtype, ALayout, BLayout, op=_minimum_op[dtype]](
+        a, b
+    )
