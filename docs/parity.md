@@ -180,10 +180,17 @@ exist.
   alone and `O(n^3)` of scalar rotations when the eigenvectors are
   accumulated -- the one ceiling in `eigh` with no MAX in it, named in the
   code with divide-and-conquer as the upgrade. The eigenvectors of `A` then
-  come back as `Q Z` through one `matmul`. What is still missing over
-  `Tensor` is the bidiagonal and Hessenberg reductions `svd` and `eigvals`
-  start from, and their own sweeps. `numax/linalg/__init__.mojo` carries
-  the reasoning.
+  come back as `Q Z` through one `matmul`. `svd` and `svdvals` take the
+  same two phases over a bidiagonal form: `gebrd` reduces device-resident
+  with alternating left and right reflectors, each a matrix-vector product
+  and a rank-one update through `matmul`, and the singular values are the
+  eigenvalues of the Golub-Kahan tridiagonal -- the `2n x 2n` symmetric
+  tridiagonal with zero diagonal and off-diagonal `d_1, e_1, d_2, ...` --
+  which the very same sweep diagonalizes, its eigenvectors interleaving
+  `B`'s singular vectors. LAPACK's `dbdsvdx` takes that route too. What is
+  still missing over `Tensor` is the Hessenberg reduction `eigvals` starts
+  from and its own sweep. `numax/linalg/__init__.mojo` carries the
+  reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere, and
   nothing at all on Metal or AMD, so `numax.fft` over `Tensor` is an

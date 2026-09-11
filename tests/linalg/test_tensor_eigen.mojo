@@ -13,8 +13,9 @@ from max.gpu.host import DeviceContext
 
 from numax.core.array import Static, to_array, transpose, zeros
 from numax.core.plain import Plain
-from numax.linalg import eigh, eigvalsh, matmul, sytrd
+from numax.linalg import eigh, eigvalsh, gebrd, matmul, svd, svdvals, sytrd
 from numax.linalg.array import eigvalsh as array_eigvalsh
+from numax.linalg.array import svdvals as array_svdvals
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype, 1]
@@ -377,6 +378,193 @@ def test_eigh_of_a_diagonal_matrix_returns_permuted_identity_vectors() raises:
     assert_almost_equal(abs(v[1 * 3 + 0]), Scalar[dtype](1.0), atol=1e-14)
     assert_almost_equal(abs(v[0 * 3 + 1]), Scalar[dtype](1.0), atol=1e-14)
     assert_almost_equal(abs(v[2 * 3 + 2]), Scalar[dtype](1.0), atol=1e-14)
+
+
+def _tall() raises -> Static[dtype, 5, 3]:
+    var ctx = DeviceContext(api="cpu")
+    return Static[dtype, 5, 3](
+        ctx,
+        [
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0,
+            6.0,
+            7.0,
+            8.0,
+            10.0,
+            2.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ],
+    )
+
+
+def _copy_rect[
+    m: Int, n: Int
+](mut a: Static[dtype, m, n]) raises -> Static[dtype, m, n]:
+    var out = zeros[dtype, m, n](a.context())
+    out.copy_from_host(a.to_host())
+    return out^
+
+
+def test_gebrd_leaves_q_transpose_a_p_upper_bidiagonal() raises:
+    comptime m = 5
+    comptime n = 3
+    var a = _tall()
+    var original = _copy_rect(a)
+
+    var reduced = gebrd(a)
+    var q = reduced.q()
+    var p = reduced.p()
+    var qt = transpose(q)
+    var half = matmul(qt, original)
+    var b = matmul(half, p).to_host()
+
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                assert_almost_equal(b[i * n + j], d[i], atol=1e-12)
+            elif j == i + 1:
+                assert_almost_equal(b[i * n + j], e[i], atol=1e-12)
+            else:
+                assert_almost_equal(
+                    b[i * n + j], Scalar[dtype](0.0), atol=1e-12
+                )
+
+
+def test_gebrd_q_and_p_are_orthogonal() raises:
+    var a = _tall()
+    var reduced = gebrd(a)
+    var q = reduced.q()
+    var p = reduced.p()
+    var qt = transpose(q)
+    var pt = transpose(p)
+    var qtq = matmul(qt, q).to_host()
+    var ptp = matmul(pt, p).to_host()
+    for i in range(3):
+        for j in range(3):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(qtq[i * 3 + j], want, atol=1e-12)
+            assert_almost_equal(ptp[i * 3 + j], want, atol=1e-12)
+
+
+def test_svdvals_matches_scipy_on_a_tall_matrix() raises:
+    # scipy.linalg.svdvals of the 5x3 above, descending.
+    var a = _tall()
+    var s = svdvals(a).to_host()
+    var expected = [17.571796832206623, 1.6897901947205591, 0.6136490735587791]
+    for i in range(3):
+        assert_almost_equal(
+            s[i], Scalar[dtype](expected[i]), rtol=1e-10, atol=1e-12
+        )
+
+
+def test_svdvals_matches_scipy_on_hilbert_four() raises:
+    var a = _hilbert[4]()
+    var s = svdvals(a).to_host()
+    var expected = [
+        1.5002142800592426,
+        0.16914122022145016,
+        0.006738273605760801,
+        9.670230402258657e-05,
+    ]
+    for i in range(4):
+        assert_almost_equal(
+            s[i], Scalar[dtype](expected[i]), rtol=1e-8, atol=1e-13
+        )
+
+
+def test_svdvals_agrees_with_the_array_tier_as_a_multiset() raises:
+    # One-sided Jacobi there, Golub-Kahan here: agreement is the check.
+    comptime n = 4
+    var a = _hilbert[n]()
+    var lifted = to_array[P](a)
+    var here = svdvals(a).to_host()
+    var there = array_svdvals[P, n, sweeps=20](lifted)
+    var there_sorted = List[Float64](capacity=n)
+    for i in range(n):
+        there_sorted.append(Float64(there[i].v[0]))
+    for i in range(n):
+        for j in range(i + 1, n):
+            if there_sorted[j] > there_sorted[i]:
+                var tmp = there_sorted[i]
+                there_sorted[i] = there_sorted[j]
+                there_sorted[j] = tmp
+    for i in range(n):
+        assert_almost_equal(
+            Float64(here[i]), there_sorted[i], rtol=1e-8, atol=1e-12
+        )
+
+
+def test_svd_reconstructs_a_from_its_factors() raises:
+    comptime m = 5
+    comptime n = 3
+    var a = _tall()
+    var original = _copy_rect(a)
+    var result = svd(a)
+
+    var ctx = a.context()
+    var scaled = zeros[dtype, m, n](ctx)
+    var u = result.u.to_host()
+    var s = result.s.to_host()
+    var host = scaled.to_host()
+    for i in range(m):
+        for j in range(n):
+            host[i * n + j] = u[i * n + j] * s[j]
+    scaled.copy_from_host(host)
+
+    var vt = transpose(result.v)
+    var back = matmul(scaled, vt).to_host()
+    var source = original.to_host()
+    for i in range(m * n):
+        assert_almost_equal(back[i], source[i], atol=1e-11)
+
+
+def test_svd_factors_are_orthonormal_and_values_descending() raises:
+    var a = _tall()
+    var result = svd(a)
+    var ut = transpose(result.u)
+    var vt = transpose(result.v)
+    var utu = matmul(ut, result.u).to_host()
+    var vtv = matmul(vt, result.v).to_host()
+    for i in range(3):
+        for j in range(3):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(utu[i * 3 + j], want, atol=1e-11)
+            assert_almost_equal(vtv[i * 3 + j], want, atol=1e-11)
+    var s = result.s.to_host()
+    assert_equal(s[0] >= s[1], True)
+    assert_equal(s[1] >= s[2], True)
+
+
+def test_svd_values_equal_svdvals() raises:
+    var a = _tall()
+    var b = _copy_rect(a)
+    var with_vectors = svd(a).s.to_host()
+    var alone = svdvals(b).to_host()
+    for i in range(3):
+        assert_almost_equal(with_vectors[i], alone[i], atol=1e-13)
+
+
+def test_svdvals_finds_a_rank_deficient_matrix() raises:
+    # Column 1 is twice column 0, so the rank is 2 and the smallest singular
+    # value is zero to rounding: scipy.linalg.svdvals gives
+    # [12.269416474076381, 1.2088918006435092, 7.4e-16].
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[dtype, 4, 3](
+        ctx, [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0]
+    )
+    var s = svdvals(a).to_host()
+    assert_almost_equal(s[0], Scalar[dtype](12.269416474076381), rtol=1e-10)
+    assert_almost_equal(s[1], Scalar[dtype](1.2088918006435092), rtol=1e-10)
+    assert_almost_equal(s[2], Scalar[dtype](0.0), atol=1e-12)
 
 
 def main() raises:

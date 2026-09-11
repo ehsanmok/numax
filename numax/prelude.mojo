@@ -258,6 +258,8 @@ from .linalg import (
     qr_factor,
     solve,
     solve_triangular,
+    svd,
+    svdvals,
     trace,
 )
 

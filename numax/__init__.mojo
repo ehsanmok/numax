@@ -287,9 +287,11 @@ from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 # re-exported here: it shares these names, so a flat surface carrying both
 # would resolve `cholesky` by a type the reader has to look up.
 from .linalg import (
+    TensorBidiagonal,
     TensorEigh,
     TensorLU,
     TensorQR,
+    TensorSVD,
     TensorTridiagonal,
     asum,
     axpy,
@@ -332,6 +334,8 @@ from .linalg import (
     solve_toeplitz,
     solve_triangular,
     solveh_banded,
+    svd,
+    svdvals,
     sytrd,
     toeplitz,
     trace,

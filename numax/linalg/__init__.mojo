@@ -37,7 +37,7 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
-| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh` | `_decomp`, plus LAPACK's `sytrd` |
+| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD` | `_decomp`, `_decomp_svd`, plus LAPACK's `sytrd`/`gebrd` |
 | `matfuncs` | `expm` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
@@ -95,9 +95,9 @@ cannot be built from an immutable binding.
 
 ## Not here yet
 
-`svd`, `svdvals`, `eigvals`, `cond` and `pinv` have no `Tensor` overload
-yet; `numax.linalg.array` has them for matrices small enough to live in
-registers. `cond` and `pinv` are `svd`'s dependents and move when it does.
+`eigvals`, `cond` and `pinv` have no `Tensor` overload yet;
+`numax.linalg.array` has them for matrices small enough to live in
+registers. `cond` and `pinv` are `svd`'s dependents and land next.
 `tridiagonal_solve` will stay `Array`-only -- Thomas is already linear and
 has nothing to hand a GEMM.
 
@@ -116,8 +116,12 @@ is `O(n^3)` of scalar host work at a small constant -- the one named
 ceiling, with `stedc`'s GEMM-shaped merge as the upgrade -- and brings the
 vectors back as `Q Z` through one `matmul`.
 
-The same two phases, over a bidiagonal and a Hessenberg form, are what
-`svd` and `eigvals` are waiting on.
+`svd` and `svdvals` take the same two phases over a bidiagonal form:
+`gebrd` reduces device-resident with every reflector through `matmul`,
+and the singular values are the eigenvalues of the Golub-Kahan
+tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
+no new numerics, only the doubling that route costs at `vectors=True`.
+`eigvals` waits on the same phases over a Hessenberg form.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of
@@ -152,7 +156,18 @@ from .blas import (
     outer,
 )
 from .cholesky import cholesky, cholesky_solve
-from .eigen import TensorEigh, TensorTridiagonal, eigh, eigvalsh, sytrd
+from .eigen import (
+    TensorBidiagonal,
+    TensorEigh,
+    TensorSVD,
+    TensorTridiagonal,
+    eigh,
+    eigvalsh,
+    gebrd,
+    svd,
+    svdvals,
+    sytrd,
+)
 from .lu import TensorLU, det, lu_factor, slogdet
 from .matfuncs import expm
 from .misc import fro, inf, neg_inf, norm, trace

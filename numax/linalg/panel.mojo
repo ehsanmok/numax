@@ -648,6 +648,181 @@ def sytd2_rank_two[
     _sync[gpu]()
 
 
+def gebd2_col[
+    dtype: DType,
+    ALayout: TensorLayout,
+    VLayout: TensorLayout,
+    TauLayout: TensorLayout,
+    SLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    left: _View[dtype, VLayout],
+    tau: _View[dtype, TauLayout],
+    scratch: _View[dtype, SLayout],
+    k: Int32,
+    m: Int32,
+) where dtype.is_floating_point():
+    """Form the left Householder reflector of a bidiagonal reduction's
+    column `k`, and write it as column `k` of the dense `left`.
+
+    The reflector annihilates `a[k+1.., k]` against `a[k, k]`. Unlike
+    `sytd2_column` it does not pack the vector into `a`: it writes the
+    full-length vector -- zero above `k`, `1` at `k`, `v` below -- into
+    `left[:, k]`, then sets `a[k, k]` to the new diagonal entry and zeroes
+    the column below it. The caller applies the reflector to the *other*
+    columns with two matrix products, so column `k` is finished here.
+
+    Launch on the accelerator with `grid_dim=1`,
+    `block_dim=_PANEL_THREADS`; the host path runs it single-threaded.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var k0 = Int(k)
+    var rows = Int(m)
+
+    var partial = Scalar[dtype](0)
+    var i = k0 + 1 + t
+    while i < rows:
+        var value = a[Coord(i, k0)]
+        partial += value * value
+        i += nt
+    scratch.store[1](Coord(t), partial)
+    _sync[gpu]()
+    if t == 0:
+        var total = Scalar[dtype](0)
+        for c in range(nt):
+            total += scratch[Coord(c)]
+        scratch.store[1](Coord(nt), total)
+    _sync[gpu]()
+
+    var below = scratch[Coord(nt)]
+    var alpha = a[Coord(k0, k0)]
+
+    if below == 0:
+        if t == 0:
+            tau.store[1](Coord(k0), Scalar[dtype](0))
+        i = t
+        while i < rows:
+            var one_at = Scalar[dtype](1) if i == k0 else Scalar[dtype](0)
+            left.store[1](Coord(i, k0), one_at)
+            i += nt
+        _sync[gpu]()
+        return
+
+    var beta = sqrt(alpha * alpha + below)
+    if alpha > 0:
+        beta = -beta
+    var this_tau = (beta - alpha) / beta
+    var scale = Scalar[dtype](1) / (alpha - beta)
+
+    i = t
+    while i < rows:
+        var value = Scalar[dtype](0)
+        if i == k0:
+            value = Scalar[dtype](1)
+        elif i > k0:
+            value = a[Coord(i, k0)] * scale
+        left.store[1](Coord(i, k0), value)
+        i += nt
+    _sync[gpu]()
+
+    i = k0 + 1 + t
+    while i < rows:
+        a.store[1](Coord(i, k0), Scalar[dtype](0))
+        i += nt
+    if t == 0:
+        a.store[1](Coord(k0, k0), beta)
+        tau.store[1](Coord(k0), this_tau)
+    _sync[gpu]()
+
+
+def gebd2_row[
+    dtype: DType,
+    ALayout: TensorLayout,
+    ULayout: TensorLayout,
+    TauLayout: TensorLayout,
+    SLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    right: _View[dtype, ULayout],
+    tau: _View[dtype, TauLayout],
+    scratch: _View[dtype, SLayout],
+    k: Int32,
+    n: Int32,
+) where dtype.is_floating_point():
+    """Form the right Householder reflector of a bidiagonal reduction's
+    row `k`, and write it as row `k` of the dense `right`.
+
+    The mirror of `gebd2_col` along the row: it annihilates
+    `a[k, k+2..]` against `a[k, k+1]`, writes the full-length vector --
+    zero through `k`, `1` at `k + 1`, `u` beyond -- into `right[k, :]`,
+    then sets `a[k, k+1]` to the new superdiagonal entry and zeroes the row
+    beyond it. The caller applies it to the other rows with two products.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var k0 = Int(k)
+    var cols = Int(n)
+    var first = k0 + 1
+
+    var partial = Scalar[dtype](0)
+    var j = first + 1 + t
+    while j < cols:
+        var value = a[Coord(k0, j)]
+        partial += value * value
+        j += nt
+    scratch.store[1](Coord(t), partial)
+    _sync[gpu]()
+    if t == 0:
+        var total = Scalar[dtype](0)
+        for c in range(nt):
+            total += scratch[Coord(c)]
+        scratch.store[1](Coord(nt), total)
+    _sync[gpu]()
+
+    var beyond = scratch[Coord(nt)]
+    var alpha = a[Coord(k0, first)]
+
+    if beyond == 0:
+        if t == 0:
+            tau.store[1](Coord(k0), Scalar[dtype](0))
+        j = t
+        while j < cols:
+            var one_at = Scalar[dtype](1) if j == first else Scalar[dtype](0)
+            right.store[1](Coord(k0, j), one_at)
+            j += nt
+        _sync[gpu]()
+        return
+
+    var beta = sqrt(alpha * alpha + beyond)
+    if alpha > 0:
+        beta = -beta
+    var this_tau = (beta - alpha) / beta
+    var scale = Scalar[dtype](1) / (alpha - beta)
+
+    j = t
+    while j < cols:
+        var value = Scalar[dtype](0)
+        if j == first:
+            value = Scalar[dtype](1)
+        elif j > first:
+            value = a[Coord(k0, j)] * scale
+        right.store[1](Coord(k0, j), value)
+        j += nt
+    _sync[gpu]()
+
+    j = first + 1 + t
+    while j < cols:
+        a.store[1](Coord(k0, j), Scalar[dtype](0))
+        j += nt
+    if t == 0:
+        a.store[1](Coord(k0, first), beta)
+        tau.store[1](Coord(k0), this_tau)
+    _sync[gpu]()
+
+
 def laswp[
     dtype: DType,
     XLayout: TensorLayout,
