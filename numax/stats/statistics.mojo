@@ -96,6 +96,11 @@ from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 from nn.cumsum import cumsum as _nn_cumsum
 
 from ..core.array import Dynamic, Static, Tensor, _dyn_shape_from
+from ..core.ops import (
+    multiply as _multiply,
+    power as _power,
+    subtract as _subtract,
+)
 from ..core.numeric import FloatLike
 from ..core.rowwise import mean_variance_axis
 
@@ -859,6 +864,78 @@ def stddev[
     defined as a function name at all.
     """
     return _sqrt(variance[gpu=gpu](xs, ddof))
+
+
+def ptp[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
+    dtype, 1
+] where dtype.is_floating_point():
+    """The range of `xs`, `max - min` -- "peak to peak". `numpy.ptp`. The
+    two whole-tensor reductions, so host-side as they are."""
+    return max(xs) - min(xs)
+
+
+def average[
+    dtype: DType, LayoutType: TensorLayout
+](mut xs: Tensor[dtype, LayoutType]) raises -> SIMD[
+    dtype, 1
+] where dtype.is_floating_point():
+    """The plain mean: `numpy.average(a)` without weights is `numpy.mean`.
+    Here so that the weighted overload below has its unweighted twin under
+    the same name."""
+    return mean(xs)
+
+
+def average[
+    dtype: DType, LayoutType: TensorLayout
+](
+    mut xs: Tensor[dtype, LayoutType], weights: Tensor[dtype, LayoutType]
+) raises -> SIMD[dtype, 1] where dtype.is_floating_point():
+    """The weighted mean `sum(w x) / sum(w)`. `numpy.average(a, weights=w)`.
+
+    Two reductions and one elementwise product, host-side as those are; a
+    zero total weight raises, as NumPy's does. The weights must have `xs`'s
+    shape -- NumPy's broadcasting of a 1-D `weights` along an axis is the
+    axis form this does not have. A second overload rather than an
+    `Optional[Tensor]`, since a `Tensor` is not implicitly copyable into
+    one.
+    """
+    var total = sum(weights)
+    if total == 0:
+        raise Error("average: the weights sum to zero")
+    return sum(_multiply(xs, weights)) / total
+
+
+def moment[
+    dtype: DType, LayoutType: TensorLayout
+](
+    mut xs: Tensor[dtype, LayoutType],
+    order: Int,
+    center: Optional[Float64] = None,
+) raises -> SIMD[dtype, 1] where dtype.is_floating_point():
+    """The `order`-th moment of `xs` about `center`, the mean by default:
+    `mean((x - c) ** order)`. `scipy.stats.moment(a, order, center=c)`.
+
+    The first central moment is exactly zero, and is returned as exactly
+    zero rather than as the rounding noise the subtraction would leave,
+    which is SciPy's short-circuit too. One elementwise pass and one
+    reduction, host-side as those are.
+    """
+    if order < 0:
+        raise Error("moment: order must be non-negative")
+    if order == 0:
+        return SIMD[dtype, 1](1)
+    var c: SIMD[dtype, 1]
+    if center:
+        c = SIMD[dtype, 1](center.value())
+    else:
+        if order == 1:
+            return SIMD[dtype, 1](0)
+        c = mean(xs)
+    var deviation = _subtract(xs, c)
+    var powered = _power(deviation, SIMD[dtype, 1](order))
+    return mean(powered)
 
 
 def cumsum[

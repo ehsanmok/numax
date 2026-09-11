@@ -6,7 +6,9 @@ from numax.stats import mean, variance, norm, uniform, seed
 
 | Module | Contents |
 |---|---|
-| `statistics` | `sum`, `mean`, `median`, `mode`, `prod`, `cumsum`, `cumprod`, `variance`, `stddev`, `variance_axis`, `min`/`max`, `argmin`/`argmax` |
+| `statistics` | `sum`, `mean`, `median`, `mode`, `prod`, `cumsum`, `cumprod`, `variance`, `stddev`, `variance_axis`, `min`/`max`, `argmin`/`argmax`, `ptp`, `average`, `moment` |
+| `quantiles` | `quantile`/`percentile` under every NumPy `method`, `nanquantile`/`nanpercentile`/`nanmedian`, `iqr` -- host-side, one sort |
+| `nanfunctions` | `nansum`, `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax` -- `isnan`, `select` and the plain reductions, composed |
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` for a named reproducible stream |
 
@@ -52,6 +54,7 @@ from .random import (
 from .statistics import (
     argmax,
     argmin,
+    average,
     cumprod,
     cumsum,
     max,
@@ -59,9 +62,28 @@ from .statistics import (
     median,
     min,
     mode,
+    moment,
     prod,
+    ptp,
     stddev,
     sum,
     variance,
     variance_axis,
+)
+from .quantiles import (
+    iqr,
+    nanmedian,
+    nanpercentile,
+    nanquantile,
+    percentile,
+    quantile,
+)
+from .nanfunctions import (
+    nanmax,
+    nanmean,
+    nanmin,
+    nanprod,
+    nanstd,
+    nansum,
+    nanvar,
 )

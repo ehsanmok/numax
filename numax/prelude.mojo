@@ -268,7 +268,27 @@ from .linalg import (
 
 # Statistics and sampling. The builtin-shadowing reductions are excluded --
 # see this module's docstring.
+from .stats.quantiles import (
+    iqr,
+    nanmedian,
+    nanpercentile,
+    nanquantile,
+    percentile,
+    quantile,
+)
+from .stats.nanfunctions import (
+    nanmax,
+    nanmean,
+    nanmin,
+    nanprod,
+    nanstd,
+    nansum,
+    nanvar,
+)
 from .stats.statistics import (
+    average,
+    moment,
+    ptp,
     argmax,
     argmin,
     cumprod,
