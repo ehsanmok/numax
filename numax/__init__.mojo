@@ -289,6 +289,7 @@ from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 from .linalg import (
     TensorLU,
     TensorQR,
+    TensorTridiagonal,
     asum,
     axpy,
     batched_matmul,
@@ -328,6 +329,7 @@ from .linalg import (
     solve_toeplitz,
     solve_triangular,
     solveh_banded,
+    sytrd,
     toeplitz,
     trace,
 )

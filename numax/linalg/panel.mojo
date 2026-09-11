@@ -478,6 +478,176 @@ def getrf2[
     )
 
 
+def sytd2_column[
+    dtype: DType,
+    ALayout: TensorLayout,
+    VLayout: TensorLayout,
+    TauLayout: TensorLayout,
+    SLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    vpad: _View[dtype, VLayout],
+    tau: _View[dtype, TauLayout],
+    scratch: _View[dtype, SLayout],
+    k: Int32,
+    n: Int32,
+) where dtype.is_floating_point():
+    """Form column `k`'s Householder reflector for a symmetric
+    tridiagonal reduction, and write it out padded. LAPACK's `sytd2`
+    inner step, without the update.
+
+    The reflector annihilates `a[k+2.., k]`, leaving `a[k+1, k]` as the
+    subdiagonal entry `T` keeps. What it writes back is LAPACK's packed
+    form -- `a[k+1, k]` holds that entry, `a[k+2.., k]` holds `v` past its
+    implicit leading `1`, and `tau[k]` holds the scale.
+
+    The difference from `geqr2_panel`, and the reason this is its own
+    kernel: a QR reflector is applied to the columns to its right, while
+    this one has to be applied on *both* sides of the trailing block.
+    Neither the update nor the panel's remaining columns happen here --
+    the caller does the update with two matrix products, which is what
+    keeps the cubic term in MAX's GEMM.
+
+    `vpad` is the reflector as a full-length vector -- zero at and above
+    `k`, `1` at `k + 1`, `v` below -- so the caller can multiply the
+    *whole* matrix by it and keep the leading block untouched for free,
+    rather than staging the trailing block dense on every column.
+
+    `scratch` is `_PANEL_THREADS + 1` entries for the norm reduction, the
+    same shape `geqr2_panel` uses.
+
+    Launch on the accelerator with `grid_dim=1`,
+    `block_dim=_PANEL_THREADS`; the host path runs it single-threaded.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var k0 = Int(k)
+    var rows = Int(n)
+    var first = k0 + 1
+
+    # ||x|| over the column strictly below the subdiagonal.
+    var partial = Scalar[dtype](0)
+    var i = first + 1 + t
+    while i < rows:
+        var value = a[Coord(i, k0)]
+        partial += value * value
+        i += nt
+    scratch.store[1](Coord(t), partial)
+    _sync[gpu]()
+
+    if t == 0:
+        var total = Scalar[dtype](0)
+        for c in range(nt):
+            total += scratch[Coord(c)]
+        scratch.store[1](Coord(nt), total)
+    _sync[gpu]()
+
+    var below = scratch[Coord(nt)]
+    var alpha = a[Coord(first, k0)]
+
+    # Already tridiagonal in this column: the reflector is the identity,
+    # `tau = 0`, and the scaling that would divide by zero never runs.
+    if below == 0:
+        if t == 0:
+            tau.store[1](Coord(k0), Scalar[dtype](0))
+        i = t
+        while i < rows:
+            var one_at = Scalar[dtype](1) if i == first else Scalar[dtype](0)
+            vpad.store[1](Coord(i), one_at)
+            i += nt
+        _sync[gpu]()
+        return
+
+    var beta = sqrt(alpha * alpha + below)
+    if alpha > 0:
+        beta = -beta
+    var this_tau = (beta - alpha) / beta
+    var scale = Scalar[dtype](1) / (alpha - beta)
+
+    i = first + 1 + t
+    while i < rows:
+        a.store[1](Coord(i, k0), a[Coord(i, k0)] * scale)
+        i += nt
+    if t == 0:
+        a.store[1](Coord(first, k0), beta)
+        tau.store[1](Coord(k0), this_tau)
+    _sync[gpu]()
+
+    # `vpad`: zero at and above `k`, the implicit `1` at `k + 1`, `v` below.
+    i = t
+    while i < rows:
+        var value = Scalar[dtype](0)
+        if i == first:
+            value = Scalar[dtype](1)
+        elif i > first:
+            value = a[Coord(i, k0)]
+        vpad.store[1](Coord(i), value)
+        i += nt
+    _sync[gpu]()
+
+
+def sytd2_rank_two[
+    dtype: DType,
+    VLayout: TensorLayout,
+    PLayout: TensorLayout,
+    LLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    vpad: _View[dtype, VLayout],
+    p: _View[dtype, PLayout],
+    left: _View[dtype, LLayout],
+    right: _View[dtype, LLayout],
+    this_tau: Scalar[dtype],
+    kappa: Scalar[dtype],
+    k: Int32,
+    n: Int32,
+) where dtype.is_floating_point():
+    """Build the two `n x 2` operands whose product is the symmetric
+    rank-2 update `v w^T + w v^T`.
+
+    `w = tau * p - (tau^2 * kappa / 2) * v`, where `p` is the unscaled
+    `A v` and `kappa` is `p . v` -- Golub and Van Loan's `w` with the
+    scaling deferred so the caller's matrix-vector product carries no
+    factor.
+
+    Packing them as `left = [v | w]` and `right = [w | v]` makes
+    `left @ right^T` exactly `v w^T + w v^T`, so MAX's GEMM does the
+    update in **one** call with `transpose_b=True` rather than two rank-one
+    passes. That identity is what lets numax skip the `syrk`/`syr2k` MAX
+    does not ship, and it is the same one a blocked `latrd` would use with
+    `2 * block` columns instead of two.
+
+    **`w` is forced to zero at and above `k`, and that is load-bearing.**
+    `v` already vanishes there, but `p` does not -- it is `A v` over the
+    whole matrix, so its leading entries are the rows the reflector does
+    not touch. Leaving them in `w` would make the update write column `k`,
+    which is where `sytd2_column` just packed the reflector, and the
+    factorization would lose the very vectors it needs to form `Q`. With
+    both vectors zeroed there the update is confined to the trailing block
+    exactly as LAPACK's is, and the caller still multiplies the whole
+    matrix and stages nothing.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var rows = Int(n)
+    var shift = this_tau * this_tau * kappa / Scalar[dtype](2)
+
+    var first = Int(k) + 1
+    var i = t
+    while i < rows:
+        var v = vpad[Coord(i)]
+        var w = Scalar[dtype](0)
+        if i >= first:
+            w = this_tau * p[Coord(i)] - shift * v
+        left.store[1](Coord(i, 0), v)
+        left.store[1](Coord(i, 1), w)
+        right.store[1](Coord(i, 0), w)
+        right.store[1](Coord(i, 1), v)
+        i += nt
+    _sync[gpu]()
+
+
 def laswp[
     dtype: DType,
     XLayout: TensorLayout,

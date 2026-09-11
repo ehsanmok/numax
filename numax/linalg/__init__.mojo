@@ -37,6 +37,7 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
+| `eigen` | `sytrd`, `TensorTridiagonal` | LAPACK's `sytrd`, under `_decomp` |
 | `matfuncs` | `expm` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
@@ -51,7 +52,8 @@ once per tier and never twice within one.
 `matmul` (compile-time and run-time shapes), `matvec`, `batched_matmul`,
 the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`, `outer`), blocked
 `cholesky`, `lu_factor` (returning a reusable `TensorLU`), `qr_factor`
-(returning a reusable `TensorQR`) and `solve`, the solves those unlock --
+(returning a reusable `TensorQR`), `sytrd` (returning a reusable
+`TensorTridiagonal`) and `solve`, the solves those unlock --
 `solve_triangular`, `cholesky_solve`, `inverse`, `det`, `slogdet`, and the
 least-squares `TensorQR.solve` -- and the scalar summaries `norm`
 (`fro`/`1`/`inf` over a matrix, `2`/`1`/`inf`/`neg_inf` over a vector) and
@@ -93,37 +95,29 @@ cannot be built from an immutable binding.
 
 ## Not here yet
 
-`svd`, `eigh`, `eigvals`, `cond` and `pinv` have no `Tensor` overload, so
-past the crossover in `docs/performance.md` they are genuinely missing
-rather than one import away; `numax.linalg.array` has them for matrices
-small enough to live in registers. `cond` and `pinv` are `svd`'s
-dependents and move when it does. `tridiagonal_solve` will stay
-`Array`-only -- Thomas is already linear and has nothing to hand a GEMM.
+`eigh`, `eigvalsh`, `svd`, `svdvals`, `eigvals`, `cond` and `pinv` have no
+`Tensor` overload yet; `numax.linalg.array` has them for matrices small
+enough to live in registers. `cond` and `pinv` are `svd`'s dependents and
+move when it does. `tridiagonal_solve` will stay `Array`-only -- Thomas is
+already linear and has nothing to hand a GEMM.
 
-The spectral four stop here deliberately, and the reason is the shape of
-the algorithms rather than the amount of work left. Every one of them is
-two phases. The first is a reduction -- symmetric to tridiagonal, general
-to bidiagonal or to Hessenberg -- and that phase is exactly the block
-reflector `qr_factor` already runs: a panel of Householder vectors,
-`larft_panel`'s `T`, a trailing update that is three GEMMs. It would be
-MAX-first in the same way, and it is over half the arithmetic.
+**The reduction phase is here.** `sytrd` reduces a symmetric matrix to
+tridiagonal form device-resident, which is over half the arithmetic of an
+`eigh` and the half with a GEMM in it. Each column is four launches: a
+single-block kernel forms the Householder reflector, `matvec` multiplies
+the matrix by it, `dot` reduces one scalar, and one `matmul` applies the
+symmetric rank-two update as `[v | w] @ [w | v]^T` with `transpose_b=True`
+-- the identity that lets numax skip the `syr2k` MAX does not ship.
 
-The second phase is not. Implicitly shifted QL/QR sweeps on the
-tridiagonal, or Golub-Kahan sweeps on the bidiagonal, loop to a tolerance,
-deflate on a data-dependent test, and do it on a band two entries wide.
-There is no GEMM to hand anything to, the sweeps are sequential in a way
-`O(n^2)` of total work spread over `O(n)` of them makes unfixable at this
-level, and both properties are tier 2 by numax's own definition -- so a
-`Tensor` `eigh` would be half a device-resident MAX kernel and half a host
-loop that decides the runtime at exactly the sizes a `Tensor` tier is for.
-Closing that half properly is LAPACK's multishift-with-aggressive-early-
-deflation machinery, which is a research-grade item and not a missing
-overload.
-
-When this resumes, the first commit is the reduction phase alone --
-`sytrd` on top of the existing block reflector, checkable by asserting
-`Q^T A Q` is tridiagonal and similar to `A` -- with the sweep following as
-declared tier 2.
+What remains of an `eigh` is the second phase, and it is the one with no
+GEMM in it. Implicitly shifted QL/QR sweeps on the tridiagonal, or
+Golub-Kahan sweeps on the bidiagonal, loop to a tolerance, deflate on a
+data-dependent test, and do it on a band two entries wide. That is tier 2
+by numax's own definition, and `eigen.mojo` declares it where it happens
+rather than hiding it. The eigenvalue-only sweep is `O(n^2)` and genuinely
+negligible beside the reduction; accumulating eigen*vectors* is `O(n^3)` of
+scalar rotations, and the upgrade there is `stedc`, whose merge phase is
+GEMM-shaped.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of
@@ -158,6 +152,7 @@ from .blas import (
     outer,
 )
 from .cholesky import cholesky, cholesky_solve
+from .eigen import TensorTridiagonal, sytrd
 from .lu import TensorLU, det, lu_factor, slogdet
 from .matfuncs import expm
 from .misc import fro, inf, neg_inf, norm, trace
