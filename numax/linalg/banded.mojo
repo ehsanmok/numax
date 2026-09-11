@@ -460,7 +460,7 @@ def solve_circulant[
     dtype: DType, n: Int, gpu: Bool = False
 ](mut c: Static[dtype, n], mut b: Static[dtype, n]) raises -> Static[
     dtype, n
-] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+] where (dtype.is_floating_point() and n > 0):
     """Solve `a @ x = b` where `a` is the circulant matrix with first column
     `c`. `scipy.linalg.solve_circulant`.
 
@@ -476,12 +476,12 @@ def solve_circulant[
     is never built. `numax.linalg.circulant` is the constructor for when it
     is wanted as a matrix.
 
-    **`n` must be a power of two.** `numax.fft` is power-of-two by
-    construction -- `docs/parity.md` records that as the shape of the whole
-    subsystem rather than a gap in it -- and the `where` clause makes the
-    restriction a compile error rather than a run-time surprise. SciPy has
-    no such limit. Pad the system to a power of two, or use
-    `solve_toeplitz`, which has none.
+    Any `n > 0`, as SciPy's. A power of two runs `numax.fft`'s radix-2
+    engine and every other length its Bluestein path, which costs three
+    power-of-two transforms of `next_fast_len(2n - 1)` per transform here
+    -- still `O(n log n)`, at a larger constant. A system that is free to
+    be padded is cheaper at `next_fast_len(n)`; one that is not no longer
+    has to be.
 
     A zero in `fft(c)` means the circulant is singular: one of its
     eigenvalues, which are exactly the entries of `fft(c)`, is zero. That

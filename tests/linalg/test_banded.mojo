@@ -371,6 +371,27 @@ def test_solve_circulant_matches_the_dense_solve() raises:
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-10)
 
 
+def test_solve_circulant_at_a_non_power_of_two_matches_scipy() raises:
+    """`scipy.linalg.solve_circulant([4, 1, .5, -.25, .75, 2], [1, 2, 3, -1,
+    .5, 4])`: `n = 6` takes `numax.fft`'s Bluestein path, which is the
+    length this routine could not accept before."""
+    var ctx = DeviceContext(api="cpu")
+    comptime n = 6
+    var c = Static[dtype, n](ctx, [4.0, 1.0, 0.5, -0.25, 0.75, 2.0])
+    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, -1.0, 0.5, 4.0])
+    var got = solve_circulant[dtype, n](c, b).to_host()
+    var want = [
+        -0.20338344335456288,
+        -0.21549817535214555,
+        1.2966862884105805,
+        -0.5300349239923758,
+        -0.5995528450560177,
+        1.4392830993445211,
+    ]
+    for i in range(n):
+        assert_almost_equal(Float64(got[i]), want[i], atol=1e-12)
+
+
 def test_solve_circulant_residual_is_zero() raises:
     """Multiply the answer back through the circulant it solved."""
     var ctx = DeviceContext(api="cpu")
