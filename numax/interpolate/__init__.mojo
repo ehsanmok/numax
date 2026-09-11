@@ -1,7 +1,7 @@
 """numax.interpolate: interpolation and polynomial evaluation.
 
 ```mojo
-from numax.interpolate import interp, horner, CubicSpline, PchipInterpolator
+from numax.interpolate import interp, CubicSpline, Chebyshev, RegularGridInterpolator
 ```
 
 Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
@@ -9,7 +9,7 @@ Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
 
 | Import | Holds | Good for |
 | --- | --- | --- |
-| `numax.interpolate` | `Tensor`, `Plain`-only, tier 2 | a device buffer of samples queried at a tensor of points: `interp` (NumPy's linear lookup), `horner`, and the cubic splines on knots that need not be uniform -- `CubicSpline` with SciPy's `bc_type`s, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- each evaluating any derivative order and integrating |
+| `numax.interpolate` | `Tensor`, `Plain`-only, tier 2 | a device buffer of samples queried at a tensor of points: `interp` (NumPy's linear lookup), `horner`, and the cubic splines on knots that need not be uniform -- `CubicSpline` with SciPy's `bc_type`s, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- each evaluating any derivative order and integrating; `Chebyshev.fit(x, y)`, the least-squares series through `numax.linalg.lstsq`, with `chebval`; and `RegularGridInterpolator` on a 2-D rectilinear grid, linear or nearest |
 | `numax.interpolate.array` | `Array[T, n]` and `FloatLike`, tier 1 | a handful of knots in registers: `horner`, the natural `CubicSpline` and the `Chebyshev` fit of a `FloatLike` function, all of which differentiate at `Dual` and run per SIMD lane inside a kernel |
 
 This surface is the `Tensor` one. What separates the tiers is the interval
@@ -29,3 +29,5 @@ from .spline import (
     CubicSpline,
     PchipInterpolator,
 )
+from .chebyshev import Chebyshev, chebval
+from .grid import RegularGridInterpolator

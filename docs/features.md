@@ -368,6 +368,8 @@ numax's own.
 | `horner` — `numpy.polynomial.polynomial.polyval`: ascending coefficients at a tensor of points | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
 | `CubicSpline` — `scipy.interpolate.CubicSpline` on knots that need not be uniform, `bc_type` `"not-a-knot"` (default), `"natural"`, `"clamped"`, the slopes from SciPy's own tridiagonal rows through `numax.linalg.solve_banded`; `spline[nu=k](points)` is the `k`-th derivative, `integrate(a, b)` the exact integral; extrapolates by default | [`interpolate/spline.mojo`](../numax/interpolate/spline.mojo) |
 | `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` — shape-preserving, Akima's, and prescribed-slope cubics; all four share one `PPoly` form and one evaluation kernel. Akima is NaN outside the knots by default, as SciPy's is | [`interpolate/spline.mojo`](../numax/interpolate/spline.mojo) |
+| `Chebyshev.fit(x, y)`, `chebval` — `numpy.polynomial.chebyshev`'s least-squares fit to *data* on `[min x, max x]`, the Chebyshev Vandermonde solved by `numax.linalg.lstsq`, and Clenshaw evaluation per lane | [`interpolate/chebyshev.mojo`](../numax/interpolate/chebyshev.mojo) |
+| `RegularGridInterpolator` — `scipy.interpolate`'s, in two dimensions: a `rows x cols` value matrix on rectilinear axes, `"linear"` or `"nearest"`, with `bounds_error`, `fill_value` and `extrapolate` (SciPy's `fill_value=None`) | [`interpolate/grid.mojo`](../numax/interpolate/grid.mojo) |
 
 Tier 2: one `elementwise` launch over the queries, and inside it a lane
 bisects the knots — the data-dependent branch the `Array` tier cannot make.

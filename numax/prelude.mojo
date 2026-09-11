@@ -301,6 +301,8 @@ from .interpolate.spline import (
     CubicSpline,
     PchipInterpolator,
 )
+from .interpolate.chebyshev import Chebyshev, chebval
+from .interpolate.grid import RegularGridInterpolator
 from .fft.fft import (
     Spectrum,
     fft,

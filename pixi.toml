@@ -241,6 +241,7 @@ test-panel = "mojo -I . tests/linalg/test_panel.mojo"
 test-interp = "mojo -I . tests/interpolate/test_interp.mojo"
 test-tensor-interp = "mojo -I . tests/interpolate/test_tensor_interp.mojo"
 test-tensor-spline = "mojo -I . tests/interpolate/test_tensor_spline.mojo"
+test-tensor-fitting = "mojo -I . tests/interpolate/test_tensor_fitting.mojo"
 test-fft = "mojo -I . tests/fft/test_fft.mojo"
 test-tensor-fft = "mojo -I . tests/fft/test_tensor_fft.mojo"
 test-tensor-trig = "mojo -I . tests/fft/test_tensor_trig.mojo"
@@ -313,6 +314,7 @@ tests = { depends-on = [
     "test-interp",
     "test-tensor-interp",
     "test-tensor-spline",
+    "test-tensor-fitting",
     "test-fft",
     "test-tensor-fft",
     "test-tensor-trig",
