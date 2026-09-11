@@ -210,6 +210,7 @@ exist.
   drops it, so `mo.cumsum` has no GPU kernel either. numax's `cumsum` and
   `cumprod` are host-side for that reason; a device scan is a blocked
   Blelloch pass rather than a flag on this kernel.
+- **`logsumexp`.** No entry point -- `nn.softmax` with `logsoftmax=True` returns the normalized tensor, not the scalar -- but the fold is there: `algorithm.reduce_op.OnlineLogSumExp` is the flash-style `{max, sum exp(x - max)}` monoid, and `numax.special.logsumexp` over `Tensor` drives it through `rowwise` exactly as `numax.linalg.dot` drives `ReduceSum`. The monoid is delegated, the entry point extended.
 - **Distributions.** Uniform, normal and Gumbel only.
 - **Everything algorithmic.** No quadrature, ODE solvers, optimizers, root
   finders, sparse matrices, polynomials, or signal-sense convolution.

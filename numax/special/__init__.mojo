@@ -4,7 +4,8 @@ Each one is written once against `FloatLike`, so the same source is
 differentiable (`Dual`), extra-precise (`Compensated`), complex
 (`Complex`) or interval-bounded (`Interval`) depending on what
 instantiates it -- and every one is tier 1, launchable inside a GPU
-thread.
+thread, except the `Tensor` overload of `logsumexp`, which is a device
+reduction and says so.
 
 ```mojo
 from numax.special import gamma, j0, erf, gaussian
@@ -13,7 +14,9 @@ from numax.special import gamma, j0, erf, gaussian
 | Module | Contents |
 |---|---|
 | `erf` | `erf`, `erfc`, `erfinv`, `erfcinv` |
-| `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc` |
+| `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc`, `gammasgn`, `factorial`, `comb`, `perm`, `poch` |
+| `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit` -- the `0 log 0` conventions as blends |
+| `logsumexp` | `logsumexp` over an `Array` (tier 1) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid (tier 2, the one delegation here) |
 | `beta` | `beta`, `betainc`, `betaincc` |
 | `bessel` | `j0`, `j1`, `y0`, `y1` |
 | `elliptic` | `elliptic_k`, `elliptic_e` |
@@ -39,7 +42,20 @@ from .bessel import j0, j1, y0, y1
 from .beta import beta, betainc, betaincc
 from .elliptic import elliptic_e, elliptic_k
 from .erf import erf, erfc, erfcinv, erfinv
-from .gamma import digamma, gamma, gammainc, gammaincc, lgamma
+from .gamma import (
+    comb,
+    digamma,
+    factorial,
+    gamma,
+    gammainc,
+    gammaincc,
+    gammasgn,
+    lgamma,
+    perm,
+    poch,
+)
+from .information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
+from .logsumexp import logsumexp
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p
 from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l

@@ -228,6 +228,8 @@ from .special.activations import (
 )
 from .special.erf import erf, erfc, erfcinv, erfinv
 from .special.gamma import digamma, gamma, lgamma
+from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
+from .special.logsumexp import logsumexp
 from .special.beta import beta
 
 # Dense linear algebra over `Tensor`. The `Array` tier is

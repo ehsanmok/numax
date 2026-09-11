@@ -66,12 +66,14 @@ from numax import (
     y1,
     betainc,
     chebyshev_t,
+    comb,
     digamma,
     elliptic_e,
     elliptic_k,
     erf,
     erfc,
     erfinv,
+    factorial,
     gamma,
     gammainc,
     hermite_h,
@@ -79,6 +81,7 @@ from numax import (
     lambertw,
     legendre_p,
     lgamma,
+    poch,
 )
 from numax.special.lambertw import lambertw_m1
 from numax.core.numeric import default_erf_approx
@@ -271,6 +274,32 @@ def main():
     for i in range(ERFINV_TAIL_N):
         s.observe(xs[i], erfinv(p(xs[i])).v[0], refs[i])
     s.report("erfinv (guess + 3 Newton), 1-[1e-12,1e-1]")
+
+    # --- combinatorics ------------------------------------------------
+    # `factorial`, `comb` and `poch` are `exp` of `lgamma` differences, so
+    # what they inherit is `lgamma`'s floor amplified by the exponential;
+    # the rows say how much of it survives at moderate arguments.
+    section("Combinatorics")
+    s = Stats()
+    xs = materialize[FACTORIAL_POS_X]()
+    refs = materialize[FACTORIAL_POS_REF]()
+    for i in range(FACTORIAL_POS_N):
+        s.observe(xs[i], factorial(p(xs[i])).v[0], refs[i])
+    s.report("factorial (gamma(n+1)), [0.5,20]")
+
+    s = Stats()
+    xs = materialize[COMB_CHOOSE3_X]()
+    refs = materialize[COMB_CHOOSE3_REF]()
+    for i in range(COMB_CHOOSE3_N):
+        s.observe(xs[i], comb(p(xs[i]), p(3.0)).v[0], refs[i])
+    s.report("comb(n, 3) (exp of lgamma differences), n in [3,60]")
+
+    s = Stats()
+    xs = materialize[POCH_RISE25_X]()
+    refs = materialize[POCH_RISE25_REF]()
+    for i in range(POCH_RISE25_N):
+        s.observe(xs[i], poch(p(xs[i]), p(2.5)).v[0], refs[i])
+    s.report("poch(z, 2.5) (exp of lgamma differences), z in [0.5,20]")
 
     # --- gamma family -------------------------------------------------
     section("Gamma family")

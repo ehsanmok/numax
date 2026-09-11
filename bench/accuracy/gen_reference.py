@@ -116,6 +116,30 @@ def build() -> list[Case]:
     )
     cases.append(
         Case(
+            "factorial_pos",
+            "factorial, [0.5, 20]",
+            clustered(0.5, 20.0),
+            lambda n: mp.gamma(n + 1),
+        )
+    )
+    cases.append(
+        Case(
+            "comb_choose3",
+            "comb(n, 3), n in [3, 60]",
+            clustered(3.0, 60.0),
+            lambda n: mp.binomial(n, 3),
+        )
+    )
+    cases.append(
+        Case(
+            "poch_rise25",
+            "poch(z, 2.5), z in [0.5, 20]",
+            clustered(0.5, 20.0),
+            lambda z: mp.rf(z, mp.mpf("2.5")),
+        )
+    )
+    cases.append(
+        Case(
             "gamma_neg",
             "gamma, (-5, 0) off the poles",
             between_poles(-5, 0),

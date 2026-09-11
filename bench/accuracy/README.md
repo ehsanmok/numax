@@ -101,6 +101,22 @@ is the approximation `Compensated` and `Decimal` fall back to. And
 measured version of the argument for promoting `erf` to a trait method so
 `Plain` could delegate.
 
+### Combinatorics
+
+| function / domain | max abs | max rel | max ULP |
+| --- | --- | --- | --- |
+| `factorial` (`gamma(n+1)`), [0.5, 20] | 1.10e+09 | 1.17e-08 | 104,856,286 |
+| `comb(n, 3)` (`exp` of `lgamma` differences), n in [3, 60] | 3.28e-04 | 2.92e-08 | 180,535,060 |
+| `poch(z, 2.5)` (`exp` of `lgamma` differences), z in [0.5, 20] | 1.33e-05 | 1.22e-08 | 95,236,033 |
+
+Read the relative column. All three are `exp` of one or two `lgamma`s, so
+they inherit `lgamma`'s floor (itself `ln`'s, below) multiplied out by the
+exponential: the 1.1e+09 absolute error on `factorial` is `20!`'s 2.4e+18
+magnitude times a 1.2e-08 relative error, not a defect of its own. The
+`lgamma` differences in `comb` and `poch` cancel most of the shared
+magnitude before the `exp`, which is why they land at the same relative
+level as `factorial` rather than above it.
+
 ### Gamma family
 
 | function / domain | max abs | max rel | max ULP |

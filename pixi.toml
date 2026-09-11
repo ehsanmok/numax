@@ -205,6 +205,7 @@ test-tensor-reduce = "mojo -I . tests/core/test_tensor_reduce.mojo"
 test-activations = "mojo -I . tests/special/test_activations.mojo"
 test-erf = "mojo -I . tests/special/test_erf.mojo"
 test-gamma = "mojo -I . tests/special/test_gamma.mojo"
+test-information = "mojo -I . tests/special/test_information.mojo"
 test-bessel = "mojo -I . tests/special/test_bessel.mojo"
 test-lambertw = "mojo -I . tests/special/test_lambertw.mojo"
 test-decimal = "mojo -I . tests/core/test_decimal.mojo"
@@ -285,6 +286,7 @@ tests = { depends-on = [
     "test-activations",
     "test-erf",
     "test-gamma",
+    "test-information",
     "test-bessel",
     "test-lambertw",
     "test-decimal",

@@ -187,6 +187,51 @@ def gammaincc[T: FloatLike](a: T, x: T) -> T:
     return T.one() - gammainc(a, x)
 
 
+def gammasgn[T: FloatLike](x: T) -> T:
+    """The sign of `Gamma(x)`: `+1` for `x > 0` and for `x` in `(-2, -1)`,
+    `(-4, -3)`, ..., `-1` on the other negative unit intervals.
+    `scipy.special.gammasgn(x)`. What `lgamma`'s `ln|Gamma|` discards and
+    `gamma` puts back; public so a caller doing the same
+    `exp(lgamma)`-and-sign trick on a ratio can."""
+    return _gamma_sign(x)
+
+
+def factorial[T: FloatLike](n: T) -> T:
+    """`n!` as `Gamma(n + 1)`, so a non-integer `n` gets the analytic
+    continuation SciPy's `factorial(n, exact=False)` returns."""
+    return gamma(n + T.one())
+
+
+def comb[T: FloatLike](n: T, k: T) -> T:
+    """The binomial coefficient `n choose k` as `Gamma(n+1) / (Gamma(k+1)
+    Gamma(n-k+1))`, evaluated through `lgamma` so `comb(1000, 500)` does
+    not overflow on the way. `scipy.special.comb(n, k, exact=False)`, and
+    `scipy.special.binom` for non-integer arguments. Defined for `n >= k >=
+    0`; `k > n` gives `Gamma` of a non-positive argument rather than
+    SciPy's `0`."""
+    var one = T.one()
+    var log_value = lgamma(n + one) - lgamma(k + one) - lgamma(n - k + one)
+    return log_value.exp()
+
+
+def perm[T: FloatLike](n: T, k: T) -> T:
+    """The number of `k`-permutations of `n`, `n! / (n - k)!`, through
+    `lgamma`. `scipy.special.perm(n, k, exact=False)`. Defined for `n >= k
+    >= 0`."""
+    var one = T.one()
+    return (lgamma(n + one) - lgamma(n - k + one)).exp()
+
+
+def poch[T: FloatLike](z: T, m: T) -> T:
+    """The Pochhammer symbol `(z)_m = Gamma(z + m) / Gamma(z)`, the rising
+    factorial, for any real `z` and `m` off `Gamma`'s poles.
+    `scipy.special.poch(z, m)`. `exp(lgamma(z+m) - lgamma(z))` with both
+    signs restored through `gammasgn`, so `poch(-2.5, 3)` comes out
+    `-1.875` and not its magnitude."""
+    var magnitude = (lgamma(z + m) - lgamma(z)).exp()
+    return magnitude * _gamma_sign(z + m) * _gamma_sign(z)
+
+
 def digamma[T: FloatLike](x: T) -> T:
     """The digamma function, `psi(x) = d/dx[ln(Gamma(x))]`.
 

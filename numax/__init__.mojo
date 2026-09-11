@@ -277,7 +277,20 @@ from .special.bessel import j0, j1, y0, y1
 from .special.beta import beta, betainc, betaincc
 from .special.elliptic import elliptic_e, elliptic_k
 from .special.erf import erf, erfc, erfcinv, erfinv
-from .special.gamma import digamma, gamma, gammainc, gammaincc, lgamma
+from .special.gamma import (
+    comb,
+    digamma,
+    factorial,
+    gamma,
+    gammainc,
+    gammaincc,
+    gammasgn,
+    lgamma,
+    perm,
+    poch,
+)
+from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
+from .special.logsumexp import logsumexp
 from .special.lambertw import lambertw, lambertw_m1
 from .special.legendre import legendre_p
 from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
