@@ -27,6 +27,8 @@ from layout.tile_tensor import PointerStorage
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
+from std.builtin.sort import sort as _std_sort
+from std.math import hypot as _hypot
 from std.sys.info import align_of
 from std.utils import IndexList
 
@@ -394,3 +396,142 @@ def _subtract_rank_two[
         target=_target[gpu](),
     ](product.view(), left.view(), right.view(), ctx)
     ctx.synchronize()
+
+
+@always_inline
+def _eps[dtype: DType]() -> Scalar[dtype]:
+    """Machine epsilon for `dtype`, the deflation threshold the sweeps use."""
+    comptime if dtype == DType.float32:
+        return Scalar[dtype](1.1920929e-07)
+    else:
+        return Scalar[dtype](2.220446049250313e-16)
+
+
+comptime _MAX_QL_SWEEPS = 60
+"""Sweeps allowed per eigenvalue before `eigvalsh` gives up.
+
+LAPACK's `sterf` uses `30 * n` in total; per eigenvalue that is a bound
+nothing well-formed approaches, since a Wilkinson-shifted QL step converges
+cubically once the off-diagonal is small. Reaching it means `e` carries a
+NaN or an infinity, and the raise says so rather than looping forever.
+"""
+
+
+def _tql_values[
+    dtype: DType
+](
+    mut d: List[Scalar[dtype]], mut e: List[Scalar[dtype]]
+) raises where dtype.is_floating_point():
+    """Implicit QL with Wilkinson shifts on the symmetric tridiagonal
+    `(d, e)`, eigenvalues only, in place into `d`. LAPACK's `sterf`.
+
+    **Tier 2, host-side, and `O(n^2)`.** Each sweep is a chain of Givens
+    rotations down the band that touches two entries at a time and stops
+    at the first negligible subdiagonal -- there is no GEMM to hand any of
+    it to, and the deflation test branches on the data. This is the half of
+    an eigendecomposition with no MAX in it, and at `O(n^2)` beside the
+    reduction's `O(n^3)` it is the half that costs nothing to run on the
+    host.
+
+    `e` is read as the `n` entries `TensorTridiagonal` carries, with
+    `e[n-1]` unused and treated as zero. Numerical Recipes' `tqli` without
+    the eigenvector accumulation, which is also Golub and Van Loan's
+    Algorithm 8.3.3 read left to right.
+    """
+    var n = len(d)
+    if n <= 1:
+        return
+    e[n - 1] = Scalar[dtype](0)
+    var eps = _eps[dtype]()
+
+    for l in range(n):
+        var sweeps = 0
+        while True:
+            # Find the first negligible subdiagonal at or past `l`; the
+            # block `l..m` is what this sweep works on.
+            var m = l
+            while m < n - 1:
+                var scale = abs(d[m]) + abs(d[m + 1])
+                if abs(e[m]) <= eps * scale:
+                    break
+                m += 1
+            if m == l:
+                break
+
+            sweeps += 1
+            if sweeps > _MAX_QL_SWEEPS:
+                raise Error(
+                    "eigvalsh: eigenvalue ",
+                    l,
+                    " did not converge in ",
+                    _MAX_QL_SWEEPS,
+                    " sweeps -- the matrix holds a NaN or an infinity",
+                )
+
+            # Wilkinson shift from the leading 2x2 of the block.
+            var g = (d[l + 1] - d[l]) / (Scalar[dtype](2) * e[l])
+            var r = _hypot(g, Scalar[dtype](1))
+            var signed_r = r if g >= 0 else -r
+            g = d[m] - d[l] + e[l] / (g + signed_r)
+
+            var s_ = Scalar[dtype](1)
+            var c = Scalar[dtype](1)
+            var p = Scalar[dtype](0)
+            var i = m - 1
+            var underflowed = False
+            while i >= l:
+                var f = s_ * e[i]
+                var b = c * e[i]
+                r = _hypot(f, g)
+                e[i + 1] = r
+                if r == 0:
+                    # The chain broke early: a zero rotation splits the
+                    # block here and the next pass restarts from `l`.
+                    d[i + 1] -= p
+                    e[m] = Scalar[dtype](0)
+                    underflowed = True
+                    break
+                s_ = f / r
+                c = g / r
+                g = d[i + 1] - p
+                r = (d[i] - g) * s_ + Scalar[dtype](2) * c * b
+                p = s_ * r
+                d[i + 1] = g + p
+                g = c * r - b
+                i -= 1
+            if underflowed:
+                continue
+            d[l] -= p
+            e[l] = g
+            e[m] = Scalar[dtype](0)
+
+
+def eigvalsh[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> Static[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** The eigenvalues of a symmetric `a`, ascending, without
+    the eigenvectors. `numpy.linalg.eigvalsh` / `scipy.linalg.eigvalsh`.
+
+    Two phases, and the split is the whole story. `sytrd` reduces `a` to
+    tridiagonal form device-resident -- `O(4n^3/3)` with the cubic term in
+    `linalg.matmul` -- and then `_tql_values` runs implicit QL sweeps on the
+    two diagonals on the host. That sweep is `O(n^2)`, sequential, and
+    branches on the data, which is tier 2 by numax's definition; beside the
+    reduction it is genuinely negligible, and the eigenvalues never asked
+    for a vector to be accumulated, which is where the `O(n^3)` of a
+    host-side `eigh` would hide.
+
+    Ascending, as SciPy returns them. The `Array` tier's `eigvalsh` is
+    cyclic Jacobi at a fixed sweep count and returns its values unsorted --
+    the two agree as multisets, and a test pins that.
+
+    `a` is read as symmetric and not checked; see `sytrd`.
+    """
+    var reduced = sytrd[gpu=gpu](a)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    _tql_values(d, e)
+    _std_sort(d)
+    return Static[dtype, n](a.context(), d^)

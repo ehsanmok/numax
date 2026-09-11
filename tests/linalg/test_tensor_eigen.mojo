@@ -11,10 +11,13 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, transpose, zeros
-from numax.linalg import matmul, sytrd
+from numax.core.array import Static, to_array, transpose, zeros
+from numax.core.plain import Plain
+from numax.linalg import eigvalsh, matmul, sytrd
+from numax.linalg.array import eigvalsh as array_eigvalsh
 
 comptime dtype = DType.float64
+comptime P = Plain[dtype, 1]
 
 
 def _hilbert[n: Int]() raises -> Static[dtype, n, n]:
@@ -189,6 +192,104 @@ def test_sytrd_at_the_sizes_with_nothing_to_do() raises:
     assert_almost_equal(r2.d.to_host()[0], Scalar[dtype](3.0))
     assert_almost_equal(r2.d.to_host()[1], Scalar[dtype](5.0))
     assert_almost_equal(r2.e.to_host()[0], Scalar[dtype](2.0))
+
+
+def test_eigvalsh_of_a_diagonal_matrix_is_its_diagonal_ascending() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 4, 4](ctx)
+    var host = a.to_host()
+    host[0] = 3
+    host[5] = -1
+    host[10] = 7
+    host[15] = 2
+    a.copy_from_host(host)
+
+    var values = eigvalsh(a).to_host()
+    assert_almost_equal(values[0], Scalar[dtype](-1.0), atol=1e-14)
+    assert_almost_equal(values[1], Scalar[dtype](2.0), atol=1e-14)
+    assert_almost_equal(values[2], Scalar[dtype](3.0), atol=1e-14)
+    assert_almost_equal(values[3], Scalar[dtype](7.0), atol=1e-14)
+
+
+def test_eigvalsh_matches_the_known_spectrum_of_hilbert_four() raises:
+    # scipy.linalg.eigvalsh(hilbert(4)), to the digits float64 keeps.
+    var a = _hilbert[4]()
+    var values = eigvalsh(a).to_host()
+    var expected = [
+        9.670230402258689e-05,
+        6.738273605760965e-03,
+        1.691412202214450e-01,
+        1.500214280059243e00,
+    ]
+    for i in range(4):
+        assert_almost_equal(
+            values[i], Scalar[dtype](expected[i]), rtol=1e-9, atol=1e-13
+        )
+
+
+def test_eigvalsh_agrees_with_the_array_tier_as_a_multiset() raises:
+    """The two tiers are different algorithms -- QL after a Householder
+    reduction here, cyclic Jacobi there -- so agreement is the check that
+    both are right. The `Array` tier returns unsorted, so compare sorted."""
+    comptime n = 5
+    var a = _hilbert[n]()
+    var lifted = to_array[P](a)
+
+    var here = eigvalsh(a).to_host()
+    var there = array_eigvalsh[P, n, sweeps=20](lifted)
+    var there_sorted = List[Float64](capacity=n)
+    for i in range(n):
+        there_sorted.append(Float64(there[i].v[0]))
+    # Selection sort; five entries.
+    for i in range(n):
+        for j in range(i + 1, n):
+            if there_sorted[j] < there_sorted[i]:
+                var tmp = there_sorted[i]
+                there_sorted[i] = there_sorted[j]
+                there_sorted[j] = tmp
+    for i in range(n):
+        assert_almost_equal(
+            Float64(here[i]), there_sorted[i], rtol=1e-8, atol=1e-13
+        )
+
+
+def test_eigvalsh_sums_to_the_trace_and_multiplies_to_the_determinant() raises:
+    # Two similarity invariants on a matrix with a known determinant: the
+    # 3x3 [[2,1,0],[1,3,1],[0,1,4]] has trace 9 and det 2*11 - 1*4 = 18.
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 3, 3](ctx)
+    var host = a.to_host()
+    var entries = [2.0, 1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 1.0, 4.0]
+    for i in range(9):
+        host[i] = Scalar[dtype](entries[i])
+    a.copy_from_host(host)
+
+    var values = eigvalsh(a).to_host()
+    var total = values[0] + values[1] + values[2]
+    var product = values[0] * values[1] * values[2]
+    assert_almost_equal(total, Scalar[dtype](9.0), atol=1e-12)
+    assert_almost_equal(product, Scalar[dtype](18.0), atol=1e-11)
+    # And ascending.
+    assert_equal(values[0] <= values[1], True)
+    assert_equal(values[1] <= values[2], True)
+
+
+def test_eigvalsh_handles_a_matrix_with_repeated_eigenvalues() raises:
+    # A rank-one perturbation of the identity: 1 (twice) and 1 + 3 = 4.
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 3, 3](ctx)
+    var host = a.to_host()
+    for i in range(3):
+        for j in range(3):
+            host[i * 3 + j] = Scalar[dtype](1.0 if i == j else 0.0) + Scalar[
+                dtype
+            ](1.0)
+    a.copy_from_host(host)
+
+    var values = eigvalsh(a).to_host()
+    assert_almost_equal(values[0], Scalar[dtype](1.0), atol=1e-12)
+    assert_almost_equal(values[1], Scalar[dtype](1.0), atol=1e-12)
+    assert_almost_equal(values[2], Scalar[dtype](4.0), atol=1e-12)
 
 
 def main() raises:

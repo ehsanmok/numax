@@ -175,10 +175,13 @@ exist.
   matrix to tridiagonal form device-resident, with the symmetric rank-two
   update issued as the single product `[V | W] @ [W | V]^T` under
   `transpose_b=True` -- the identity that stands in for the `syr2k` above.
-  What is still missing over `Tensor` is the *second* phase of each
-  spectral factorization, a sequential sweep over a two-wide band with
-  data-dependent deflation, which no GEMM helps and which is tier 2 by
-  numax's definition. `numax/linalg/__init__.mojo` carries the reasoning.
+  `eigvalsh` sits on top of it: an implicit-QL sweep over the two diagonals,
+  host-side, `O(n^2)` and negligible beside the reduction -- tier 2 by
+  numax's definition and declared so. What is still missing over `Tensor` is
+  the *vector*-producing second phase of each spectral factorization, which
+  is `O(n^3)` of scalar rotations rather than `O(n^2)`, and the bidiagonal
+  and Hessenberg reductions `svd` and `eigvals` start from.
+  `numax/linalg/__init__.mojo` carries the reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere, and
   nothing at all on Metal or AMD, so `numax.fft` over `Tensor` is an

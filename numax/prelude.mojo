@@ -242,6 +242,7 @@ from .linalg import (
     cholesky,
     cholesky_solve,
     det,
+    eigvalsh,
     dot,
     fro,
     inf,
