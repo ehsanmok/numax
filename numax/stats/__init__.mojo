@@ -8,6 +8,8 @@ from numax.stats import mean, variance, norm, uniform, seed
 |---|---|
 | `statistics` | `sum`, `mean`, `median`, `mode`, `prod`, `cumsum`, `cumprod`, `variance`, `stddev`, `variance_axis`, `min`/`max`, `argmin`/`argmax`, `ptp`, `average`, `moment` |
 | `quantiles` | `quantile`/`percentile` under every NumPy `method`, `nanquantile`/`nanpercentile`/`nanmedian`, `iqr` -- host-side, one sort |
+| `histograms` | `histogram` (uniform, ranged, explicit edges, density, weights), `histogram2d`, `histogramdd`, `bincount`, `digitize` -- NumPy's edge rules, host-side |
+| `correlation` | `cov`, `corrcoef`, `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore` -- SciPy's p-values through `t.sf`/`norm.sf`, host-side |
 | `nanfunctions` | `nansum`, `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax` -- `isnan`, `select` and the plain reductions, composed |
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` for a named reproducible stream |
@@ -77,6 +79,28 @@ from .quantiles import (
     nanquantile,
     percentile,
     quantile,
+)
+from .histograms import (
+    Histogram,
+    Histogram2D,
+    HistogramDD,
+    bincount,
+    digitize,
+    histogram,
+    histogram2d,
+    histogramdd,
+)
+from .correlation import (
+    CorrelationResult,
+    LinregressResult,
+    corrcoef,
+    cov,
+    kendalltau,
+    linregress,
+    pearsonr,
+    rankdata,
+    spearmanr,
+    zscore,
 )
 from .nanfunctions import (
     nanmax,

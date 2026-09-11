@@ -276,6 +276,23 @@ from .stats.quantiles import (
     percentile,
     quantile,
 )
+from .stats.histograms import (
+    bincount,
+    digitize,
+    histogram,
+    histogram2d,
+    histogramdd,
+)
+from .stats.correlation import (
+    corrcoef,
+    cov,
+    kendalltau,
+    linregress,
+    pearsonr,
+    rankdata,
+    spearmanr,
+    zscore,
+)
 from .stats.nanfunctions import (
     nanmax,
     nanmean,
