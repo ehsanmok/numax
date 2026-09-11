@@ -108,6 +108,48 @@ def test_spline_passes_through_every_knot() raises:
         )
 
 
+def test_non_uniform_overloads_agree_with_the_uniform_ones_on_a_grid() raises:
+    """The knot-taking `cubic_spline_moments`/`cubic_spline_eval` on a
+    uniform grid reproduce the `(x0, h)` pair exactly -- the new overloads
+    are the old ones with the spacing kept per interval."""
+    comptime n = 9
+    var built = sine_spline[n]()
+    var knots = Array[P, n](fill=pv(0.0))
+    for i in range(n):
+        knots[i] = pv(Float64(i) * built[2])
+    var moments = cubic_spline_moments[P, n](knots, built[0])
+    for i in range(n):
+        assert_almost_equal(s(moments[i]), s(built[1][i]), atol=1e-12)
+    for i in range(50):
+        var x = PI * Float64(i) / 49.0
+        var uniform = cubic_spline_eval[P, n](
+            built[0], built[1], pv(0.0), pv(built[2]), pv(x)
+        )
+        var general = cubic_spline_eval[P, n](knots, built[0], moments, pv(x))
+        assert_almost_equal(s(general), s(uniform), atol=1e-12)
+
+
+def test_non_uniform_spline_passes_through_its_knots() raises:
+    """On irregular knots the spline still interpolates: exact at every
+    knot, and clamped past both ends."""
+    comptime n = 5
+    var knots = Array[P, n](fill=pv(0.0))
+    var values = Array[P, n](fill=pv(0.0))
+    var xs = [0.0, 1.0, 2.5, 4.0, 7.0]
+    var ys = [1.0, 3.0, 2.0, 5.0, -1.0]
+    for i in range(n):
+        knots[i] = pv(xs[i])
+        values[i] = pv(ys[i])
+    var moments = cubic_spline_moments[P, n](knots, values)
+    for i in range(n):
+        var at = cubic_spline_eval[P, n](knots, values, moments, pv(xs[i]))
+        assert_almost_equal(s(at), ys[i], atol=1e-12)
+    var below = cubic_spline_eval[P, n](knots, values, moments, pv(-3.0))
+    var above = cubic_spline_eval[P, n](knots, values, moments, pv(9.0))
+    assert_almost_equal(s(below), 1.0, atol=1e-12)
+    assert_almost_equal(s(above), -1.0, atol=1e-12)
+
+
 def test_natural_spline_has_zero_end_moments() raises:
     comptime n = 9
     var built = sine_spline[n]()

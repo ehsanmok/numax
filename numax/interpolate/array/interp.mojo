@@ -4,24 +4,24 @@ Three ways to turn a set of samples (or a function you'd rather not call
 repeatedly) into something cheap to evaluate, all `FloatLike`-generic so
 the result differentiates and runs on GPU like everything else here.
 
-## The uniform-grid restriction, and why it isn't a shortcut
+## No search, and what that costs
 
-`cubic_spline_eval` takes a grid origin and spacing rather than an array of
-`x` values, and there's a reason it can't take arbitrary knots. Evaluating
-a spline means first finding *which* interval `x` falls in -- a binary
-search, whose trip count depends on the data. Inside a SIMD vector, lanes
-would land in different intervals and want different numbers of search
-steps, which `FloatLike` has no way to express, and on GPU it's a
-divergent branch. So non-uniform knots are genuinely out of scope here, not
-merely unimplemented.
+Evaluating a spline means first finding *which* interval `x` falls in -- a
+binary search, whose trip count depends on the data. Inside a SIMD vector,
+lanes would land in different intervals and want different numbers of
+search steps, which `FloatLike` has no way to express, and on GPU it's a
+divergent branch. So nothing here searches: `cubic_spline_eval` evaluates
+all `n-1` cubics and selects the right one with an indicator blend, `O(n)`
+per point instead of `O(log n)`. That's the real cost of lane
+independence, and it's fine for the small `n` this module targets (the
+coefficients live in registers) while being the wrong choice for a spline
+over thousands of knots -- which is `numax.interpolate`'s `Tensor` tier,
+whose lanes bisect.
 
-A uniform grid replaces the search with arithmetic (`(x - x0)/h`), which is
-lane-independent. Even then, *indexing* an `Array` at a per-lane-varying
-position isn't possible either, so `cubic_spline_eval` scans all `n-1`
-intervals and blends -- `O(n)` per point instead of `O(log n)`. That's the
-real cost of lane independence, and it's fine for the small `n` this module
-targets (the coefficients live in registers) while being the wrong choice
-for a spline over thousands of knots.
+The scan works on any knots, so both spacings are here: the uniform
+overloads take a grid origin and spacing (`x0`, `h`) and the non-uniform
+ones take the knots `x` themselves. The `CubicSpline` object wraps the
+uniform pair; the non-uniform pair is called directly.
 
 Outside the grid, evaluation clamps to the nearest endpoint rather than
 extrapolating the end cubic. Cubic extrapolation diverges fast and is
@@ -93,6 +93,88 @@ def cubic_spline_moments[
     for i in range(interior):
         moments[i + 1] = interior_moments[i].copy()
     return moments^
+
+
+def cubic_spline_moments[
+    T: FloatLike, n: Int
+](x: Array[T, n], y: Array[T, n]) -> Array[T, n]:
+    """The natural cubic spline's second derivatives at `n` knots `x` that
+    need not be uniformly spaced (`n >= 3`).
+
+    The same system as the uniform overload with the spacing kept per
+    interval: with `h_i = x[i+1] - x[i]` and secant `D_i`, the interior
+    row is `h[i-1] M[i-1] + 2(h[i-1] + h[i]) M[i] + h[i] M[i+1] = 6(D_i -
+    D_{i-1})`, still tridiagonal, still diagonally dominant, still fixed
+    work through `numax.linalg.array.tridiagonal_solve`. Tier 1: nothing
+    here searches, so non-uniform knots cost this tier nothing at
+    construction. Pass the result to the `cubic_spline_eval` overload that
+    also takes `x`.
+    """
+    comptime interior = n - 2
+
+    var sub = Array[T, interior](fill=T.constant(0.0))
+    var diag = Array[T, interior](fill=T.constant(0.0))
+    var sup = Array[T, interior](fill=T.constant(0.0))
+    var rhs = Array[T, interior](fill=T.constant(0.0))
+
+    for j in range(interior):
+        var i = j + 1
+        var h_left = x[i] - x[i - 1]
+        var h_right = x[i + 1] - x[i]
+        sub[j] = h_left.copy()
+        diag[j] = T.constant(2.0) * (h_left + h_right)
+        sup[j] = h_right.copy()
+        var secant_right = (y[i + 1] - y[i]) / h_right
+        var secant_left = (y[i] - y[i - 1]) / h_left
+        rhs[j] = T.constant(6.0) * (secant_right - secant_left)
+
+    var interior_moments = tridiagonal_solve[T, interior](sub, diag, sup, rhs)
+
+    var moments = Array[T, n](fill=T.constant(0.0))
+    for j in range(interior):
+        moments[j + 1] = interior_moments[j].copy()
+    return moments^
+
+
+def cubic_spline_eval[
+    T: FloatLike, n: Int
+](x: Array[T, n], y: Array[T, n], moments: Array[T, n], at: T) -> T:
+    """Evaluate the spline through `(x, y)` with `moments` from the
+    non-uniform `cubic_spline_moments` at `at`.
+
+    The uniform overload's scan with each interval's own `h`: every one of
+    the `n - 1` cubics is evaluated and the one whose interval holds `at`
+    is selected by an indicator blend, so the work is fixed and no lane
+    branches -- the same `O(n)`-per-point price, for the same reason.
+    Clamped to `[x[0], x[n-1]]` outside the knots, like the uniform form.
+    """
+    var clamped = min_of(max_of(at, x[0]), x[n - 1])
+
+    var result = T.constant(0.0)
+    for i in range(n - 1):
+        var h = x[i + 1] - x[i]
+        var t = clamped - x[i]
+
+        var slope = (y[i + 1] - y[i]) / h + (
+            -(
+                h
+                * (T.constant(2.0) * moments[i] + moments[i + 1])
+                / T.constant(6.0)
+            )
+        )
+        var curvature = moments[i] / T.constant(2.0)
+        var jerk = (moments[i + 1] - moments[i]) / (T.constant(6.0) * h)
+        var value = y[i] + t * (slope + t * (curvature + t * jerk))
+
+        var above = ge_indicator(clamped, x[i])
+        var selected: T
+        if i == n - 2:
+            selected = above.copy()
+        else:
+            selected = above * (T.one() - ge_indicator(clamped, x[i + 1]))
+        result = result + selected * value
+
+    return result^
 
 
 def cubic_spline_eval[

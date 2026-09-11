@@ -295,6 +295,12 @@ from .optimize.minimize import minimize
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 from .integrate.ode import dopri5, rk4_system
 from .interpolate.interp import horner, interp
+from .interpolate.spline import (
+    Akima1DInterpolator,
+    CubicHermiteSpline,
+    CubicSpline,
+    PchipInterpolator,
+)
 from .fft.fft import (
     Spectrum,
     fft,

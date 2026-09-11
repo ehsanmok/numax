@@ -366,6 +366,8 @@ numax's own.
 |---|---|
 | `interp` — `numpy.interp`: linear lookup of `(xp, fp)` at a tensor of points, with `left`/`right`; one launch, a bisection per query | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
 | `horner` — `numpy.polynomial.polynomial.polyval`: ascending coefficients at a tensor of points | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
+| `CubicSpline` — `scipy.interpolate.CubicSpline` on knots that need not be uniform, `bc_type` `"not-a-knot"` (default), `"natural"`, `"clamped"`, the slopes from SciPy's own tridiagonal rows through `numax.linalg.solve_banded`; `spline[nu=k](points)` is the `k`-th derivative, `integrate(a, b)` the exact integral; extrapolates by default | [`interpolate/spline.mojo`](../numax/interpolate/spline.mojo) |
+| `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` — shape-preserving, Akima's, and prescribed-slope cubics; all four share one `PPoly` form and one evaluation kernel. Akima is NaN outside the knots by default, as SciPy's is | [`interpolate/spline.mojo`](../numax/interpolate/spline.mojo) |
 
 Tier 2: one `elementwise` launch over the queries, and inside it a lane
 bisects the knots — the data-dependent branch the `Array` tier cannot make.
@@ -375,7 +377,7 @@ The grid is borrowed (`mut`), not consumed, since it is queried many times.
 |---|---|
 | `horner` — polynomial evaluation at one `FloatLike` value | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
 | `CubicSpline`, `Chebyshev` — the `scipy.interpolate`-shaped objects: built once, called many times, `__call__` evaluates. `Chebyshev[T, n].fit[f](a, b)` fits and keeps the coefficients | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
-| `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines on a uniform grid, over `numax.linalg.array`'s tridiagonal solve. The pair the `CubicSpline` object wraps, kept public because they are what a GPU-launchable kernel calls | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
+| `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines over `numax.linalg.array`'s tridiagonal solve, on a uniform grid (`x0`, `h`) or on the knots `x` themselves. The uniform pair is what the `CubicSpline` object wraps; both stay public because they are what a GPU-launchable kernel calls | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
 | `chebyshev_fit`, `chebyshev_eval` — Chebyshev fit of a `FloatLike` function at its nodes, and Clenshaw evaluation | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
 
 Tier 1, 1-D, and the tier that differentiates: a spline or a Chebyshev fit
