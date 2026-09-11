@@ -118,6 +118,28 @@ def build() -> list[Case]:
         Case("exp1_pos", "exp1, [0.05, 30]", logarithmic(0.05, 30.0), mp.e1)
     )
     cases.append(
+        Case("zeta_above", "zeta, [1.1, 30]", clustered(1.1, 30.0), mp.zeta)
+    )
+    cases.append(
+        Case("zeta_below", "zeta, [-2.5, 0.9]", clustered(-2.5, 0.9), mp.zeta)
+    )
+    cases.append(
+        Case(
+            "hyp1f1_mid",
+            "hyp1f1(1.5, 2.5, x), [-40, 40]",
+            clustered(-40.0, 40.0),
+            lambda x: mp.hyp1f1(mp.mpf("1.5"), mp.mpf("2.5"), x),
+        )
+    )
+    cases.append(
+        Case(
+            "hyp2f1_mid",
+            "hyp2f1(0.5, 1.5, 2.5, x), [-5, 0.9]",
+            clustered(-5.0, 0.9),
+            lambda x: mp.hyp2f1(mp.mpf("0.5"), mp.mpf("1.5"), mp.mpf("2.5"), x),
+        )
+    )
+    cases.append(
         Case("expi_pos", "expi, [0.05, 60]", logarithmic(0.05, 60.0), mp.ei)
     )
     cases.append(

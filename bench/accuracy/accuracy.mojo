@@ -80,12 +80,15 @@ from numax import (
     gamma,
     gammainc,
     hermite_h,
+    hyp1f1,
+    hyp2f1,
     laguerre_l,
     lambertw,
     legendre_p,
     lgamma,
     poch,
     sici,
+    zeta,
 )
 from numax.special.lambertw import lambertw_m1
 from numax.core.numeric import default_erf_approx
@@ -357,6 +360,36 @@ def main():
     for i in range(FRESNEL_C_N):
         s.observe(xs[i], fresnel(p(xs[i]))[1].v[0], refs[i])
     s.report("Fresnel C (series | erfc fraction at 2), [0.01,10]")
+
+    # --- zeta and hypergeometric ---------------------------------------
+    section("Zeta and hypergeometric")
+    s = Stats()
+    xs = materialize[ZETA_ABOVE_X]()
+    refs = materialize[ZETA_ABOVE_REF]()
+    for i in range(ZETA_ABOVE_N):
+        s.observe(xs[i], zeta(p(xs[i])).v[0], refs[i])
+    s.report("zeta (Euler-Maclaurin N=10, M=8), [1.1,30]")
+
+    s = Stats()
+    xs = materialize[ZETA_BELOW_X]()
+    refs = materialize[ZETA_BELOW_REF]()
+    for i in range(ZETA_BELOW_N):
+        s.observe(xs[i], zeta(p(xs[i])).v[0], refs[i])
+    s.report("zeta (Euler-Maclaurin N=10, M=8), [-2.5,0.9]")
+
+    s = Stats()
+    xs = materialize[HYP1F1_MID_X]()
+    refs = materialize[HYP1F1_MID_REF]()
+    for i in range(HYP1F1_MID_N):
+        s.observe(xs[i], hyp1f1(p(1.5), p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("hyp1f1(1.5, 2.5, x) (series | Kummer), [-40,40]")
+
+    s = Stats()
+    xs = materialize[HYP2F1_MID_X]()
+    refs = materialize[HYP2F1_MID_REF]()
+    for i in range(HYP2F1_MID_N):
+        s.observe(xs[i], hyp2f1(p(0.5), p(1.5), p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("hyp2f1(0.5, 1.5, 2.5, x) (series | Pfaff), [-5,0.9]")
 
     # --- gamma family -------------------------------------------------
     section("Gamma family")

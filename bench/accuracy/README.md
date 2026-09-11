@@ -140,6 +140,27 @@ off by `1.85e-10` on its own. `expi`'s 4.75e+13 absolute is `Ei(60) ~
 series the asymptotic sum takes over from at `x = 40`. The
 `expn(n, x)` family shares `exp1`'s route and floor.
 
+### Zeta and hypergeometric
+
+| function / domain | max abs | max rel | max ULP |
+| --- | --- | --- | --- |
+| `zeta` (Euler-Maclaurin, N=10, M=8), [1.1, 30] | 9.97e-12 | 9.42e-13 | 5,611 |
+| `zeta` (Euler-Maclaurin, N=10, M=8), [-2.5, 0.9] | 5.24e-10 | 2.07e-07 | 1,077,665,923 |
+| `hyp1f1(1.5, 2.5, x)` (series \| Kummer), [-40, 40] | 1.10e+01 | 1.64e-11 | 110,721 |
+| `hyp2f1(0.5, 1.5, 2.5, x)` (series \| Pfaff), [-5, 0.9] | 2.68e-10 | 4.94e-10 | 2,415,788 |
+
+The two `zeta` rows are one formula measured on two sides of a
+cancellation. Above the pole the answer is the sum's size and the error is
+`exp`'s floor on each `k^{-s} = exp(-s ln k)` term, with the logarithms
+taken from an exact compile-time table -- taking them from `std.math.log`
+instead read `3.3e-10` here and `3.9e-4` below, which is what the table
+buys. Below the pole `zeta(-2.5) = 0.0085` is a difference of terms near
+`300`, so the same `4e-12` relative floor on each term becomes `2e-7`
+relative on the answer; the formula itself is at `1e-18` in mpmath. The
+`hyp1f1` row's 11.0 absolute is `1.6e-11` relative on an answer of
+`7e+11` at `x = 40`; `hyp2f1`'s worst point sits in the Pfaff region,
+where `(1 - x)^{-a}` is `exp(-a ln(1 - x))` and `ln`'s floor comes back.
+
 ### Gamma family
 
 | function / domain | max abs | max rel | max ULP |

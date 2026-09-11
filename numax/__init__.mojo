@@ -290,6 +290,8 @@ from .special.gamma import (
     poch,
 )
 from .special.expint import exp1, expi, expn, fresnel, sici
+from .special.hyper import hyp1f1, hyp2f1
+from .special.zeta import zeta
 from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
 from .special.logsumexp import logsumexp
 from .special.lambertw import lambertw, lambertw_m1
