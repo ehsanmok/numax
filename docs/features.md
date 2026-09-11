@@ -471,6 +471,7 @@ row-major tensor, but the surface above it is not uniformly rank-generic yet:
   and `moveaxis` beside it; `concatenate`/`split`/`stack` join or cut along
   any axis at any rank through a second overload taking `axis`, keeping the
   rank-1 ones for when the result length should stay compile-time;
+  `expand_dims`, `roll`, `tile` and `repeat` take an axis at any rank;
   `reshape` targets rank 2 or 3.
 - The SciPy-shaped algorithms are fixed-size `Array` kernels: `linalg` is
   matrices, `fft2` a square transform, `rk4_system` an `n`-component state,

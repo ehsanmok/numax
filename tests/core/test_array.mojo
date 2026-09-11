@@ -40,6 +40,7 @@ from numax.core.array import (
     concatenate,
     empty,
     empty_like,
+    expand_dims,
     eye,
     full,
     full_like,
@@ -49,11 +50,14 @@ from numax.core.array import (
     ones,
     ones_like,
     ravel,
+    repeat,
     reshape,
+    roll,
     split,
     squeeze,
     stack,
     swapaxes,
+    tile,
     transpose,
     zeros,
     zeros_like,
@@ -673,6 +677,89 @@ def test_the_rank_one_concatenate_still_keeps_its_length_in_the_type() raises:
     b[0] = 9
     var joined: Static[dtype, 5] = concatenate(a, b)
     assert_equal(joined.to_host()[2], 9.0)
+
+
+def test_expand_dims_inserts_a_size_one_axis() raises:
+    # numpy.expand_dims on a (2, 3) at axis=1 gives a (2, 1, 3); the
+    # elements keep their row-major order.
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var e = expand_dims[axis=1](a)
+    assert_equal(e.dim_at(0), 2)
+    assert_equal(e.dim_at(1), 1)
+    assert_equal(e.dim_at(2), 3)
+    var out = e.to_host()
+    var source = a.to_host()
+    for i in range(6):
+        assert_equal(out[i], source[i])
+
+
+def test_roll_shifts_cyclically_and_inverts() raises:
+    # numpy.roll([[1,2,3],[4,5,6]], 1, axis=1) == [[3,1,2],[6,4,5]]
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var rolled = roll[axis=1](a, 1)
+    var expected = [3.0, 1.0, 2.0, 6.0, 4.0, 5.0]
+    for i in range(6):
+        assert_equal(rolled[i], Scalar[dtype](expected[i]))
+
+    # The opposite shift puts it back, which is what "cyclic" has to mean.
+    var back = roll[axis=1](rolled, -1)
+    var source = a.to_host()
+    for i in range(6):
+        assert_equal(back[i], source[i])
+
+
+def test_roll_along_the_outer_axis() raises:
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var rolled = roll[axis=0](a, 1)
+    assert_equal(rolled[0], 4.0)
+    assert_equal(rolled[3], 1.0)
+
+
+def test_tile_repeats_the_whole_block() raises:
+    # numpy.tile on a (2, 3) by (2, 1) gives a (4, 3) that is `a` above `a`.
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var tiled = tile(a, 2, 1)
+    assert_equal(tiled.dim_at(0), 4)
+    assert_equal(tiled.dim_at(1), 3)
+    var out = tiled.to_host()
+    var source = a.to_host()
+    for i in range(6):
+        assert_equal(out[i], source[i])
+        assert_equal(out[6 + i], source[i])
+
+
+def test_repeat_repeats_each_element_not_the_block() raises:
+    # The distinction from `tile`: numpy.repeat(a, 2, axis=1) gives
+    # [[1, 1, 2, 2, 3, 3], ...] where numpy.tile(a, (1, 2)) gives
+    # [[1, 2, 3, 1, 2, 3], ...].
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var repeated = repeat[axis=1](a, 2)
+    assert_equal(repeated.dim_at(0), 2)
+    assert_equal(repeated.dim_at(1), 6)
+    var expected = [1.0, 1.0, 2.0, 2.0, 3.0, 3.0]
+    var out = repeated.to_host()
+    for i in range(6):
+        assert_equal(out[i], Scalar[dtype](expected[i]))
+
+    var tiled = tile(a, 1, 2)
+    var tiled_out = tiled.to_host()
+    var tiled_expected = [1.0, 2.0, 3.0, 1.0, 2.0, 3.0]
+    for i in range(6):
+        assert_equal(tiled_out[i], Scalar[dtype](tiled_expected[i]))
+
+
+def test_tile_rejects_a_count_per_missing_axis() raises:
+    var a = _grid2[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var raised = False
+    try:
+        _ = tile(a, 2)
+    except:
+        raised = True
+    assert_equal(raised, True)
 
 
 def main() raises:

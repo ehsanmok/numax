@@ -133,6 +133,8 @@ from layout.tile_layout import row_major, TensorLayout
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from max.algorithm.functional import elementwise
 from linalg.transpose import transpose as _max_transpose
+from nn.repeat_interleave import repeat_interleave as _nn_repeat
+from nn.tile import tile as _nn_tile
 from nn.pad import (
     pad_constant as _max_pad_constant,
     pad_reflect as _max_pad_reflect,
@@ -2156,6 +2158,178 @@ def split[
         Dynamic[dtype, rank](
             ctx, row_major(_dyn_shape_from[rank](tail_extents)), tail^
         ),
+    )
+
+
+def expand_dims[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank + 1
+] where (axis >= 0 and axis <= LayoutType.rank):
+    """`a` with a size-1 axis inserted at `axis`. `numpy.expand_dims`.
+
+    The inverse of `squeeze`, and the cheapest way to line a vector up with
+    a matrix for a broadcasting op: a `(3,)` at `axis=1` is a `(3, 1)`,
+    which stretches down columns where the bare `(3,)` stretches across
+    rows.
+
+    Row-major order is unchanged -- only the shape is -- so this is a copy
+    for the reason every manipulation here copies: a view would borrow from
+    a tensor this module does not own.
+    """
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank + 1)
+    for d in range(rank + 1):
+        if d < axis:
+            extents.append(a.dim_at(d))
+        elif d == axis:
+            extents.append(1)
+        else:
+            extents.append(a.dim_at(d - 1))
+    return Dynamic[dtype, rank + 1](
+        a.context(), row_major(_dyn_shape_from[rank + 1](extents)), a.to_host()
+    )
+
+
+def roll[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](a: Tensor[dtype, LayoutType], shift: Int) raises -> Tensor[
+    dtype, LayoutType
+] where (axis >= 0 and axis < LayoutType.rank):
+    """`a` with its elements shifted cyclically by `shift` along `axis`.
+    `numpy.roll(a, shift, axis=k)`.
+
+    Elements pushed past the end reappear at the start, so the shape is
+    unchanged and `roll` is invertible by the opposite shift. A negative
+    `shift` rolls the other way, as NumPy's does.
+
+    MAX has no counterpart -- there is no `nn.roll` and no `nn.gather` route
+    that expresses a cyclic shift without materializing the index tensor --
+    so this is numax's own walk over the `outer`/`length`/`inner`
+    decomposition.
+    """
+    comptime rank = LayoutType.rank
+    var length = a.dim_at(axis)
+    var outer = 1
+    for d in range(axis):
+        outer *= a.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, rank):
+        inner *= a.dim_at(d)
+
+    var by = shift % length if length > 0 else 0
+    if by < 0:
+        by += length
+
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](length=len(values), fill=0)
+    for o in range(outer):
+        for k in range(length):
+            var to = (k + by) % length
+            for i in range(inner):
+                out[(o * length + to) * inner + i] = values[
+                    (o * length + k) * inner + i
+                ]
+    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
+
+
+def tile[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], *reps: Int) raises -> Dynamic[
+    dtype, LayoutType.rank
+]:
+    """`a` repeated `reps[d]` times along each axis `d`. `numpy.tile`.
+
+    The whole block repeats, so tiling a `(2, 3)` by `(2, 1)` gives a
+    `(4, 3)` that is `a` above `a` -- as against `repeat`, which repeats
+    each element in place.
+
+    Routed to `nn.tile`, which is the ONNX `Tile` operator and agrees with
+    `numpy.tile` element for element (checked at the pin). Two limits come
+    from that kernel rather than from here: **rank 4 at most**, which it
+    asserts, and **host only**, since it takes no `target` and no
+    `DeviceContext`. One limit is numax's: `reps` must give one count per
+    axis, where `numpy.tile` prepends 1s for a shorter tuple.
+    """
+    comptime rank = LayoutType.rank
+    if len(reps) != rank:
+        raise Error(
+            "tile: ", len(reps), " counts given for a rank-", rank, " tensor"
+        )
+
+    var extents = List[Int](capacity=rank)
+    var counts = List[Scalar[DType.int64]](capacity=rank)
+    var count = 1
+    for d in range(rank):
+        if reps[d] < 1:
+            raise Error(
+                "tile: axis ", d, " count ", reps[d], " is not positive"
+            )
+        extents.append(a.dim_at(d) * reps[d])
+        counts.append(Scalar[DType.int64](reps[d]))
+        count *= extents[d]
+
+    var in_extents = List[Int](capacity=rank)
+    for d in range(rank):
+        in_extents.append(a.dim_at(d))
+
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](length=count, fill=0)
+    _nn_tile(
+        TileTensor(values, row_major(_dyn_shape_from[rank](in_extents))),
+        TileTensor(counts, row_major(Coord(rank))),
+        TileTensor(out, row_major(_dyn_shape_from[rank](extents))),
+    )
+    return Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents)), out^
+    )
+
+
+def repeat[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](a: Tensor[dtype, LayoutType], count: Int) raises -> Dynamic[
+    dtype, LayoutType.rank
+] where (axis >= 0 and axis < LayoutType.rank):
+    """Each element of `a` repeated `count` times along `axis`.
+    `numpy.repeat(a, count, axis=k)`.
+
+    Distinct from `tile`: repeating a `(2, 3)` by 2 along `axis=1` gives
+    `[[1, 1, 2, 2, 3, 3], ...]`, where tiling it gives
+    `[[1, 2, 3, 1, 2, 3], ...]`.
+
+    Routed to `nn.repeat_interleave`, which takes a `DeviceContext` and so
+    has a device path -- unlike `nn.tile`. `numpy.repeat`'s per-element
+    counts are not exposed: the kernel accepts them, but the result's
+    extent is then a sum over a tensor the caller would also have to build,
+    and no caller in numax needs it yet.
+    """
+    comptime rank = LayoutType.rank
+    if count < 1:
+        raise Error("repeat: count ", count, " is not positive")
+
+    var in_extents = List[Int](capacity=rank)
+    var extents = List[Int](capacity=rank)
+    var total = 1
+    for d in range(rank):
+        in_extents.append(a.dim_at(d))
+        extents.append(a.dim_at(d) * count if d == axis else a.dim_at(d))
+        total *= extents[d]
+
+    var values = a.to_host()
+    var counts = List[Scalar[DType.int64]](
+        length=1, fill=Scalar[DType.int64](count)
+    )
+    var out = List[Scalar[dtype]](length=total, fill=0)
+    var ctx = a.context()
+    _nn_repeat(
+        TileTensor(values, row_major(_dyn_shape_from[rank](in_extents))),
+        TileTensor(counts, row_major(Coord(1))),
+        axis,
+        TileTensor(out, row_major(_dyn_shape_from[rank](extents))),
+        ctx,
+    )
+    return Dynamic[dtype, rank](
+        ctx, row_major(_dyn_shape_from[rank](extents)), out^
     )
 
 

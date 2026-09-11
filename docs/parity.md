@@ -268,6 +268,17 @@ only a coordinate. And it fuses two *independent* elementwise operations into
 one launch rather than two chained ones, so it does not address the chained
 case even where it compiles.
 
+`nn.tile` and `nn.repeat_interleave` were searched at the pin for `tile` and
+`repeat`, and both are **delegates**: `nn.tile` is the ONNX `Tile` operator and
+agrees with `numpy.tile` element for element, `nn.repeat_interleave` agrees with
+`numpy.repeat`. Each carries one limit worth recording. `nn.tile` asserts
+**rank 4 at most** and takes no `target` and no `DeviceContext`, so it is host
+only; `nn.repeat_interleave` does take a context and so has a device path. There
+is no `nn.roll` and no `nn.expand_dims`, and no `nn.gather` spelling of a cyclic
+shift that avoids materializing the index tensor, so `roll` and `expand_dims`
+are numax's own -- the **Plain-only surface** outcome, since a cyclic shift at
+`Dual` or `Interval` means nothing a plain one does not.
+
 MAX's `nn` versions of `arange`/`reshape`/`concat`/`split` were checked and are
 not usable as array functions: `nn.arange` returns one SIMD vector for an
 index rather than filling a tensor, `nn.concat` wants a pre-sized output plus a
