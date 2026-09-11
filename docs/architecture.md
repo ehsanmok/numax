@@ -33,7 +33,7 @@ numax/
                 array/ holding the FloatLike-generic tier of the same names
   optimize/     minimization (optimize) and scalar root finding (solve)
   integrate/    quadrature, fixed-step and adaptive ODE, quad/solve_ivp
-  interpolate/  polynomial and spline interpolation
+  interpolate/  interpolation: `interp` over Tensor; splines and Chebyshev over Array
   special/      erf, gamma, beta, bessel, elliptic, lambertw, orthogonal
                 polynomials, activations
   stats/        descriptive statistics, distributions, random sampling
@@ -46,7 +46,7 @@ Dependencies run one way: `core` depends on nothing else in `numax`, every
 other subpackage depends on `core`, and the few cross-subpackage edges are
 deliberate (`stats` uses `special`'s incomplete gamma and beta,
 `integrate` uses `special`'s Legendre roots and `optimize`'s Newton solver,
-`interpolate` uses `linalg.array`'s tridiagonal solve, and `optimize` uses
+`interpolate.array` uses `linalg.array`'s tridiagonal solve, and `optimize` uses
 `linalg.array`'s Cholesky for the damped normal equations a least-squares
 step solves -- both take the `Array` tier because both are called from
 tier-1 kernels). The fifth is newer and runs the other way: `linalg` uses

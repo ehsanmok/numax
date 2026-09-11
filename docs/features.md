@@ -141,7 +141,7 @@ segfaults a host read.
 | Manipulation at a computed shape | `reshape_dyn`, `slice` (basic slicing at any rank), `broadcast_to` (NumPy's rules, right-aligned), `concatenate_dyn`, `split_dyn`, `stack_dyn` — all copy into compact storage rather than returning a view, since MAX has no stride-0 broadcast view and a view would borrow from a tensor these do not own | [`core/array.mojo`](../numax/core/array.mojo) |
 | Indexing | `a[i]` flat on any rank, `a[r, c]` on a rank-2 tensor; `.view()[i, j, k]` is the general form. On a GPU each access stages its own host mapping — take one `to_host()` and index that instead | [`core/array.mojo`](../numax/core/array.mojo) |
 | Printing | `print(a)` — `Tensor` conforms to `Writable`; `a.format(precision=8, threshold=..., edge_items=...)` is the same output with the defaults overridden | [`core/array.mojo`](../numax/core/array.mojo) |
-| Conversion | `to_array`, `to_tensor` — the seam between `Tensor` (shape and device) and `Array[T, n]` (the `FloatLike` conformer layer `numax.linalg`, `numax.signal` and `numax.interpolate` take). Lifting works at any conformer; lowering is `Plain`-only, since `FloatLike` can build a value from a `Float64` but not read one back | [`core/array.mojo`](../numax/core/array.mojo), [`npy_to_cholesky.mojo`](../examples/intermediate/npy_to_cholesky.mojo) |
+| Conversion | `to_array`, `to_tensor` — the seam between `Tensor` (shape and device) and `Array[T, n]` (the `FloatLike` conformer layer `numax.linalg.array`, `numax.signal` and `numax.interpolate.array` take). Lifting works at any conformer; lowering is `Plain`-only, since `FloatLike` can build a value from a `Float64` but not read one back | [`core/array.mojo`](../numax/core/array.mojo), [`npy_to_cholesky.mojo`](../examples/intermediate/npy_to_cholesky.mojo) |
 | Matrix builders | `diag`, `diagflat`, `diagonal`, `tri`, `tril`, `triu`, `vander`, `pad` | [`core/array.mojo`](../numax/core/array.mojo) |
 | Arithmetic and operators | `add`, `subtract`, `multiply`, `divide`, `power`, `mod`, `floor_divide`, `negative`, `invert`, `astype` — tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion | [`core/ops.mojo`](../numax/core/ops.mojo) |
 | Elementwise math | `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `rsqrt`, `cbrt`, `abs`, `sin`, `cos`, `tan`, `sinh`, `cosh`, `tanh`, `floor`, `ceil`, `trunc`, `round`, `copysign`, `arcsin`, `arccos`, `arctan`, `arctan2`, `arcsinh`, `arccosh`, `arctanh`, `hypot`, `maximum`, `minimum`, `clip`, `remainder`, `diff`, `gradient` | [`core/elementwise.mojo`](../numax/core/elementwise.mojo) |
@@ -357,14 +357,30 @@ run one per GPU thread with solution sensitivities from the same integrator.
 
 ## `numax.interpolate`
 
-| Surface | Where |
-|---|---|
-| `horner` — polynomial evaluation | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
-| `CubicSpline`, `Chebyshev` — the `scipy.interpolate`-shaped objects: built once, called many times, `__call__` evaluates. `Chebyshev[T, n].fit[f](a, b)` fits and keeps the coefficients | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
-| `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines, over `numax.linalg`'s tridiagonal solve. The pair the `CubicSpline` object wraps, kept public because they are what a GPU-launchable kernel calls | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
-| `chebyshev_fit`, `chebyshev_eval` — Chebyshev fit and evaluation | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
+Two tiers, one import each, on the `numax.linalg` pattern. MAX has no
+interpolation at arbitrary points — its `nn.resize_*` kernels resample a
+whole image onto a fixed grid by a scale factor — so both tiers are
+numax's own.
 
-Tier 1, 1-D.
+| Surface — over `Tensor`, from `numax.interpolate` | Where |
+|---|---|
+| `interp` — `numpy.interp`: linear lookup of `(xp, fp)` at a tensor of points, with `left`/`right`; one launch, a bisection per query | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
+| `horner` — `numpy.polynomial.polynomial.polyval`: ascending coefficients at a tensor of points | [`interpolate/interp.mojo`](../numax/interpolate/interp.mojo) |
+
+Tier 2: one `elementwise` launch over the queries, and inside it a lane
+bisects the knots — the data-dependent branch the `Array` tier cannot make.
+The grid is borrowed (`mut`), not consumed, since it is queried many times.
+
+| Surface — over `Array[T, n]`, from `numax.interpolate.array` | Where |
+|---|---|
+| `horner` — polynomial evaluation at one `FloatLike` value | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
+| `CubicSpline`, `Chebyshev` — the `scipy.interpolate`-shaped objects: built once, called many times, `__call__` evaluates. `Chebyshev[T, n].fit[f](a, b)` fits and keeps the coefficients | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
+| `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines on a uniform grid, over `numax.linalg.array`'s tridiagonal solve. The pair the `CubicSpline` object wraps, kept public because they are what a GPU-launchable kernel calls | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
+| `chebyshev_fit`, `chebyshev_eval` — Chebyshev fit of a `FloatLike` function at its nodes, and Clenshaw evaluation | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
+
+Tier 1, 1-D, and the tier that differentiates: a spline or a Chebyshev fit
+at `Dual` carries derivatives with respect to whatever the knots or the
+interval depend on.
 
 ## `numax.fft`
 

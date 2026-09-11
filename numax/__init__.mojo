@@ -56,7 +56,7 @@ is safe; its own docstring lists them and where to reach them.
 | `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner` are MAX kernels, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace` build on those; `kron`/`matrix_power` and the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`), the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) and `expm` sit beside them. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `eigvalsh`, `svd`, `svdvals`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `slogdet`, `trace`, `cond`, `matrix_rank`, norms, `dot`/`nrm2`/`outer`, `matmul`, `expm`, `sqrtm`, `tridiagonal_solve` |
 | `numax.optimize` | `minimize` (`bfgs`, `cg`) and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize.array` is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
 | `numax.integrate` | `trapezoid`/`simpson`/`cumulative_trapezoid` over sampled `Tensor`s with `scipy.integrate`'s signatures; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively; `numax.integrate.array` is the `FloatLike` tier that integrates a function -- Gauss-Legendre, Simpson and trapezoid at a fixed node count, `rk4`/`dopri5` at a fixed step -- and differentiates at `Dual` |
-| `numax.interpolate` | Horner, cubic splines, Chebyshev fits |
+| `numax.interpolate` | `interp` and `horner` over a `Tensor` of query points; `numax.interpolate.array` is the `FloatLike` tier with Horner, natural cubic splines and Chebyshev fits of a function, which differentiate at `Dual` |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, rectangular `fft2`/`ifft2`/`rfft2`, `fftshift`/`ifftshift`, `fftfreq`/`rfftfreq` over `Tensor` at any length -- radix-2 at a power of two, Bluestein otherwise -- device-resident across `log2(n) + 1` stages per axis; `dct`/`idct`/`dst`/`idst` types I-IV; `numax.fft.array` is the register-resident tier that differentiates, and adds circular convolution. MAX ships no forward transform at all |
 | `numax.signal` | `convolve`, `correlate`, `lfilter`, `firwin`, Hann/Hamming/Blackman windows |
 | `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
@@ -365,16 +365,9 @@ from .integrate.integrate import (
 from .integrate.ode import TensorStep, dopri5, dopri5_step, rk4_system
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 
-# Interpolation -- `numax.interpolate`.
-from .interpolate.interp import (
-    Chebyshev,
-    CubicSpline,
-    chebyshev_eval,
-    chebyshev_fit,
-    cubic_spline_eval,
-    cubic_spline_moments,
-    horner,
-)
+# Interpolation -- `numax.interpolate`, the `Tensor` tier. The `FloatLike`
+# spline and Chebyshev fit are one import away at `numax.interpolate.array`.
+from .interpolate.interp import horner, interp
 
 # Discrete Fourier transforms -- `numax.fft`, the `Tensor` tier.
 # `circular_convolve` is `Array`-tier only, one import away at

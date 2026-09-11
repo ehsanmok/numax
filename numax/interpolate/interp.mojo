@@ -1,309 +1,183 @@
-"""Polynomial evaluation, cubic splines, and Chebyshev approximation.
+"""Interpolation over `numax.core.array.Tensor`: NumPy's `interp` and
+polynomial evaluation over a tensor of query points.
 
-Three ways to turn a set of samples (or a function you'd rather not call
-repeatedly) into something cheap to evaluate, all `FloatLike`-generic so
-the result differentiates and runs on GPU like everything else here.
+**This module is tier 2.** Each routine is one `elementwise` launch over
+the query points -- host-driven, device-resident, `Plain`-only -- and
+inside that launch a lane may branch on data: the interval search is a
+bisection whose trip count is `log2(n)` and whose path depends on the
+query. That is exactly what the `FloatLike` tier cannot do, and why
+`numax.interpolate.array`'s spline scans every interval and blends instead.
+The two tiers are cross-referenced rather than ranked: that one is for a
+handful of knots inside a per-lane kernel, this one for a device buffer of
+samples.
 
-## The uniform-grid restriction, and why it isn't a shortcut
+## The MAX gate
 
-`cubic_spline_eval` takes a grid origin and spacing rather than an array of
-`x` values, and there's a reason it can't take arbitrary knots. Evaluating
-a spline means first finding *which* interval `x` falls in -- a binary
-search, whose trip count depends on the data. Inside a SIMD vector, lanes
-would land in different intervals and want different numbers of search
-steps, which `FloatLike` has no way to express, and on GPU it's a
-divergent branch. So non-uniform knots are genuinely out of scope here, not
-merely unimplemented.
+MAX ships no interpolation at arbitrary query points. What it has is image
+resampling: `nn.resize_linear` and `nn.resize_nearest_neighbor` (host-only)
+and `nn.resize_bicubic` (`target` and a `DeviceContext`) each take an
+NCHW image and a *scale factor* and produce the whole resampled image on a
+fixed output grid. `numpy.interp(x, xp, fp)` and the `scipy.interpolate`
+objects answer a different question -- the value at *these* points, on a
+grid that need not be uniform -- and no scale factor expresses it. So this
+module is an **extend**: numax's kernels, in MAX's idiom, with nothing to
+delegate to.
 
-A uniform grid replaces the search with arithmetic (`(x - x0)/h`), which is
-lane-independent. Even then, *indexing* an `Array` at a per-lane-varying
-position isn't possible either, so `cubic_spline_eval` scans all `n-1`
-intervals and blends -- `O(n)` per point instead of `O(log n)`. That's the
-real cost of lane independence, and it's fine for the small `n` this module
-targets (the coefficients live in registers) while being the wrong choice
-for a spline over thousands of knots.
+## Borrowed, not consumed
 
-Outside the grid, evaluation clamps to the nearest endpoint rather than
-extrapolating the end cubic. Cubic extrapolation diverges fast and is
-almost never what a caller wants; clamping is also what keeps the discarded
-intervals' arithmetic bounded, since a blend evaluates every branch.
-
-## Chebyshev fits are the alternative when you have a function, not samples
-
-`chebyshev_fit` samples `f` at Chebyshev nodes and returns coefficients
-whose `chebyshev_eval` is near-minimax on the interval -- for a smooth `f`,
-far more accurate per coefficient than an equally-spaced polynomial fit,
-and free of the Runge oscillation those suffer from. This is the tool for
-replacing an expensive kernel with a cheap one inside a hot loop.
+Unlike the transforms in `numax.fft`, these take their tensors `mut` and
+leave them alone: a grid is queried many times, and consuming it on the
+first call would make the second one a copy. `mut` because `view()` needs
+it, so a caller holds the tensors in `var` bindings -- which is how a grid
+that is reused is held anyway.
 """
 
-from std.collections import Array
-from std.math import cos as _cos_f64
+from layout import Coord, TileTensor, coord_to_index_list
+from layout.tile_layout import TensorLayout
+from max.algorithm.functional import elementwise
 
-from ..linalg.array.triangular import tridiagonal_solve
-from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
+from ..core.array import Static
 
-comptime _PI = 3.14159265358979323846
+comptime _View[dtype: DType, LayoutType: TensorLayout] = TileTensor[
+    dtype, LayoutType, MutAnyOrigin
+]
 
 
-def horner[T: FloatLike, n: Int](coefficients: Array[T, n], x: T) -> T:
-    """Evaluate a polynomial at `x`, coefficients in ascending order
-    (`coefficients[i]` multiplies `x^i`).
+@always_inline
+def _interval[
+    dtype: DType, LayoutType: TensorLayout
+](knots: _View[dtype, LayoutType], n: Int, x: Scalar[dtype]) -> Int:
+    """The `i` in `[0, n - 2]` with `knots[i] <= x < knots[i + 1]`, clamped
+    to the end intervals for an `x` outside the knots.
 
-    Horner's rule rather than summing `c_i * x^i`: `n-1` multiply-adds
-    instead of `n` powers, and better conditioned, since it never forms the
-    large intermediate `x^i` that then has to cancel against its neighbours.
+    Bisection, `log2(n)` steps, on ascending knots. Runs inside a kernel
+    body, one lane per query; the branch on `knots[mid] <= x` is the
+    data-dependent step that makes this tier 2.
     """
-    var total = coefficients[n - 1].copy()
-    for step in range(1, n):
-        total = total * x + coefficients[n - 1 - step]
-    return total^
-
-
-def cubic_spline_moments[
-    T: FloatLike, n: Int
-](y: Array[T, n], h: T) -> Array[T, n]:
-    """The natural cubic spline's second derivatives at `n` uniformly
-    spaced knots (`n >= 3`).
-
-    "Natural" fixes the second derivative to zero at both ends, which
-    leaves an `(n-2)`-unknown tridiagonal system with the constant pattern
-    `M[i-1] + 4*M[i] + M[i+1] = 6*(y[i+1] - 2*y[i] + y[i-1])/h^2`. That
-    goes straight to `numax.linalg.tridiagonal_solve` -- `O(n)`, no
-    pivoting needed (the system is diagonally dominant), and fixed work.
-
-    Returned separately from evaluation so a spline built once can be
-    evaluated many times; pass the result to `cubic_spline_eval`.
-    """
-    comptime interior = n - 2
-
-    var sub = Array[T, interior](fill=T.one())
-    var diag = Array[T, interior](fill=T.constant(4.0))
-    var sup = Array[T, interior](fill=T.one())
-    var rhs = Array[T, interior](fill=T.constant(0.0))
-
-    var six_over_h2 = T.constant(6.0) / (h * h)
-    for i in range(interior):
-        var second_difference = y[i + 2] - (T.constant(2.0) * y[i + 1]) + y[i]
-        rhs[i] = six_over_h2 * second_difference
-
-    var interior_moments = tridiagonal_solve[T, interior](sub, diag, sup, rhs)
-
-    var moments = Array[T, n](fill=T.constant(0.0))
-    for i in range(interior):
-        moments[i + 1] = interior_moments[i].copy()
-    return moments^
-
-
-def cubic_spline_eval[
-    T: FloatLike, n: Int
-](y: Array[T, n], moments: Array[T, n], x0: T, h: T, x: T,) -> T:
-    """Evaluate the spline through `y` (with `moments` from
-    `cubic_spline_moments`) at `x`.
-
-    See this module's docstring for the `O(n)` scan and the clamping
-    behaviour outside `[x0, x0 + (n-1)*h]`.
-    """
-    var last = T.constant(Float64(n - 1))
-    var clamped = min_of(max_of((x - x0) / h, T.constant(0.0)), last)
-
-    var result = T.constant(0.0)
-    var interval_start = T.constant(0.0)
-
-    for i in range(n - 1):
-        var t = (clamped - interval_start) * h
-
-        # The cubic on interval `i`, in the standard moment form.
-        var slope = (y[i + 1] - y[i]) / h + (
-            -(
-                h
-                * (T.constant(2.0) * moments[i] + moments[i + 1])
-                / T.constant(6.0)
-            )
-        )
-        var curvature = moments[i] / T.constant(2.0)
-        var jerk = (moments[i + 1] - moments[i]) / (T.constant(6.0) * h)
-        var value = y[i] + t * (slope + t * (curvature + t * jerk))
-
-        # `1` exactly on the interval containing `clamped`. The last
-        # interval takes the right endpoint too, which is why its upper
-        # test is dropped -- otherwise `x = x0 + (n-1)*h` would select no
-        # interval at all and evaluate to zero.
-        var above = ge_indicator(clamped, interval_start)
-        var selected: T
-        if i == n - 2:
-            selected = above.copy()
+    var lo = 0
+    var hi = n - 1
+    while hi - lo > 1:
+        var mid = (lo + hi) // 2
+        if knots[Coord(mid)] <= x:
+            lo = mid
         else:
-            selected = above * (
-                T.one() - ge_indicator(clamped, interval_start + T.one())
-            )
-
-        result = result + selected * value
-        interval_start = interval_start + T.one()
-
-    return result^
+            hi = mid
+    return lo
 
 
-def chebyshev_fit[
-    T: FloatLike,
-    f: def[U: FloatLike](U) thin -> U,
-    n_terms: Int = 16,
-](a: T, b: T) -> Array[T, n_terms]:
-    """Chebyshev coefficients approximating `f` on `[a, b]`.
+def interp[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](
+    mut x: Static[dtype, m],
+    mut xp: Static[dtype, n],
+    mut fp: Static[dtype, n],
+    left: Optional[Scalar[dtype]] = None,
+    right: Optional[Scalar[dtype]] = None,
+) raises -> Static[dtype, m] where (
+    dtype.is_floating_point() and m > 0 and n > 0
+):
+    """One-dimensional linear interpolation of the samples `(xp, fp)` at the
+    points `x`. `numpy.interp(x, xp, fp, left, right)`.
 
-    `c[k] = (2/N) * sum_j f(t_j) * cos(k*pi*(j+0.5)/N)` at the `N`
-    Chebyshev nodes `t_j`, the standard discrete construction. The cosine
-    table depends only on `n_terms`, so it's built at compile time and the
-    run-time cost is exactly `n_terms` evaluations of `f` plus the sums.
+    `xp` must be ascending, which is not checked -- NumPy does not check it
+    either, and the bisection returns *an* interval on unsorted knots
+    rather than raising. Outside `[xp[0], xp[n-1]]` the value is `left` and
+    `right`, defaulting to `fp[0]` and `fp[n-1]` as NumPy's do; a point
+    exactly on `xp[0]` is inside, so it takes `fp[0]` rather than `left`.
+    `period` is not provided.
 
-    `f` is evaluated at `T`, so fitting at `Dual` gives coefficients that
-    carry derivatives with respect to whatever the endpoints depend on.
+    One launch over the `m` queries: bisection to the interval, then the
+    linear blend, so a query costs `O(log n)` and the grid is read in
+    place. `numax.interpolate.array` has no `interp` -- an `Array` of knots
+    small enough for registers is a spline's or a polynomial's, not a
+    lookup table's.
     """
-    comptime nodes = _chebyshev_nodes[n_terms]()
-    comptime table = _chebyshev_cosine_table[n_terms]()
+    var ctx = x.context()
+    var out = Static[dtype, m]._uninitialized(ctx)
+    var xs = x.view()
+    var knots = xp.view()
+    var values = fp.view()
+    var ys = out.view()
+    var has_left = Bool(left)
+    var left_value = left.value() if left else Scalar[dtype](0)
+    var has_right = Bool(right)
+    var right_value = right.value() if right else Scalar[dtype](0)
 
-    var half_width = (b - a) / T.constant(2.0)
-    var midpoint = (a + b) / T.constant(2.0)
+    @always_inline
+    def lookup[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var xs,
+        var knots,
+        var values,
+        var ys,
+        var has_left,
+        var left_value,
+        var has_right,
+        var right_value,
+    }:
+        var q = coord_to_index_list(coord)[0]
+        var at = xs[Coord(q)]
+        var y: Scalar[dtype]
+        if at < knots[Coord(0)]:
+            y = left_value if has_left else values[Coord(0)]
+        elif at > knots[Coord(n - 1)]:
+            y = right_value if has_right else values[Coord(n - 1)]
+        else:
+            var i = _interval(knots, n, at)
+            var x0 = knots[Coord(i)]
+            var x1 = knots[Coord(i + 1)]
+            var y0 = values[Coord(i)]
+            var y1 = values[Coord(i + 1)]
+            # `x1 == x0` only at `n == 1`, where the clamps above have
+            # already answered; the guard keeps the lane finite regardless.
+            var span = x1 - x0
+            var t = (at - x0) / span if span != 0 else Scalar[dtype](0)
+            y = y0 + t * (y1 - y0)
+        ys.store[1](Coord(q), y)
 
-    var samples = Array[T, n_terms](fill=T.constant(0.0))
-    comptime for j in range(n_terms):
-        comptime node = nodes[j]
-        samples[j] = f[T](midpoint + half_width * T.constant(node))
-
-    var out = Array[T, n_terms](fill=T.constant(0.0))
-    comptime two_over_n = 2.0 / Float64(n_terms)
-
-    # Both loops are `comptime for` so each table entry folds into a
-    # `dtype`-native literal. Materializing the table into a runtime array
-    # instead would keep it in float64 and make this CPU-only, the same
-    # trap `numax.special.orthopoly`'s module docstring describes. The cost is an
-    # `n_terms^2` unroll, which is why `n_terms` is meant to stay modest.
-    comptime for k in range(n_terms):
-        var total = T.constant(0.0)
-        comptime for j in range(n_terms):
-            comptime entry = table[k * n_terms + j]
-            total = total + samples[j] * T.constant(entry)
-        out[k] = total * T.constant(two_over_n)
-
-    return out^
-
-
-def chebyshev_eval[
-    T: FloatLike, n: Int
-](coefficients: Array[T, n], a: T, b: T, x: T) -> T:
-    """Evaluate a `chebyshev_fit` result at `x`, by Clenshaw recurrence.
-
-    Clenshaw rather than summing `c[k]*T_k(x)` term by term: it folds the
-    Chebyshev recurrence into the summation, so no `T_k` is ever formed,
-    and it's the numerically stable way to evaluate this basis.
-
-    `c[0]` enters at half weight, which is the convention `chebyshev_fit`'s
-    `2/N` normalization produces.
-    """
-    var y = (T.constant(2.0) * x - a - b) / (b - a)
-    var two_y = T.constant(2.0) * y
-
-    var d = T.constant(0.0)
-    var dd = T.constant(0.0)
-    for step in range(1, n):
-        var k = n - step
-        var saved = d.copy()
-        d = two_y * d - dd + coefficients[k]
-        dd = saved^
-
-    return y * d - dd + T.constant(0.5) * coefficients[0]
-
-
-def _chebyshev_nodes[n: Int]() -> Array[Float64, n]:
-    """`cos(pi*(j+0.5)/n)` -- the Chebyshev points of the first kind on
-    `[-1, 1]`, which cluster near the endpoints and are what make the fit
-    near-minimax rather than merely least-squares."""
-    var out = Array[Float64, n](fill=0.0)
-    for j in range(n):
-        out[j] = _cos_f64(_PI * (Float64(j) + 0.5) / Float64(n))
-    return out^
-
-
-def _chebyshev_cosine_table[n: Int]() -> Array[Float64, n * n]:
-    """`cos(k*pi*(j+0.5)/n)` for every `(k, j)`, row-major in `k`."""
-    var out = Array[Float64, n * n](fill=0.0)
-    for k in range(n):
-        for j in range(n):
-            out[k * n + j] = _cos_f64(
-                Float64(k) * _PI * (Float64(j) + 0.5) / Float64(n)
-            )
-    return out^
-
-
-# --------------------------------------------------------------------------
-# The scipy.interpolate-shaped objects over the two-call protocols above
-# --------------------------------------------------------------------------
-
-
-@fieldwise_init
-struct CubicSpline[T: FloatLike, n: Int](Copyable, Movable):
-    """A natural cubic spline through `n` uniformly spaced knots, built
-    once and called many times. `scipy.interpolate.CubicSpline`.
-
-    ```mojo
-    var spline = CubicSpline[Plain[f64], 5](y, x0, h)
-    var value = spline(x)
-    ```
-
-    The moments are solved in the constructor and kept, which is the whole
-    point of the split `cubic_spline_moments`/`cubic_spline_eval` protocol
-    this wraps -- those stay public and stay tier 1, since they are what a
-    GPU-launchable kernel calls. This is the convenience over them, not a
-    replacement.
-    """
-
-    var y: Array[Self.T, Self.n]
-    var moments: Array[Self.T, Self.n]
-    var x0: Self.T
-    var h: Self.T
-
-    def __init__(out self, y: Array[Self.T, Self.n], x0: Self.T, h: Self.T):
-        """Solve for the spline's second derivatives at the knots."""
-        self.moments = cubic_spline_moments[Self.T, Self.n](y, h)
-        self.y = y.copy()
-        self.x0 = x0.copy()
-        self.h = h.copy()
-
-    def __call__(self, x: Self.T) -> Self.T:
-        """The spline's value at `x`, clamped to the knot range."""
-        return cubic_spline_eval[Self.T, Self.n](
-            self.y, self.moments, self.x0, self.h, x
-        )
-
-
-@fieldwise_init
-struct Chebyshev[T: FloatLike, n: Int](Copyable, Movable):
-    """A Chebyshev series on `[a, b]`, built once and called many times.
-    `numpy.polynomial.chebyshev.Chebyshev`.
-
-    ```mojo
-    var series = Chebyshev[Plain[f64], 16](
-        chebyshev_fit[Plain[f64], g, 16](a, b), a, b
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        lookup, Coord(m), ctx
     )
-    var value = series(x)
-    ```
+    ctx.synchronize()
+    return out^
 
-    Wraps the `chebyshev_fit`/`chebyshev_eval` pair, which stay public and
-    tier 1. `fit` below is the shorthand that does both.
+
+def horner[
+    dtype: DType, k: Int, m: Int, gpu: Bool = False
+](mut coefficients: Static[dtype, k], mut x: Static[dtype, m]) raises -> Static[
+    dtype, m
+] where (dtype.is_floating_point() and k > 0 and m > 0):
+    """The polynomial with ascending `coefficients` (`coefficients[i]`
+    multiplies `x^i`) evaluated at every point of `x`.
+    `numpy.polynomial.polynomial.polyval(x, c)`.
+
+    Horner's rule per lane, `k - 1` multiply-adds, the coefficients read in
+    place from the device buffer. The same rule as
+    `numax.interpolate.array.horner`, over a tensor of points rather than
+    one `FloatLike` value -- and the ascending order is NumPy's
+    `polynomial` package's, not the descending order of the legacy
+    `numpy.polyval`.
     """
+    var ctx = x.context()
+    var out = Static[dtype, m]._uninitialized(ctx)
+    var cs = coefficients.view()
+    var xs = x.view()
+    var ys = out.view()
 
-    var coefficients: Array[Self.T, Self.n]
-    var a: Self.T
-    var b: Self.T
+    @always_inline
+    def evaluate[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var cs, var xs, var ys}:
+        var q = coord_to_index_list(coord)[0]
+        var at = xs[Coord(q)]
+        var total = cs[Coord(k - 1)]
+        for step in range(1, k):
+            total = total * at + cs[Coord(k - 1 - step)]
+        ys.store[1](Coord(q), total)
 
-    @staticmethod
-    def fit[f: def[U: FloatLike](U) thin -> U](a: Self.T, b: Self.T) -> Self:
-        """Fit `f` on `[a, b]` and keep the coefficients.
-        `Chebyshev[Plain[f64], 16].fit[g](a, b)`."""
-        return Self(chebyshev_fit[Self.T, f, Self.n](a, b), a.copy(), b.copy())
-
-    def __call__(self, x: Self.T) -> Self.T:
-        """The series' value at `x`, by Clenshaw recurrence."""
-        return chebyshev_eval[Self.T, Self.n](
-            self.coefficients, self.a, self.b, x
-        )
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        evaluate, Coord(m), ctx
+    )
+    ctx.synchronize()
+    return out^
