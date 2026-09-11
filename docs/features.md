@@ -338,9 +338,10 @@ through to a different algorithm.
 |---|---|---|
 | `trapezoid`, `simpson`, `cumulative_trapezoid` over sampled `Tensor`s — `trapezoid(y, dx)`, `simpson(y, x)`, exactly `scipy.integrate`'s signatures, SciPy's even-count Simpson correction included | 2 | [`integrate/quadrature.mojo`](../numax/integrate/quadrature.mojo) |
 | `gauss_legendre`, `simpson`, `trapezoid` over a `FloatLike` function — fixed node count; the Gauss-Legendre nodes are Legendre roots found by numax's own Newton solver | 1 | [`integrate/array/quadrature.mojo`](../numax/integrate/array/quadrature.mojo) (`numax.integrate.array`) |
-| `rk4`, `rk4_system`, `dopri5_step`, `dopri5_with_error`, `dopri5` — fixed-step integration, one state or `n` components, with the embedded error estimate | 1 | [`integrate/ode.mojo`](../numax/integrate/ode.mojo) |
+| `rk4_system`, `dopri5`, `dopri5_step`, `solve_ivp` over a `Tensor` state — every stage an `elementwise` launch on the state's device, `gpu=True` on the accelerator; `solve_ivp` shares the scalar controller and takes the same steps at `n == 1` | 2 | [`integrate/ode.mojo`](../numax/integrate/ode.mojo) |
+| `rk4`, `rk4_system`, `dopri5_step`, `dopri5_with_error`, `dopri5` over a `FloatLike` right-hand side — fixed-step, one state or `n` register-resident components, with the embedded error estimate | 1 | [`integrate/array/ode.mojo`](../numax/integrate/array/ode.mojo) (`numax.integrate.array`) |
 | `quad`, `quad_vec` — adaptive quadrature to a tolerance, returning `QuadResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
-| `solve_ivp` — adaptive step-size control, returning `IVPResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
+| `solve_ivp` (scalar state) — adaptive step-size control, returning `IVPResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
 | `solve_ivp_stiff` — A-stable implicit trapezoid, for the problem whose step size stability rather than accuracy decides | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
 
 Because the integrand is a `FloatLike` kernel, differentiating through an

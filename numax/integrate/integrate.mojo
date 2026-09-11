@@ -50,7 +50,10 @@ from std.collections import Array
 from ..core.dual import Dual
 from ..core.numeric import FloatLike
 from ..core.plain import Plain
-from .ode import dopri5_step
+from .array.ode import dopri5_step
+from .ode import dopri5_step as _tensor_dopri5_step
+from ..core.array import Static, copy
+from max.gpu.host import DeviceContext
 from .array.quadrature import gauss_legendre
 
 # Fixed to float64 for the same two reasons as `numax.optimize`: an error
@@ -350,6 +353,131 @@ def solve_ivp[
         h = h * scale
 
     return IVPResult(t, y, accepted, rejected, False)
+
+
+def _max_abs_ratio[
+    dtype: DType, n: Int
+](
+    mut y: Static[dtype, n],
+    mut y_next: Static[dtype, n],
+    mut y_hat: Static[dtype, n],
+    rtol: Float64,
+    atol: Float64,
+) raises -> Float64 where dtype.is_floating_point():
+    """`max_i |y_next_i - y_hat_i| / (atol + rtol * max(|y_i|, |y_next_i|))`
+    -- the infinity-norm error ratio the controller accepts a step on.
+
+    At `n == 1` this is exactly the scalar `solve_ivp`'s ratio, which is
+    what lets the test pin the two against each other step for step.
+    """
+    var a = y.to_host()
+    var b = y_next.to_host()
+    var c = y_hat.to_host()
+    var worst = 0.0
+    for i in range(n):
+        var scale = atol + rtol * max(abs(Float64(a[i])), abs(Float64(b[i])))
+        var err = abs(Float64(b[i] - c[i]))
+        var ratio = err / scale if scale > 0.0 else 0.0
+        if ratio > worst:
+            worst = ratio
+    return worst
+
+
+struct TensorIVPResult[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point()
+):
+    """The outcome of an adaptive integration over a `Tensor` state: the
+    `Tensor` form of `IVPResult`, with the same fields and the same meaning
+    for `accepted`, `rejected` and `converged`."""
+
+    var t: Float64
+    var y: Static[Self.dtype, Self.n]
+    var accepted: Int
+    var rejected: Int
+    var converged: Bool
+
+    def __init__(
+        out self,
+        t: Float64,
+        var y: Static[Self.dtype, Self.n],
+        accepted: Int,
+        rejected: Int,
+        converged: Bool,
+    ):
+        self.t = t
+        self.y = y^
+        self.accepted = accepted
+        self.rejected = rejected
+        self.converged = converged
+
+
+def solve_ivp[
+    dtype: DType,
+    n: Int,
+    f: def(
+        Scalar[dtype], Static[dtype, n], DeviceContext
+    ) raises thin -> Static[dtype, n],
+    gpu: Bool = False,
+](
+    t0: Float64,
+    mut y0: Static[dtype, n],
+    t1: Float64,
+    rtol: Float64 = 1e-8,
+    atol: Float64 = 1e-10,
+    max_steps: Int = 10000,
+) raises -> TensorIVPResult[dtype, n] where dtype.is_floating_point():
+    """Integrate the system from `t0` to `t1` with adaptive step control.
+    The `Tensor` form of `solve_ivp`, and the same controller: Dormand-Prince
+    5(4) steps, accepted when the error ratio is at most one, the next step
+    scaled by `0.9 * ratio^(-1/5)` clamped to a factor of five each way.
+
+    The error ratio is the infinity norm over components of
+    `|y5 - y4| / (atol + rtol * max(|y|, |y5|))`, which at `n == 1` is the
+    scalar controller's ratio exactly -- so on a one-component problem the
+    two take the same steps and return the same counts, and a test says so.
+    Reading those two vectors back each step is the one host round trip in
+    the loop, and the decision it feeds is what makes this tier 2.
+    """
+    if t0 == t1:
+        return TensorIVPResult[dtype, n](t0, copy(y0), 0, 0, True)
+
+    var direction = 1.0 if t1 > t0 else -1.0
+    var span = abs(t1 - t0)
+    var t = t0
+    var y = copy(y0)
+    var h = direction * span / 100.0
+    var accepted = 0
+    var rejected = 0
+
+    for _ in range(max_steps):
+        if abs(t - t1) <= 0.0:
+            return TensorIVPResult[dtype, n](t, y^, accepted, rejected, True)
+        if abs(h) > abs(t1 - t):
+            h = t1 - t
+
+        var stepped = _tensor_dopri5_step[dtype, n, f, gpu](t, y, h)
+        var ratio = _max_abs_ratio(y, stepped.y, stepped.y_hat, rtol, atol)
+
+        if ratio <= 1.0:
+            t += h
+            y = copy(stepped.y)
+            accepted += 1
+            if abs(t - t1) <= 0.0:
+                return TensorIVPResult[dtype, n](
+                    t, y^, accepted, rejected, True
+                )
+        else:
+            rejected += 1
+
+        var scale: Float64
+        if ratio <= 0.0:
+            scale = 5.0
+        else:
+            scale = 0.9 * (1.0 / ratio) ** 0.2
+            scale = min(5.0, max(0.2, scale))
+        h = h * scale
+
+    return TensorIVPResult[dtype, n](t, y^, accepted, rejected, False)
 
 
 def _trapezoid_step[

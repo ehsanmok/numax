@@ -221,6 +221,7 @@ test-quadrature = "mojo -I . tests/integrate/test_quadrature.mojo"
 test-tensor-quadrature = "mojo -I . tests/integrate/test_tensor_quadrature.mojo"
 test-integrate = "mojo -I . tests/integrate/test_integrate.mojo"
 test-ode = "mojo -I . tests/integrate/test_ode.mojo"
+test-tensor-ode = "mojo -I . tests/integrate/test_tensor_ode.mojo"
 test-optimize = "mojo -I . tests/optimize/test_optimize.mojo"
 test-minimize = "mojo -I . tests/optimize/test_minimize.mojo"
 test-tensor-least-squares = "mojo -I . tests/optimize/test_tensor_least_squares.mojo"
@@ -289,6 +290,7 @@ tests = { depends-on = [
     "test-tensor-quadrature",
     "test-integrate",
     "test-ode",
+    "test-tensor-ode",
     "test-optimize",
   "test-minimize",
     "test-tensor-least-squares",

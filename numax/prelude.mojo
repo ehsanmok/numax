@@ -288,7 +288,7 @@ from .stats.random import (
 from .optimize.least_squares import curve_fit, least_squares
 from .optimize.minimize import minimize
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
-from .integrate.ode import rk4
+from .integrate.ode import dopri5, rk4_system
 from .interpolate.interp import Chebyshev, CubicSpline, horner
 from .fft.fft import Spectrum, fft, fftfreq, ifft, rfft, rfftfreq
 

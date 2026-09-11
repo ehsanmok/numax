@@ -12,7 +12,7 @@ from std.math import sin as sin_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Plain
-from numax.integrate import dopri5, dopri5_with_error, rk4, rk4_system
+from numax.integrate.array import dopri5, dopri5_with_error, rk4, rk4_system
 
 comptime dtype = DType.float64
 comptime width = 1

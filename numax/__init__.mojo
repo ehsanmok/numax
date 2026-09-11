@@ -349,18 +349,13 @@ from .optimize.minimize import TensorMinimizeResult, minimize
 from .integrate.integrate import (
     IVPResult,
     QuadResult,
+    TensorIVPResult,
     quad,
     quad_vec,
     solve_ivp,
     solve_ivp_stiff,
 )
-from .integrate.ode import (
-    dopri5,
-    dopri5_step,
-    dopri5_with_error,
-    rk4,
-    rk4_system,
-)
+from .integrate.ode import TensorStep, dopri5, dopri5_step, rk4_system
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 
 # Interpolation -- `numax.interpolate`.

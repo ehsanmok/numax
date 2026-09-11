@@ -120,7 +120,7 @@ and declares which one every function is in:
 
 Every module declares its tier in its own docstring, so the split is
 readable from the source rather than inferred. Tier 1 is the conformers,
-the special functions, the FFT, `rk4`, `dopri5` (fixed-step),
+the special functions, the FFT, `numax.integrate.array`'s `rk4`/`dopri5` (fixed-step),
 `numax.integrate.array`'s `gauss_legendre`, the distributions, and `numax.optimize.solve`'s
 fixed-iteration `newton`/`halley`/`bisection`. Tier 2 is the NumPy-named
 surface over `Tensor` -- the elementwise math, the comparisons, sorting,

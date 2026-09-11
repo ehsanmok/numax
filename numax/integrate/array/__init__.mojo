@@ -2,7 +2,7 @@
 register-resident, `FloatLike`-generic tier.
 
 ```mojo
-from numax.integrate.array import gauss_legendre, simpson, trapezoid
+from numax.integrate.array import gauss_legendre, simpson, trapezoid, rk4, dopri5
 ```
 
 **Opt-in, and one import away rather than in the flat surface.** `simpson`
@@ -16,16 +16,17 @@ is the other one, the same split `numax.linalg.array`, `numax.fft.array` and
 | Module | Holds |
 | --- | --- |
 | `quadrature` | `gauss_legendre`, `simpson`, `trapezoid` -- a `FloatLike` integrand `f` over `[a, b]` at a fixed node count |
+| `ode` | `rk4`, `rk4_system`, `dopri5`, `dopri5_with_error`, `dopri5_step` -- a `FloatLike` right-hand side, a scalar or `Array[T, n]` state, a fixed step count |
 
 ## Why this tier exists at all
 
 The integrand is a `FloatLike` kernel, so integrating at `Dual`
 differentiates the integral -- with respect to a limit or a parameter --
 and integrating at `Compensated` recovers the digits a long sum loses.
-Every node count is a compile-time parameter, so the whole quadrature is
-**tier 1**: fixed work, no per-lane branch, launchable inside a GPU thread,
-which is how `examples/advanced/ode.mojo` runs a thousand integrals one per
-thread.
+Every node count and step count is a compile-time parameter, so the whole
+tier is **tier 1**: fixed work, no per-lane branch, launchable inside a GPU
+thread, which is how `examples/advanced/ode.mojo` runs a thousand
+trajectories one per thread with `rk4`.
 
 ## Where the two tiers part, and the spelling that follows
 
@@ -50,4 +51,5 @@ from numax.integrate.array import simpson as simpson_f  # Array, over f
 That is the price of a flat surface that means exactly one thing.
 """
 
+from .ode import dopri5, dopri5_step, dopri5_with_error, rk4, rk4_system
 from .quadrature import gauss_legendre, simpson, trapezoid

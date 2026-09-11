@@ -7,7 +7,7 @@ ways:
 
 - **CPU**: `numax.stats.uniform` draws the initial conditions directly
   into a `Tensor`, reproducibly under a fixed `seed`, then
-  `numax.integrate.rk4` integrates every trajectory via `numax.core.tensor.map` at
+  `numax.integrate.array.rk4` integrates every trajectory via `numax.core.tensor.map` at
   native SIMD width -- no different from `ode.mojo`'s own CPU path once the
   initial conditions exist.
 - **GPU**: initial conditions are drawn *on-device*, one value per thread,
@@ -32,7 +32,7 @@ from std.random import Random
 
 from numax import Plain, Static
 from numax.core.numeric import FloatLike
-from numax.integrate import rk4
+from numax.integrate.array import rk4
 from numax.stats import seed, uniform
 from numax.core.tensor import map
 

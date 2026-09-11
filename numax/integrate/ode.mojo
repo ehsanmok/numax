@@ -1,307 +1,278 @@
-"""Fixed-step Runge-Kutta integrators for initial-value problems.
+"""Initial-value problems over a `Tensor` state: `rk4_system`, `dopri5` and
+`dopri5_step` for a system whose state is a `Static[dtype, n]`.
 
-Solve `dy/dt = f(t, y)` from `t0` to `t1` given `y(t0) = y0`, for a scalar
-`y` (`rk4`, `dopri5`) or an `n`-component system (`rk4_system`).
+**This module is tier 2**, host-orchestrated: the step loop runs on the
+host, and every stage combination -- `y + a*k` -- is one `elementwise`
+launch on the state's own device, so a large state never round-trips
+between stages. `gpu=True` puts those launches on the accelerator; the
+right-hand side `f` is the caller's and runs wherever the caller wrote it
+to run. The adaptive `solve_ivp` over a `Tensor` state drives `dopri5_step` from
+`numax.integrate.integrate`, beside the scalar one, so the name has one
+owning module.
 
-Two things fall out of writing these against `FloatLike` rather than a
-concrete float type.
+This is the method-of-lines case the `Array` tier cannot reach: a PDE
+discretized to ten thousand unknowns is a `Tensor` state, and
+`numax.integrate.array.rk4_system`'s `Array[T, n]` lives in registers. The
+two tiers share the Dormand-Prince tableau and the same stage structure,
+and the tests pin the `Tensor` forms against the `Array` ones component by
+component on the same problem.
 
-**Sensitivities come from the integrator you already have.** Integrating at
-`Dual` propagates a derivative through every stage, so seeding `y0` with
-derivative `1` returns `dy(t1)/dy0` alongside the solution -- the
-initial-condition sensitivity, with no variational equation to derive and
-no adjoint pass. Sensitivity to a *parameter* needs no new API either:
-augment the state with the parameter and give it `dp/dt = 0`, then seed
-that component's derivative instead. `tests/integrate/test_ode.mojo` checks both
-against closed forms.
+`f` takes `(t, y, ctx)` and returns `dy/dt` as a new tensor -- the
+convention `numax.optimize.minimize` uses for its objective, with the time
+first. It is a compile-time parameter, so it cannot capture run-time data;
+a parameter goes into the state as a component with zero derivative, as it
+does at the `Array` tier.
 
-**One thread per initial condition is the natural GPU shape.** The whole
-integration is a fixed number of stages over a fixed number of steps with
-no data-dependent control flow, so it compiles into a `map[gpu=True]`
-kernel body directly: each thread integrates its own trajectory to
-completion. `examples/advanced/ode.mojo` runs an ensemble that way, verified
-on Metal and on CUDA.
-
-## Scope: fixed steps, no adaptive control
-
-Both integrators take a step count, not a tolerance, because no kernel in
-`numax` runs a data-dependent number of iterations -- that's what keeps every
-one of them launchable inside a GPU thread. This is a real limitation and
-worth being precise about, because Dormand-Prince is *usually* an adaptive
-method -- its embedded 4th-order pair exists to estimate the local error so
-a controller can resize the step. `dopri5` here still computes that
-estimate (`dopri5_with_error` returns it), but nothing acts on it: an
-adaptive controller would have each SIMD lane and each GPU thread accepting
-or rejecting steps on its own schedule, which `FloatLike` has no way to
-express and which would destroy the one-thread-per-trajectory shape above.
-
-What you get instead is a 5th-order solution for the same step count a
-4th-order RK4 would need, plus an honest error number you can inspect to
-decide whether to re-run with more steps. Stiff problems still want an
-implicit method, which isn't here.
+`ponytail:` each stage argument is built by repeated in-place `axpy`
+launches, one per `k`, so a `dopri5` step is about thirty small launches
+rather than seven fused ones. Fusing each stage's combination into one
+body is the upgrade; nothing in the signatures changes when it lands.
 """
 
-from std.collections import Array
+from layout import Coord
+from max.algorithm.functional import elementwise
+from max.gpu.host import DeviceContext
+from std.sys.info import simd_width_of
 
-from ..core.numeric import FloatLike
+from ..core.array import Static, copy
+
+from .array.ode import (
+    _A21,
+    _A31,
+    _A32,
+    _A41,
+    _A42,
+    _A43,
+    _A51,
+    _A52,
+    _A53,
+    _A54,
+    _A61,
+    _A62,
+    _A63,
+    _A64,
+    _A65,
+    _B1,
+    _B3,
+    _B4,
+    _B5,
+    _B6,
+    _BH1,
+    _BH3,
+    _BH4,
+    _BH5,
+    _BH6,
+    _BH7,
+    _C2,
+    _C3,
+    _C4,
+    _C5,
+)
 
 
-def rk4[
-    T: FloatLike,
-    f: def[U: FloatLike](U, U) thin -> U,
-    num_steps: Int = 100,
-](t0: T, y0: T, t1: T) -> T:
-    """Integrate the scalar `dy/dt = f(t, y)` from `t0` to `t1` with
-    `num_steps` steps of the classical fourth-order Runge-Kutta method.
+@always_inline
+def _target[gpu: Bool]() -> StaticString:
+    return "gpu" if gpu else "cpu"
 
-    Fourth-order accurate: halving the step size cuts the error by about
-    16x, which `tests/integrate/test_ode.mojo` verifies directly rather than
-    asserting.
 
-    `t1 < t0` integrates backwards, since the step size is just
-    `(t1-t0)/num_steps` and nothing here assumes its sign.
-    """
-    var h = (t1 - t0) / T.constant(Float64(num_steps))
-    var half = h / T.constant(2.0)
-    var y = y0.copy()
-    # The step index is carried as a running `T` rather than converted from
-    # the loop's `Int` -- see `numax.special.orthopoly`'s module docstring for the
-    # Metal instruction that rules out the obvious `T.constant(Float64(i))`.
-    var step_index = T.constant(0.0)
+@always_inline
+def _width[dtype: DType, gpu: Bool]() -> Int:
+    comptime if gpu:
+        return 1
+    else:
+        return simd_width_of[dtype]()
 
-    for _ in range(num_steps):
-        var t = t0 + step_index * h
 
-        var k1 = f[T](t.copy(), y.copy())
-        var k2 = f[T](t + half, y + half * k1)
-        var k3 = f[T](t + half, y + half * k2)
-        var k4 = f[T](t + h, y + h * k3)
+def _axpy_into[
+    dtype: DType, n: Int, gpu: Bool
+](
+    mut out: Static[dtype, n],
+    mut x: Static[dtype, n],
+    a: Scalar[dtype],
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """`out += a * x`, in place, on `out`'s device -- the one primitive
+    every Runge-Kutta stage argument and combination is built from."""
+    var o = out.view().coalesce()
+    var xs = x.view().coalesce()
 
-        y = y + h * (
-            k1 + T.constant(2.0) * k2 + T.constant(2.0) * k3 + k4
-        ) / T.constant(6.0)
-        step_index = step_index + T.one()
+    @always_inline
+    def body[w: Int, alignment: Int = 1](coord: Coord) {var o, var xs, var a}:
+        o.store[w](coord, o.load[w](coord) + a * xs.load[w](coord))
 
-    return y^
+    elementwise[simd_width=_width[dtype, gpu](), target=_target[gpu]()](
+        body, Coord(n), ctx
+    )
+    ctx.synchronize()
 
 
 def rk4_system[
-    T: FloatLike,
+    dtype: DType,
     n: Int,
-    f: def[U: FloatLike](U, Array[U, n]) thin -> Array[U, n],
+    f: def(
+        Scalar[dtype], Static[dtype, n], DeviceContext
+    ) raises thin -> Static[dtype, n],
     num_steps: Int = 100,
-](t0: T, y0: Array[T, n], t1: T) -> Array[T, n]:
-    """Integrate the `n`-component system `dy/dt = f(t, y)` with the same
-    method as `rk4`.
+    gpu: Bool = False,
+](t0: Float64, mut y0: Static[dtype, n], t1: Float64) raises -> Static[
+    dtype, n
+] where (dtype.is_floating_point() and num_steps >= 1):
+    """Integrate the `n`-component system `dy/dt = f(t, y)` from `t0` to
+    `t1` in `num_steps` classical fourth-order Runge-Kutta steps, the
+    state a `Tensor`. The `Tensor` form of `numax.integrate.array.rk4_system`.
 
-    `n` is a compile-time size, so the state lives in registers and the
-    whole integration stays GPU-launchable. This is also where parameter
-    sensitivity goes: append the parameter to the state with `dp/dt = 0`,
-    seed its `Dual` derivative, and read the sensitivity off the components
-    you care about.
+    `t1 < t0` integrates backwards; the step is `(t1 - t0) / num_steps` and
+    nothing here assumes its sign.
     """
-    var h = (t1 - t0) / T.constant(Float64(num_steps))
-    var half = h / T.constant(2.0)
-    var y = _copy_state[T, n](y0)
-    var step_index = T.constant(0.0)
+    var ctx = y0.context()
+    var h = (t1 - t0) / Float64(num_steps)
+    var y = copy(y0)
 
-    for _ in range(num_steps):
-        var t = t0 + step_index * h
+    for step in range(num_steps):
+        var t = t0 + Float64(step) * h
+        var k1 = f(Scalar[dtype](t), y, ctx)
 
-        var k1 = f[T](t.copy(), _copy_state[T, n](y))
-        var k2 = f[T](t + half, _axpy[T, n](half, k1, y))
-        var k3 = f[T](t + half, _axpy[T, n](half, k2, y))
-        var k4 = f[T](t + h, _axpy[T, n](h.copy(), k3, y))
+        var arg = copy(y)
+        _axpy_into[gpu=gpu](arg, k1, Scalar[dtype](h / 2), ctx)
+        var k2 = f(Scalar[dtype](t + h / 2), arg, ctx)
 
-        var sixth = h / T.constant(6.0)
-        for i in range(n):
-            var slope = (
-                k1[i]
-                + T.constant(2.0) * k2[i]
-                + T.constant(2.0) * k3[i]
-                + k4[i]
-            )
-            y[i] = y[i] + sixth * slope
-        step_index = step_index + T.one()
+        arg = copy(y)
+        _axpy_into[gpu=gpu](arg, k2, Scalar[dtype](h / 2), ctx)
+        var k3 = f(Scalar[dtype](t + h / 2), arg, ctx)
+
+        arg = copy(y)
+        _axpy_into[gpu=gpu](arg, k3, Scalar[dtype](h), ctx)
+        var k4 = f(Scalar[dtype](t + h), arg, ctx)
+
+        _axpy_into[gpu=gpu](y, k1, Scalar[dtype](h / 6), ctx)
+        _axpy_into[gpu=gpu](y, k2, Scalar[dtype](h / 3), ctx)
+        _axpy_into[gpu=gpu](y, k3, Scalar[dtype](h / 3), ctx)
+        _axpy_into[gpu=gpu](y, k4, Scalar[dtype](h / 6), ctx)
 
     return y^
 
 
-def dopri5[
-    T: FloatLike,
-    f: def[U: FloatLike](U, U) thin -> U,
-    num_steps: Int = 100,
-](t0: T, y0: T, t1: T) -> T:
-    """Integrate the scalar `dy/dt = f(t, y)` with fixed-step
-    Dormand-Prince 5(4).
+struct TensorStep[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point()
+):
+    """One Dormand-Prince step's result: the 5th-order state and the
+    embedded 4th-order one, whose disagreement is the local error
+    estimate. A struct rather than a tuple because a `Tuple` of two
+    `Tensor`s cannot be destructured in Mojo 1.0.
 
-    Fifth-order accurate for seven stages per step against `rk4`'s four,
-    which is the trade: more work per step, but the error falls off as
-    `h^5`, so it wins decisively once the step count is anywhere near
-    adequate.
-
-    Use `dopri5_with_error` if you want the embedded 4th-order pair's
-    disagreement as a local error indicator; see this module's docstring for
-    why nothing here acts on it automatically.
+    `ponytail:` neither field can be *moved* out either -- Mojo 1.0 rejects
+    moving one field from a struct that still owns another ("destroyed out
+    of the middle of a value") -- so `dopri5` and `solve_ivp` `copy` the
+    accepted state out, one `n`-element device copy per step. A consuming
+    accessor that moves both fields out is the upgrade once the language
+    allows it.
     """
-    var result = dopri5_with_error[T, f, num_steps](t0, y0, t1)
-    return result[0].copy()
 
+    var y: Static[Self.dtype, Self.n]
+    """The 5th-order solution after the step."""
 
-def dopri5_with_error[
-    T: FloatLike,
-    f: def[U: FloatLike](U, U) thin -> U,
-    num_steps: Int = 100,
-](t0: T, y0: T, t1: T) -> Tuple[T, T]:
-    """`dopri5`, also returning the summed magnitude of the 5th- and
-    4th-order solutions' per-step disagreement.
+    var y_hat: Static[Self.dtype, Self.n]
+    """The embedded 4th-order solution; `|y - y_hat|` is the error estimate."""
 
-    That second value is the standard local truncation error estimate an
-    adaptive controller would drive the step size with. Summed over fixed
-    steps it's a rough global error proxy: useful for deciding whether
-    `num_steps` was enough, not a rigorous bound.
-    """
-    var h = (t1 - t0) / T.constant(Float64(num_steps))
-    var y = y0.copy()
-    var error_sum = T.constant(0.0)
-    var step_index = T.constant(0.0)
-
-    for _ in range(num_steps):
-        var t = t0 + step_index * h
-        var stepped = dopri5_step[T, f](t^, y.copy(), h.copy())
-        error_sum = error_sum + stepped[1]
-        y = stepped[0].copy()
-        step_index = step_index + T.one()
-
-    return (y^, error_sum^)
+    def __init__(
+        out self,
+        var y: Static[Self.dtype, Self.n],
+        var y_hat: Static[Self.dtype, Self.n],
+    ):
+        self.y = y^
+        self.y_hat = y_hat^
 
 
 def dopri5_step[
-    T: FloatLike,
-    f: def[U: FloatLike](U, U) thin -> U,
-](t: T, y: T, h: T) -> Tuple[T, T]:
-    """One Dormand-Prince 5(4) step: returns `(y5, |y5 - y4|)`.
+    dtype: DType,
+    n: Int,
+    f: def(
+        Scalar[dtype], Static[dtype, n], DeviceContext
+    ) raises thin -> Static[dtype, n],
+    gpu: Bool = False,
+](t: Float64, mut y: Static[dtype, n], h: Float64) raises -> TensorStep[
+    dtype, n
+] where dtype.is_floating_point():
+    """One Dormand-Prince 5(4) step of the system, returning both
+    embedded solutions. The `Tensor` form of
+    `numax.integrate.array.dopri5_step`, from the same tableau.
 
-    The seven stages, the 5th-order solution, and the magnitude of its
-    disagreement with the embedded 4th-order one -- the standard local
-    truncation error estimate. Public but low-level: `dopri5` and
-    `dopri5_with_error` drive it at a fixed step size, and
-    `numax.integrate.solve_ivp` drives it with adaptive step control.
-    Sharing one step body is what keeps the tableau in exactly one place.
-
-    Tier 1, like everything else in this module: seven evaluations of `f`,
-    no branching, no data-dependent iteration. The adaptive *controller*
-    built on top of it is tier 2, but this is not.
+    Public but low-level: `dopri5` drives it at a fixed step and
+    `solve_ivp` with adaptive control, so the tableau lives in one place.
     """
-    var k1 = f[T](t.copy(), y.copy())
-    var k2 = f[T](t + _c(h, _C2), y + h * (_c(k1, _A21)))
-    var k3 = f[T](t + _c(h, _C3), y + h * (_c(k1, _A31) + _c(k2, _A32)))
-    var k4 = f[T](
-        t + _c(h, _C4),
-        y + h * (_c(k1, _A41) + _c(k2, _A42) + _c(k3, _A43)),
-    )
-    var k5 = f[T](
-        t + _c(h, _C5),
-        y + h * (_c(k1, _A51) + _c(k2, _A52) + _c(k3, _A53) + _c(k4, _A54)),
-    )
-    var k6 = f[T](
-        t + h,
-        y
-        + h
-        * (
-            _c(k1, _A61)
-            + _c(k2, _A62)
-            + _c(k3, _A63)
-            + _c(k4, _A64)
-            + _c(k5, _A65)
-        ),
-    )
+    var ctx = y.context()
+    var hs = Scalar[dtype](h)
 
-    # The 5th-order solution. Its stage weights are also row 7 of the
-    # Butcher tableau, which is what makes `k7` below the next step's
-    # `k1` (the "first same as last" property) -- not exploited here,
-    # since `k7` is only needed for the error estimate.
-    var increment = (
-        _c(k1, _B1) + _c(k3, _B3) + _c(k4, _B4) + _c(k5, _B5) + _c(k6, _B6)
-    )
-    var y5 = y + h * increment
+    var k1 = f(Scalar[dtype](t), y, ctx)
 
-    var k7 = f[T](t + h, y5.copy())
-    var increment_hat = (
-        _c(k1, _BH1)
-        + _c(k3, _BH3)
-        + _c(k4, _BH4)
-        + _c(k5, _BH5)
-        + _c(k6, _BH6)
-        + _c(k7, _BH7)
-    )
-    var y4 = y + h * increment_hat
+    var arg = copy(y)
+    _axpy_into[gpu=gpu](arg, k1, hs * Scalar[dtype](_A21), ctx)
+    var k2 = f(Scalar[dtype](t + _C2 * h), arg, ctx)
 
-    return (y5^, (y5 - y4).abs())
+    arg = copy(y)
+    _axpy_into[gpu=gpu](arg, k1, hs * Scalar[dtype](_A31), ctx)
+    _axpy_into[gpu=gpu](arg, k2, hs * Scalar[dtype](_A32), ctx)
+    var k3 = f(Scalar[dtype](t + _C3 * h), arg, ctx)
 
+    arg = copy(y)
+    _axpy_into[gpu=gpu](arg, k1, hs * Scalar[dtype](_A41), ctx)
+    _axpy_into[gpu=gpu](arg, k2, hs * Scalar[dtype](_A42), ctx)
+    _axpy_into[gpu=gpu](arg, k3, hs * Scalar[dtype](_A43), ctx)
+    var k4 = f(Scalar[dtype](t + _C4 * h), arg, ctx)
 
-def _c[T: FloatLike](x: T, coefficient: Float64) -> T:
-    """`coefficient * x`, with the coefficient a compile-time literal.
+    arg = copy(y)
+    _axpy_into[gpu=gpu](arg, k1, hs * Scalar[dtype](_A51), ctx)
+    _axpy_into[gpu=gpu](arg, k2, hs * Scalar[dtype](_A52), ctx)
+    _axpy_into[gpu=gpu](arg, k3, hs * Scalar[dtype](_A53), ctx)
+    _axpy_into[gpu=gpu](arg, k4, hs * Scalar[dtype](_A54), ctx)
+    var k5 = f(Scalar[dtype](t + _C5 * h), arg, ctx)
 
-    Every caller passes one of the `_A`/`_B`/`_C` constants below, so
-    `T.constant` folds into a `dtype`-native literal and no float64
-    arithmetic survives into the generated code.
-    """
-    return T.constant(coefficient) * x
+    arg = copy(y)
+    _axpy_into[gpu=gpu](arg, k1, hs * Scalar[dtype](_A61), ctx)
+    _axpy_into[gpu=gpu](arg, k2, hs * Scalar[dtype](_A62), ctx)
+    _axpy_into[gpu=gpu](arg, k3, hs * Scalar[dtype](_A63), ctx)
+    _axpy_into[gpu=gpu](arg, k4, hs * Scalar[dtype](_A64), ctx)
+    _axpy_into[gpu=gpu](arg, k5, hs * Scalar[dtype](_A65), ctx)
+    var k6 = f(Scalar[dtype](t + h), arg, ctx)
+
+    # The 5th-order solution; its weights are row 7 of the tableau.
+    var y5 = copy(y)
+    _axpy_into[gpu=gpu](y5, k1, hs * Scalar[dtype](_B1), ctx)
+    _axpy_into[gpu=gpu](y5, k3, hs * Scalar[dtype](_B3), ctx)
+    _axpy_into[gpu=gpu](y5, k4, hs * Scalar[dtype](_B4), ctx)
+    _axpy_into[gpu=gpu](y5, k5, hs * Scalar[dtype](_B5), ctx)
+    _axpy_into[gpu=gpu](y5, k6, hs * Scalar[dtype](_B6), ctx)
+
+    var k7 = f(Scalar[dtype](t + h), y5, ctx)
+    var y4 = copy(y)
+    _axpy_into[gpu=gpu](y4, k1, hs * Scalar[dtype](_BH1), ctx)
+    _axpy_into[gpu=gpu](y4, k3, hs * Scalar[dtype](_BH3), ctx)
+    _axpy_into[gpu=gpu](y4, k4, hs * Scalar[dtype](_BH4), ctx)
+    _axpy_into[gpu=gpu](y4, k5, hs * Scalar[dtype](_BH5), ctx)
+    _axpy_into[gpu=gpu](y4, k6, hs * Scalar[dtype](_BH6), ctx)
+    _axpy_into[gpu=gpu](y4, k7, hs * Scalar[dtype](_BH7), ctx)
+
+    return TensorStep[dtype, n](y5^, y4^)
 
 
-def _copy_state[T: FloatLike, n: Int](y: Array[T, n]) -> Array[T, n]:
-    var out = Array[T, n](fill=T.constant(0.0))
-    for i in range(n):
-        out[i] = y[i].copy()
-    return out^
-
-
-def _axpy[
-    T: FloatLike, n: Int
-](a: T, x: Array[T, n], y: Array[T, n]) -> Array[T, n]:
-    """`y + a*x`, componentwise -- the stage argument every RK stage builds."""
-    var out = Array[T, n](fill=T.constant(0.0))
-    for i in range(n):
-        out[i] = y[i] + a * x[i]
-    return out^
-
-
-# Dormand-Prince 5(4) Butcher tableau (Dormand & Prince 1980, "A family of
-# embedded Runge-Kutta formulae"). `_C*` are the stage times as fractions of
-# the step, `_A*` the stage coefficients, `_B*` the 5th-order weights, and
-# `_BH*` the embedded 4th-order weights. `_B2`/`_BH2` are zero and omitted
-# rather than written out, which is why `k2` appears in no weighted sum.
-comptime _C2 = 1.0 / 5.0
-comptime _C3 = 3.0 / 10.0
-comptime _C4 = 4.0 / 5.0
-comptime _C5 = 8.0 / 9.0
-
-comptime _A21 = 1.0 / 5.0
-comptime _A31 = 3.0 / 40.0
-comptime _A32 = 9.0 / 40.0
-comptime _A41 = 44.0 / 45.0
-comptime _A42 = -56.0 / 15.0
-comptime _A43 = 32.0 / 9.0
-comptime _A51 = 19372.0 / 6561.0
-comptime _A52 = -25360.0 / 2187.0
-comptime _A53 = 64448.0 / 6561.0
-comptime _A54 = -212.0 / 729.0
-comptime _A61 = 9017.0 / 3168.0
-comptime _A62 = -355.0 / 33.0
-comptime _A63 = 46732.0 / 5247.0
-comptime _A64 = 49.0 / 176.0
-comptime _A65 = -5103.0 / 18656.0
-
-comptime _B1 = 35.0 / 384.0
-comptime _B3 = 500.0 / 1113.0
-comptime _B4 = 125.0 / 192.0
-comptime _B5 = -2187.0 / 6784.0
-comptime _B6 = 11.0 / 84.0
-
-comptime _BH1 = 5179.0 / 57600.0
-comptime _BH3 = 7571.0 / 16695.0
-comptime _BH4 = 393.0 / 640.0
-comptime _BH5 = -92097.0 / 339200.0
-comptime _BH6 = 187.0 / 2100.0
-comptime _BH7 = 1.0 / 40.0
+def dopri5[
+    dtype: DType,
+    n: Int,
+    f: def(
+        Scalar[dtype], Static[dtype, n], DeviceContext
+    ) raises thin -> Static[dtype, n],
+    num_steps: Int = 100,
+    gpu: Bool = False,
+](t0: Float64, mut y0: Static[dtype, n], t1: Float64) raises -> Static[
+    dtype, n
+] where (dtype.is_floating_point() and num_steps >= 1):
+    """Integrate the system with fixed-step Dormand-Prince 5(4). The
+    `Tensor` form of `numax.integrate.array.dopri5`: fifth order for seven
+    stages per step, against `rk4_system`'s fourth for four."""
+    var h = (t1 - t0) / Float64(num_steps)
+    var y = copy(y0)
+    for step in range(num_steps):
+        var t = t0 + Float64(step) * h
+        var stepped = dopri5_step[dtype, n, f, gpu](t, y, h)
+        y = copy(stepped.y)
+    return y^
