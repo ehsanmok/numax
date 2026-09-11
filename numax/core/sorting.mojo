@@ -474,6 +474,96 @@ def nonzero[
     return indices^
 
 
+def argwhere[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[DType.int64, 2]:
+    """The coordinates of the nonzero elements, one row each.
+    `numpy.argwhere`.
+
+    Where `nonzero` returns *flat* indices as a `List[Int]`, this returns a
+    `(count, rank)` tensor whose row `i` is the full coordinate of the
+    `i`-th nonzero element. That is the form a rank-2 caller needs -- a
+    flat index into a `(rows, cols)` has to be divided back out, and doing
+    it at the call site is where the stride convention gets mistaken.
+
+    Right-sized: the row count depends on the data, which is what a
+    run-time-shaped tensor is for.
+    """
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank)
+    for d in range(rank):
+        extents.append(a.dim_at(d))
+
+    var values = a.to_host()
+    var n = len(values)
+    var coords = List[Scalar[DType.int64]](capacity=n * rank)
+    var count = 0
+    for flat in range(n):
+        if values[flat] != 0:
+            count += 1
+            var rem = flat
+            var digits = List[Int](length=rank, fill=0)
+            for k in range(rank):
+                var d = rank - 1 - k
+                digits[d] = rem % extents[d]
+                rem //= extents[d]
+            for d in range(rank):
+                coords.append(Scalar[DType.int64](digits[d]))
+
+    var shape = List[Int](capacity=2)
+    shape.append(count)
+    shape.append(rank)
+    return Dynamic[DType.int64, 2](
+        a.context(), row_major(_dyn_shape_from[2](shape)), coords^
+    )
+
+
+def put[
+    dtype: DType, LayoutType: TensorLayout
+](
+    mut a: Tensor[dtype, LayoutType],
+    indices: List[Int],
+    values: List[Scalar[dtype]],
+) raises:
+    """Write `values` into `a` at the flat `indices`. `numpy.put`.
+
+    In place and returning nothing, unlike everything else in this module,
+    because that is what `numpy.put` does and because the alternative -- a
+    copy with a few entries changed -- is the expensive spelling of a
+    scatter. The consumer for `nonzero`'s and `argsort`'s index lists on
+    the writing side, as `take` is on the reading side.
+
+    `values` must be as long as `indices`, or one element long, which
+    broadcasts to every index the way `numpy.put` does. Indices are flat
+    and row-major, matching `numpy.put` with no `mode`; an out-of-range one
+    raises rather than wrapping, since `mode="raise"` is NumPy's default.
+
+    MAX's `nn.scatter_elements` and `nn.scatter_nd` were searched for this
+    and neither fits: both want the indices as a tensor shaped like the
+    output slice rather than a flat list, so numax would build the very
+    thing the caller is trying to avoid.
+    """
+    var n = a.size()
+    if len(values) != len(indices) and len(values) != 1:
+        raise Error(
+            "put: ",
+            len(values),
+            " values for ",
+            len(indices),
+            " indices -- give one value or one per index",
+        )
+
+    var current = a.to_host()
+    for q in range(len(indices)):
+        var at = indices[q]
+        if at < 0 or at >= n:
+            raise Error(
+                "put: index ", at, " is out of range for ", n, " elements"
+            )
+        current[at] = values[0] if len(values) == 1 else values[q]
+    a.copy_from_host(current)
+
+
 def extract[
     dtype: DType, LayoutType: TensorLayout
 ](

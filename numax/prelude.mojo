@@ -201,9 +201,11 @@ from .core.logic import (
 )
 from .core.sorting import (
     argsort,
+    argwhere,
     count_nonzero,
     extract,
     nonzero,
+    put,
     searchsorted,
     select,
     sort,

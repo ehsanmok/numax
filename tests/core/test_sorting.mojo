@@ -21,9 +21,11 @@ from numax.core.sorting import (
     all_nonzero,
     any_nonzero,
     argsort,
+    argwhere,
     count_nonzero,
     extract,
     nonzero,
+    put,
     searchsorted,
     sort,
     take,
@@ -660,6 +662,92 @@ def test_select_at_one_shape_still_keeps_its_layout_type() raises:
     var b = _grid3[2, 3]([9.0, 9.0, 9.0, 9.0, 9.0, 9.0])
     var same: Static[dtype, 2, 3] = select(greater(a, b), a, b)
     assert_equal(same.to_host()[0], 9.0)
+
+
+def test_argwhere_returns_coordinates_where_nonzero_returns_flat() raises:
+    # numpy.argwhere([[0, 5, 0], [7, 0, 9]]) == [[0, 1], [1, 0], [1, 2]],
+    # against numpy.flatnonzero's [1, 3, 5] -- the same elements, addressed
+    # two ways, which is the distinction this pair exists for.
+    var a = _grid3[2, 3]([0.0, 5.0, 0.0, 7.0, 0.0, 9.0])
+
+    var coords = argwhere(a)
+    assert_equal(coords.dim_at(0), 3)
+    assert_equal(coords.dim_at(1), 2)
+    var out = coords.to_host()
+    var expected = [0, 1, 1, 0, 1, 2]
+    for i in range(6):
+        assert_equal(Int(out[i]), expected[i])
+
+    var flat = nonzero(a)
+    assert_equal(len(flat), 3)
+    assert_equal(flat[0], 1)
+    assert_equal(flat[2], 5)
+
+
+def test_argwhere_on_an_all_zero_tensor_is_empty() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 2, 2](ctx)
+    var coords = argwhere(a)
+    assert_equal(coords.dim_at(0), 0)
+    assert_equal(coords.dim_at(1), 2)
+
+
+def test_put_writes_in_place_at_flat_indices() raises:
+    var a = mk[5]([1.0, 2.0, 3.0, 4.0, 5.0])
+    var idx = List[Int]()
+    idx.append(0)
+    idx.append(3)
+    var vals = List[Scalar[dtype]]()
+    vals.append(Scalar[dtype](-1.0))
+    vals.append(Scalar[dtype](-4.0))
+
+    put(a, idx, vals)
+    var out = a.to_host()
+    var expected = [-1.0, 2.0, 3.0, -4.0, 5.0]
+    for i in range(5):
+        assert_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_put_broadcasts_a_single_value_over_every_index() raises:
+    var a = mk[5]([1.0, 2.0, 3.0, 4.0, 5.0])
+    var idx = List[Int]()
+    idx.append(1)
+    idx.append(4)
+    var one = List[Scalar[dtype]]()
+    one.append(Scalar[dtype](0.0))
+
+    put(a, idx, one)
+    var out = a.to_host()
+    assert_equal(out[1], 0.0)
+    assert_equal(out[4], 0.0)
+    assert_equal(out[0], 1.0)
+
+
+def test_put_is_the_writing_side_of_nonzero() raises:
+    # The pairing worth pinning: `nonzero` says where, `put` writes there.
+    var a = mk[5]([0.0, 3.0, 0.0, 8.0, 0.0])
+    var one = List[Scalar[dtype]]()
+    one.append(Scalar[dtype](1.0))
+
+    put(a, nonzero(a), one)
+    var out = a.to_host()
+    assert_equal(out[0], 0.0)
+    assert_equal(out[1], 1.0)
+    assert_equal(out[3], 1.0)
+
+
+def test_put_rejects_an_out_of_range_index() raises:
+    var a = mk[3]([1.0, 2.0, 3.0])
+    var idx = List[Int]()
+    idx.append(5)
+    var vals = List[Scalar[dtype]]()
+    vals.append(Scalar[dtype](0.0))
+    var raised = False
+    try:
+        put(a, idx, vals)
+    except:
+        raised = True
+    assert_true(raised)
 
 
 def main() raises:
