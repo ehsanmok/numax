@@ -51,7 +51,7 @@ from ..core.dual import Dual
 from ..core.numeric import FloatLike
 from ..core.plain import Plain
 from .ode import dopri5_step
-from .quadrature import gauss_legendre
+from .array.quadrature import gauss_legendre
 
 # Fixed to float64 for the same two reasons as `numax.optimize`: an error
 # tolerance of 1e-10 is meaningless at float32, and Mojo will not accept a

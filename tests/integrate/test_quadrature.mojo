@@ -1,4 +1,4 @@
-"""Tests for `numax.integrate` and `numax.special.orthopoly`.
+"""Tests for `numax.integrate.array` and `numax.special.orthopoly`.
 
 Integrands here have closed-form antiderivatives, so every expected value
 is exact rather than a reference-library number.
@@ -15,13 +15,11 @@ from numax import (
     Plain,
     chebyshev_t,
     chebyshev_u,
-    gauss_legendre,
     hermite_h,
     laguerre_l,
     legendre_p,
-    simpson,
-    trapezoid,
 )
+from numax.integrate.array import gauss_legendre, simpson, trapezoid
 
 comptime dtype = DType.float64
 comptime width = 1

@@ -28,13 +28,11 @@ from numax import (
     FloatLike,
     Plain,
     chebyshev_t,
-    gauss_legendre,
     hermite_h,
     laguerre_l,
     legendre_p,
-    simpson,
-    trapezoid,
 )
+from numax.integrate.array import gauss_legendre, simpson, trapezoid
 
 from numax.optimize.array import newton
 

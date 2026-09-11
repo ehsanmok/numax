@@ -13,7 +13,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from numax import FloatLike, Plain
 from numax.integrate import quad, quad_vec, solve_ivp, solve_ivp_stiff
 from numax.integrate import dopri5
-from numax.integrate import gauss_legendre
+from numax.integrate.array import gauss_legendre
 
 comptime P = Plain[DType.float64, 1]
 

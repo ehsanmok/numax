@@ -1,202 +1,196 @@
-"""Numerical integration on a fixed grid: Gauss-Legendre, Simpson, and the
-trapezoid rule.
+"""Integration of sampled values: `scipy.integrate`'s `trapezoid`, `simpson`
+and `cumulative_trapezoid`, over `Tensor`.
 
-**This module is tier 1**: fixed nodes, fixed work, launchable inside a GPU
-thread. Adaptive quadrature -- subdividing wherever the integrand
-misbehaves -- cannot be, by the same rule as everywhere else here: the
-subdivision pattern is data-dependent, so two SIMD lanes integrating
-different functions would want different grids and there is no per-lane way
-to give them one.
+**This module is tier 2**: `Plain`-only, host-side. Each rule walks a host
+copy of the samples, on the same terms as `numax.core.elementwise` -- the
+arithmetic is a fixed weighted sum, but the walk is not launched on a
+device. `ponytail:` a device path would be one reduction through the
+`rowwise` scaffolder `numax.stats.sum` already uses, and it waits on
+either an `integrate -> stats` edge or that reduction moving into `core`.
+The `Array` tier, `numax.integrate.array`, is the one that runs inside a
+kernel.
 
-That is not a compromise for this family. Gauss-Legendre does a fixed amount
-of work by construction and is *exact* for polynomials up to degree `2n-1`
-with `n` nodes, so for the smooth integrands it is aimed at the adaptive
-question mostly does not arise -- and where it does, `numax.integrate.quad`
-is the tier-2 answer: same `FloatLike` integrand, subdivided to a tolerance,
-`Plain`-only and host-side. The two are siblings; on a smooth integrand this
-one is both faster and more accurate.
+These take *samples* -- a tensor `y` on a uniform grid of spacing `dx`, or
+at the points `x` -- which is what `scipy.integrate.trapezoid(y, x=None,
+dx=1.0)` takes. `numax.integrate.array.trapezoid[f](a, b)` samples a
+function itself; that is the same rule under a different input and is
+recorded in `docs/parity.md` as the divergent spelling.
 
-Two things fall out of writing this against `FloatLike` rather than a
-concrete float:
+`simpson` follows SciPy 1.11+: composite Simpson over pairs of intervals,
+and when the sample count is even the last interval takes Cartwright's
+three-point correction rather than a trapezoid, so the rule stays exact for
+quadratics however many samples there are. Non-uniform `x` uses the general
+three-point formula per pair. Both are checked against `scipy.integrate`'s
+digits in the tests, not derived here from scratch.
 
-- Integrating at `Dual` differentiates the integral -- with respect to
-  either limit (recovering the fundamental theorem of calculus) or with
-  respect to a parameter baked into the integrand. No separate
-  "differentiate under the integral sign" machinery.
-- The Gauss-Legendre nodes are the roots of `P_n`, and the weights involve
-  `P_n'`. Both come from inside `numax`: `numax.special.legendre`'s recurrence for
-  `P_n`, `numax.optimize`'s Newton for the roots, and `numax.core.dual` for the
-  derivative in the weight formula. Nothing here is a transcribed table.
-
-That last point has a payoff beyond self-containment. Because the node
-solve is written over `FloatLike`, it can be run at `Plain[float64, 1]`
-*during compilation* -- `comptime nodes = _gauss_legendre_nodes[n]()`
-evaluates the entire Newton iteration in the compiler, so the generated
-code sees a plain list of constants. The nodes cost nothing at runtime and
-still aren't a table anyone had to type in. (Verified directly: this is the
-same mechanism `numax.core.compensated`'s `_split_f64` uses to keep float64
-arithmetic out of device code.)
+Rank 1 only. A higher-rank `axis=` form is the `outer`/`length`/`inner`
+split `numax.stats` uses and is a follow-up rather than a decision.
 """
 
-from std.collections import Array
-from std.math import cos as _cos_f64
+from layout.tile_layout import TensorLayout
 
-from ..core.dual import Dual
-from ..special.legendre import legendre_p
-from ..core.numeric import FloatLike
-from ..core.plain import Plain
-from ..optimize.array.solve import newton
-
-comptime _PI = 3.14159265358979323846
-
-# The type the compile-time node solve runs at.
-comptime _CT = Plain[DType.float64, 1]
+from ..core.array import Static, Tensor
 
 
-def _legendre_p_n[n: Int, U: FloatLike](x: U) -> U:
-    """`P_n` with its degree bound, leaving the `FloatLike` parameter open
-    -- the shape `numax.optimize`'s `f` parameter needs (`_legendre_p_n[n, _]`
-    at the call site)."""
-    return legendre_p(n, x)
-
-
-def _gauss_legendre_nodes[n: Int]() -> Array[Float64, n]:
-    """The `n` roots of `P_n`, by Newton from the standard Chebyshev-like
-    seed `cos(pi*(i+0.75)/(n+0.5))`, which is close enough to every root
-    that a fixed 10 iterations converges to full `float64` precision.
-
-    Intended to be called in a `comptime` binding, so the whole solve
-    happens in the compiler.
-    """
-    var out = Array[Float64, n](fill=0.0)
-    for i in range(n):
-        var seed = _cos_f64(_PI * (Float64(i) + 0.75) / (Float64(n) + 0.5))
-        out[i] = Float64(
-            newton[f=_legendre_p_n[n, _], num_iters=10](_CT.constant(seed)).v
+def _spacings[
+    dtype: DType, XLayout: TensorLayout
+](x: Tensor[dtype, XLayout], n: Int) raises -> List[Scalar[dtype]]:
+    """`x[i+1] - x[i]`, checking `x` has as many points as `y`."""
+    if x.size() != n:
+        raise Error(
+            "integrate: x has ", x.size(), " points for ", n, " samples"
         )
-    return out^
-
-
-def _gauss_legendre_weights[n: Int]() -> Array[Float64, n]:
-    """`w_i = 2 / ((1 - x_i^2) * P_n'(x_i)^2)` at each node.
-
-    `P_n'` comes from evaluating `legendre_p` at a `Dual` -- there's no
-    derivative recurrence written out anywhere for this.
-    """
-    var nodes = _gauss_legendre_nodes[n]()
-    var out = Array[Float64, n](fill=0.0)
-    for i in range(n):
-        var x = nodes[i]
-        var seeded = legendre_p(n, Dual[_CT](_CT.constant(x), _CT.one()))
-        var d = Float64(seeded.deriv.v)
-        out[i] = 2.0 / ((1.0 - x * x) * d * d)
-    return out^
-
-
-def gauss_legendre[
-    T: FloatLike,
-    f: def[U: FloatLike](U) thin -> U,
-    n: Int = 8,
-](a: T, b: T) -> T:
-    """Integrate `f` over `[a, b]` with `n`-point Gauss-Legendre quadrature.
-
-    Exact (to rounding) for any polynomial integrand of degree `2n-1` or
-    less, and extremely accurate for smooth non-polynomial integrands --
-    which is why the default `n` is small. `n=8` already beats a
-    thousand-point trapezoid rule on a smooth integrand, at a hundredth the
-    number of evaluations.
-
-    Nodes and weights are compile-time constants (see this module's
-    docstring), so the runtime cost is exactly `n` evaluations of `f`, `n`
-    multiply-adds, and one affine map from `[-1, 1]` to `[a, b]`.
-
-    Accuracy depends on the integrand being smooth on `[a, b]`. A
-    discontinuity, a kink, or an endpoint singularity is where an adaptive
-    rule earns its keep and this will not -- either integrate up to the
-    trouble spot and past it as two calls, or reach for the tier-2
-    `numax.integrate.quad` (or `quad_vec`, if the trouble spot's location
-    is known), which does that subdivision to a tolerance.
-    """
-    comptime nodes = _gauss_legendre_nodes[n]()
-    comptime weights = _gauss_legendre_weights[n]()
-
-    var half_width = (b - a) / T.constant(2.0)
-    var midpoint = (a + b) / T.constant(2.0)
-
-    var total = T.constant(0.0)
-    comptime for i in range(n):
-        comptime node = nodes[i]
-        comptime weight = weights[i]
-        var x = midpoint + half_width * T.constant(node)
-        total = total + T.constant(weight) * f[T](x^)
-
-    return total * half_width
+    var xs = x.to_host()
+    var h = List[Scalar[dtype]](capacity=n - 1)
+    for i in range(n - 1):
+        h.append(xs[i + 1] - xs[i])
+    return h^
 
 
 def trapezoid[
-    T: FloatLike,
-    f: def[U: FloatLike](U) thin -> U,
-    num_intervals: Int = 128,
-](a: T, b: T) -> T:
-    """Integrate `f` over `[a, b]` with the composite trapezoid rule.
+    dtype: DType, LayoutType: TensorLayout
+](y: Tensor[dtype, LayoutType], dx: Scalar[dtype] = 1) raises -> Scalar[
+    dtype
+] where (dtype.is_floating_point() and LayoutType.rank == 1):
+    """The trapezoid rule over samples `y` spaced `dx` apart.
+    `scipy.integrate.trapezoid(y, dx=dx)`."""
+    var ys = y.to_host()
+    var n = len(ys)
+    if n < 2:
+        return Scalar[dtype](0)
+    var total = (ys[0] + ys[n - 1]) / 2
+    for i in range(1, n - 1):
+        total += ys[i]
+    return total * dx
 
-    Second-order accurate (error `O(h^2)`), so it needs far more
-    evaluations than `gauss_legendre` for the same accuracy on a smooth
-    integrand. It earns its place on integrands Gauss-Legendre struggles
-    with: a uniform grid doesn't concentrate its points near the endpoints
-    the way Gauss nodes do, which matters when the integrand is only
-    piecewise smooth.
-    """
-    var h = (b - a) / T.constant(Float64(num_intervals))
-    var total = (f[T](a.copy()) + f[T](b.copy())) / T.constant(2.0)
 
-    # `a + k*h` rather than a running `x += h`: the multiply reintroduces
-    # no drift, where repeated addition accumulates it across the grid.
-    # `k` itself is carried as a `T` for the GPU reason `numax.special.orthopoly`'s
-    # module docstring records.
-    var kf = T.one()
+def trapezoid[
+    dtype: DType, LayoutType: TensorLayout, XLayout: TensorLayout
+](y: Tensor[dtype, LayoutType], x: Tensor[dtype, XLayout]) raises -> Scalar[
+    dtype
+] where (
+    dtype.is_floating_point() and LayoutType.rank == 1 and XLayout.rank == 1
+):
+    """The trapezoid rule over samples `y` at the points `x`, which need
+    not be evenly spaced. `scipy.integrate.trapezoid(y, x)`."""
+    var ys = y.to_host()
+    var n = len(ys)
+    if n < 2:
+        return Scalar[dtype](0)
+    var h = _spacings(x, n)
+    var total = Scalar[dtype](0)
+    for i in range(n - 1):
+        total += h[i] * (ys[i] + ys[i + 1]) / 2
+    return total
 
-    for _ in range(1, num_intervals):
-        var x = a + kf * h
-        total = total + f[T](x^)
-        kf = kf + T.one()
 
-    return total * h
+def _simpson_general[
+    dtype: DType
+](ys: List[Scalar[dtype]], h: List[Scalar[dtype]]) -> Scalar[dtype]:
+    """Composite Simpson over `ys` with interval widths `h`, SciPy 1.11+'s
+    rule: pairs of intervals by the general three-point formula, and an
+    even sample count closed by Cartwright's correction on the last
+    interval."""
+    var n = len(ys)
+    if n < 2:
+        return Scalar[dtype](0)
+    if n == 2:
+        return h[0] * (ys[0] + ys[1]) / 2
+
+    var pairs_end = n - 1 if n % 2 == 1 else n - 2
+    var total = Scalar[dtype](0)
+    var i = 0
+    while i < pairs_end:
+        var h0 = h[i]
+        var h1 = h[i + 1]
+        var hsum = h0 + h1
+        var hprod = h0 * h1
+        var h0divh1 = h0 / h1
+        total += (hsum / 6) * (
+            ys[i] * (2 - 1 / h0divh1)
+            + ys[i + 1] * (hsum * hsum / hprod)
+            + ys[i + 2] * (2 - h0divh1)
+        )
+        i += 2
+
+    if n % 2 == 0:
+        var h0 = h[n - 3]
+        var h1 = h[n - 2]
+        var alpha = (2 * h1 * h1 + 3 * h0 * h1) / (6 * (h0 + h1))
+        var beta = (h1 * h1 + 3 * h0 * h1) / (6 * h0)
+        var eta = h1 * h1 * h1 / (6 * h0 * (h0 + h1))
+        total += alpha * ys[n - 1] + beta * ys[n - 2] - eta * ys[n - 3]
+    return total
 
 
 def simpson[
-    T: FloatLike,
-    f: def[U: FloatLike](U) thin -> U,
-    num_panels: Int = 64,
-](a: T, b: T) -> T:
-    """Integrate `f` over `[a, b]` with composite Simpson's rule, over
-    `num_panels` panels of two subintervals each.
+    dtype: DType, LayoutType: TensorLayout
+](y: Tensor[dtype, LayoutType], dx: Scalar[dtype] = 1) raises -> Scalar[
+    dtype
+] where (dtype.is_floating_point() and LayoutType.rank == 1):
+    """Composite Simpson's rule over samples `y` spaced `dx` apart.
+    `scipy.integrate.simpson(y, dx=dx)`, even sample counts included."""
+    var ys = y.to_host()
+    var h = List[Scalar[dtype]](length=max(len(ys) - 1, 0), fill=dx)
+    return _simpson_general(ys, h)
 
-    Fourth-order accurate (`O(h^4)`) on the same uniform grid the trapezoid
-    rule walks, which makes it the better default of the two whenever the
-    integrand has a few continuous derivatives.
 
-    Simpson needs an even number of subintervals. That's expressed here by
-    counting *panels* rather than subintervals, so the requirement is
-    structural and can't be violated -- an attempt to say it as
-    `where num_intervals % 2 == 0` instead doesn't compile, since Mojo's
-    constraint solver can't evaluate `Int.__mod__` (it reports "cannot
-    evaluate call to non-builtin function"), and silently rounding an odd
-    count would be worse than either.
+def simpson[
+    dtype: DType, LayoutType: TensorLayout, XLayout: TensorLayout
+](y: Tensor[dtype, LayoutType], x: Tensor[dtype, XLayout]) raises -> Scalar[
+    dtype
+] where (
+    dtype.is_floating_point() and LayoutType.rank == 1 and XLayout.rank == 1
+):
+    """Composite Simpson's rule over samples `y` at the points `x`.
+    `scipy.integrate.simpson(y, x)`."""
+    var ys = y.to_host()
+    if len(ys) < 2:
+        return Scalar[dtype](0)
+    return _simpson_general(ys, _spacings(x, len(ys)))
 
-    The alternating 4/2 coefficient pattern is a branch on the loop index,
-    a scalar identical in every lane -- not a per-lane branch on the data,
-    so it doesn't run into the invariant the rest of this library observes.
+
+def cumulative_trapezoid[
+    dtype: DType, n: Int, initial: Bool = False
+](y: Static[dtype, n], dx: Scalar[dtype] = 1) raises -> Static[
+    dtype, n if initial else n - 1
+] where (dtype.is_floating_point() and n >= 2):
+    """The running trapezoid integral of `y` at spacing `dx`.
+    `scipy.integrate.cumulative_trapezoid(y, dx=dx)`.
+
+    `n - 1` values, one per interval, as SciPy returns by default;
+    `initial=True` is SciPy's `initial=0`, prepending a zero so the result
+    is as long as `y` and `out[i]` is the integral up to `y[i]`. A
+    compile-time flag rather than an argument because it changes the
+    result's length, which is part of the type.
     """
-    comptime num_intervals = 2 * num_panels
-    var h = (b - a) / T.constant(Float64(num_intervals))
-    var total = f[T](a.copy()) + f[T](b.copy())
-    var kf = T.one()
+    var ys = y.to_host()
+    comptime m = n if initial else n - 1
+    var out = List[Scalar[dtype]](capacity=m)
+    var running = Scalar[dtype](0)
+    comptime if initial:
+        out.append(running)
+    for i in range(n - 1):
+        running += dx * (ys[i] + ys[i + 1]) / 2
+        out.append(running)
+    return Static[dtype, m](y.context(), out^)
 
-    for k in range(1, num_intervals):
-        var x = a + kf * h
-        var coefficient = 4.0 if k % 2 == 1 else 2.0
-        total = total + T.constant(coefficient) * f[T](x^)
-        kf = kf + T.one()
 
-    return total * h / T.constant(3.0)
+def cumulative_trapezoid[
+    dtype: DType, n: Int, XLayout: TensorLayout, initial: Bool = False
+](y: Static[dtype, n], x: Tensor[dtype, XLayout]) raises -> Static[
+    dtype, n if initial else n - 1
+] where (dtype.is_floating_point() and n >= 2 and XLayout.rank == 1):
+    """The running trapezoid integral of `y` at the points `x`.
+    `scipy.integrate.cumulative_trapezoid(y, x)`."""
+    var ys = y.to_host()
+    var h = _spacings(x, n)
+    comptime m = n if initial else n - 1
+    var out = List[Scalar[dtype]](capacity=m)
+    var running = Scalar[dtype](0)
+    comptime if initial:
+        out.append(running)
+    for i in range(n - 1):
+        running += h[i] * (ys[i] + ys[i + 1]) / 2
+        out.append(running)
+    return Static[dtype, m](y.context(), out^)

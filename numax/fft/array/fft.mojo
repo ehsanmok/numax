@@ -9,7 +9,7 @@ sign convention, matching NumPy's `fft` and SciPy's.
 
 Size is a compile-time parameter, and it's given as `log2n` rather than `n`
 so that "must be a power of two" is structural instead of a constraint the
-compiler would have to check (`numax.integrate.simpson` takes a panel
+compiler would have to check (`numax.integrate.array.simpson` takes a panel
 count for the same reason). A caller wanting a 64-point transform writes
 `fft[Inner, 6]`.
 

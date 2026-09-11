@@ -336,7 +336,8 @@ through to a different algorithm.
 
 | Surface | Tier | Where |
 |---|---|---|
-| `gauss_legendre`, `simpson`, `trapezoid` — fixed node count; the Gauss-Legendre nodes are Legendre roots found by numax's own Newton solver | 1 | [`integrate/quadrature.mojo`](../numax/integrate/quadrature.mojo) |
+| `trapezoid`, `simpson`, `cumulative_trapezoid` over sampled `Tensor`s — `trapezoid(y, dx)`, `simpson(y, x)`, exactly `scipy.integrate`'s signatures, SciPy's even-count Simpson correction included | 2 | [`integrate/quadrature.mojo`](../numax/integrate/quadrature.mojo) |
+| `gauss_legendre`, `simpson`, `trapezoid` over a `FloatLike` function — fixed node count; the Gauss-Legendre nodes are Legendre roots found by numax's own Newton solver | 1 | [`integrate/array/quadrature.mojo`](../numax/integrate/array/quadrature.mojo) (`numax.integrate.array`) |
 | `rk4`, `rk4_system`, `dopri5_step`, `dopri5_with_error`, `dopri5` — fixed-step integration, one state or `n` components, with the embedded error estimate | 1 | [`integrate/ode.mojo`](../numax/integrate/ode.mojo) |
 | `quad`, `quad_vec` — adaptive quadrature to a tolerance, returning `QuadResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |
 | `solve_ivp` — adaptive step-size control, returning `IVPResult` | 2 | [`integrate/integrate.mojo`](../numax/integrate/integrate.mojo) |

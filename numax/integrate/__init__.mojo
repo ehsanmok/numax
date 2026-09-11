@@ -1,18 +1,27 @@
 """numax.integrate: quadrature and initial-value problem solvers.
 
-Split the same way as `numax.optimize`. `quadrature`'s Gauss-Legendre,
-Simpson and trapezoid rules and `ode`'s `rk4`/`dopri5` steps take a fixed
-number of nodes or steps, so they are tier 1 and GPU-launchable.
-`quad`/`quad_vec`/`solve_ivp`/`solve_ivp_stiff` adapt until they hit a
-tolerance, so they
-are tier 2, `Plain`-only and host-side.
-
 ```mojo
-from numax.integrate import gauss_legendre, rk4, quad, solve_ivp
+from numax.integrate import trapezoid, simpson, cumulative_trapezoid, quad, solve_ivp
 ```
 
-Because the integrand is a `FloatLike` kernel, differentiating through an
-integral is just calling the same quadrature at `Dual`.
+Two tiers, one import each, the same split `numax.linalg`, `numax.fft` and
+`numax.optimize` make:
+
+| Import | Holds | Good for |
+| --- | --- | --- |
+| `numax.integrate` | `Tensor`, `Plain`-only, tier 2 | samples the caller already holds: `trapezoid(y, dx)`, `simpson(y, x)`, `cumulative_trapezoid` -- `scipy.integrate`'s own signatures |
+| `numax.integrate.array` | `Array[T, n]` and `FloatLike`, tier 1 | a `FloatLike` integrand: `gauss_legendre[f](a, b)`, `simpson[f](a, b)`, `trapezoid[f](a, b)`, and the fixed-step `rk4`/`dopri5` |
+
+This surface is the `Tensor` one. It also carries the adaptive scalar
+drivers -- `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` -- which take
+a `FloatLike` integrand but iterate to a tolerance on the host, so they are
+tier 2 and belong to neither tier's type; they stay where they were.
+
+Because the integrand of the `array` tier is a `FloatLike` kernel,
+differentiating through an integral is just calling the same quadrature at
+`Dual`. The sample-taking rules here have no such property -- they never
+see the function -- and are the ones a caller reaches for with data rather
+than a formula.
 """
 
 from .integrate import (
@@ -24,4 +33,4 @@ from .integrate import (
     solve_ivp_stiff,
 )
 from .ode import dopri5, dopri5_step, dopri5_with_error, rk4, rk4_system
-from .quadrature import gauss_legendre, simpson, trapezoid
+from .quadrature import cumulative_trapezoid, simpson, trapezoid
