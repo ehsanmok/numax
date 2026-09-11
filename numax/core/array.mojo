@@ -1188,6 +1188,91 @@ def squeeze[
     return Static[dtype, n](a.context(), a.to_host())
 
 
+def squeeze[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
+    """`a` with the size-1 axis at `axis` dropped. `numpy.squeeze(a, axis=k)`.
+
+    The inverse of `expand_dims`, and the general form of the two fixed
+    overloads above -- those keep their extents in the type, which is why
+    they stay. Raises if the axis is not of extent 1, as
+    `numpy.squeeze(a, axis=k)` does; the no-axis `numpy.squeeze` that drops
+    *every* size-1 axis has no counterpart here, since how many it would
+    drop is a run-time property and the result rank is part of the type.
+
+    Row-major order is unchanged -- only the shape is.
+    """
+    comptime rank = LayoutType.rank
+    if a.dim_at(axis) != 1:
+        raise Error(
+            "squeeze: axis ",
+            axis,
+            " has extent ",
+            a.dim_at(axis),
+            ", not 1",
+        )
+
+    var extents = List[Int](capacity=rank - 1)
+    for d in range(rank):
+        if d != axis:
+            extents.append(a.dim_at(d))
+    return Dynamic[dtype, rank - 1](
+        a.context(), row_major(_dyn_shape_from[rank - 1](extents)), a.to_host()
+    )
+
+
+def atleast_1d[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 1] where (
+    LayoutType.rank == 1
+):
+    """`a` unchanged, as a rank-1 tensor. `numpy.atleast_1d`.
+
+    numax has no rank-0 tensor, so this is the identity at the only rank it
+    can receive. It exists so a caller writing shape-agnostic code can
+    spell the intent, the way `numpy.atleast_1d` is written before code
+    that indexes.
+    """
+    return asarray(a.to_host(), a.context())
+
+
+def atleast_2d[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 2] where (
+    LayoutType.rank == 1
+):
+    """`a` as a `(1, n)` row. `numpy.atleast_2d` at rank 1.
+
+    NumPy promotes a rank-1 array to a *row*, not a column -- which is the
+    convention that makes `atleast_2d(v) @ m` the product a caller expects
+    and is worth stating, since the opposite choice is equally plausible.
+    `expand_dims[axis=1]` is the column.
+    """
+    var extents = List[Int](capacity=2)
+    extents.append(1)
+    extents.append(a.size())
+    return Dynamic[dtype, 2](
+        a.context(), row_major(_dyn_shape_from[2](extents)), a.to_host()
+    )
+
+
+def atleast_2d[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank
+] where (LayoutType.rank >= 2):
+    """`a` unchanged, at rank 2 or above. `numpy.atleast_2d`."""
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank)
+    for d in range(rank):
+        extents.append(a.dim_at(d))
+    return Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents)), a.to_host()
+    )
+
+
 def stack[
     dtype: DType, n: Int
 ](a: Static[dtype, n], b: Static[dtype, n]) raises -> Static[dtype, 2, n]:

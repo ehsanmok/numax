@@ -38,6 +38,8 @@ from numax.core.array import (
     Tensor,
     arange,
     concatenate,
+    atleast_1d,
+    atleast_2d,
     empty,
     empty_like,
     expand_dims,
@@ -760,6 +762,83 @@ def test_tile_rejects_a_count_per_missing_axis() raises:
     except:
         raised = True
     assert_equal(raised, True)
+
+
+def test_squeeze_at_an_axis_is_expand_dims_read_backwards() raises:
+    # numpy.squeeze(a, axis=1) on a (2, 1, 3) gives a (2, 3).
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 2, 1, 3](ctx)
+    for i in range(6):
+        a[i] = Scalar[dtype](i)
+
+    var s = squeeze[axis=1](a)
+    assert_equal(s.dim_at(0), 2)
+    assert_equal(s.dim_at(1), 3)
+    var out = s.to_host()
+    for i in range(6):
+        assert_equal(out[i], Scalar[dtype](i))
+
+    # The round trip, which is the claim the pair has to satisfy.
+    var v = zeros[dtype, 3](ctx)
+    v[2] = 7
+    var back = squeeze[axis=1](expand_dims[axis=1](v))
+    assert_equal(back.dim_at(0), 3)
+    assert_equal(back.to_host()[2], 7.0)
+
+
+def test_squeeze_rejects_an_axis_that_is_not_size_one() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 2, 3](ctx)
+    var raised = False
+    try:
+        _ = squeeze[axis=1](a)
+    except:
+        raised = True
+    assert_equal(raised, True)
+
+
+def test_the_fixed_squeeze_overloads_still_keep_their_type() raises:
+    var ctx = DeviceContext(api="cpu")
+    var row = zeros[dtype, 1, 4](ctx)
+    row[3] = 5
+    var flat: Static[dtype, 4] = squeeze(row)
+    assert_equal(flat.to_host()[3], 5.0)
+
+
+def test_atleast_2d_promotes_a_vector_to_a_row_not_a_column() raises:
+    # NumPy's convention, and the one worth pinning: (3,) becomes (1, 3).
+    var ctx = DeviceContext(api="cpu")
+    var v = zeros[dtype, 3](ctx)
+    for i in range(3):
+        v[i] = Scalar[dtype](i + 1)
+
+    var r = atleast_2d(v)
+    assert_equal(r.dim_at(0), 1)
+    assert_equal(r.dim_at(1), 3)
+
+    # `expand_dims[axis=1]` is the column, and they are not the same shape.
+    var c = expand_dims[axis=1](v)
+    assert_equal(c.dim_at(0), 3)
+    assert_equal(c.dim_at(1), 1)
+
+
+def test_atleast_2d_leaves_a_matrix_alone() raises:
+    var ctx = DeviceContext(api="cpu")
+    var m = zeros[dtype, 2, 3](ctx)
+    m[4] = 8
+    var same = atleast_2d(m)
+    assert_equal(same.dim_at(0), 2)
+    assert_equal(same.dim_at(1), 3)
+    assert_equal(same.to_host()[4], 8.0)
+
+
+def test_atleast_1d_is_the_identity_at_the_only_rank_it_takes() raises:
+    var ctx = DeviceContext(api="cpu")
+    var v = zeros[dtype, 3](ctx)
+    v[1] = 6
+    var got = atleast_1d(v)
+    assert_equal(got.dim_at(0), 3)
+    assert_equal(got.to_host()[1], 6.0)
 
 
 def main() raises:
