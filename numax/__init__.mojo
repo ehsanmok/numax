@@ -85,6 +85,7 @@ from .core.array import (
     Static,
     Tensor,
     arange,
+    broadcast_shapes,
     broadcast_to,
     asarray,
     concatenate,

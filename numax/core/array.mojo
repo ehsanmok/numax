@@ -1296,6 +1296,74 @@ def stack_dyn[
     return result^
 
 
+def _extents_of[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) -> List[Int]:
+    """`a`'s extents, axis by axis, as a rank-generic list."""
+    var out = List[Int](capacity=LayoutType.rank)
+    comptime for d in range(LayoutType.rank):
+        out.append(a.dim_at(d))
+    return out^
+
+
+def _strides_of[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) -> List[Int]:
+    """`a`'s strides, axis by axis, as a rank-generic list."""
+    var out = List[Int](capacity=LayoutType.rank)
+    comptime for d in range(LayoutType.rank):
+        out.append(a.stride_at(d))
+    return out^
+
+
+def broadcast_shapes(a: List[Int], b: List[Int]) raises -> List[Int]:
+    """The shape two shapes broadcast to. `numpy.broadcast_shapes`.
+
+    NumPy's rule, right-aligned: a missing leading axis counts as extent 1,
+    an axis of extent 1 stretches to the other, two equal axes pass through,
+    and anything else raises. This is the one place the rule is written
+    down; `broadcast_to` and every broadcasting binary op read it from here
+    rather than restating it.
+    """
+    var ra = len(a)
+    var rb = len(b)
+    var rank = ra if ra > rb else rb
+    var out = List[Int](length=rank, fill=1)
+    for k in range(rank):
+        var da = a[ra - 1 - k] if k < ra else 1
+        var db = b[rb - 1 - k] if k < rb else 1
+        if da != db and da != 1 and db != 1:
+            raise Error(
+                "broadcast_shapes: axis ",
+                rank - 1 - k,
+                " of extents ",
+                da,
+                " and ",
+                db,
+                " do not broadcast",
+            )
+        out[rank - 1 - k] = db if da == 1 else da
+    return out^
+
+
+def _stretch_strides(
+    extents: List[Int], strides: List[Int], rank: Int
+) -> List[Int]:
+    """`strides` re-expressed against a rank-`rank` broadcast result.
+
+    A stretched axis gets stride 0, so reading through these visits the same
+    element for every position along it -- which is what makes the walk over
+    a broadcast pair a copy-free index computation rather than a
+    materialized operand.
+    """
+    var r = len(extents)
+    var out = List[Int](length=rank, fill=0)
+    for k in range(r):
+        if extents[r - 1 - k] != 1:
+            out[rank - 1 - k] = strides[r - 1 - k]
+    return out^
+
+
 def broadcast_to[
     dtype: DType, LayoutType: TensorLayout, rank: Int
 ](a: Tensor[dtype, LayoutType], *extents: Int) raises -> Dynamic[dtype, rank]:
@@ -1321,26 +1389,30 @@ def broadcast_to[
             rank,
         )
 
+    var target = List[Int](capacity=rank)
     var count = 1
     for d in range(rank):
         if extents[d] < 0:
             raise Error("broadcast_to: axis ", d, " has a negative extent")
+        target.append(extents[d])
         count *= extents[d]
 
-    # Right-aligned: source axis `d - offset` lines up with target axis `d`.
-    var offset = rank - src_rank
-    for d in range(offset, rank):
-        var have = a.dim_at(d - offset)
-        if have != 1 and have != extents[d]:
+    # Reject anything `broadcast_shapes` would reject, with the target's own
+    # extents as the other operand, so the rule lives in one place.
+    var src_extents = _extents_of(a)
+    var agreed = broadcast_shapes(src_extents, target)
+    for d in range(rank):
+        if agreed[d] != target[d]:
             raise Error(
                 "broadcast_to: axis ",
                 d,
                 " of extent ",
-                have,
+                agreed[d],
                 " does not stretch to ",
-                extents[d],
+                target[d],
             )
 
+    var src_strides = _stretch_strides(src_extents, _strides_of(a), rank)
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=count)
     for flat in range(count):
@@ -1350,8 +1422,7 @@ def broadcast_to[
             var d = rank - 1 - k
             var c = rem % extents[d]
             rem //= extents[d]
-            if d >= offset and a.dim_at(d - offset) != 1:
-                src += c * a.stride_at(d - offset)
+            src += c * src_strides[d]
         out.append(values[src])
 
     var result = Dynamic[dtype, rank](

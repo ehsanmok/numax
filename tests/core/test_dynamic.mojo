@@ -20,6 +20,7 @@ from max.gpu.host import DeviceContext
 from numax.core.array import (
     Dynamic,
     Static,
+    broadcast_shapes,
     broadcast_to,
     concatenate_dyn,
     empty_dyn,
@@ -310,6 +311,33 @@ def test_broadcast_to_leaves_a_matching_shape_alone() raises:
     var same = broadcast_to[rank=2](a, 2, 3)
     for i in range(6):
         assert_almost_equal(same[i], a[i])
+
+
+def test_broadcast_shapes_follows_numpys_right_alignment() raises:
+    # numpy.broadcast_shapes((3, 1), (4,)) == (3, 4) -- the shorter shape
+    # aligns with the trailing axes and its missing leading axis counts as 1.
+    var got = broadcast_shapes([3, 1], [4])
+    assert_equal(len(got), 2)
+    assert_equal(got[0], 3)
+    assert_equal(got[1], 4)
+
+    var square = broadcast_shapes([2, 3], [2, 3])
+    assert_equal(square[0], 2)
+    assert_equal(square[1], 3)
+
+    var scalar_like = broadcast_shapes([1], [5, 6])
+    assert_equal(len(scalar_like), 2)
+    assert_equal(scalar_like[0], 5)
+    assert_equal(scalar_like[1], 6)
+
+
+def test_broadcast_shapes_rejects_an_incompatible_axis() raises:
+    var raised = False
+    try:
+        _ = broadcast_shapes([3], [4])
+    except:
+        raised = True
+    assert_true(raised)
 
 
 def main() raises:
