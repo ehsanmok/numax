@@ -623,5 +623,44 @@ def test_take_along_axis_sorts_each_row_with_argsort() raises:
     assert_equal(sorted_rows[5], 9.0)
 
 
+def test_select_broadcasts_all_three_arguments() raises:
+    # numpy.where(a > 0, a, 0.0) -- the commonest spelling of `where` there
+    # is, and one the same-layout overload cannot express because the
+    # fallback is a scalar-shaped tensor.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[2, 3]([1.0, -2.0, 3.0, -4.0, 5.0, -6.0])
+    var zero = zeros[dtype, 1](ctx)
+
+    var clipped = select(greater(a, zero), a, zero)
+    assert_equal(clipped.dim_at(0), 2)
+    assert_equal(clipped.dim_at(1), 3)
+    var out = clipped.to_host()
+    var expected = [1.0, 0.0, 3.0, 0.0, 5.0, 0.0]
+    for i in range(6):
+        assert_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_select_stretches_a_row_against_a_matrix() raises:
+    # A (3,) condition against a (2, 3) pair: the mask picks whole columns.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var b = _grid3[2, 3]([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+    var mask = mk_mask[3]([True, False, True])
+
+    var picked = select(mask, a, b).to_host()
+    var expected = [1.0, 20.0, 3.0, 4.0, 50.0, 6.0]
+    for i in range(6):
+        assert_equal(picked[i], Scalar[dtype](expected[i]))
+
+
+def test_select_at_one_shape_still_keeps_its_layout_type() raises:
+    # The broadcasting overload must not shadow the same-layout one.
+    var ctx = DeviceContext(api="cpu")
+    var a = _grid3[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var b = _grid3[2, 3]([9.0, 9.0, 9.0, 9.0, 9.0, 9.0])
+    var same: Static[dtype, 2, 3] = select(greater(a, b), a, b)
+    assert_equal(same.to_host()[0], 9.0)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

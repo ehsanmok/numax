@@ -77,7 +77,11 @@ from .array import (
     asarray,
     _dyn_shape,
     _dyn_shape_from,
+    _extents_of,
     _product,
+    _stretch_strides,
+    _strides_of,
+    broadcast_shapes,
 )
 
 
@@ -544,7 +548,9 @@ def select[
     Shape-preserving, unlike everything else in this module, which is why
     it keeps the input's rank instead of flattening: the output length is
     the input length regardless of the condition's values, so there is
-    nothing data-dependent about the *shape*.
+    nothing data-dependent about the *shape*. The overload below takes
+    three shapes NumPy would broadcast, which is what
+    `where(a > 0, a, 0.0)` needs.
 
     That also means the three-argument select could have been written as a
     tier-1 `FloatLike` kernel using the branchless `blend` in
@@ -561,6 +567,75 @@ def select[
     for i in range(n):
         out[i] = x_values[i] if mask[i] else y_values[i]
     return Tensor[dtype, LayoutType](x.context(), condition.layout, out^)
+
+
+def select[
+    dtype: DType,
+    CLayout: TensorLayout,
+    XLayout: TensorLayout,
+    YLayout: TensorLayout,
+](
+    condition: Tensor[DType.bool, CLayout],
+    x: Tensor[dtype, XLayout],
+    y: Tensor[dtype, YLayout],
+) raises -> Dynamic[
+    dtype,
+    CLayout.rank if (
+        CLayout.rank > XLayout.rank and CLayout.rank > YLayout.rank
+    ) else (XLayout.rank if XLayout.rank > YLayout.rank else YLayout.rank),
+]:
+    """`select` over three shapes NumPy would broadcast.
+
+    `numpy.where` broadcasts all three of its arguments, which is what makes
+    `where(a > 0, a, 0.0)` and `where(mask_row, matrix, fallback_column)`
+    the ordinary spellings. The overload above needs one layout type for
+    all three, so neither compiled.
+
+    All three stretch: the result shape is `broadcast_shapes` applied
+    twice, and the result rank is the largest of the three input ranks.
+    Like every broadcasting routine in `numax.core.ops`,
+    `numax.core.elementwise` and `numax.core.logic`, the walk reads through
+    zero strides rather than materializing any operand, and the result is a
+    `Dynamic` because the extents are computed at run time.
+    """
+    comptime rank = CLayout.rank if (
+        CLayout.rank > XLayout.rank and CLayout.rank > YLayout.rank
+    ) else (XLayout.rank if XLayout.rank > YLayout.rank else YLayout.rank)
+    var c_extents = _extents_of(condition)
+    var x_extents = _extents_of(x)
+    var y_extents = _extents_of(y)
+    var extents = broadcast_shapes(
+        broadcast_shapes(c_extents, x_extents), y_extents
+    )
+    var c_strides = _stretch_strides(c_extents, _strides_of(condition), rank)
+    var x_strides = _stretch_strides(x_extents, _strides_of(x), rank)
+    var y_strides = _stretch_strides(y_extents, _strides_of(y), rank)
+
+    var count = 1
+    for d in range(rank):
+        count *= extents[d]
+
+    var mask = condition.to_host()
+    var x_values = x.to_host()
+    var y_values = y.to_host()
+    var out = List[Scalar[dtype]](length=count, fill=0)
+    for flat in range(count):
+        var rem = flat
+        var ci = 0
+        var xi = 0
+        var yi = 0
+        for k in range(rank):
+            var d = rank - 1 - k
+            var at = rem % extents[d]
+            rem //= extents[d]
+            ci += at * c_strides[d]
+            xi += at * x_strides[d]
+            yi += at * y_strides[d]
+        out[flat] = x_values[xi] if mask[ci] else y_values[yi]
+
+    return Dynamic[dtype, rank](
+        x.context(), row_major(_dyn_shape_from[rank](extents)), out^
+    )
 
 
 def _top_k_into[
