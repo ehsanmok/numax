@@ -13,7 +13,7 @@ from max.gpu.host import DeviceContext
 
 from numax.core.array import Static, to_array, transpose, zeros
 from numax.core.plain import Plain
-from numax.linalg import eigvalsh, matmul, sytrd
+from numax.linalg import eigh, eigvalsh, matmul, sytrd
 from numax.linalg.array import eigvalsh as array_eigvalsh
 
 comptime dtype = DType.float64
@@ -290,6 +290,93 @@ def test_eigvalsh_handles_a_matrix_with_repeated_eigenvalues() raises:
     assert_almost_equal(values[0], Scalar[dtype](1.0), atol=1e-12)
     assert_almost_equal(values[1], Scalar[dtype](1.0), atol=1e-12)
     assert_almost_equal(values[2], Scalar[dtype](4.0), atol=1e-12)
+
+
+def test_eigh_satisfies_the_eigenvalue_equation_for_every_pair() raises:
+    # A @ v_j == w_j * v_j: the definition, not a table.
+    comptime n = 5
+    var a = _hilbert[n]()
+    var original = _copy_of(a)
+
+    var result = eigh(a)
+    var av = matmul(original, result.vectors).to_host()
+    var v = result.vectors.to_host()
+    var w = result.values.to_host()
+    for j in range(n):
+        for i in range(n):
+            assert_almost_equal(av[i * n + j], w[j] * v[i * n + j], atol=1e-12)
+
+
+def test_eigh_eigenvectors_are_orthonormal() raises:
+    comptime n = 5
+    var a = _hilbert[n]()
+    var result = eigh(a)
+    var vt = transpose(result.vectors)
+    var gram = matmul(vt, result.vectors).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(gram[i * n + j], want, atol=1e-12)
+
+
+def test_eigh_reconstructs_a_from_its_factors() raises:
+    # A == V diag(w) V^T, which is what "eigendecomposition" means.
+    comptime n = 6
+    var a = _hilbert[n]()
+    var original = _copy_of(a)
+
+    var result = eigh(a)
+    var ctx = a.context()
+    var scaled = zeros[dtype, n, n](ctx)
+    var v = result.vectors.to_host()
+    var w = result.values.to_host()
+    var host = scaled.to_host()
+    for i in range(n):
+        for j in range(n):
+            host[i * n + j] = v[i * n + j] * w[j]
+    scaled.copy_from_host(host)
+
+    var vt = transpose(result.vectors)
+    var back = matmul(scaled, vt).to_host()
+    var source = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
+
+
+def test_eigh_values_are_ascending_and_equal_eigvalsh() raises:
+    # The two names must agree exactly: eigvalsh is eigh without the
+    # vectors, and a divergence would mean two spectra for one matrix.
+    comptime n = 5
+    var a = _hilbert[n]()
+    var b = _copy_of(a)
+
+    var w = eigh(a).values.to_host()
+    var w_only = eigvalsh(b).to_host()
+    for i in range(n):
+        assert_almost_equal(w[i], w_only[i], atol=1e-13)
+    for i in range(n - 1):
+        assert_equal(w[i] <= w[i + 1], True)
+
+
+def test_eigh_of_a_diagonal_matrix_returns_permuted_identity_vectors() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 3, 3](ctx)
+    var host = a.to_host()
+    host[0] = 3
+    host[4] = -1
+    host[8] = 7
+    a.copy_from_host(host)
+
+    var result = eigh(a)
+    var w = result.values.to_host()
+    assert_almost_equal(w[0], Scalar[dtype](-1.0), atol=1e-14)
+    assert_almost_equal(w[1], Scalar[dtype](3.0), atol=1e-14)
+    assert_almost_equal(w[2], Scalar[dtype](7.0), atol=1e-14)
+    # Column 0 pairs with -1, which lived at index 1: it is +-e_1.
+    var v = result.vectors.to_host()
+    assert_almost_equal(abs(v[1 * 3 + 0]), Scalar[dtype](1.0), atol=1e-14)
+    assert_almost_equal(abs(v[0 * 3 + 1]), Scalar[dtype](1.0), atol=1e-14)
+    assert_almost_equal(abs(v[2 * 3 + 2]), Scalar[dtype](1.0), atol=1e-14)
 
 
 def main() raises:

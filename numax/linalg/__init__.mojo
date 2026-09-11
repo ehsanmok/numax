@@ -37,7 +37,7 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
-| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh` | `_decomp`, plus LAPACK's `sytrd` |
+| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh` | `_decomp`, plus LAPACK's `sytrd` |
 | `matfuncs` | `expm` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
@@ -95,29 +95,29 @@ cannot be built from an immutable binding.
 
 ## Not here yet
 
-`eigh`, `eigvalsh`, `svd`, `svdvals`, `eigvals`, `cond` and `pinv` have no
-`Tensor` overload yet; `numax.linalg.array` has them for matrices small
-enough to live in registers. `cond` and `pinv` are `svd`'s dependents and
-move when it does. `tridiagonal_solve` will stay `Array`-only -- Thomas is
-already linear and has nothing to hand a GEMM.
+`svd`, `svdvals`, `eigvals`, `cond` and `pinv` have no `Tensor` overload
+yet; `numax.linalg.array` has them for matrices small enough to live in
+registers. `cond` and `pinv` are `svd`'s dependents and move when it does.
+`tridiagonal_solve` will stay `Array`-only -- Thomas is already linear and
+has nothing to hand a GEMM.
 
-**The reduction phase is here.** `sytrd` reduces a symmetric matrix to
+**The symmetric eigenproblem is here**, and its shape is the shape every
+spectral factorization will take. `sytrd` reduces a symmetric matrix to
 tridiagonal form device-resident, which is over half the arithmetic of an
-`eigh` and the half with a GEMM in it. Each column is four launches: a
-single-block kernel forms the Householder reflector, `matvec` multiplies
-the matrix by it, `dot` reduces one scalar, and one `matmul` applies the
-symmetric rank-two update as `[v | w] @ [w | v]^T` with `transpose_b=True`
--- the identity that lets numax skip the `syr2k` MAX does not ship.
+`eigh` and the half with a GEMM in it: each column is four launches, and
+the symmetric rank-two update goes out as `[v | w] @ [w | v]^T` with
+`transpose_b=True`, the identity that lets numax skip the `syr2k` MAX does
+not ship. Then implicit QL sweeps the two diagonals on the host -- looping
+to a tolerance, deflating on a test of the data, tier 2 by numax's own
+definition and declared so in `eigen.mojo` where it happens. `eigvalsh`
+stops there at `O(n^2)`, negligible beside the reduction. `eigh` also
+accumulates the rotations into the tridiagonal's eigenvector matrix, which
+is `O(n^3)` of scalar host work at a small constant -- the one named
+ceiling, with `stedc`'s GEMM-shaped merge as the upgrade -- and brings the
+vectors back as `Q Z` through one `matmul`.
 
-What remains of an `eigh` is the second phase, and it is the one with no
-GEMM in it. Implicitly shifted QL/QR sweeps on the tridiagonal, or
-Golub-Kahan sweeps on the bidiagonal, loop to a tolerance, deflate on a
-data-dependent test, and do it on a band two entries wide. That is tier 2
-by numax's own definition, and `eigen.mojo` declares it where it happens
-rather than hiding it. The eigenvalue-only sweep is `O(n^2)` and genuinely
-negligible beside the reduction; accumulating eigen*vectors* is `O(n^3)` of
-scalar rotations, and the upgrade there is `stedc`, whose merge phase is
-GEMM-shaped.
+The same two phases, over a bidiagonal and a Hessenberg form, are what
+`svd` and `eigvals` are waiting on.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of
@@ -152,7 +152,7 @@ from .blas import (
     outer,
 )
 from .cholesky import cholesky, cholesky_solve
-from .eigen import TensorTridiagonal, eigvalsh, sytrd
+from .eigen import TensorEigh, TensorTridiagonal, eigh, eigvalsh, sytrd
 from .lu import TensorLU, det, lu_factor, slogdet
 from .matfuncs import expm
 from .misc import fro, inf, neg_inf, norm, trace

@@ -33,7 +33,7 @@ from std.sys.info import align_of
 from std.utils import IndexList
 
 from ..core.array import Dynamic, Static, zeros, zeros_dyn
-from .blas import _target, dot, matvec
+from .blas import _target, dot, matmul, matvec
 from .common import _Dense
 from .panel import (
     _PANEL_THREADS,
@@ -417,26 +417,38 @@ NaN or an infinity, and the raise says so rather than looping forever.
 """
 
 
-def _tql_values[
-    dtype: DType
+def _tql[
+    dtype: DType, vectors: Bool
 ](
-    mut d: List[Scalar[dtype]], mut e: List[Scalar[dtype]]
+    mut d: List[Scalar[dtype]],
+    mut e: List[Scalar[dtype]],
+    mut z: List[Scalar[dtype]],
 ) raises where dtype.is_floating_point():
     """Implicit QL with Wilkinson shifts on the symmetric tridiagonal
-    `(d, e)`, eigenvalues only, in place into `d`. LAPACK's `sterf`.
+    `(d, e)`, in place into `d`. LAPACK's `sterf` at `vectors=False` and
+    `steqr` at `vectors=True`, where the rotations are also accumulated
+    into the row-major `n x n` matrix `z`, which the caller passes in as
+    the identity.
 
-    **Tier 2, host-side, and `O(n^2)`.** Each sweep is a chain of Givens
-    rotations down the band that touches two entries at a time and stops
-    at the first negligible subdiagonal -- there is no GEMM to hand any of
-    it to, and the deflation test branches on the data. This is the half of
-    an eigendecomposition with no MAX in it, and at `O(n^2)` beside the
-    reduction's `O(n^3)` it is the half that costs nothing to run on the
-    host.
+    **Tier 2, host-side.** Each sweep is a chain of Givens rotations down
+    the band that touches two entries at a time and stops at the first
+    negligible subdiagonal -- there is no GEMM to hand any of it to, and
+    the deflation test branches on the data. This is the half of an
+    eigendecomposition with no MAX in it.
+
+    The two settings cost very differently, and that is the reason for the
+    parameter rather than two functions. Values alone are `O(n^2)`,
+    negligible beside the reduction. Accumulating `z` applies every
+    rotation to a full column pair, `O(n)` per rotation and `O(n^3)`
+    overall, at a small constant and in scalar host code -- the one
+    genuinely host-bound term in `eigh`, and the `ponytail:` ceiling it
+    names. The upgrade is `stedc`, divide and conquer, whose merge phase
+    multiplies the sub-problems' eigenvector blocks together and so *is*
+    GEMM-shaped.
 
     `e` is read as the `n` entries `TensorTridiagonal` carries, with
-    `e[n-1]` unused and treated as zero. Numerical Recipes' `tqli` without
-    the eigenvector accumulation, which is also Golub and Van Loan's
-    Algorithm 8.3.3 read left to right.
+    `e[n-1]` unused and treated as zero. Numerical Recipes' `tqli`, which
+    is also Golub and Van Loan's Algorithm 8.3.3 read left to right.
     """
     var n = len(d)
     if n <= 1:
@@ -498,6 +510,13 @@ def _tql_values[
                 p = s_ * r
                 d[i + 1] = g + p
                 g = c * r - b
+                comptime if vectors:
+                    # Rotate columns `i` and `i + 1` of `z`.
+                    for row in range(n):
+                        var zi = z[row * n + i]
+                        var zn = z[row * n + i + 1]
+                        z[row * n + i + 1] = s_ * zi + c * zn
+                        z[row * n + i] = c * zi - s_ * zn
                 i -= 1
             if underflowed:
                 continue
@@ -516,7 +535,7 @@ def eigvalsh[
 
     Two phases, and the split is the whole story. `sytrd` reduces `a` to
     tridiagonal form device-resident -- `O(4n^3/3)` with the cubic term in
-    `linalg.matmul` -- and then `_tql_values` runs implicit QL sweeps on the
+    `linalg.matmul` -- and then `_tql` runs implicit QL sweeps on the
     two diagonals on the host. That sweep is `O(n^2)`, sequential, and
     branches on the data, which is tier 2 by numax's definition; beside the
     reduction it is genuinely negligible, and the eigenvalues never asked
@@ -532,6 +551,104 @@ def eigvalsh[
     var reduced = sytrd[gpu=gpu](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
-    _tql_values(d, e)
+    var unused = List[Scalar[dtype]]()
+    _tql[vectors=False](d, e, unused)
     _std_sort(d)
     return Static[dtype, n](a.context(), d^)
+
+
+struct TensorEigh[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point() and n >= 1
+):
+    """`eigh`'s result: eigenvalues ascending, eigenvectors as columns.
+
+    A struct rather than the `(w, v)` tuple SciPy returns, for the reason
+    `qr_factor` returns a `TensorQR`: a `Tuple` of two `Tensor`s cannot be
+    destructured in Mojo 1.0, so a tuple-shaped return would hand back a
+    pair no caller could take apart. `numax.linalg.array.eigh` returns the
+    tuple because `Array` copies.
+    """
+
+    var values: Static[Self.dtype, Self.n]
+    """The eigenvalues, ascending."""
+
+    var vectors: Static[Self.dtype, Self.n, Self.n]
+    """The eigenvectors, one per column, in the order of `values`, so
+    `a @ vectors[:, j] == values[j] * vectors[:, j]`. Orthonormal."""
+
+    def __init__(
+        out self,
+        var values: Static[Self.dtype, Self.n],
+        var vectors: Static[Self.dtype, Self.n, Self.n],
+    ):
+        self.values = values^
+        self.vectors = vectors^
+
+
+def eigh[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> TensorEigh[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** The eigendecomposition of a symmetric `a`: eigenvalues
+    ascending and orthonormal eigenvectors as columns.
+    `numpy.linalg.eigh` / `scipy.linalg.eigh`.
+
+    Three steps, two of them GEMM-shaped. `sytrd` reduces `a` to
+    tridiagonal form device-resident, `O(4n^3/3)` through `linalg.matmul`.
+    Implicit QL then diagonalizes the tridiagonal on the host,
+    accumulating its rotations into `Z`, the tridiagonal's own eigenvector
+    matrix. And the eigenvectors of `a` are `Q Z`, where `Q` is the
+    reduction's orthogonal factor -- LAPACK's `ormtr` -- which is one
+    `matmul`.
+
+    `ponytail:` the middle step is the ceiling, and it is stated rather
+    than hidden. Accumulating `Z` is `O(n^3)` of scalar Givens rotations
+    on the host -- a small constant, but the one term here with no MAX in
+    it, and the reason `eigvalsh` exists as a separate name: values alone
+    make that step `O(n^2)`. The upgrade is `stedc`, divide and conquer,
+    whose merge phase multiplies the sub-problems' eigenvector blocks and
+    so is GEMM-shaped; nothing above or below it changes when it lands.
+
+    The `Array` tier's `eigh` is cyclic Jacobi at a fixed sweep count,
+    unsorted, differentiable and launchable inside a GPU thread. For a
+    matrix small enough to live in registers it is the better tool; this
+    is for the sizes it cannot reach.
+
+    `a` is read as symmetric and not checked; see `sytrd`.
+    """
+    var ctx = a.context()
+    var reduced = sytrd[gpu=gpu](a)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+
+    var z = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        z[i * n + i] = Scalar[dtype](1)
+    _tql[vectors=True](d, e, z)
+
+    # Sort ascending, carrying each eigenvalue's column with it.
+    var order = List[Int](capacity=n)
+    for i in range(n):
+        order.append(i)
+    for i in range(1, n):
+        var j = i
+        while j > 0 and d[order[j]] < d[order[j - 1]]:
+            var tmp = order[j]
+            order[j] = order[j - 1]
+            order[j - 1] = tmp
+            j -= 1
+
+    var sorted_values = List[Scalar[dtype]](capacity=n)
+    var sorted_z = List[Scalar[dtype]](length=n * n, fill=0)
+    for j in range(n):
+        var src = order[j]
+        sorted_values.append(d[src])
+        for row in range(n):
+            sorted_z[row * n + j] = z[row * n + src]
+
+    var values = Static[dtype, n](ctx, sorted_values^)
+    var z_dev = Static[dtype, n, n](ctx, sorted_z^)
+    var q = reduced.q()
+    var vectors = matmul[gpu=gpu](q, z_dev)
+    return TensorEigh[dtype, n](values^, vectors^)
