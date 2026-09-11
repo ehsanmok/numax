@@ -112,6 +112,16 @@ what makes a `FloatLike` kernel a fused kernel by construction. Two inputs
 is simply the point where the operation cannot be expressed inside a
 single `step` at all, because it needs a second buffer to read from.
 
+`map` has two further overloads taking one and two run-time
+`Scalar[dtype]` arguments, forwarded to `step` alongside each element.
+`step` being a compile-time parameter is what `enqueue_function` needs and
+what leaves a kernel no way to see a value known only at run time; a
+`Scalar[dtype]` is fixed-width and so `DevicePassable`, and crosses the
+launch boundary as an ordinary kernel argument. `numax.stats`'s
+distributions over `Tensor` are what forced it -- `norm.cdf` needs `mu` and
+`sigma`, and neither is a constant of the kernel. It stops at two for the
+same reason the three-input form does not exist.
+
 Every function here accepts a `TileTensor` of *any* rank, and how it gets
 from that rank down to a walk is what separates the three groups below.
 
@@ -639,6 +649,156 @@ def map[
             out_flat.store[1](
                 Coord(i),
                 step[1](lhs_flat.load[1](Coord(i)), rhs_flat.load[1](Coord(i))),
+            )
+
+
+def map[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](SIMD[dtype, w], SIMD[dtype, 1]) thin -> SIMD[dtype, w],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    xs: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    p0: Scalar[dtype],
+) where (
+    TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+):
+    """Apply `step` to every element of `xs` under one run-time scalar.
+
+    The unary `map` binds `step` as a compile-time parameter, which is what
+    `DeviceContext.enqueue_function` needs -- and which leaves a kernel no
+    way to see a value only known at run time. A distribution is the case
+    that forces it: `norm.cdf` over a tensor needs `mu` and `sigma`, and
+    neither is a constant of the kernel. `Scalar[dtype]` is fixed-width and
+    therefore `DevicePassable`, so it crosses the launch boundary as an
+    ordinary kernel argument and nothing about the walk changes.
+
+    Same `gpu` parameter, same coalescing, same `where` clause, and the same
+    meaning for `width` on each path as the unary `map`.
+
+    It stops at two scalars, for the reason the three-input `map` does not
+    exist: past that, the thing to compose is the kernel. Every
+    `scipy.stats` distribution numax carries is shaped by at most two
+    parameters.
+
+    ```mojo
+    def scale_step[w: Int](x: SIMD[dtype, w], s: SIMD[dtype, 1]) -> SIMD[dtype, w]:
+        return x * s
+
+    map[width = simd_width_of[dtype](), step=scale_step](xs, ys, 2.0)
+    ```
+    """
+    var xs_flat = xs.coalesce()
+    var ys_flat = ys.coalesce()
+    comptime if gpu:
+        var n = xs_flat.num_elements()
+        var base = Int(global_idx.x) * width
+        if base + width <= n:
+            ys_flat.store[width](
+                Coord(base), step[width](xs_flat.load[width](Coord(base)), p0)
+            )
+        else:
+            for i in range(base, n):
+                ys_flat.store[1](
+                    Coord(i), step[1](xs_flat.load[1](Coord(i)), p0)
+                )
+    else:
+        var n = xs_flat.num_elements()
+        var vec_n = (n // width) * width
+        if vec_n > 0:
+            var xs_bulk = xs_flat.slice((0, vec_n)).vectorize[width]()
+            var ys_bulk = ys_flat.slice((0, vec_n)).vectorize[width]()
+            for i in range(xs_bulk.num_elements()):
+                ys_bulk.store[width](
+                    Coord(i), step[width](xs_bulk.load[width](Coord(i)), p0)
+                )
+        for i in range(vec_n, n):
+            ys_flat.store[1](Coord(i), step[1](xs_flat.load[1](Coord(i)), p0))
+
+
+def map[
+    dtype: DType,
+    LayoutType: TensorLayout,
+    step: def[w: Int](
+        SIMD[dtype, w], SIMD[dtype, 1], SIMD[dtype, 1]
+    ) thin -> SIMD[dtype, w],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    xs: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    p0: Scalar[dtype],
+    p1: Scalar[dtype],
+) where (
+    TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    ].is_row_major
+):
+    """Apply `step` to every element of `xs` under two run-time scalars.
+
+    The two-parameter form of the `map` above, and the shape every
+    two-parameter distribution takes -- `norm(mu, sigma)`, `gamma(shape,
+    scale)`, `beta(a, b)`, `binom(n, p)`. See that overload for why the
+    scalars are run-time arguments rather than compile-time parameters.
+    """
+    var xs_flat = xs.coalesce()
+    var ys_flat = ys.coalesce()
+    comptime if gpu:
+        var n = xs_flat.num_elements()
+        var base = Int(global_idx.x) * width
+        if base + width <= n:
+            ys_flat.store[width](
+                Coord(base),
+                step[width](xs_flat.load[width](Coord(base)), p0, p1),
+            )
+        else:
+            for i in range(base, n):
+                ys_flat.store[1](
+                    Coord(i), step[1](xs_flat.load[1](Coord(i)), p0, p1)
+                )
+    else:
+        var n = xs_flat.num_elements()
+        var vec_n = (n // width) * width
+        if vec_n > 0:
+            var xs_bulk = xs_flat.slice((0, vec_n)).vectorize[width]()
+            var ys_bulk = ys_flat.slice((0, vec_n)).vectorize[width]()
+            for i in range(xs_bulk.num_elements()):
+                ys_bulk.store[width](
+                    Coord(i), step[width](xs_bulk.load[width](Coord(i)), p0, p1)
+                )
+        for i in range(vec_n, n):
+            ys_flat.store[1](
+                Coord(i), step[1](xs_flat.load[1](Coord(i)), p0, p1)
             )
 
 

@@ -399,5 +399,74 @@ def test_dynamic_map_writes_through_to_the_underlying_storage() raises:
         assert_almost_equal(ys_storage[i], Scalar[dtype](exp(-1.0)))
 
 
+def _standardize[
+    w: Int
+](x: SIMD[dtype, w], mu: SIMD[dtype, 1], sigma: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+]:
+    """The shape every distribution takes: a kernel over one tensor whose
+    parameters are only known at run time."""
+    return (x - mu) / sigma
+
+
+def _scaled[w: Int](x: SIMD[dtype, w], k: SIMD[dtype, 1]) -> SIMD[dtype, w]:
+    return x * k
+
+
+def test_map_carries_one_runtime_scalar_into_the_kernel() raises:
+    comptime layout = row_major[n]()
+    var xs_storage = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        xs_storage.append(Scalar[dtype](i) * 0.5)
+    var xs = TileTensor(xs_storage, layout)
+    var out_storage = List[Scalar[dtype]](length=n, fill=0)
+    var out = TileTensor(out_storage, layout)
+
+    map[width=width, step=_scaled](xs, out, Scalar[dtype](3.0))
+
+    for i in range(n):
+        assert_almost_equal(out[i], xs[i] * 3.0)
+
+
+def test_map_carries_two_runtime_scalars_with_a_remainder() raises:
+    # Not a multiple of `width`, so the scalar tail has to forward the
+    # parameters too -- dropping them there is the regression worth catching.
+    comptime odd_n = n + 3
+    comptime layout = row_major[odd_n]()
+    var xs_storage = List[Scalar[dtype]](capacity=odd_n)
+    for i in range(odd_n):
+        xs_storage.append(Scalar[dtype](i) * 0.25 - 1.0)
+    var xs = TileTensor(xs_storage, layout)
+    var out_storage = List[Scalar[dtype]](length=odd_n, fill=0)
+    var out = TileTensor(out_storage, layout)
+
+    map[width=width, step=_standardize](
+        xs, out, Scalar[dtype](2.0), Scalar[dtype](4.0)
+    )
+
+    for i in range(odd_n):
+        assert_almost_equal(out[i], (xs[i] - 2.0) / 4.0, atol=1e-6)
+
+
+def test_map_with_scalars_coalesces_a_multidimensional_tensor() raises:
+    comptime rows = 3
+    comptime cols = 5
+    comptime layout = row_major[rows, cols]()
+    var xs_storage = List[Scalar[dtype]](capacity=rows * cols)
+    for i in range(rows * cols):
+        xs_storage.append(Scalar[dtype](i) * 0.1)
+    var xs = TileTensor(xs_storage, layout)
+    var out_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
+    var out = TileTensor(out_storage, layout)
+
+    map[width=width, step=_standardize](
+        xs, out, Scalar[dtype](0.5), Scalar[dtype](2.0)
+    )
+
+    for r in range(rows):
+        for c in range(cols):
+            assert_almost_equal(out[r, c], (xs[r, c] - 0.5) / 2.0, atol=1e-6)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
