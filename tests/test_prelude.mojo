@@ -83,5 +83,35 @@ def test_stats_and_io_are_reachable() raises:
     assert_almost_equal(back[3], Scalar[dtype](3.0))
 
 
+def test_the_rank_and_broadcast_surface_is_reachable() raises:
+    """Every public name the rank-and-broadcast work added has to be in the
+    prelude, or a star-import promises a surface it does not carry. One
+    call per name: this test fails to compile if any is missing."""
+    var grid = reshape[rows=2, cols=3](arange[6]())
+
+    # Shape manipulation.
+    assert_equal(transpose(grid, 1, 0).dim_at(0), 3)
+    assert_equal(swapaxes(grid, 0, 1).dim_at(0), 3)
+    assert_equal(moveaxis(grid, 0, 1).dim_at(0), 3)
+    assert_equal(expand_dims[axis=1](grid).dim_at(1), 1)
+    assert_equal(tile(grid, 2, 1).dim_at(0), 4)
+    assert_equal(repeat[axis=1](grid, 2).dim_at(1), 6)
+    assert_almost_equal(roll[axis=1](grid, 1)[0], Scalar[dtype](2.0))
+
+    # The broadcast rule, and an op that reads it.
+    var joint = broadcast_shapes([2, 1], [3])
+    assert_equal(joint[0], 2)
+    assert_equal(joint[1], 3)
+
+    var row = arange[3]()
+    assert_almost_equal(add(grid, row)[4], Scalar[dtype](5.0))
+
+    # Indexing.
+    var picked = take_along_axis[axis=1](
+        grid, full[DType.int64, 2, 3](Scalar[DType.int64](2))
+    )
+    assert_almost_equal(picked[0], Scalar[dtype](2.0))
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

@@ -4,10 +4,13 @@
 from numax.prelude import *
 ```
 
-brings the conformers, `Tensor` and its creation and manipulation surface,
-the elementwise math, the comparisons, the constants, the seam to the
-`Array` layer, and the entry points of `numax.special`, `numax.linalg`,
-`numax.stats` and `numax.io` that a program reaches for first.
+brings the conformers, `Tensor` and its creation and manipulation surface
+-- including the rank-generic half, `transpose`/`swapaxes`/`moveaxis`,
+`expand_dims`/`roll`/`tile`/`repeat`, `broadcast_shapes` and
+`take_along_axis` -- the elementwise math, the comparisons, the constants,
+the seam to the `Array` layer, and the entry points of `numax.special`,
+`numax.linalg`, `numax.stats` and `numax.io` that a program reaches for
+first.
 
 This module declares no tier of its own -- it re-exports, and each name
 carries the tier of the module that defines it.
@@ -70,6 +73,7 @@ from .core.array import (
     Static,
     Tensor,
     arange,
+    broadcast_shapes,
     broadcast_to,
     asarray,
     concatenate,
@@ -81,6 +85,7 @@ from .core.array import (
     empty,
     empty_dyn,
     empty_like,
+    expand_dims,
     eye,
     flip,
     full,
@@ -92,17 +97,22 @@ from .core.array import (
     linspace,
     logspace,
     meshgrid,
+    moveaxis,
     ones,
     ones_dyn,
     ones_like,
     ravel,
+    repeat,
     reshape,
     reshape_dyn,
+    roll,
     split,
     split_dyn,
     stack_dyn,
     squeeze,
     stack,
+    swapaxes,
+    tile,
     to_array,
     to_tensor,
     transpose,
@@ -196,6 +206,7 @@ from .core.sorting import (
     select,
     sort,
     take,
+    take_along_axis,
     top_k,
     unique,
 )
