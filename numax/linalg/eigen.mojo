@@ -345,6 +345,10 @@ def sytrd[
 
         _subtract_rank_two[gpu=gpu](work, left, right, product, ctx)
 
+    # `sv` is read by every launch above and `scratch` is named nowhere
+    # else, so without this Mojo would destroy it after `.view()`; see
+    # `findings.mdc` on the origin-erased view and the queued free.
+    _ = scratch^
     var reduced = work.to_host()
     var d = zeros[dtype, n](ctx)
     var e = zeros[dtype, n](ctx)
@@ -978,6 +982,7 @@ def gebrd[
                     work, pcol, u, tau_r, product, ctx
                 )
 
+    _ = scratch^  # as in `sytrd`: pin the workspace past its last launch
     var reduced = work.to_host()
     var d = zeros[dtype, n](ctx)
     var e = zeros[dtype, n](ctx)
