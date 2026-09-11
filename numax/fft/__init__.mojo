@@ -1,7 +1,7 @@
 """numax.fft: discrete Fourier transforms.
 
 ```mojo
-from numax.fft import fft, ifft, rfft, fftfreq, rfftfreq
+from numax.fft import fft, ifft, rfft, irfft, fft2, rfft2, fftfreq, fftshift
 ```
 
 Radix-2 Cooley-Tukey, power-of-two by construction. MAX ships **no forward
@@ -17,10 +17,25 @@ Two tiers, one import each, the same split `numax.linalg` makes:
 | `numax.fft` | `Tensor`, `Plain`-only, tier 2 | the large transform: `log2(n) + 1` device launches, no host round trip |
 | `numax.fft.array` | `Array[Complex[T], n]`, `FloatLike`-generic, tier 1 | the small one: register-resident, differentiates at `Dual`, runs per SIMD lane inside a kernel body |
 
-This surface is the `Tensor` one, and it carries `fft`/`ifft`, `rfft`,
-`fftfreq`/`rfftfreq` and the `Spectrum` pair they travel in. `fft2`,
-`irfft`, `fftshift`/`ifftshift` and `circular_convolve` are `Array`-tier
-only so far.
+This surface is the `Tensor` one, and it carries `fft`/`ifft`,
+`rfft`/`irfft`, `fft2`/`ifft2`/`rfft2` (rectangular, where the `Array`
+tier's is square), `fftshift`/`ifftshift` at rank 1 and 2,
+`fftfreq`/`rfftfreq`, and the `Spectrum` pair they travel in.
+`circular_convolve` is `Array`-tier only; over `Tensor` the same identity is
+`numax.signal`'s to spell.
 """
 
-from .fft import Spectrum, fft, fftfreq, ifft, rfft, rfftfreq
+from .fft import (
+    Spectrum,
+    fft,
+    fft2,
+    fftfreq,
+    fftshift,
+    ifft,
+    ifft2,
+    ifftshift,
+    irfft,
+    rfft,
+    rfft2,
+    rfftfreq,
+)

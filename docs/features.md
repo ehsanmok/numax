@@ -380,12 +380,14 @@ not.
 | Surface — over `Tensor`, from `numax.fft` | Where |
 |---|---|
 | `fft`, `ifft` — complex forward and inverse, travelling as a `Spectrum` real/imaginary pair, since a `dtype`-monomorphic tensor cannot hold a `Complex` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
-| `rfft` — real input, half spectrum | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `rfft`, `irfft` — real input, half spectrum, and back (`irfft[n=...]`, since `n` cannot be read off the half) | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `fft2`, `ifft2`, `rfft2` — rectangular 2-D transforms: the same lane engine along the rows, then along the columns through a zero-copy transposed view | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `fftshift`, `ifftshift` — centring, at rank 1 and over both axes of a matrix; the two differ for odd `n` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fftfreq`, `rfftfreq` — frequency grids | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 
 Tier 2: the stage loop is on the host and each of the `log2(n) + 1` stages
-is a device kernel, so the data stays device-resident between them but
-nothing here runs *inside* a kernel body. `gpu=True` is `float32` on Apple
+per axis is a device kernel, so the data stays device-resident between
+them but nothing here runs *inside* a kernel body. `gpu=True` is `float32` on Apple
 silicon, which is Metal's limit on `double` rather than this module's.
 
 | Surface — over `Array[Complex[T], n]`, from `numax.fft.array` | Where |

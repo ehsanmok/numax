@@ -295,7 +295,20 @@ from .optimize.minimize import minimize
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 from .integrate.ode import dopri5, rk4_system
 from .interpolate.interp import Chebyshev, CubicSpline, horner
-from .fft.fft import Spectrum, fft, fftfreq, ifft, rfft, rfftfreq
+from .fft.fft import (
+    Spectrum,
+    fft,
+    fft2,
+    fftfreq,
+    fftshift,
+    ifft,
+    ifft2,
+    ifftshift,
+    irfft,
+    rfft,
+    rfft2,
+    rfftfreq,
+)
 
 # I/O.
 from .io.io import nmx
