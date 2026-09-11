@@ -2,7 +2,7 @@
 estimation.
 
 ```mojo
-from numax.signal import convolve, fftconvolve, get_window
+from numax.signal import convolve, fftconvolve, get_window, filtfilt, savgol_filter
 ```
 
 Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
@@ -10,7 +10,7 @@ Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
 
 | Import | Holds | Good for |
 | --- | --- | --- |
-| `numax.signal` | `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `full`/`same`/`valid` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms |
+| `numax.signal` | `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `full`/`same`/`valid` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt` (host recurrences), `medfilt`, `detrend`, `savgol_filter`, `resample` and the multiband `firwin` |
 | `numax.signal.array` | `Array[T, n]` and `FloatLike`, tier 1 | a frame inside a kernel: the direct `convolve`/`correlate`, `lfilter`, the lowpass `firwin`, and the cosine windows as compile-time tables, all differentiating at `Dual` |
 
 This surface is the `Tensor` one. `apply_window` has no `Tensor` spelling
@@ -32,4 +32,15 @@ from .windows import (
     hamming,
     hann,
     kaiser,
+)
+from .filters import (
+    detrend,
+    filtfilt,
+    firwin,
+    lfilter,
+    lfilter_zi,
+    medfilt,
+    resample,
+    savgol_filter,
+    sosfilt,
 )

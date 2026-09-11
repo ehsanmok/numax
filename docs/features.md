@@ -439,6 +439,9 @@ routed.
 | `convolve`, `correlate` — `numpy.convolve`/`numpy.correlate` in `full` (default), `same` and `valid`, one `elementwise` launch of dot products over the overlap | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `fftconvolve` — the same answer through `numax.fft`: pad to `next_fast_len(m + k - 1)`, multiply the `rfft`s, `irfft`, slice; the route for a long kernel | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `boxcar`, `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `get_window` — `scipy.signal.windows` as `Tensor` factories, symmetric (`sym=True`, the factories' default) or periodic (`get_window`'s default `fftbins=True`) | [`signal/windows.mojo`](../numax/signal/windows.mojo) |
+| `lfilter`, `lfilter_zi`, `filtfilt`, `sosfilt` — the recursive filters, SciPy's transposed direct form II, odd-padded forward-backward pass, second-order cascade. **Host-side by nature**: a recurrence has no lanes to launch | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
+| `medfilt`, `detrend`, `savgol_filter` — a window per lane, one launch each; `savgol_filter` in all five of SciPy's edge modes and any derivative order, `detrend` linear or constant through two reductions | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
+| `resample`, `firwin` — Fourier resampling with SciPy's Nyquist-bin rule, and the window-method design for lowpass, highpass, bandpass, bandstop and multiband responses | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
 
 Tier 2: host-driven, device-resident; the windows are host tables uploaded
 once. `apply_window` has no `Tensor` spelling because `multiply` already is

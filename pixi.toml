@@ -247,6 +247,7 @@ test-tensor-fft = "mojo -I . tests/fft/test_tensor_fft.mojo"
 test-tensor-trig = "mojo -I . tests/fft/test_tensor_trig.mojo"
 test-signal = "mojo -I . tests/signal/test_signal.mojo"
 test-tensor-convolution = "mojo -I . tests/signal/test_tensor_convolution.mojo"
+test-tensor-filters = "mojo -I . tests/signal/test_tensor_filters.mojo"
 test-interval = "mojo -I . tests/core/test_interval.mojo"
 test-prelude = "mojo -I . tests/test_prelude.mojo"
 test-array = "mojo -I . tests/core/test_array.mojo"
@@ -321,6 +322,7 @@ tests = { depends-on = [
     "test-tensor-trig",
     "test-signal",
     "test-tensor-convolution",
+    "test-tensor-filters",
     "test-interval",
     "test-prelude",
     "test-array",
