@@ -1075,7 +1075,9 @@ def svdvals[
     var top = _top_n_descending[dtype, n](gk[0])
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
-        out.append(gk[0][top[i]])
+        # `|.|`: an exactly singular matrix's zero pair can land with its
+        # nominally positive member a rounding error below zero.
+        out.append(abs(gk[0][top[i]]))
     return Static[dtype, n](a.context(), out^)
 
 
@@ -1151,7 +1153,7 @@ def svd[
     var root_two = Scalar[dtype](1.4142135623730951)
     for j in range(n):
         var col = top[j]
-        s_host.append(values[col])
+        s_host.append(abs(values[col]))
         for i in range(n):
             vb[i * n + j] = z[(2 * i) * size + col] * root_two
             ub[i * n + j] = z[(2 * i + 1) * size + col] * root_two
@@ -1163,3 +1165,36 @@ def svd[
     var u = matmul[gpu=gpu](q, u_b)
     var v = matmul[gpu=gpu](p, v_b)
     return TensorSVD[dtype, m, n](u^, Static[dtype, n](ctx, s_host^), v^)
+
+
+def matrix_rank[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](
+    mut a: Static[dtype, m, n], tol: Optional[Float64] = None
+) raises -> Int where (dtype.is_floating_point() and m >= n and n >= 1):
+    """**Tier 2.** How many singular values exceed `tol`.
+    `numpy.linalg.matrix_rank`.
+
+    `tol` defaults to NumPy's: the largest singular value times
+    `max(m, n)` times the machine epsilon of `dtype`, which is the noise
+    floor an SVD of that size can be expected to carry. Pass an explicit
+    `tol` to ask a different question -- "how many directions carry more
+    than one part in a thousand" is `tol = 1e-3 * s_max`.
+
+    An `Int`, where the `Array` tier returns `T`: one `Tensor` is one
+    matrix, so there is one rank, and nothing here needs to stay branchless.
+    """
+    var s = svdvals[gpu=gpu](a).to_host()
+    var eps: Float64
+    comptime if dtype == DType.float32:
+        eps = 1.1920929e-07
+    else:
+        eps = 2.220446049250313e-16
+    var threshold = (
+        tol.value() if tol else Float64(s[0]) * Float64(max(m, n)) * eps
+    )
+    var rank = 0
+    for i in range(n):
+        if Float64(s[i]) > threshold:
+            rank += 1
+    return rank

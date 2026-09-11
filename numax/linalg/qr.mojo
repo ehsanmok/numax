@@ -34,7 +34,8 @@ from max.gpu.host import DeviceContext
 
 from ..core.array import Dynamic, Static, zeros, zeros_dyn
 
-from .blas import _target
+from .basic import pinv
+from .blas import _target, matvec
 from .common import _Dense
 from .panel import (
     _PANEL_THREADS,
@@ -632,10 +633,15 @@ def qr_factor[
 
 
 def lstsq[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 16
+    dtype: DType,
+    m: Int,
+    n: Int,
+    gpu: Bool = False,
+    block: Int = 16,
+    method: StaticString = "qr",
 ](mut a: Static[dtype, m, n], mut b: Static[dtype, m]) raises -> Static[
     dtype, n
-] where (dtype.is_floating_point() and m >= n):
+] where (dtype.is_floating_point() and m >= n and n >= 1):
     """The least-squares solution of the overdetermined `A x = b`: the `x`
     minimizing `||A x - b||`. `numpy.linalg.lstsq`, first return value, and
     the name `scipy.linalg` puts on this algorithm.
@@ -650,10 +656,26 @@ def lstsq[
     half and `solve` is the cheap one, so this convenience is exactly the
     wrong shape for a loop.
 
-    Rank deficiency is not detected, the same limit the `Array` tier's
-    `lstsq` documents: a dependent column leaves a near-zero diagonal in
-    `R`, and the substitution's floor keeps the answer finite rather than
-    correct.
+    | `method` | Route | Reach for it when |
+    | --- | --- | --- |
+    | `"qr"` (default) | `qr_factor` then `TensorQR.solve` | `A` has full column rank, which is the fit's usual case |
+    | `"svd"` | `pinv(A) @ b` | `A` may be rank deficient: the answer is the minimum-norm solution, as `scipy.linalg.lstsq`'s default driver returns |
+
+    At `"qr"` rank deficiency is not detected, the same limit the `Array`
+    tier's `lstsq` documents: a dependent column leaves a near-zero
+    diagonal in `R`, and the substitution's floor keeps the answer finite
+    rather than correct. `"svd"` is the route that is correct there, at the
+    price of a singular value decomposition instead of a QR. An
+    unrecognized `method` raises rather than failing to compile; see
+    `numax.optimize.minimize` for why.
     """
-    var factored = qr_factor[dtype, m, n, gpu, block](a)
-    return factored.solve[block](b)
+    comptime if method == "qr":
+        var factored = qr_factor[dtype, m, n, gpu, block](a)
+        return factored.solve[block](b)
+    elif method == "svd":
+        var pseudo = pinv[dtype, m, n, gpu](a)
+        return matvec[gpu=gpu](pseudo, b)
+    else:
+        raise Error(
+            "lstsq: unknown method '", method, "'; expected 'qr' or 'svd'"
+        )

@@ -30,6 +30,7 @@ from ..core.array import Static
 from ..core.rowwise import max_axis, sum_axis
 
 from .blas import _fused_sum, _target, asum as _asum, nrm2 as _nrm2
+from .eigen import svdvals
 
 
 comptime fro = 0
@@ -261,3 +262,26 @@ def norm[
             else:
                 best = min(best, host[i])
         return best
+
+
+def cond[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](mut a: Static[dtype, m, n]) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and m >= n and n >= 1
+):
+    """**Tier 2.** The 2-norm condition number, the ratio of the largest
+    singular value to the smallest. `numpy.linalg.cond`.
+
+    The number that says how much a solve can amplify input error -- a
+    `cond` of `1e12` at `float64` means about four significant digits
+    survive. Worth computing before trusting `solve` or `inverse` on a
+    matrix of unknown provenance. `svdvals` device-resident, then one
+    division.
+
+    A singular matrix returns `inf`, which is what NumPy returns and what
+    the division gives. The `Array` tier's `cond` floors the divisor and
+    reports a very large finite number instead, because a branchless kernel
+    cannot decide to return an infinity; at this tier the decision is free.
+    """
+    var s = svdvals[gpu=gpu](a).to_host()
+    return s[0] / s[n - 1]

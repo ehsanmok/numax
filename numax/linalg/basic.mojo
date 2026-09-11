@@ -2,7 +2,8 @@
 
 **The `Tensor` tier**, with `numax.linalg.array.basic` holding the
 `FloatLike`-generic one -- unpivoted LU plus two substitutions for
-`solve`, and `pinv`, which has no `Tensor` form because `svd` does not.
+`solve`, and a `pinv` over one-sided Jacobi where this one goes through
+`numax.linalg.svd`.
 
 `solve` factors with the blocked pivoted `lu_factor` -- whose trailing
 update is MAX's GEMM -- and substitutes. It pivots, so it solves systems
@@ -17,12 +18,18 @@ Note that inverting explicitly is rarely the right move at any size:
 solving against a specific right-hand side is both cheaper and better
 conditioned.
 
+`pinv` is `svd` followed by one `inner` product: `V diag(1/s) U^T` with
+the small singular values dropped, which is what to reach for instead of
+`inverse` when the matrix may be singular, rectangular, or both.
+
 MAX ships no `solve`, no `inv` and no pseudo-inverse at any size, so
 nothing here delegates.
 """
 
 from ..core.array import Static, eye
 
+from .blas import inner
+from .eigen import svd
 from .lu import lu_factor
 
 
@@ -73,3 +80,40 @@ def inverse[
     var factorization = lu_factor[dtype, n, gpu, block](a)
     var identity = eye[n, dtype](a.context())
     return factorization.solve[n, block](identity)
+
+
+def pinv[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](mut a: Static[dtype, m, n], rcond: Float64 = 1e-15) raises -> Static[
+    dtype, n, m
+] where (dtype.is_floating_point() and m >= n and n >= 1):
+    """**Tier 2.** The Moore-Penrose pseudoinverse, `V diag(1/s) U^T`, with
+    singular values below `rcond` times the largest dropped.
+    `numpy.linalg.pinv`, and `scipy.linalg.pinv`'s shape.
+
+    Reach for this instead of `inverse` when the matrix might be singular,
+    nearly so, or not square at all: `inverse` solves against the identity
+    through a pivoted LU and returns enormous garbage for a near-singular
+    input, whereas here a singular direction contributes nothing rather
+    than dominating. `n x m` for an `m x n` input, so `pinv(a) @ a` is the
+    `n x n` identity when `a` has full column rank.
+
+    `svd` device-resident, then `V` scaled column by column on the host --
+    `n x n`, the small factor -- and one `inner` product against `U`,
+    which is `linalg.matmul` reading `U` transposed in place. `rcond`
+    defaults to NumPy's `1e-15`; the `Array` tier uses `1e-12`, because at
+    a fixed Jacobi sweep count its small singular values carry more noise.
+    """
+    var factored = svd[gpu=gpu](a)
+    var s = factored.s.to_host()
+    var threshold = Float64(s[0]) * rcond
+
+    var v_scaled = factored.v.to_host()
+    for j in range(n):
+        var inv = Scalar[dtype](0)
+        if Float64(s[j]) > threshold:
+            inv = Scalar[dtype](1) / s[j]
+        for i in range(n):
+            v_scaled[i * n + j] = v_scaled[i * n + j] * inv
+    var scaled = Static[dtype, n, n](a.context(), v_scaled^)
+    return inner[gpu=gpu](scaled, factored.u)

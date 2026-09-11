@@ -13,7 +13,20 @@ from max.gpu.host import DeviceContext
 
 from numax.core.array import Static, to_array, transpose, zeros
 from numax.core.plain import Plain
-from numax.linalg import eigh, eigvalsh, gebrd, matmul, svd, svdvals, sytrd
+from numax.linalg import (
+    cond,
+    eigh,
+    eigvalsh,
+    gebrd,
+    lstsq,
+    matmul,
+    matrix_rank,
+    matvec,
+    pinv,
+    svd,
+    svdvals,
+    sytrd,
+)
 from numax.linalg.array import eigvalsh as array_eigvalsh
 from numax.linalg.array import svdvals as array_svdvals
 
@@ -565,6 +578,130 @@ def test_svdvals_finds_a_rank_deficient_matrix() raises:
     assert_almost_equal(s[0], Scalar[dtype](12.269416474076381), rtol=1e-10)
     assert_almost_equal(s[1], Scalar[dtype](1.2088918006435092), rtol=1e-10)
     assert_almost_equal(s[2], Scalar[dtype](0.0), atol=1e-12)
+
+
+def _rank_two() raises -> Static[dtype, 4, 3]:
+    var ctx = DeviceContext(api="cpu")
+    return Static[dtype, 4, 3](
+        ctx, [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0]
+    )
+
+
+def test_pinv_inverts_a_full_rank_tall_matrix_from_the_left() raises:
+    # pinv(A) is n x m and pinv(A) @ A is the n x n identity at full rank.
+    var a = _tall()
+    var original = _copy_rect(a)
+    var p = pinv(a)
+    var product = matmul(p, original).to_host()
+    for i in range(3):
+        for j in range(3):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(product[i * 3 + j], want, atol=1e-10)
+
+
+def test_pinv_of_a_square_matrix_is_its_inverse() raises:
+    # scipy.linalg.pinv(hilbert(4))[0, 0] = 16, [3, 3] = 2800 -- the
+    # inverse Hilbert matrix's exact entries, to cond(H) * eps.
+    var a = _hilbert[4]()
+    var p = pinv(a).to_host()
+    assert_almost_equal(p[0], Scalar[dtype](16.0), rtol=1e-8)
+    assert_almost_equal(p[15], Scalar[dtype](2800.0), rtol=1e-8)
+
+
+def test_pinv_of_a_rank_deficient_matrix_matches_scipy_and_penrose() raises:
+    # scipy.linalg.pinv of the rank-2 matrix, rows 0 and 2; and the first
+    # Moore-Penrose condition A P A == A, which `inverse` cannot satisfy here.
+    var a = _rank_two()
+    var original = _copy_rect(a)
+    var p = pinv(a)
+    var ph = p.to_host()
+    var row0 = [
+        -0.00909090909090875,
+        0.01818181818181808,
+        0.00909090909090934,
+        0.03636363636363615,
+    ]
+    var row2 = [
+        0.5909090909090909,
+        -0.18181818181818196,
+        0.4090909090909091,
+        -0.36363636363636354,
+    ]
+    for j in range(4):
+        assert_almost_equal(ph[0 * 4 + j], Scalar[dtype](row0[j]), atol=1e-10)
+        assert_almost_equal(ph[2 * 4 + j], Scalar[dtype](row2[j]), atol=1e-10)
+
+    var ap = matmul(original, p)
+    var apa = matmul(ap, original).to_host()
+    var source = original.to_host()
+    for i in range(12):
+        assert_almost_equal(apa[i], source[i], atol=1e-10)
+
+
+def test_cond_matches_scipy_on_hilbert_four() raises:
+    var a = _hilbert[4]()
+    assert_almost_equal(cond(a), Scalar[dtype](15513.738738929003), rtol=1e-8)
+
+
+def test_cond_of_a_singular_matrix_is_infinite_or_huge() raises:
+    # numpy.linalg.cond([[1, 2], [2, 4]]) is about 2.8e16; the smallest
+    # singular value is zero to rounding, so the ratio is at the floor of
+    # what float64 can express or past it.
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 2.0, 4.0])
+    assert_equal(Float64(cond(a)) > 1e15, True)
+
+
+def test_matrix_rank_counts_independent_directions() raises:
+    var full = _hilbert[4]()
+    assert_equal(matrix_rank(full), 4)
+    var deficient = _rank_two()
+    assert_equal(matrix_rank(deficient), 2)
+    var tall = _tall()
+    assert_equal(matrix_rank(tall), 3)
+
+
+def test_matrix_rank_honours_an_explicit_tolerance() raises:
+    # Hilbert-4's singular values are 1.5, 0.17, 6.7e-3, 9.7e-5: a
+    # tolerance of 1e-3 counts three of them.
+    var a = _hilbert[4]()
+    assert_equal(matrix_rank(a, tol=1e-3), 3)
+
+
+def test_lstsq_svd_agrees_with_qr_at_full_rank() raises:
+    # scipy.linalg.lstsq(A, b) for the tall matrix: the two routes must
+    # give the same x, and SciPy's.
+    var a = _tall()
+    var a2 = _copy_rect(a)
+    var ctx = a.context()
+    var b = Static[dtype, 5](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var b2 = Static[dtype, 5](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var via_qr = lstsq(a, b).to_host()
+    var via_svd = lstsq[method="svd"](a2, b2).to_host()
+    var expected = [
+        1.915662650602404,
+        -0.9638554216867546,
+        -0.16867469879517083,
+    ]
+    for i in range(3):
+        assert_almost_equal(via_svd[i], Scalar[dtype](expected[i]), atol=1e-10)
+        assert_almost_equal(via_qr[i], via_svd[i], atol=1e-10)
+
+
+def test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient() raises:
+    # scipy.linalg.lstsq on the rank-2 matrix: x = [0.2364, 0.4727, -0.3636],
+    # the minimum-norm member of the solution family.
+    var a = _rank_two()
+    var ctx = a.context()
+    var b = Static[dtype, 4](ctx, [1.0, 2.0, 3.0, 5.0])
+    var x = lstsq[method="svd"](a, b).to_host()
+    var expected = [
+        0.23636363636363628,
+        0.47272727272727294,
+        -0.3636363636363633,
+    ]
+    for i in range(3):
+        assert_almost_equal(x[i], Scalar[dtype](expected[i]), atol=1e-10)
 
 
 def main() raises:

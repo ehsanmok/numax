@@ -35,9 +35,9 @@ modules matter when reading or extending.
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
 | `lu` | `lu_factor`, `TensorLU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
-| `basic` | `solve`, `inverse` | `_basic` |
-| `misc` | `norm` (matrix and vector), `trace`, `fro`, `inf`, `neg_inf` | `_misc` |
-| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD` | `_decomp`, `_decomp_svd`, plus LAPACK's `sytrd`/`gebrd` |
+| `basic` | `solve`, `inverse`, `pinv` | `_basic` |
+| `misc` | `norm` (matrix and vector), `trace`, `cond`, `fro`, `inf`, `neg_inf` | `_misc` |
+| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD`, `matrix_rank` | `_decomp`, `_decomp_svd`, plus LAPACK's `sytrd`/`gebrd` |
 | `matfuncs` | `expm` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
@@ -95,11 +95,9 @@ cannot be built from an immutable binding.
 
 ## Not here yet
 
-`eigvals`, `cond` and `pinv` have no `Tensor` overload yet;
-`numax.linalg.array` has them for matrices small enough to live in
-registers. `cond` and `pinv` are `svd`'s dependents and land next.
-`tridiagonal_solve` will stay `Array`-only -- Thomas is already linear and
-has nothing to hand a GEMM.
+`eigvals` has no `Tensor` overload yet; `numax.linalg.array` has it for
+matrices small enough to live in registers. `tridiagonal_solve` will stay
+`Array`-only -- Thomas is already linear and has nothing to hand a GEMM.
 
 **The symmetric eigenproblem is here**, and its shape is the shape every
 spectral factorization will take. `sytrd` reduces a symmetric matrix to
@@ -121,7 +119,7 @@ vectors back as `Q Z` through one `matmul`.
 and the singular values are the eigenvalues of the Golub-Kahan
 tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
 no new numerics, only the doubling that route costs at `vectors=True`.
-`eigvals` waits on the same phases over a Hessenberg form.
+`pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it. `eigvals` waits on the same phases over a Hessenberg form.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of
@@ -141,7 +139,7 @@ from .banded import (
     solveh_banded,
     solve_toeplitz,
 )
-from .basic import inverse, solve
+from .basic import inverse, pinv, solve
 from .blas import (
     asum,
     axpy,
@@ -164,13 +162,14 @@ from .eigen import (
     eigh,
     eigvalsh,
     gebrd,
+    matrix_rank,
     svd,
     svdvals,
     sytrd,
 )
 from .lu import TensorLU, det, lu_factor, slogdet
 from .matfuncs import expm
-from .misc import fro, inf, neg_inf, norm, trace
+from .misc import cond, fro, inf, neg_inf, norm, trace
 from .qr import TensorQR, lstsq, qr_factor
 from .special_matrices import (
     block_diag,

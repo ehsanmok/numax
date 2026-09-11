@@ -187,9 +187,11 @@ exist.
   eigenvalues of the Golub-Kahan tridiagonal -- the `2n x 2n` symmetric
   tridiagonal with zero diagonal and off-diagonal `d_1, e_1, d_2, ...` --
   which the very same sweep diagonalizes, its eigenvectors interleaving
-  `B`'s singular vectors. LAPACK's `dbdsvdx` takes that route too. What is
-  still missing over `Tensor` is the Hessenberg reduction `eigvals` starts
-  from and its own sweep. `numax/linalg/__init__.mojo` carries the
+  `B`'s singular vectors. LAPACK's `dbdsvdx` takes that route too. `pinv`,
+  `cond`, `matrix_rank` and `lstsq`'s `"svd"` method are its dependents --
+  each one SVD and a few lines, delegating underneath. What is still missing
+  over `Tensor` is the Hessenberg reduction `eigvals` starts from and its own
+  sweep. `numax/linalg/__init__.mojo` carries the
   reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere, and

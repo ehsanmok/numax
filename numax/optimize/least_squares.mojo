@@ -107,7 +107,9 @@ def _damped_step[
     damping: Float64,
     ctx: DeviceContext,
 ) raises -> List[Float64] where (
-    dtype.is_floating_point() and n_resid + n_params >= n_params
+    dtype.is_floating_point()
+    and n_resid + n_params >= n_params
+    and n_params >= 1
 ):
     """The Levenberg-Marquardt step, through the augmented least-squares
     system rather than the normal equations.
@@ -170,6 +172,7 @@ def least_squares[
 ) raises -> TensorFitResult[dtype, n_params] where (
     dtype.is_floating_point()
     and n_resid >= n_params
+    and n_params >= 1
     # `_damped_step` restates this for `lstsq`; the solver does not carry a
     # caller's clause into a callee's own parameter list.
     and n_resid + n_params >= n_params
@@ -300,6 +303,7 @@ def curve_fit[
 ) raises -> TensorFitResult[dtype, n_params] where (
     dtype.is_floating_point()
     and n_points >= n_params
+    and n_params >= 1
     and n_points + n_params >= n_params
 ):
     """Fit `model(xdata, params)` to `ydata` by least squares.
