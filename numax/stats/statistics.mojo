@@ -441,30 +441,31 @@ def mean[
     return pair[0]
 
 
-def median[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
-    dtype, 1
+def _median_of[
+    dtype: DType
+](var values: List[Scalar[dtype]]) -> Scalar[
+    dtype
 ] where dtype.is_floating_point():
-    """The median of `xs` -- the average of the two middle elements when
-    `xs` has an even count, matching NumPy's default."""
-    var n = xs.size()
-    var values = xs.to_host()
+    """The median of `values`, sorting them in place.
+
+    Shared by the whole-tensor `median` and the axis one, so the even-count
+    convention is decided once.
+    """
+    var n = len(values)
     sort(values)
     if n % 2 == 1:
         return values[n // 2]
     return (values[n // 2 - 1] + values[n // 2]) / Scalar[dtype](2)
 
 
-def mode[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
-    dtype, 1
+def _mode_of[
+    dtype: DType
+](var values: List[Scalar[dtype]]) -> Scalar[
+    dtype
 ] where dtype.is_floating_point():
-    """The most frequent value in `xs`; the smallest among ties, matching
-    `scipy.stats.mode`'s convention."""
-    var n = xs.size()
-    var values = xs.to_host()
+    """The most frequent value in `values`, smallest among ties, sorting
+    them in place. Shared by the whole-tensor `mode` and the axis one."""
+    var n = len(values)
     sort(values)
     var best_value = values[0]
     var best_count = 1
@@ -480,6 +481,128 @@ def mode[
             best_count = run_count
             best_value = run_value
     return best_value
+
+
+def _axis_split[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Tuple[Int, Int, Int]:
+    """`xs` split around `axis` into `(outer, length, inner)`.
+
+    The same decomposition `_fold_axis` walks -- element `(o, k, i)` sits at
+    flat index `(o * length + k) * inner + i` -- for the reductions that
+    need a whole slice at a time rather than a running accumulator.
+    """
+    var length = xs.dim_at(axis)
+    var outer = 1
+    for d in range(axis):
+        outer *= xs.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, LayoutType.rank):
+        inner *= xs.dim_at(d)
+    return (outer, length, inner)
+
+
+def _axis_extents[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> List[Int]:
+    """`xs`'s extents with `axis` dropped -- the shape an axis reduction
+    returns, matching NumPy's default of no `keepdims`."""
+    var out = List[Int](capacity=LayoutType.rank - 1)
+    for d in range(LayoutType.rank):
+        if d != axis:
+            out.append(xs.dim_at(d))
+    return out^
+
+
+def median[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
+    dtype, 1
+] where dtype.is_floating_point():
+    """The median of `xs` -- the average of the two middle elements when
+    `xs` has an even count, matching NumPy's default."""
+    return _median_of(xs.to_host())
+
+
+def median[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """`xs` reduced to its median along `axis`. `numpy.median(a, axis=k)`.
+
+    A median is not a fold -- it needs the whole slice at once -- so this
+    gathers each slice rather than running `_fold_axis`. The even-count
+    convention is `_median_of`'s, the same one the whole-tensor overload
+    uses.
+    """
+    var split = _axis_split[axis=axis](xs)
+    var outer = split[0]
+    var length = split[1]
+    var inner = split[2]
+    var values = xs.to_host()
+    var out = List[Scalar[dtype]](capacity=outer * inner)
+    for o in range(outer):
+        for i in range(inner):
+            var slice_ = List[Scalar[dtype]](capacity=length)
+            for k in range(length):
+                slice_.append(values[(o * length + k) * inner + i])
+            out.append(_median_of(slice_^))
+    return Dynamic[dtype, LayoutType.rank - 1](
+        xs.context(),
+        row_major(
+            _dyn_shape_from[LayoutType.rank - 1](_axis_extents[axis=axis](xs))
+        ),
+        out^,
+    )
+
+
+def mode[
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
+    dtype, 1
+] where dtype.is_floating_point():
+    """The most frequent value in `xs`; the smallest among ties, matching
+    `scipy.stats.mode`'s convention."""
+    return _mode_of(xs.to_host())
+
+
+def mode[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """`xs` reduced to its most frequent value along `axis`.
+    `scipy.stats.mode(a, axis=k)`, smallest among ties."""
+    var split = _axis_split[axis=axis](xs)
+    var outer = split[0]
+    var length = split[1]
+    var inner = split[2]
+    var values = xs.to_host()
+    var out = List[Scalar[dtype]](capacity=outer * inner)
+    for o in range(outer):
+        for i in range(inner):
+            var slice_ = List[Scalar[dtype]](capacity=length)
+            for k in range(length):
+                slice_.append(values[(o * length + k) * inner + i])
+            out.append(_mode_of(slice_^))
+    return Dynamic[dtype, LayoutType.rank - 1](
+        xs.context(),
+        row_major(
+            _dyn_shape_from[LayoutType.rank - 1](_axis_extents[axis=axis](xs))
+        ),
+        out^,
+    )
 
 
 def argmax[
@@ -507,6 +630,112 @@ def argmin[
     var out = TileTensor(out_storage, row_major[1]())
     _nn_argmin(flat, 0, out)
     return Int(out[0])
+
+
+def _argn_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int, largest: Bool
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    DType.int64, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """Indices of the largest or smallest element of `xs` along `axis`.
+
+    **`nn.argmaxmin` handles only the innermost axis**: `_argn` raises
+    "axis other than innermost not supported yet" for anything else, and
+    wants an output of the input's own rank with that axis at extent 1.
+    So the delegation fires for `axis == rank - 1`, where MAX
+    `parallelize`s the outer rows, and numax walks the other axes itself.
+    Both return the *first* extremum among ties, which is NumPy's rule and
+    (verified) also MAX's.
+
+    The returned extents drop `axis`, matching NumPy's default of no
+    `keepdims`, so the innermost case reshapes MAX's `(..., 1)` output.
+    """
+    comptime rank = LayoutType.rank
+    var out_extents = _axis_extents[axis=axis](xs)
+    var count = 1
+    for d in range(rank - 1):
+        count *= out_extents[d]
+
+    var values = xs.to_host()
+    var out = List[Scalar[DType.int64]](length=count, fill=0)
+
+    comptime if axis == rank - 1:
+        var in_extents = List[Int](capacity=rank)
+        var keep_extents = List[Int](capacity=rank)
+        for d in range(rank):
+            in_extents.append(xs.dim_at(d))
+            keep_extents.append(1 if d == axis else xs.dim_at(d))
+        var inp = TileTensor(
+            values, row_major(_dyn_shape_from[rank](in_extents))
+        )
+        var keep = TileTensor(
+            out, row_major(_dyn_shape_from[rank](keep_extents))
+        )
+        comptime if largest:
+            _nn_argmax(inp, axis, keep)
+        else:
+            _nn_argmin(inp, axis, keep)
+    else:
+        var split = _axis_split[axis=axis](xs)
+        var outer = split[0]
+        var length = split[1]
+        var inner = split[2]
+        for o in range(outer):
+            for i in range(inner):
+                var best = values[o * length * inner + i]
+                var best_k = 0
+                for k in range(1, length):
+                    var v = values[(o * length + k) * inner + i]
+                    var better = v > best if largest else v < best
+                    if better:
+                        best = v
+                        best_k = k
+                out[o * inner + i] = Scalar[DType.int64](best_k)
+
+    return Dynamic[DType.int64, rank - 1](
+        xs.context(),
+        row_major(_dyn_shape_from[rank - 1](out_extents)),
+        out^,
+    )
+
+
+def argmax[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    DType.int64, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """Indices of the largest element along `axis`. `numpy.argmax(a, axis=k)`.
+
+    Indices are positions *along `axis`*, not flat ones -- which is why
+    this returns a tensor where the whole-tensor overload returns a single
+    flat `Int`.
+    """
+    return _argn_axis[axis=axis, largest=True](xs)
+
+
+def argmin[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    DType.int64, LayoutType.rank - 1
+] where (
+    dtype.is_floating_point()
+    and axis >= 0
+    and axis < LayoutType.rank
+    and LayoutType.rank > 1
+):
+    """Indices of the smallest element along `axis`. `numpy.argmin(a, axis=k)`.
+    """
+    return _argn_axis[axis=axis, largest=False](xs)
 
 
 def cumprod[

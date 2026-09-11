@@ -13,9 +13,12 @@ from numax.stats import mean, variance, norm, uniform, seed
 Every reduction takes a `Tensor` and covers every element.
 `mean`/`variance`/`stddev`/`cumsum` also have a `FloatLike`-generic form
 over `List[T]`, so calling them at `Compensated` recovers the precision a
-long float32 summation loses. `sum`, `prod`, `min`, `max` and `mean` each
-carry a second overload folding one axis -- `sum(a)` and `sum[axis=k](a)`,
-matching `numpy.sum(a)` and `numpy.sum(a, axis=k)`.
+long float32 summation loses. `sum`, `prod`, `min`, `max`, `mean`, `median`, `mode`, `argmin` and
+`argmax` each carry a second overload folding one axis -- `sum(a)` and
+`sum[axis=k](a)`, matching `numpy.sum(a)` and `numpy.sum(a, axis=k)`. The
+axis `argmin`/`argmax` return a tensor of positions *along that axis*
+where the whole-tensor ones return a single flat `Int`, which is NumPy's
+split too.
 No `Random[FloatLike]` conformer: sampling is not differentiable, so the
 trait contract does not fit.
 

@@ -461,21 +461,22 @@ Tier 2, `Plain`-only, host-side.
 Rank is a compile-time variadic and `map`/`reduce` coalesce any contiguous
 row-major tensor, but the surface above it is not uniformly rank-generic yet:
 
-- `numax.stats`'s `median`, `mode`, `argmin`, `argmax`, `cumsum` and
-  `cumprod` cover every element with no `axis=`; the five that do take one
-  are `sum`, `prod`, `min`, `max` and `mean`, each through a second
-  overload of its own name (`sum(a)` folds everything, `sum[axis=k](a)`
-  folds one axis), and `numax.core.tensor.reduce_axis` folds an arbitrary
-  `combine` the same way.
+- `numax.stats`'s `cumsum` and `cumprod` cover every element with no
+  `axis=`; `sum`, `prod`, `min`, `max`, `mean`, `median`, `mode`, `argmin`
+  and `argmax` each take one through a second overload of its own name
+  (`sum(a)` folds everything, `sum[axis=k](a)` folds one axis), and
+  `numax.core.tensor.reduce_axis` folds an arbitrary `combine` the same
+  way.
 - `numax.core.sorting` flattens.
 - `transpose` is 2-D; `concatenate`/`split`/`stack` are rank-1; `reshape`
   targets rank 2 or 3.
 - The SciPy-shaped algorithms are fixed-size `Array` kernels: `linalg` is
   matrices, `fft2` a square transform, `rk4_system` an `n`-component state,
   while `quad`, `solve_ivp`, the splines and the distributions are 1-D.
-- There is no general broadcasting between two arbitrary shapes and no fancy
-  indexing. `broadcast_op_axis` broadcasts only in the direction that pairs
-  with a reduction.
+- Binary operations broadcast between two arbitrary shapes under NumPy's
+  rules (`broadcast_shapes`), but there is no fancy indexing.
+  `broadcast_op_axis` broadcasts only in the direction that pairs with a
+  reduction, which is the route that avoids a copy.
 
 An extent that depends on a value has somewhere to live: each dimension of a
 `Tensor` is independently compile-time or run-time, so `unique`, `extract` and
