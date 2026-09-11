@@ -117,6 +117,29 @@ magnitude times a 1.2e-08 relative error, not a defect of its own. The
 magnitude before the `exp`, which is why they land at the same relative
 level as `factorial` rather than above it.
 
+### Exponential and trigonometric integrals
+
+| function / domain | max abs | max rel | max ULP |
+| --- | --- | --- | --- |
+| `exp1` (series \| fraction at 1.5), [0.05, 30] | 6.09e-10 | 2.94e-09 | 14,126,675 |
+| `expi` (series \| asymptotic at 40), [0.05, 60] | 4.75e+13 | 2.70e-09 | 13,179,031 |
+| `expi` (`-exp1(-x)`), -[0.05, 30] | 6.09e-10 | 2.94e-09 | 14,126,675 |
+| `Si` (series \| `E1(ix)` fraction at 2), [0.05, 60] | 4.44e-16 | 1.39e-15 | 10 |
+| `Ci` (series \| `E1(ix)` fraction at 2), [0.05, 60] | 6.84e-10 | 4.66e-09 | 28,390,179 |
+| Fresnel `S` (series \| `erfc` fraction at 2), [0.01, 10] | 1.22e-15 | 3.09e-14 | 153 |
+| Fresnel `C` (series \| `erfc` fraction at 2), [0.01, 10] | 1.33e-15 | 1.02e-14 | 59 |
+
+Two rows at `1e-15` and four at `3e-9`, and the split is exactly which
+functions take a logarithm. `Si` and the Fresnel pair are series and
+continued fractions in the four arithmetic operations and `exp`, and land
+at the algorithms' own error. `exp1`, `expi` and `Ci` carry `gamma + ln x`
+in their series region, and their worst points (`x = 0.66`, `x = 1.38`)
+sit there, at `std.math.log`'s error for those arguments -- `log(0.1)` is
+off by `1.85e-10` on its own. `expi`'s 4.75e+13 absolute is `Ei(60) ~
+2e+24` times the same `2.7e-9` relative, inherited from the `ln` in the
+series the asymptotic sum takes over from at `x = 40`. The
+`expn(n, x)` family shares `exp1`'s route and floor.
+
 ### Gamma family
 
 | function / domain | max abs | max rel | max ULP |

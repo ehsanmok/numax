@@ -15,6 +15,7 @@ from numax.special import gamma, j0, erf, gaussian
 |---|---|
 | `erf` | `erf`, `erfc`, `erfinv`, `erfcinv` |
 | `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc`, `gammasgn`, `factorial`, `comb`, `perm`, `poch` |
+| `expint` | `exp1`, `expi`, `expn`, `sici`, `fresnel` -- series against continued fractions, the complex ones over `Complex[T]` |
 | `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit` -- the `0 log 0` conventions as blends |
 | `logsumexp` | `logsumexp` over an `Array` (tier 1) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid (tier 2, the one delegation here) |
 | `beta` | `beta`, `betainc`, `betaincc` |
@@ -54,6 +55,7 @@ from .gamma import (
     perm,
     poch,
 )
+from .expint import exp1, expi, expn, fresnel, sici
 from .information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
 from .logsumexp import logsumexp
 from .lambertw import lambertw, lambertw_m1

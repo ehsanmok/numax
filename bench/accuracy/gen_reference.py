@@ -115,6 +115,28 @@ def build() -> list[Case]:
         Case("gamma_pos", "gamma, [0.5, 8]", clustered(0.5, 8.0), mp.gamma)
     )
     cases.append(
+        Case("exp1_pos", "exp1, [0.05, 30]", logarithmic(0.05, 30.0), mp.e1)
+    )
+    cases.append(
+        Case("expi_pos", "expi, [0.05, 60]", logarithmic(0.05, 60.0), mp.ei)
+    )
+    cases.append(
+        Case(
+            "expi_neg",
+            "expi, -[0.05, 30]",
+            [-t for t in logarithmic(0.05, 30.0)],
+            mp.ei,
+        )
+    )
+    cases.append(Case("si_pos", "Si, [0.05, 60]", logarithmic(0.05, 60.0), mp.si))
+    cases.append(Case("ci_pos", "Ci, [0.05, 60]", logarithmic(0.05, 60.0), mp.ci))
+    cases.append(
+        Case("fresnel_s", "Fresnel S, [0.01, 10]", clustered(0.01, 10.0), mp.fresnels)
+    )
+    cases.append(
+        Case("fresnel_c", "Fresnel C, [0.01, 10]", clustered(0.01, 10.0), mp.fresnelc)
+    )
+    cases.append(
         Case(
             "factorial_pos",
             "factorial, [0.5, 20]",

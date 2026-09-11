@@ -71,8 +71,11 @@ from numax import (
     elliptic_e,
     elliptic_k,
     erf,
+    fresnel,
     erfc,
     erfinv,
+    exp1,
+    expi,
     factorial,
     gamma,
     gammainc,
@@ -82,6 +85,7 @@ from numax import (
     legendre_p,
     lgamma,
     poch,
+    sici,
 )
 from numax.special.lambertw import lambertw_m1
 from numax.core.numeric import default_erf_approx
@@ -300,6 +304,59 @@ def main():
     for i in range(POCH_RISE25_N):
         s.observe(xs[i], poch(p(xs[i]), p(2.5)).v[0], refs[i])
     s.report("poch(z, 2.5) (exp of lgamma differences), z in [0.5,20]")
+
+    # --- exponential and trigonometric integrals ----------------------
+    # Each is a series blended against a continued fraction; the worst
+    # point sits at the threshold, where both sides are at their limit.
+    section("Exponential and trigonometric integrals")
+    s = Stats()
+    xs = materialize[EXP1_POS_X]()
+    refs = materialize[EXP1_POS_REF]()
+    for i in range(EXP1_POS_N):
+        s.observe(xs[i], exp1(p(xs[i])).v[0], refs[i])
+    s.report("exp1 (series | fraction at 1.5), [0.05,30]")
+
+    s = Stats()
+    xs = materialize[EXPI_POS_X]()
+    refs = materialize[EXPI_POS_REF]()
+    for i in range(EXPI_POS_N):
+        s.observe(xs[i], expi(p(xs[i])).v[0], refs[i])
+    s.report("expi (series | asymptotic at 40), [0.05,60]")
+
+    s = Stats()
+    xs = materialize[EXPI_NEG_X]()
+    refs = materialize[EXPI_NEG_REF]()
+    for i in range(EXPI_NEG_N):
+        s.observe(xs[i], expi(p(xs[i])).v[0], refs[i])
+    s.report("expi (-exp1(-x)), -[0.05,30]")
+
+    s = Stats()
+    xs = materialize[SI_POS_X]()
+    refs = materialize[SI_POS_REF]()
+    for i in range(SI_POS_N):
+        s.observe(xs[i], sici(p(xs[i]))[0].v[0], refs[i])
+    s.report("Si (series | E1(ix) fraction at 2), [0.05,60]")
+
+    s = Stats()
+    xs = materialize[CI_POS_X]()
+    refs = materialize[CI_POS_REF]()
+    for i in range(CI_POS_N):
+        s.observe(xs[i], sici(p(xs[i]))[1].v[0], refs[i])
+    s.report("Ci (series | E1(ix) fraction at 2), [0.05,60]")
+
+    s = Stats()
+    xs = materialize[FRESNEL_S_X]()
+    refs = materialize[FRESNEL_S_REF]()
+    for i in range(FRESNEL_S_N):
+        s.observe(xs[i], fresnel(p(xs[i]))[0].v[0], refs[i])
+    s.report("Fresnel S (series | erfc fraction at 2), [0.01,10]")
+
+    s = Stats()
+    xs = materialize[FRESNEL_C_X]()
+    refs = materialize[FRESNEL_C_REF]()
+    for i in range(FRESNEL_C_N):
+        s.observe(xs[i], fresnel(p(xs[i]))[1].v[0], refs[i])
+    s.report("Fresnel C (series | erfc fraction at 2), [0.01,10]")
 
     # --- gamma family -------------------------------------------------
     section("Gamma family")

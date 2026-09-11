@@ -228,6 +228,7 @@ from .special.activations import (
 )
 from .special.erf import erf, erfc, erfcinv, erfinv
 from .special.gamma import digamma, gamma, lgamma
+from .special.expint import exp1, expi, expn, fresnel, sici
 from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
 from .special.logsumexp import logsumexp
 from .special.beta import beta

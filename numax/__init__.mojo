@@ -289,6 +289,7 @@ from .special.gamma import (
     perm,
     poch,
 )
+from .special.expint import exp1, expi, expn, fresnel, sici
 from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
 from .special.logsumexp import logsumexp
 from .special.lambertw import lambertw, lambertw_m1

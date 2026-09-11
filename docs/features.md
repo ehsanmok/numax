@@ -178,6 +178,7 @@ differentiable or extra-precise through whichever conformer instantiates it.
 |---|---|
 | [`erf`](../numax/special/erf.mojo) | `erf`, `erfc`, `erfinv`, `erfcinv` -- the inverses are a two-region guess plus three Newton steps against the trait's own `erf`/`erfc`, so every conformer's inverse is consistent with its forward function |
 | [`gamma`](../numax/special/gamma.mojo) | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc`, `gammasgn`, `factorial`, `comb`, `perm`, `poch` -- the combinatorial four through `lgamma` and `gammasgn`, so they neither overflow on the way nor lose the sign |
+| [`expint`](../numax/special/expint.mojo) | `exp1`, `expi`, `expn`, `sici`, `fresnel` -- a power series below a threshold blended against a fixed-depth continued fraction above it; `Si`/`Ci` are `E_1(ix)` and the Fresnel pair `erf` at a complex argument, both evaluated over `Complex[T]`, so the conformer layer does the work the classic auxiliary-function fits do |
 | [`information`](../numax/special/information.mojo) | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit` -- SciPy's `0 log 0` conventions applied as blends, so they run in a kernel and differentiate |
 | [`logsumexp`](../numax/special/logsumexp.mojo) | `logsumexp` over an `Array` (tier 1, the softmax's gradient at `Dual`) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid on the `rowwise` scaffolder (tier 2, `dot`'s shape) |
 | [`beta`](../numax/special/beta.mojo) | `beta`, `betainc`, `betaincc` |
