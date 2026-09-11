@@ -71,12 +71,28 @@ does not compile for it in any kernel numax writes (`findings.mdc` records
 the same rejection for the Bessel recurrences). CUDA has no such
 restriction.
 
-**Power-of-two only, and structurally so:** every extent transformed along
-is checked in a `where` clause, so a size that is not a power of two is a
-compile error rather than a run-time raise. Bluestein's chirp-z and mixed
-radix are **out of scope, not missing** -- they are a different algorithm
-with a different error bound, and the `Array` tier makes the same choice
-for the same reason.
+## Any length: Bluestein
+
+The radix-2 engine needs a power of two. Every other length goes through
+Bluestein's chirp-z identity, `jk = (j^2 + k^2 - (k-j)^2) / 2`, which turns
+a length-`n` DFT into one circular convolution of length `m =
+next_fast_len(2n - 1)` -- a power of two, so the radix-2 engine runs it:
+pre-multiply by the chirp `exp(-i*pi*j^2/n)`, three length-`m` transforms
+(the chirp's, the data's, and the inverse of their product), post-multiply
+by the chirp again. `_dft` picks the path from `n` at compile time, so the
+public transforms take any `n > 0` and a caller never names the algorithm.
+
+The cost is honest and stated: a length-`n` Bluestein transform is three
+radix-2 transforms of a length between `2n` and `4n`, plus three
+`elementwise` passes, so it runs roughly six to twelve times slower than a
+power-of-two transform of length `n` and its rounding error is that of the
+length-`m` engine with two extra complex products -- about twice a
+power-of-two transform's. `next_fast_len` exists so a caller who can pad
+does. The chirp angles are formed from `j^2 mod 2n` on the host in
+`Float64`, so they never lose digits to a large `j^2`.
+
+The `Array` tier stays power-of-two: Bluestein triples the register
+footprint, which is the one resource that tier is built around.
 """
 
 from std.math import cos as _cos, sin as _sin
@@ -89,6 +105,7 @@ from max.gpu.host import DeviceContext
 from ..core.array import Static, Tensor, zeros
 
 comptime _TWO_PI = 6.283185307179586
+comptime _PI = 3.141592653589793
 
 comptime Spectrum[dtype: DType, *dims: Int] = Tuple[
     Static[dtype, *dims], Static[dtype, *dims]
@@ -138,6 +155,32 @@ def _reverse_bits(value: Int, bits: Int) -> Int:
 
 def _is_power_of_two(n: Int) -> Bool:
     return n > 0 and (n & (n - 1)) == 0
+
+
+def _next_power_of_two(n: Int) -> Int:
+    """The smallest power of two `>= n`; `1` for `n <= 1`."""
+    var m = 1
+    while m < n:
+        m <<= 1
+    return m
+
+
+def next_fast_len(n: Int) -> Int:
+    """The smallest length `>= n` this module transforms at full speed --
+    the next power of two. `scipy.fft.next_fast_len`, for numax's engine.
+
+    SciPy's answer is the next 2-3-5-7-11-smooth number because pocketfft
+    has a radix for each of those primes; this engine has radix 2 and
+    Bluestein, so its fast lengths are the powers of two and every other
+    length costs three transforms of `next_fast_len(2n - 1)`. Same contract
+    -- "pad to this and the transform is cheapest" -- and a different set,
+    which is why the name is kept and the divergence is recorded in
+    `docs/parity.md`. Zero-padding changes the frequency grid (`fftfreq`)
+    but not what the spectrum says about the signal.
+
+    Usable at compile time: `comptime m = next_fast_len(1000)` is `1024`.
+    """
+    return _next_power_of_two(n)
 
 
 def _as_matrix[
@@ -295,6 +338,187 @@ def _radix2[
     _ = wi_all^
 
 
+def _bluestein[
+    dtype: DType,
+    batch: Int,
+    n: Int,
+    gpu: Bool,
+    inverse: Bool,
+    SrcLayout: TensorLayout,
+    DstLayout: TensorLayout,
+](
+    src_re: _Lanes[dtype, SrcLayout],
+    src_im: _Lanes[dtype, SrcLayout],
+    dst_re: _Lanes[dtype, DstLayout],
+    dst_im: _Lanes[dtype, DstLayout],
+    ctx: DeviceContext,
+) raises:
+    """Bluestein's chirp-z: `batch` length-`n` DFTs at any `n`, each as one
+    circular convolution of length `m = next_fast_len(2n - 1)` run by
+    `_radix2`. Same lanes contract as `_radix2`, any `n > 0`.
+
+    With `w[j] = exp(s*i*pi*j^2/n)` (`s = -1` forward, `+1` inverse),
+    `X[k] = w[k] * sum_j (x[j] w[j]) conj(w[k-j])`. The sum is a linear
+    convolution over `k - j` in `(-n, n)`, which a circular one of length
+    `m >= 2n - 1` reproduces exactly once `conj(w)` is wrapped -- `h[j] =
+    h[m-j] = conj(w[j])` -- so no term aliases onto another. The
+    convolution itself is `ifft(fft(a) * fft(h))` through the radix-2
+    engine, whose own `1/m` is the convolution's normalization; the DFT's
+    `1/n` for the inverse direction is applied in the last pass.
+
+    Three `elementwise` passes (spread, multiply, collect) around three
+    length-`m` transforms. `h`'s transform is recomputed per call rather
+    than cached; at `O(m log m)` against the data's own transforms it is a
+    fixed third of the work, and a cache would be the module's first piece
+    of mutable global state.
+    """
+    comptime m = _next_power_of_two(2 * n - 1)
+    comptime sign = 1.0 if inverse else -1.0
+
+    # The chirp, with `j^2` reduced mod `2n` first: `exp(i*pi*j^2/n)` has
+    # that period in `j^2`, and the reduced angle keeps every digit where
+    # `j^2` itself would not past a few thousand.
+    var wr = List[Scalar[dtype]](capacity=n)
+    var wi = List[Scalar[dtype]](capacity=n)
+    var hr = List[Scalar[dtype]](length=m, fill=Scalar[dtype](0))
+    var hi = List[Scalar[dtype]](length=m, fill=Scalar[dtype](0))
+    for j in range(n):
+        var angle = sign * _PI * Float64((j * j) % (2 * n)) / Float64(n)
+        var c = Scalar[dtype](_cos(angle))
+        var d = Scalar[dtype](_sin(angle))
+        wr.append(c)
+        wi.append(d)
+        # `h = conj(w)`, wrapped so `h[-j]` sits at `m - j`.
+        hr[j] = c
+        hi[j] = -d
+        if j > 0:
+            hr[m - j] = c
+            hi[m - j] = -d
+    var chirp_re = Static[dtype, n](ctx, wr^)
+    var chirp_im = Static[dtype, n](ctx, wi^)
+    var h_re = Static[dtype, m](ctx, hr^)
+    var h_im = Static[dtype, m](ctx, hi^)
+
+    # `H = fft(h)`, once per call.
+    var big_h_re = Static[dtype, m]._uninitialized(ctx)
+    var big_h_im = Static[dtype, m]._uninitialized(ctx)
+    _radix2[dtype, 1, m, gpu, False](
+        _as_matrix[dtype, 1, m](h_re),
+        _as_matrix[dtype, 1, m](h_im),
+        _as_matrix[dtype, 1, m](big_h_re),
+        _as_matrix[dtype, 1, m](big_h_im),
+        ctx,
+    )
+
+    # `a[b, j] = x[b, j] * w[j]` for `j < n`, zero to `m`.
+    var a_re = Static[dtype, batch, m]._uninitialized(ctx)
+    var a_im = Static[dtype, batch, m]._uninitialized(ctx)
+    var sre = src_re
+    var sim = src_im
+    var are = a_re.view()
+    var aim = a_im.view()
+    var cre = chirp_re.view()
+    var cim = chirp_im.view()
+
+    @always_inline
+    def spread[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var sre, var sim, var are, var aim, var cre, var cim}:
+        var idx = coord_to_index_list(coord)
+        var b = idx[0]
+        var j = idx[1]
+        if j < n:
+            var xr = sre[Coord(b, j)]
+            var xi = sim[Coord(b, j)]
+            var wr = cre[Coord(j)]
+            var wi = cim[Coord(j)]
+            are.store[1](Coord(b, j), xr * wr - xi * wi)
+            aim.store[1](Coord(b, j), xr * wi + xi * wr)
+        else:
+            are.store[1](Coord(b, j), Scalar[dtype](0))
+            aim.store[1](Coord(b, j), Scalar[dtype](0))
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        spread, Coord(batch, m), ctx
+    )
+
+    # `A = fft(a)`, then `A *= H` in place, then `a = ifft(A)` back into
+    # `a`'s buffers, which are free once `A` exists.
+    var big_re = Static[dtype, batch, m]._uninitialized(ctx)
+    var big_im = Static[dtype, batch, m]._uninitialized(ctx)
+    _radix2[dtype, batch, m, gpu, False](
+        _as_matrix[dtype, batch, m](a_re),
+        _as_matrix[dtype, batch, m](a_im),
+        _as_matrix[dtype, batch, m](big_re),
+        _as_matrix[dtype, batch, m](big_im),
+        ctx,
+    )
+    var bre = big_re.view()
+    var bim = big_im.view()
+    var hre = big_h_re.view()
+    var him = big_h_im.view()
+
+    @always_inline
+    def multiply[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var bre, var bim, var hre, var him}:
+        var idx = coord_to_index_list(coord)
+        var c = Coord(idx[0], idx[1])
+        var ar = bre[c]
+        var ai = bim[c]
+        var gr = hre[Coord(idx[1])]
+        var gi = him[Coord(idx[1])]
+        bre.store[1](c, ar * gr - ai * gi)
+        bim.store[1](c, ar * gi + ai * gr)
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        multiply, Coord(batch, m), ctx
+    )
+    _radix2[dtype, batch, m, gpu, True](
+        _as_matrix[dtype, batch, m](big_re),
+        _as_matrix[dtype, batch, m](big_im),
+        _as_matrix[dtype, batch, m](a_re),
+        _as_matrix[dtype, batch, m](a_im),
+        ctx,
+    )
+
+    # `X[k] = a[k] * w[k]`, and the inverse direction's `1/n`.
+    comptime scale = 1.0 / Float64(n) if inverse else 1.0
+    var dre = dst_re
+    var dim = dst_im
+
+    @always_inline
+    def collect[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var are, var aim, var cre, var cim, var dre, var dim}:
+        var idx = coord_to_index_list(coord)
+        var b = idx[0]
+        var k = idx[1]
+        var ar = are[Coord(b, k)]
+        var ai = aim[Coord(b, k)]
+        var wr = cre[Coord(k)]
+        var wi = cim[Coord(k)]
+        dre.store[1](Coord(b, k), (ar * wr - ai * wi) * Scalar[dtype](scale))
+        dim.store[1](Coord(b, k), (ar * wi + ai * wr) * Scalar[dtype](scale))
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        collect, Coord(batch, n), ctx
+    )
+    ctx.synchronize()
+
+    # Every table and workspace was read through an origin-erased view.
+    _ = chirp_re^
+    _ = chirp_im^
+    _ = h_re^
+    _ = h_im^
+    _ = big_h_re^
+    _ = big_h_im^
+    _ = a_re^
+    _ = a_im^
+    _ = big_re^
+    _ = big_im^
+
+
 def _dft[
     dtype: DType,
     batch: Int,
@@ -311,8 +535,16 @@ def _dft[
     ctx: DeviceContext,
 ) raises:
     """`batch` length-`n` DFTs along the lanes of `src`, into `dst`. The one
-    place the algorithm is chosen; every public transform comes here."""
-    _radix2[dtype, batch, n, gpu, inverse](src_re, src_im, dst_re, dst_im, ctx)
+    place the algorithm is chosen, from `n` at compile time: radix-2 at a
+    power of two, Bluestein otherwise. Every public transform comes here."""
+    comptime if _is_power_of_two(n):
+        _radix2[dtype, batch, n, gpu, inverse](
+            src_re, src_im, dst_re, dst_im, ctx
+        )
+    else:
+        _bluestein[dtype, batch, n, gpu, inverse](
+            src_re, src_im, dst_re, dst_im, ctx
+        )
 
 
 def _dft1[
@@ -365,15 +597,18 @@ def _dft2[
 
 def fft[
     dtype: DType, n: Int, gpu: Bool = False
-](var x: Spectrum[dtype, n]) raises -> Spectrum[
-    dtype, n
-] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+](var x: Spectrum[dtype, n]) raises -> Spectrum[dtype, n] where (
+    dtype.is_floating_point() and n > 0
+):
     """The forward transform of the complex sequence `x`,
     unnormalized. `numpy.fft.fft`, returned as a real/imaginary pair.
 
     `X[k] = sum_j x[j] * exp(-2*pi*i*j*k/n)` -- NumPy's and SciPy's sign
-    convention. `n` must be a power of two, which the `where` clause makes a
-    compile error rather than a run-time check.
+    convention. Any `n > 0`: a power of two runs the radix-2 engine
+    directly and every other length goes through Bluestein, at roughly the
+    cost of three power-of-two transforms of length `next_fast_len(2n - 1)`
+    -- the module docstring has the accounting, and `next_fast_len` is the
+    length to pad to when padding is an option.
 
     `numax.fft.array.fft` is the sibling that differentiates and runs inside
     a kernel body, at register-resident sizes.
@@ -383,9 +618,9 @@ def fft[
 
 def ifft[
     dtype: DType, n: Int, gpu: Bool = False
-](var x: Spectrum[dtype, n]) raises -> Spectrum[
-    dtype, n
-] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+](var x: Spectrum[dtype, n]) raises -> Spectrum[dtype, n] where (
+    dtype.is_floating_point() and n > 0
+):
     """The inverse transform of `x`, normalized by `1/n`.
     `numpy.fft.ifft`.
 
@@ -397,9 +632,9 @@ def ifft[
 
 def rfft[
     dtype: DType, n: Int, gpu: Bool = False
-](var x: Static[dtype, n]) raises -> Spectrum[
-    dtype, n // 2 + 1
-] where dtype.is_floating_point() and (n > 0 and (n & (n - 1)) == 0):
+](var x: Static[dtype, n]) raises -> Spectrum[dtype, n // 2 + 1] where (
+    dtype.is_floating_point() and n > 0
+):
     """The forward transform of a **real** sequence, returning the half
     spectrum `X[0..n/2]`. `numpy.fft.rfft`.
 
@@ -458,11 +693,10 @@ def irfft[
     `n` and `n - 1` -- so it is a parameter with NumPy's default, the even
     length `2 * (keep - 1)`; an odd-length signal is recovered with
     `irfft[n=7](x)`, as NumPy's `n=` argument does it. An `n` the half
-    spectrum could not have come from, or one that is not a power of two,
-    is still a compile error, but through `comptime assert` in the body rather
-    than a `where` clause: `keep` arrives from `rfft`'s return type as the
-    unevaluated expression `n // 2 + 1`, and the `where` prover cannot
-    evaluate `//`.
+    spectrum could not have come from is still a compile error, but through
+    `comptime assert` in the body rather than a `where` clause: `keep`
+    arrives from `rfft`'s return type as the unevaluated expression `n // 2
+    + 1`, and the `where` prover cannot evaluate `//`.
 
     The missing half is rebuilt by conjugate symmetry, `X[n-k] = conj(X[k])`,
     in one gather kernel rather than stored; the inverse engine then runs
@@ -477,9 +711,6 @@ def irfft[
         "irfft: a half spectrum of `keep` bins comes from a signal of length"
         " 2 * keep - 2 or 2 * keep - 1"
     )
-    comptime assert _is_power_of_two(
-        n
-    ), "irfft: the signal length must be a power of two"
     var ctx = x[0].context()
 
     var full_re = Static[dtype, n]._uninitialized(ctx)
@@ -526,11 +757,7 @@ def fft2[
     dtype: DType, rows: Int, cols: Int, gpu: Bool = False
 ](var x: Spectrum[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols
-] where (
-    dtype.is_floating_point()
-    and (rows > 0 and (rows & (rows - 1)) == 0)
-    and (cols > 0 and (cols & (cols - 1)) == 0)
-):
+] where (dtype.is_floating_point() and rows > 0 and cols > 0):
     """The 2-D transform of a `rows x cols` complex image, unnormalized.
     `numpy.fft.fft2`.
 
@@ -540,9 +767,8 @@ def fft2[
     one of length `rows * cols` -- not an approximation. Rectangular, where
     `numax.fft.array.fft2` is square only: the column pass runs the same
     engine over a transposed view of the same buffer, so a second extent
-    costs a second twiddle table and nothing else.
-
-    Both extents must be powers of two; the `where` clause checks each.
+    costs a second twiddle table and nothing else. Either extent may be any
+    length; each axis picks radix-2 or Bluestein on its own.
     """
     return _dft2[dtype, rows, cols, gpu, False](x^)
 
@@ -551,11 +777,7 @@ def ifft2[
     dtype: DType, rows: Int, cols: Int, gpu: Bool = False
 ](var x: Spectrum[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols
-] where (
-    dtype.is_floating_point()
-    and (rows > 0 and (rows & (rows - 1)) == 0)
-    and (cols > 0 and (cols & (cols - 1)) == 0)
-):
+] where (dtype.is_floating_point() and rows > 0 and cols > 0):
     """The inverse of `fft2`, normalized by `1/(rows * cols)`.
     `numpy.fft.ifft2`.
 
@@ -570,11 +792,7 @@ def rfft2[
     dtype: DType, rows: Int, cols: Int, gpu: Bool = False
 ](var x: Static[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols // 2 + 1
-] where (
-    dtype.is_floating_point()
-    and (rows > 0 and (rows & (rows - 1)) == 0)
-    and (cols > 0 and (cols & (cols - 1)) == 0)
-):
+] where (dtype.is_floating_point() and rows > 0 and cols > 0):
     """The 2-D transform of a **real** image, keeping the half spectrum
     along the last axis: `rows x (cols/2 + 1)`. `numpy.fft.rfft2`.
 

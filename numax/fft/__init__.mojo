@@ -4,8 +4,8 @@
 from numax.fft import fft, ifft, rfft, irfft, fft2, rfft2, fftfreq, fftshift
 ```
 
-Radix-2 Cooley-Tukey, power-of-two by construction. MAX ships **no forward
-transform at all** -- its only one is `nn.irfft`, inverse-only,
+Radix-2 Cooley-Tukey at a power of two, Bluestein's chirp-z at every other
+length over `Tensor`. MAX ships **no forward transform at all** -- its only one is `nn.irfft`, inverse-only,
 last-axis-only and NVIDIA-only over the private `_cufft` -- so this is an
 **extend** rather than a delegation, written in MAX's idiom with `gpu: Bool`
 selecting the target and the data device-resident between stages.
@@ -20,7 +20,8 @@ Two tiers, one import each, the same split `numax.linalg` makes:
 This surface is the `Tensor` one, and it carries `fft`/`ifft`,
 `rfft`/`irfft`, `fft2`/`ifft2`/`rfft2` (rectangular, where the `Array`
 tier's is square), `fftshift`/`ifftshift` at rank 1 and 2,
-`fftfreq`/`rfftfreq`, and the `Spectrum` pair they travel in.
+`fftfreq`/`rfftfreq`, `next_fast_len` -- the next power of two, the length
+this engine is fast at -- and the `Spectrum` pair they travel in.
 `circular_convolve` is `Array`-tier only; over `Tensor` the same identity is
 `numax.signal`'s to spell.
 """
@@ -35,6 +36,7 @@ from .fft import (
     ifft2,
     ifftshift,
     irfft,
+    next_fast_len,
     rfft,
     rfft2,
     rfftfreq,

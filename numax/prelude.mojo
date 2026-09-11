@@ -305,6 +305,7 @@ from .fft.fft import (
     ifft2,
     ifftshift,
     irfft,
+    next_fast_len,
     rfft,
     rfft2,
     rfftfreq,

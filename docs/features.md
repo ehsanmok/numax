@@ -368,8 +368,10 @@ Tier 1, 1-D.
 
 ## `numax.fft`
 
-Radix-2 Cooley-Tukey, power-of-two by construction. MAX ships **no forward
-FFT at all** — its only transform is `nn.irfft`, inverse-only,
+Radix-2 Cooley-Tukey at a power of two; over `Tensor`, Bluestein's chirp-z
+at every other length, so the `Tensor` tier takes any `n > 0` and the
+`Array` tier stays power-of-two (Bluestein triples the register footprint
+that tier is built around). MAX ships **no forward FFT at all** — its only transform is `nn.irfft`, inverse-only,
 last-axis-only and NVIDIA-only over the private `_cufft` — so there is
 nothing to route to and both tiers here are numax's own.
 
@@ -384,6 +386,7 @@ not.
 | `fft2`, `ifft2`, `rfft2` — rectangular 2-D transforms: the same lane engine along the rows, then along the columns through a zero-copy transposed view | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fftshift`, `ifftshift` — centring, at rank 1 and over both axes of a matrix; the two differ for odd `n` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fftfreq`, `rfftfreq` — frequency grids | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `next_fast_len` — the next power of two, the length this engine is fast at; a non-power-of-two `n` costs three transforms of `next_fast_len(2n - 1)` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 
 Tier 2: the stage loop is on the host and each of the `log2(n) + 1` stages
 per axis is a device kernel, so the data stays device-resident between
