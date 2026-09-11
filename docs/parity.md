@@ -183,8 +183,16 @@ exist.
 - **Out-of-place tensor arithmetic and explicit broadcast.** `TileTensor` has
   in-place operators only and no `broadcast_to`.
 - **Statistics and ordering past the basics.** No value-based or n-D sort, no
-  `searchsorted`, no `partition`, no `unique`/`median`/`quantile`/`histogram`.
-  `nn.cumsum` is CPU-only.
+  `searchsorted`, no `partition`, no `unique`/`median`/`quantile`/`histogram`,
+  and no `cumprod`. `nn.cumsum` *is* there and numax routes to it --
+  `TileTensor` in and out, its axis a compile-time parameter, any axis rather
+  than only the innermost, and a `float64` accumulator for a `float32` input,
+  so it is both the MAX-first route and the more accurate one. It is
+  **CPU-only**, and not by omission: the graph operator at
+  `graph_compiler/builtin_kernels/reductions.mojo` takes a `DeviceContext` and
+  drops it, so `mo.cumsum` has no GPU kernel either. numax's `cumsum` and
+  `cumprod` are host-side for that reason; a device scan is a blocked
+  Blelloch pass rather than a flag on this kernel.
 - **Distributions.** Uniform, normal and Gumbel only.
 - **Everything algorithmic.** No quadrature, ODE solvers, optimizers, root
   finders, sparse matrices, polynomials, or signal-sense convolution.

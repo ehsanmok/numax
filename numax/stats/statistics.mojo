@@ -93,6 +93,7 @@ from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
 from layout.tile_tensor import PointerStorage
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
+from nn.cumsum import cumsum as _nn_cumsum
 
 from ..core.array import Dynamic, Static, Tensor, _dyn_shape_from
 from ..core.numeric import FloatLike
@@ -738,10 +739,66 @@ def argmin[
     return _argn_axis[axis=axis, largest=False](xs)
 
 
+def _scan_axis[
+    dtype: DType, LayoutType: TensorLayout, axis: Int, multiply: Bool
+](xs: Tensor[dtype, LayoutType]) raises -> List[Scalar[dtype]]:
+    """A running sum or product of `xs` along `axis`, in row-major order.
+
+    The sum half delegates to `nn.cumsum`, which takes `TileTensor` in and
+    out, takes its axis as a compile-time parameter, handles any axis (not
+    only the innermost, unlike `nn.argmaxmin`) and accumulates in
+    `float64` for a `float32` input -- so it is both MAX-first and more
+    accurate than the obvious loop. There is no `nn.cumprod`, so the
+    product half is numax's own walk over `_axis_split`'s decomposition.
+
+    `ponytail:` both halves are host-side. `nn.cumsum` has no `target` and
+    no `DeviceContext` -- the graph operator takes a context and drops it,
+    so `mo.cumsum` has no GPU kernel either -- and a device scan is a
+    blocked Blelloch pass rather than a flag on this one, so it is a
+    separate commit rather than a parameter here.
+    """
+    var count = xs.size()
+    var values = xs.to_host()
+    var out = List[Scalar[dtype]](length=count, fill=0)
+
+    comptime if multiply:
+        var split = _axis_split[axis=axis](xs)
+        var outer = split[0]
+        var length = split[1]
+        var inner = split[2]
+        for o in range(outer):
+            for i in range(inner):
+                var acc = Scalar[dtype](1)
+                for k in range(length):
+                    var at = (o * length + k) * inner + i
+                    acc = acc * values[at]
+                    out[at] = acc
+    else:
+        comptime rank = LayoutType.rank
+        var extents = List[Int](capacity=rank)
+        for d in range(rank):
+            extents.append(xs.dim_at(d))
+        var shape = row_major(_dyn_shape_from[rank](extents))
+        _nn_cumsum[exclusive=False, reverse=False, axis=axis](
+            TileTensor(out, shape), TileTensor(values, shape)
+        )
+
+    return out^
+
+
 def cumprod[
-    dtype: DType, n: Int
-](xs: Static[dtype, n]) raises -> Static[dtype, n]:
-    """The running product of `xs`: `ys[i] = xs[0] * ... * xs[i]`."""
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> Static[
+    dtype, LayoutType.static_product
+] where LayoutType.all_dims_known:
+    """The running product of every element of `xs`, flattened row-major.
+    `numpy.cumprod(a)`.
+
+    Rank-1 in gives rank-1 out at the same length, so this is the same call
+    it always was; at higher rank it flattens, which is what
+    `numpy.cumprod` with no `axis` does.
+    """
+    comptime n = LayoutType.static_product
     var values = xs.to_host()
     var storage = List[Scalar[dtype]](capacity=n)
     var acc = Scalar[dtype](1)
@@ -749,6 +806,23 @@ def cumprod[
         acc = acc * values[i]
         storage.append(acc)
     return Static[dtype, n](xs.context(), storage^)
+
+
+def cumprod[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType] where (
+    axis >= 0 and axis < LayoutType.rank
+):
+    """The running product along `axis`. `numpy.cumprod(a, axis=k)`.
+
+    Keeps `xs`'s shape rather than dropping the axis -- a scan is not a
+    reduction.
+    """
+    return Tensor[dtype, LayoutType](
+        xs.context(),
+        xs.layout,
+        _scan_axis[axis=axis, multiply=True](xs)^,
+    )
 
 
 def variance[
@@ -788,18 +862,43 @@ def stddev[
 
 
 def cumsum[
-    dtype: DType, n: Int
-](xs: Static[dtype, n]) raises -> Static[dtype, n]:
-    """The running sum of `xs`: `ys[i] = xs[0] + ... + xs[i]`. The
-    counterpart of `cumprod`; the `List[T]` form below is the
-    `FloatLike`-generic one."""
+    dtype: DType, LayoutType: TensorLayout
+](xs: Tensor[dtype, LayoutType]) raises -> Static[
+    dtype, LayoutType.static_product
+] where LayoutType.all_dims_known:
+    """The running sum of every element of `xs`, flattened row-major.
+    `numpy.cumsum(a)`.
+
+    The counterpart of `cumprod`; the `List[T]` form below is the
+    `FloatLike`-generic one. Rank-1 in gives rank-1 out at the same length,
+    and at higher rank it flattens, which is what `numpy.cumsum` with no
+    `axis` does.
+    """
+    comptime n = LayoutType.static_product
     var values = xs.to_host()
-    var storage = List[Scalar[dtype]](capacity=n)
-    var acc = Scalar[dtype](0)
-    for i in range(n):
-        acc = acc + values[i]
-        storage.append(acc)
+    var storage = List[Scalar[dtype]](length=n, fill=0)
+    _nn_cumsum[exclusive=False, reverse=False, axis=0](
+        TileTensor(storage, row_major(Coord(n))),
+        TileTensor(values, row_major(Coord(n))),
+    )
     return Static[dtype, n](xs.context(), storage^)
+
+
+def cumsum[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType] where (
+    axis >= 0 and axis < LayoutType.rank
+):
+    """The running sum along `axis`. `numpy.cumsum(a, axis=k)`.
+
+    Keeps `xs`'s shape rather than dropping the axis -- a scan is not a
+    reduction. Routed to `nn.cumsum`.
+    """
+    return Tensor[dtype, LayoutType](
+        xs.context(),
+        xs.layout,
+        _scan_axis[axis=axis, multiply=False](xs)^,
+    )
 
 
 def mean[T: FloatLike](xs: List[T]) -> T:

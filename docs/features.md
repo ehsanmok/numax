@@ -461,12 +461,11 @@ Tier 2, `Plain`-only, host-side.
 Rank is a compile-time variadic and `map`/`reduce` coalesce any contiguous
 row-major tensor, but the surface above it is not uniformly rank-generic yet:
 
-- `numax.stats`'s `cumsum` and `cumprod` cover every element with no
-  `axis=`; `sum`, `prod`, `min`, `max`, `mean`, `median`, `mode`, `argmin`
-  and `argmax` each take one through a second overload of its own name
-  (`sum(a)` folds everything, `sum[axis=k](a)` folds one axis), and
-  `numax.core.tensor.reduce_axis` folds an arbitrary `combine` the same
-  way.
+- `numax.stats`'s `sum`, `prod`, `min`, `max`, `mean`, `median`, `mode`,
+  `argmin`, `argmax`, `cumsum` and `cumprod` each take an `axis=` through a
+  second overload of its own name (`sum(a)` folds everything,
+  `sum[axis=k](a)` folds one axis), and `numax.core.tensor.reduce_axis`
+  folds an arbitrary `combine` the same way.
 - `numax.core.sorting` flattens.
 - `transpose` is 2-D; `concatenate`/`split`/`stack` are rank-1; `reshape`
   targets rank 2 or 3.

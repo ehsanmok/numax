@@ -14,6 +14,8 @@ from max.gpu.host import DeviceContext
 from numax.core.array import Static, zeros, zeros_dyn
 from numax.stats import (
     argmax,
+    cumprod,
+    cumsum,
     argmin,
     max,
     mean,
@@ -239,6 +241,62 @@ def test_axis_reductions_that_need_a_whole_slice_handle_rank_three() raises:
     assert_equal(mid_arg.dim[0](), 2)
     assert_equal(mid_arg.dim[1](), 4)
     assert_equal(mid_arg[0], 2)
+
+
+def test_cumsum_along_an_axis_keeps_the_shape() raises:
+    # numpy.cumsum([[1, 2, 3], [4, 5, 6]], axis=1) == [[1, 3, 6], [4, 9, 15]]
+    # -- a scan is not a reduction, so nothing is dropped.
+    var a = _grid[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var across = cumsum[axis=1](a)
+    assert_equal(across.size(), 6)
+    var expected_across = [1.0, 3.0, 6.0, 4.0, 9.0, 15.0]
+    for i in range(6):
+        assert_almost_equal(across[i], Scalar[dtype](expected_across[i]))
+
+    # axis=0 -- the axis `nn.argmaxmin` cannot take and `nn.cumsum` can.
+    var down = cumsum[axis=0](a)
+    var expected_down = [1.0, 2.0, 3.0, 5.0, 7.0, 9.0]
+    for i in range(6):
+        assert_almost_equal(down[i], Scalar[dtype](expected_down[i]))
+
+
+def test_cumprod_along_an_axis_keeps_the_shape() raises:
+    # numpy.cumprod([[1, 2, 3], [4, 5, 6]], axis=1) == [[1, 2, 6], [4, 20, 120]]
+    var a = _grid[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var across = cumprod[axis=1](a)
+    var expected = [1.0, 2.0, 6.0, 4.0, 20.0, 120.0]
+    for i in range(6):
+        assert_almost_equal(across[i], Scalar[dtype](expected[i]))
+
+
+def test_cumsum_with_no_axis_flattens_like_numpy() raises:
+    # numpy.cumsum(a) with no axis flattens first, whatever a's rank.
+    var a = _grid[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var flat = cumsum(a)
+    assert_equal(flat.size(), 6)
+    var expected = [1.0, 3.0, 6.0, 10.0, 15.0, 21.0]
+    for i in range(6):
+        assert_almost_equal(flat.to_host()[i], Scalar[dtype](expected[i]))
+
+    var prod_flat = cumprod(a)
+    assert_almost_equal(prod_flat.to_host()[5], Scalar[dtype](720.0))
+
+
+def test_scanning_the_last_axis_of_a_rank_three_tensor() raises:
+    # The `outer`/`length`/`inner` split again, and `nn.cumsum` at rank 3.
+    var a = _ramp[2, 3, 4]()
+
+    var scanned = cumsum[axis=2](a)
+    assert_equal(scanned.size(), 24)
+    # First row is 1, 2, 3, 4 -> 1, 3, 6, 10.
+    assert_almost_equal(scanned[0], Scalar[dtype](1.0))
+    assert_almost_equal(scanned[3], Scalar[dtype](10.0))
+
+    var multiplied = cumprod[axis=2](a)
+    assert_almost_equal(multiplied[3], Scalar[dtype](24.0))
 
 
 def main() raises:
