@@ -1056,6 +1056,122 @@ def transpose[
     return result^
 
 
+def transpose[
+    dtype: DType, LayoutType: TensorLayout
+](mut a: Tensor[dtype, LayoutType], *axes: Int) raises -> Dynamic[
+    dtype, LayoutType.rank
+]:
+    """`a` with its axes permuted by `axes`. `numpy.transpose(a, axes)`.
+
+    `axes` is a permutation of `0 .. rank - 1`: the result's axis `d` is
+    `a`'s axis `axes[d]`, so `transpose(a, 2, 0, 1)` on a `(2, 3, 4)` gives
+    a `(4, 2, 3)`. The permutation is a run-time value, so the result is a
+    `Dynamic` -- the rank-2 overload above keeps its extents in the type
+    because there the permutation is the only one there is.
+
+    `linalg.transpose` does the work, at any rank, as it does for the
+    rank-2 case. **Host only**: the device path the rank-2 overload
+    describes -- and the reason it does not use MAX -- applies here too,
+    and an `elementwise` gather at a run-time permutation would have to
+    address through strides the kernel cannot see.
+    """
+    comptime rank = LayoutType.rank
+    if len(axes) != rank:
+        raise Error(
+            "transpose: ",
+            len(axes),
+            " axes given for a rank-",
+            rank,
+            " tensor",
+        )
+
+    var order = List[Int](capacity=rank)
+    var seen = List[Bool](length=rank, fill=False)
+    for d in range(rank):
+        var ax = axes[d]
+        if ax < 0 or ax >= rank:
+            raise Error("transpose: axis ", ax, " is out of range")
+        if seen[ax]:
+            raise Error("transpose: axis ", ax, " is repeated")
+        seen[ax] = True
+        order.append(ax)
+
+    return _transpose_by(a, order)
+
+
+def swapaxes[
+    dtype: DType, LayoutType: TensorLayout
+](mut a: Tensor[dtype, LayoutType], axis1: Int, axis2: Int) raises -> Dynamic[
+    dtype, LayoutType.rank
+]:
+    """`a` with `axis1` and `axis2` exchanged. `numpy.swapaxes`.
+
+    The two-axis case of `transpose`, which is what most callers of a
+    permutation actually want and which they would otherwise spell as a
+    full list with two entries out of order.
+    """
+    comptime rank = LayoutType.rank
+    var first = axis1 + rank if axis1 < 0 else axis1
+    var second = axis2 + rank if axis2 < 0 else axis2
+    if first < 0 or first >= rank or second < 0 or second >= rank:
+        raise Error("swapaxes: an axis is out of range for rank ", rank)
+
+    var order = List[Int](capacity=rank)
+    for d in range(rank):
+        order.append(d)
+    order[first] = second
+    order[second] = first
+    return _transpose_by(a, order)
+
+
+def moveaxis[
+    dtype: DType, LayoutType: TensorLayout
+](
+    mut a: Tensor[dtype, LayoutType], source: Int, destination: Int
+) raises -> Dynamic[dtype, LayoutType.rank]:
+    """`a` with axis `source` moved to position `destination`, the rest
+    keeping their order. `numpy.moveaxis`.
+
+    Not `swapaxes`: moving axis 0 to position 2 of a rank-3 tensor gives
+    the order `(1, 2, 0)`, where swapping them would give `(2, 1, 0)`.
+    """
+    comptime rank = LayoutType.rank
+    var src = source + rank if source < 0 else source
+    var dst = destination + rank if destination < 0 else destination
+    if src < 0 or src >= rank or dst < 0 or dst >= rank:
+        raise Error("moveaxis: an axis is out of range for rank ", rank)
+
+    var order = List[Int](capacity=rank)
+    for d in range(rank):
+        if d != src:
+            order.append(d)
+    order.insert(dst, src)
+    return _transpose_by(a, order)
+
+
+def _transpose_by[
+    dtype: DType, LayoutType: TensorLayout
+](mut a: Tensor[dtype, LayoutType], order: List[Int]) raises -> Dynamic[
+    dtype, LayoutType.rank
+]:
+    """`transpose` for a permutation already held in a list, which is what
+    `swapaxes` and `moveaxis` build. Same delegation to `linalg.transpose`,
+    no validation -- the caller constructed the permutation rather than
+    receiving it."""
+    comptime rank = LayoutType.rank
+    var out_extents = List[Int](capacity=rank)
+    for d in range(rank):
+        out_extents.append(a.dim_at(order[d]))
+
+    var ctx = a.context()
+    var result = Dynamic[dtype, rank](
+        ctx, row_major(_dyn_shape_from[rank](out_extents))
+    )
+    _max_transpose(result.view(), a.view(), order.unsafe_ptr(), ctx)
+    ctx.synchronize()
+    return result^
+
+
 def squeeze[
     dtype: DType, n: Int
 ](a: Static[dtype, 1, n]) raises -> Static[dtype, n]:

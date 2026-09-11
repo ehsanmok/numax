@@ -205,7 +205,7 @@ on CPU targets", which is why numax keeps its own GPU-launchable versions.
 
 | Area | Home | Notes |
 |---|---|---|
-| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` on the host and to an `elementwise` gather on a device, because every path `linalg.transpose` can reach is a host memcpy; `pad` routes to `nn.pad` on the host for all three NumPy modes and to `nn.pad_gpu` on a device for `constant`, the only mode MAX implements there; `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
+| Array creation and manipulation | `numax/core/array.mojo` | `Plain`-only, comptime shape, a thin owner whose `.view()` is a `TileTensor`. `transpose` routes to `linalg.transpose` on the host -- at rank 2 with the permutation in the type, and at any rank through `transpose(a, *axes)`, `swapaxes` and `moveaxis`, verified against an arbitrary rank-3 permutation at the pin -- and to an `elementwise` gather on a device, because every path `linalg.transpose` can reach is a host memcpy; `pad` routes to `nn.pad` on the host for all three NumPy modes and to `nn.pad_gpu` on a device for `constant`, the only mode MAX implements there; `to_array`/`to_tensor` bridge to the `Array[T, n]` conformer layer |
 | Elementwise math | `numax/core/elementwise.mojo` | `Plain`-only over `std.math`, rather than growing `FloatLike` by twenty methods across seven conformers |
 | Arithmetic and operators | `numax/core/ops.mojo` | Tensor-tensor and tensor-scalar; `astype` is explicit because there is no dtype promotion |
 | Comparison and logic | `numax/core/logic.mojo` | Truth is a `Static[DType.bool]`, so a comparison composes with `logical_and` |

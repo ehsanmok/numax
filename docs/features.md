@@ -467,8 +467,9 @@ row-major tensor, but the surface above it is not uniformly rank-generic yet:
   `sum[axis=k](a)` folds one axis), and `numax.core.tensor.reduce_axis`
   folds an arbitrary `combine` the same way.
 - `numax.core.sorting` flattens.
-- `transpose` is 2-D; `concatenate`/`split`/`stack` are rank-1; `reshape`
-  targets rank 2 or 3.
+- `transpose` permutes any rank (`transpose(a, 2, 0, 1)`), with `swapaxes`
+  and `moveaxis` beside it; `concatenate`/`split`/`stack` are rank-1;
+  `reshape` targets rank 2 or 3.
 - The SciPy-shaped algorithms are fixed-size `Array` kernels: `linalg` is
   matrices, `fft2` a square transform, `rk4_system` an `n`-component state,
   while `quad`, `solve_ivp`, the splines and the distributions are 1-D.

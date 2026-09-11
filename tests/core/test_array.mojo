@@ -45,6 +45,7 @@ from numax.core.array import (
     full_like,
     linspace,
     logspace,
+    moveaxis,
     ones,
     ones_like,
     ravel,
@@ -52,6 +53,7 @@ from numax.core.array import (
     split,
     squeeze,
     stack,
+    swapaxes,
     transpose,
     zeros,
     zeros_like,
@@ -442,6 +444,100 @@ def test_every_dtype_alias_names_the_dtype_it_looks_like() raises:
     assert_equal(u32, DType.uint32)
     assert_equal(u64, DType.uint64)
     assert_equal(bool, DType.bool)
+
+
+def _rank_three() raises -> Static[dtype, 2, 3, 4]:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 2, 3, 4](ctx)
+    for i in range(24):
+        a[i] = Scalar[dtype](i)
+    return a^
+
+
+def test_transpose_permutes_axes_at_rank_three() raises:
+    # numpy.transpose(a, (2, 0, 1)) on a (2, 3, 4) gives a (4, 2, 3), and
+    # a[i, j, k] lands at out[k, i, j].
+    var a = _rank_three()
+
+    var p = transpose(a, 2, 0, 1)
+    assert_equal(p.dim_at(0), 4)
+    assert_equal(p.dim_at(1), 2)
+    assert_equal(p.dim_at(2), 3)
+
+    var source = a.to_host()
+    var out = p.to_host()
+    for i in range(2):
+        for j in range(3):
+            for k in range(4):
+                assert_equal(
+                    out[(k * 2 + i) * 3 + j], source[(i * 3 + j) * 4 + k]
+                )
+
+
+def test_transpose_at_rank_two_still_keeps_its_extents_in_the_type() raises:
+    # The rank-n overload must not shadow the rank-2 one, which is the only
+    # one whose result shape is compile-time.
+    var ctx = DeviceContext(api="cpu")
+    var m = full[dtype, 2, 3](0, ctx=ctx)
+    m[1] = 7
+    var t: Static[dtype, 3, 2] = transpose(m)
+    assert_equal(t.view()[1, 0], 7)
+
+
+def test_transpose_rejects_a_bad_permutation() raises:
+    var a = _rank_three()
+    var repeated = False
+    try:
+        _ = transpose(a, 0, 0, 1)
+    except:
+        repeated = True
+    assert_equal(repeated, True)
+
+    var wrong_count = False
+    try:
+        _ = transpose(a, 1, 0)
+    except:
+        wrong_count = True
+    assert_equal(wrong_count, True)
+
+
+def test_swapaxes_exchanges_exactly_two_axes() raises:
+    # numpy.swapaxes(a, 0, 2) on a (2, 3, 4) gives a (4, 3, 2).
+    var a = _rank_three()
+    var s = swapaxes(a, 0, 2)
+    assert_equal(s.dim_at(0), 4)
+    assert_equal(s.dim_at(1), 3)
+    assert_equal(s.dim_at(2), 2)
+
+    var source = a.to_host()
+    var out = s.to_host()
+    for i in range(2):
+        for j in range(3):
+            for k in range(4):
+                assert_equal(
+                    out[(k * 3 + j) * 2 + i], source[(i * 3 + j) * 4 + k]
+                )
+
+
+def test_moveaxis_is_not_swapaxes() raises:
+    # Moving axis 0 to position 2 of a (2, 3, 4) gives a (3, 4, 2) -- the
+    # order (1, 2, 0). Swapping them would give a (4, 3, 2) instead, which
+    # is the distinction this test exists for.
+    var a = _rank_three()
+    var moved = moveaxis(a, 0, 2)
+    assert_equal(moved.dim_at(0), 3)
+    assert_equal(moved.dim_at(1), 4)
+    assert_equal(moved.dim_at(2), 2)
+
+    var swapped = swapaxes(a, 0, 2)
+    assert_equal(swapped.dim_at(0), 4)
+
+
+def test_swapaxes_accepts_negative_axes() raises:
+    var a = _rank_three()
+    var s = swapaxes(a, -1, 0)
+    assert_equal(s.dim_at(0), 4)
+    assert_equal(s.dim_at(2), 2)
 
 
 def main() raises:
