@@ -118,10 +118,16 @@ pixi run bench-torch     # PyTorch, eager + compile, CPU + CUDA/MPS
 pixi run bench-cupy      # CuPy, eager + fused + raw kernel (Linux/CUDA only)
 pixi run bench-thermite  # Rust thermite, CPU (NEON or AVX2)
 
-pixi run bench-linalg    # numax linalg, CPU
+pixi run bench-linalg    # numax linalg, CPU -- factorizations, spectral, BLAS-1, block sweep
+pixi run bench-signal    # numax signal, CPU -- convolve vs. fftconvolve, filters, welch
+pixi run bench-interpolate # numax interpolate, CPU -- interp, CubicSpline
+pixi run bench-stats     # numax stats, CPU -- norm.cdf, histogram, quantile, cov
 pixi run bench-linalg-gpu # numax factorizations, CUDA/Metal (needs a GPU)
 pixi run bench-blas1-gpu # numax BLAS-1, CUDA/Metal -- separate, see the Metal note
 pixi run -e bench-python bench-scipy-linalg # LAPACK, CPU (OpenBLAS or Accelerate)
+pixi run -e bench-python bench-scipy-signal # scipy.signal, CPU
+pixi run -e bench-python bench-scipy-interpolate # numpy.interp and scipy CubicSpline, CPU
+pixi run -e bench-python bench-scipy-stats  # scipy.stats.norm, numpy histogram/quantile/cov, CPU
 pixi run -e bench-python bench-torch-linalg # PyTorch: cuSOLVER on CUDA, MPS on Metal
 pixi run -e bench-python bench-cupy-linalg  # cuSOLVER via CuPy, CUDA
 ```
@@ -715,6 +721,29 @@ measured**, and both are worth knowing about:
 - `torch/linalg.py` was CUDA-only in four places, including `.double()`,
   which MPS rejects outright. Its float64 references now run on the host on
   both backends.
+
+### The 0.2 surfaces: spectral, signal, interpolation, statistics
+
+Apple M3 Pro, `float32`, numax against SciPy 1.18.1 on Accelerate, from
+`bench-linalg`'s spectral table, `bench-signal`, `bench-interpolate` and
+`bench-stats` with their `bench-scipy-*` baselines. Ratios are numax /
+SciPy on time, so above one is numax ahead.
+
+| area | ahead | behind |
+|---|---|---|
+| spectral, `n = 1024` | -- | `eigvalsh` 0.11, `eigvals` 0.06, `svdvals` 0.02, `schur` 0.02, `eigh` 0.015, `svd` 0.002: the band iterations run on the host, and with vectors that is `O(n^3)` scalar Givens |
+| convolution | direct `convolve` within 1.2-2x of SciPy to 128 taps | `fftconvolve` 14x behind at `2^17` points (radix-2, one launch per stage); the crossover is `k ~ 250` at `m = 4096`, `~550` at `65536` |
+| filters | `medfilt` 2.0x, `savgol_filter` 1.9x, `welch` 12.4x | `lfilter` 0.08, `filtfilt` 0.44 -- `Float64` host recurrences over a `List` |
+| interpolation | `interp` 9.4x, `CubicSpline` evaluation 3.9x | `CubicSpline` construction 0.3x (host tridiagonal solve, a quarter of a millisecond) |
+| statistics | `norm.cdf` 5.4x, `histogram` at par | `quantile` 0.05 (host sort), `cov`/`corrcoef` 0.11 (host loop) |
+
+The full tables, and what each gap is made of, are in
+[`docs/performance.md`](../docs/performance.md) under "The 0.2 surfaces,
+measured". The one-line summary: everything that is one `elementwise` or
+one batched transform is ahead of SciPy; everything that is a host loop
+over a `List` is behind it, and by the ratio of a scalar loop to C. The
+spectral vector accumulations are the largest of those loops and the
+first thing to move.
 
 ### The ceiling row overstates the gap
 

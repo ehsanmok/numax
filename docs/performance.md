@@ -525,6 +525,146 @@ What this machine says:
   changing (`nb^3 / 3` against the products it enables) and which needs
   measuring before it is.
 
+### The 0.2 surfaces, measured
+
+Everything the `Tensor` tier gained in 0.2 shipped with a `ponytail:` note
+naming its ceiling and no number saying how far away that ceiling was.
+These are the numbers: the same **Apple M3 Pro**, `float32`, numax
+against SciPy 1.18.1 on Accelerate, one processor per row. The harnesses
+are `bench_linalg.mojo`'s new spectral table and the three new files
+`bench_signal.mojo`, `bench_interpolate.mojo`, `bench_stats.mojo`, each
+with a `bench/scipy/` baseline printing the same columns from the same
+data.
+
+**Spectral, `n = 1024`** (ms per call; GFLOP/s from Golub and Van Loan's
+counts, so the two columns are comparable to each other and to the
+factorization table above, not to a flop counter):
+
+| op | numax ms | numax GFLOP/s | LAPACK ms | LAPACK GFLOP/s | numax / LAPACK |
+|---|---|---|---|---|---|
+| `eigvalsh` | 358 | 4.0 | 39.7 | 36.0 | 0.11 |
+| `eigh` | 6,101 | 1.6 | 89.1 | 108.5 | 0.015 |
+| `svdvals` | 2,263 | 1.3 | 49.8 | 57.5 | 0.022 |
+| `svd` | 41,465 | 0.6 | 90.4 | 261.3 | 0.002 |
+| `eigvals` | 2,436 | 4.4 | 136.4 | 78.7 | 0.056 |
+| `schur` | 7,292 | 3.7 | 154.8 | 173.4 | 0.021 |
+
+Read against `cholesky` at 83 and `qr_factor` at 38 GFLOP/s on the same
+machine, the table says exactly what the `ponytail:` notes predicted, and
+puts sizes on it:
+
+- **The band iteration is the run.** `eigh` minus `eigvalsh` is 5.7 s of
+  the 6.1 s: that is the `steqr` vector accumulation, `O(n^3)` scalar
+  Givens rotations applied to `Z` on the host, at well under 1 GFLOP/s.
+  `svd` minus `svdvals` is 39 s of 41 -- `bdsqr` rotating `U` and `V` the
+  same way -- and `schur` minus `eigvals` is 4.9 s of `Z`. The reductions
+  and the values-only iterations are the small remainder. The upgrade
+  path is the one those notes name: accumulate the rotations in blocks
+  and apply each block as a GEMM (the `stedc`/`dlasr`-by-blocks shape),
+  so the `O(n^3)` moves from a host loop to `linalg.matmul`. That is the
+  single largest item left in the linalg backlog, and the one whose
+  payoff is a known 50-100x on `eigh` and `svd` at this size.
+- **The reductions are BLAS-2, not BLAS-3.** `eigvalsh` is `sytrd` plus an
+  `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
+  unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
+  at matvec shapes), the B1a form whose B1b upgrade is `latrd` plus one
+  rank-`2k` GEMM per panel. `svdvals` at 1.3 GFLOP/s is `gebrd` in the
+  same shape. Both are the next item after the accumulation.
+- **`float32` residuals are LAPACK's too.** numax's trace gap on
+  `eigvalsh` at `n = 1024` is 0.033 against Accelerate's 0.37, and its
+  `eigh` residual `2.7e-4` against `8.0e-4`; the host iterations run in
+  `float64` on the band, which is where that comes from.
+
+**Convolution -- where `fftconvolve` overtakes `convolve`** (µs per call,
+`full` mode; the two numax rows at each `(m, k)` agree to `1e-6`, and so
+do SciPy's):
+
+| `m` | `k` | numax direct | numax FFT | SciPy direct | SciPy FFT |
+|---|---|---|---|---|---|
+| 4,096 | 8 | 13.0 | 654 | 5.8 | 44.9 |
+| 4,096 | 32 | 59.8 | 615 | 30.5 | 44.5 |
+| 4,096 | 128 | 336 | 576 | 46.1 | 44.7 |
+| 4,096 | 512 | 1,650 | 581 | 125 | 45.0 |
+| 4,096 | 2,048 | 7,221 | 626 | 615 | 52.1 |
+| 65,536 | 8 | 96.0 | 10,826 | 78.6 | 743 |
+| 65,536 | 128 | 1,776 | 11,101 | 697 | 777 |
+| 65,536 | 512 | 9,954 | 10,856 | 1,941 | 780 |
+| 65,536 | 2,048 | 43,866 | 10,929 | 11,262 | 485 |
+
+The crossover the convolution module said it would not guess: **about
+`k = 250` at `m = 4096` and `k = 550` at `m = 65536`** on this machine,
+against SciPy's `k ~ 128` and `~150`. The direct form is within 1.2-2x
+of SciPy's up to 128 taps -- one `elementwise` launch of `m + k - 1` dot
+products -- and falls to 4x behind at 2048 taps, where SciPy's direct
+kernel pulls ahead. The transform route is the
+weak one: 10.9 ms for a `131072`-point round trip is 14x SciPy's
+`pocketfft`, because `numax.fft` is `log2(n) + 1` `elementwise` launches
+per transform (radix-2, one stage per launch, `docs`'d in
+`numax/fft/fft.mojo`), three transforms plus two padding passes per
+convolution, and on a CPU each launch is a thread-pool dispatch over
+`n/2` butterflies of trivial work. A radix-4 or fused multi-stage kernel
+would move both the crossover and the `welch` row below; until then the
+rule for a caller is the table, not SciPy's.
+
+**Filters and spectra, `n = 2^20`** (µs per call):
+
+| op | numax | SciPy | numax / SciPy |
+|---|---|---|---|
+| `lfilter`, 32-tap FIR | 99,192 | 7,955 | 0.08 |
+| `filtfilt`, Butterworth order 4 | 31,994 | 14,127 | 0.44 |
+| `medfilt`, kernel 5 | 2,391 | 4,843 | **2.0** |
+| `savgol_filter`, window 11 / order 3 | 2,507 | 4,852 | **1.9** |
+| `welch`, `nperseg = 256` | 6,780 | 83,839 | **12.4** |
+
+The two `elementwise` filters beat SciPy's C by 2x and `welch` -- 8,191
+segments through one batched `rfft` -- by 12x. The recurrences lose, as
+the module docstring says they diverge for: `lfilter` is a `Float64` host
+loop over a `List`, and at 32 taps it is 12x behind `scipy.signal`'s C
+`lfilter`; the IIR `filtfilt` at 4 taps is 2.3x behind. The gap is the
+`List[Float64]` indexing and the two host round trips, not the algorithm,
+and a `Scalar[dtype]`-typed loop over the tensor's own buffer is the
+straightforward fix.
+
+**Interpolation** (µs per call, `n = 1024` knots, `m = 2^20` queries):
+
+| op | numax | NumPy / SciPy | numax / SciPy |
+|---|---|---|---|
+| `interp` | 4,605 | 43,508 | **9.4** |
+| `CubicSpline` evaluation | 5,105 | 19,763 | **3.9** |
+| `CubicSpline` construction, `n = 1024` | 234 | 72.6 | 0.31 |
+| `CubicSpline` construction, `n = 4096` | 428 | 142 | 0.33 |
+
+Evaluation is the shape a `Tensor` tier exists for -- a vectorized
+`searchsorted` and a gather, one launch each -- and is 4-9x ahead.
+Construction is the not-a-knot tridiagonal system on the host, 3x behind
+SciPy's `solve_banded`, at a cost that is a quarter of a millisecond and
+independent of how many points are later evaluated.
+
+**Statistics** (µs per call; `norm.cdf` and `histogram` at `n = 2^24`,
+`quantile` too, `cov`/`corrcoef` on `8 x 2^20`):
+
+| op | numax | NumPy / SciPy | numax / SciPy |
+|---|---|---|---|
+| `norm.cdf` | 41,048 (3.3 GB/s) | 221,533 (0.6 GB/s) | **5.4** |
+| `histogram`, 64 bins | 72,286 | 75,643 | 1.05 |
+| `quantile`, `q = 0.5` | 1,096,237 | 51,090 | 0.05 |
+| `cov`, 8 variables | 124,783 | 14,307 | 0.11 |
+| `corrcoef`, 8 variables | 124,843 | 14,354 | 0.11 |
+
+`norm.cdf` is one `elementwise` through the tier-1 `erf` and beats
+`scipy.stats` by 5x -- and is still at 3.3 GB/s on a machine whose
+memory moves `~150`, so it is compute-bound on the `erf` polynomial,
+not bandwidth-bound: the same `elementwise` walk moves `medfilt` over
+`2^20` points in 2.4 ms. The device path is where that changes.
+`histogram` matches NumPy; both are host-side counts. The two rows to
+fix are the other host loops: `quantile` sorts a `List` of `2^24` on
+the host where NumPy partitions, 21x behind, and `cov` runs its
+`O(rows^2 n)` in a `Float64` host loop, 9x behind. The `correlation`
+module is host-side because its inputs are whole-tensor reductions; a
+centering `map` and one `matmul` is the device shape that would put
+`cov` at GEMM speed, and it joins the same backlog as the spectral
+accumulation above.
+
 ### The ceiling row is not the ceiling a blocked factorization can reach
 
 Every table above opens with `linalg.matmul` at `n x n x n` and invites
@@ -580,7 +720,10 @@ pixi run bench-roofline # GPU: how much memory bandwidth map[gpu=True] reaches
 pixi run bench-elementwise # CPU: serial vs. threaded at six sizes
 pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
 pixi run bench-matmul   # CPU: the Array tier's matmul vs. MAX's linalg.matmul
-pixi run bench-linalg   # CPU: the Tensor tier vs. the linalg.matmul ceiling
+pixi run bench-linalg   # CPU: the Tensor tier vs. the linalg.matmul ceiling, spectral included
+pixi run bench-signal   # CPU: convolve vs. fftconvolve crossover, filters, welch
+pixi run bench-interpolate # CPU: interp and CubicSpline, evaluation and construction
+pixi run bench-stats    # CPU: norm.cdf, histogram, quantile, cov/corrcoef
 pixi run bench-linalg-gpu # the factorizations on a device (CUDA/Metal)
 pixi run bench-blas1-gpu # BLAS-1 on a device; separate, see the Metal note above
 pixi run bench-numpy    # cross-language: NumPy, CPU
@@ -588,6 +731,9 @@ pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
 pixi run bench-cupy     # cross-language: CuPy, GPU (Linux/CUDA only)
 pixi run -e bench-python bench-scipy-linalg # linalg baseline: LAPACK (OpenBLAS or Accelerate), CPU
+pixi run -e bench-python bench-scipy-signal # signal baseline: scipy.signal, CPU
+pixi run -e bench-python bench-scipy-interpolate # interpolation baseline: numpy.interp, scipy CubicSpline
+pixi run -e bench-python bench-scipy-stats  # statistics baseline: scipy.stats.norm, numpy histogram/quantile/cov
 pixi run -e bench-python bench-torch-linalg # linalg baseline: cuSOLVER on CUDA, MPS on Metal
 pixi run -e bench-python bench-cupy-linalg  # linalg baseline: cuSOLVER, CUDA
 pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON/AVX2)

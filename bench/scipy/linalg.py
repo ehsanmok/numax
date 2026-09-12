@@ -18,7 +18,10 @@ that would change a number is spelled the same way in both:
 
 What this baseline *is* is reference LAPACK: `cholesky` is `potrf`,
 `lu_factor` is `getrf`, `solve` is `gesv`, `qr` is `geqrf` plus `orgqr`,
-and the BLAS-1 calls are `sdot`/`snrm2`/`sasum`/`saxpy` from
+the spectral rows are `syevd`/`syevr` (`eigh`, `eigvalsh`), `gesdd`
+(`svd`, `svdvals`), `geev` (`eigvals`) and `gees` (`schur`) -- the
+`scipy.linalg` defaults, with the same Golub-Van Loan flop counts the Mojo
+harness prints -- and the BLAS-1 calls are `sdot`/`snrm2`/`sasum`/`saxpy` from
 `scipy.linalg.blas` rather than NumPy ufuncs, so the comparison is against
 the routine numax's overload is named after. Which BLAS is underneath
 depends on the wheel -- printed in the header, since it decides the whole
@@ -132,6 +135,59 @@ def bench_qr(n: int) -> None:
     row("qr", n, ns, 2.0 * n**2 * (n - n / 3.0), resid)
 
 
+def bench_eigvalsh(n: int) -> None:
+    a = spd(n)
+    ns = time_call(lambda: sla.eigvalsh(a), iters(4 * n**3 // 3))
+    w = sla.eigvalsh(a)
+    resid = abs(float(np.sum(w.astype(np.float64))) - float(np.trace(a.astype(np.float64))))
+    row("eigvalsh", n, ns, 4.0 * n**3 / 3.0, resid)
+
+
+def bench_eigh(n: int) -> None:
+    a = spd(n)
+    ns = time_call(lambda: sla.eigh(a), iters(9 * n**3))
+    w, v = sla.eigh(a)
+    a64 = a.astype(np.float64)
+    v64 = v.astype(np.float64)
+    resid = float(np.max(np.abs(a64 @ v64 - v64 * w.astype(np.float64))))
+    row("eigh", n, ns, 9.0 * n**3, resid)
+
+
+def bench_svdvals(n: int) -> None:
+    a = general(n)
+    flops = 4.0 * n**3 - 4.0 * n**3 / 3.0
+    ns = time_call(lambda: sla.svdvals(a), iters(int(flops)))
+    s = sla.svdvals(a).astype(np.float64)
+    frob = float(np.sum(a.astype(np.float64) ** 2))
+    row("svdvals", n, ns, flops, abs(float(np.sum(s * s)) - frob) / frob)
+
+
+def bench_svd(n: int) -> None:
+    a = general(n)
+    flops = 14.0 * n**3 + 8.0 * n**3
+    ns = time_call(lambda: sla.svd(a, full_matrices=False), iters(int(flops)))
+    u, s, vh = sla.svd(a, full_matrices=False)
+    back = (u.astype(np.float64) * s.astype(np.float64)) @ vh.astype(np.float64)
+    row("svd", n, ns, flops, float(np.max(np.abs(back - a))))
+
+
+def bench_eigvals(n: int) -> None:
+    a = general(n)
+    ns = time_call(lambda: sla.eigvals(a), iters(10 * n**3))
+    w = sla.eigvals(a)
+    resid = abs(float(np.sum(w.real.astype(np.float64))) - float(np.trace(a.astype(np.float64))))
+    row("eigvals", n, ns, 10.0 * n**3, resid)
+
+
+def bench_schur(n: int) -> None:
+    a = general(n)
+    ns = time_call(lambda: sla.schur(a), iters(25 * n**3))
+    t, z = sla.schur(a)
+    z64 = z.astype(np.float64)
+    back = z64 @ t.astype(np.float64) @ z64.T
+    row("schur", n, ns, 25.0 * n**3, float(np.max(np.abs(back - a))))
+
+
 def bench_blas1(n: int) -> None:
     x = ramp(n, 1)
     y = ramp(n, 2)
@@ -197,6 +253,20 @@ def main() -> None:
         bench_solve(n)
     for n in FACTOR_SIZES:
         bench_qr(n)
+
+    print()
+    print("Spectral (ms is per call, GFLOP/s from Golub-Van Loan's count)")
+    print("op\tn\tms\tGFLOP/s\tmax |residual|")
+    for fn in (
+        bench_eigvalsh,
+        bench_eigh,
+        bench_svdvals,
+        bench_svd,
+        bench_eigvals,
+        bench_schur,
+    ):
+        for n in FACTOR_SIZES:
+            fn(n)
 
     print()
     print("BLAS-1 (us is per call, GB/s over the traffic the op must move)")

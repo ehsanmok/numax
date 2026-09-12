@@ -118,6 +118,11 @@ bench-torch = { cmd = "python3 gaussian.py", cwd = "bench/torch" }
 # everywhere and the script says so and exits when there is no device.
 bench-scipy-linalg = { cmd = "python3 linalg.py", cwd = "bench/scipy" }
 bench-torch-linalg = { cmd = "python3 linalg.py", cwd = "bench/torch" }
+# The signal, interpolation and statistics baselines, against
+# `bench_signal.mojo`, `bench_interpolate.mojo` and `bench_stats.mojo`.
+bench-scipy-signal = { cmd = "python3 signal_processing.py", cwd = "bench/scipy" }
+bench-scipy-interpolate = { cmd = "python3 interpolate.py", cwd = "bench/scipy" }
+bench-scipy-stats = { cmd = "python3 stats.py", cwd = "bench/scipy" }
 accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
 
 [feature.bench-rust]
@@ -458,6 +463,11 @@ bench-elementwise = "mojo -I . bench/bench_elementwise.mojo"
 # blocked factorizations are trying to reach. CPU-only, so CI can run it;
 # `bench-linalg-gpu` is the same measurements on a device.
 bench-linalg = "mojo -I . bench/bench_linalg.mojo"
+# The `Tensor` tiers of numax.signal, numax.interpolate and numax.stats,
+# each against the `bench-scipy-*` baseline of the same name. CPU-only.
+bench-signal = "mojo -I . bench/bench_signal.mojo"
+bench-interpolate = "mojo -I . bench/bench_interpolate.mojo"
+bench-stats = "mojo -I . bench/bench_stats.mojo"
 # The fusion sweep runs a GPU half, so it needs real Metal hardware too.
 bench-fusion = "mojo -I . bench/bench_fusion.mojo"
 # Needs real Metal hardware, like the GPU examples -- a local-only check.

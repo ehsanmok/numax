@@ -22,7 +22,21 @@ Three tables, because three different things limit them:
    box's 64 MiB of L3 on purpose: at 16M `float32` the vector is exactly
    L3-sized and the reductions read out of cache, so a number there is a
    cache number, not a memory one.
-3. **Block size** -- each factorization at its default block against its
+3. **Spectral** -- `eigvalsh`, `eigh`, `svdvals`, `svd`, `eigvals`,
+   `schur` at n = 128 through 1024. These are the 0.2 decompositions, and
+   they split in a way the factorizations above do not: the reduction to
+   tridiagonal, bidiagonal or Hessenberg form is blocked and its cubic
+   term is MAX's GEMM, but the iteration on the reduced band -- implicit
+   QL/QR, Golub-Kahan, Francis -- runs on the host in `O(n^2)` for values
+   and `O(n^3)` of scalar Givens work for vectors. The GFLOP/s column uses
+   Golub and Van Loan's counts (`4n^3/3` values-only symmetric, `9n^3`
+   with vectors; `4mn^2 - 4n^3/3` singular values, `14mn^2 + 8n^3` with
+   `U` and `V`; `10n^3` eigenvalues of a general matrix, `25n^3` for the
+   Schur form with `Z`), so a low number against the factorizations
+   above says how much of each run is the host's Givens loop rather than
+   the device's GEMM. That is the measurement the vector-accumulating
+   paths' `ponytail:` notes ask for.
+4. **Block size** -- each factorization at its default block against its
    neighbours, at two sizes, because the best block is not the same at
    both: `cholesky` and `lu_factor` hold their defaults (32 and 16) at
    n = 512 and n = 1024, while `qr_factor`'s best block *shrinks* with n,
@@ -31,7 +45,10 @@ Three tables, because three different things limit them:
 
 Each row carries a residual so a fast wrong answer cannot hide: `L L^T`
 against `A` for Cholesky, `A x - b` for the solves, `Q R` against `A` for
-QR, and a `float64` recomputation for the BLAS-1 reductions.
+QR, `A V - V diag(w)`, `U diag(s) V^T - A` and `Z T Z^T - A` for the
+spectral forms (the values-only rows check the trace, which is all a set
+of eigenvalues can be checked against without vectors), and a `float64`
+recomputation for the BLAS-1 reductions.
 
 **`float32`, deliberately.** The GPU sibling of this file cannot be
 anything else -- `linalg.matmul` does not compile for GPU at `float64`,
@@ -55,9 +72,15 @@ from numax.linalg import (
     axpy,
     cholesky,
     dot,
+    eigh,
+    eigvals,
+    eigvalsh,
     lu_factor,
     matmul,
     matvec,
+    schur,
+    svd,
+    svdvals,
     nrm2,
     qr_factor,
     solve,
@@ -330,6 +353,199 @@ def bench_qr[
     _row(label, n, ns, flops, worst)
 
 
+def _diag[
+    n: Int
+](ctx: DeviceContext, mut values: Static[dtype, n]) raises -> Static[
+    dtype, n, n
+]:
+    """`diag(values)` as a dense matrix, so a spectral residual is two
+    `matmul`s rather than a host loop over `n^3` entries."""
+    var host = values.to_host()
+    var entries = List[Scalar[dtype]](capacity=n * n)
+    for i in range(n):
+        for j in range(n):
+            entries.append(host[i] if i == j else Scalar[dtype](0))
+    return Static[dtype, n, n](ctx, entries^)
+
+
+def _max_abs_diff[
+    n: Int, want: def(Int, Int, Int) thin -> Float64
+](mut got: Static[dtype, n, n]) raises -> Float64:
+    var host = got.to_host()
+    var worst = Float64(0)
+    for i in range(n):
+        for j in range(n):
+            var diff = abs(Float64(host[i * n + j]) - want(i, j, n))
+            if diff > worst:
+                worst = diff
+    return worst
+
+
+def _trace_gap[
+    n: Int, entry: def(Int, Int, Int) thin -> Float64
+](mut re: Static[dtype, n]) raises -> Float64:
+    """`|sum(w) - trace(A)|`, the one check a set of eigenvalues admits
+    without its vectors."""
+    var host = re.to_host()
+    var total = Float64(0)
+    var trace = Float64(0)
+    for i in range(n):
+        total += Float64(host[i])
+        trace += entry(i, i, n)
+    return abs(total - trace)
+
+
+def bench_eigvalsh[n: Int](ctx: DeviceContext) raises:
+    var a = _spd[n](ctx)
+
+    def work() raises {mut a}:
+        var w = eigvalsh[dtype, n](a)
+        keep(w.buffer.unsafe_ptr())
+
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
+    var w = eigvalsh[dtype, n](a)
+    _row(
+        "eigvalsh",
+        n,
+        ns,
+        4.0 * Float64(n) ** 3 / 3.0,
+        _trace_gap[n, _spd_entry](w),
+    )
+
+
+def bench_eigh[n: Int](ctx: DeviceContext) raises:
+    var a = _spd[n](ctx)
+
+    def work() raises {mut a}:
+        var e = eigh[dtype, n](a)
+        keep(e.vectors.buffer.unsafe_ptr())
+
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
+    var e = eigh[dtype, n](a)
+    # `A V - V diag(w)`: the eigen-equation column by column.
+    var av = matmul[dtype, n, n, n](a, e.vectors)
+    var d = _diag[n](ctx, e.values)
+    var vd = matmul[dtype, n, n, n](e.vectors, d)
+    var avh = av.to_host()
+    var vdh = vd.to_host()
+    var worst = Float64(0)
+    for i in range(n * n):
+        var diff = abs(Float64(avh[i]) - Float64(vdh[i]))
+        if diff > worst:
+            worst = diff
+    _row("eigh", n, ns, 9.0 * Float64(n) ** 3, worst)
+
+
+def bench_svdvals[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
+    var a = _general[n](ctx)
+
+    def work() raises {mut a}:
+        var s = svdvals[dtype, n, n](a)
+        keep(s.buffer.unsafe_ptr())
+
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
+    # Singular values admit no trace check; `sum(s^2) == ||A||_F^2` is the
+    # identity that plays the same part.
+    var s = svdvals[dtype, n, n](a)
+    var host = s.to_host()
+    var total = Float64(0)
+    for i in range(n):
+        total += Float64(host[i]) * Float64(host[i])
+    var frob = Float64(0)
+    for i in range(n):
+        for j in range(n):
+            var v = _general_entry(i, j, n)
+            frob += v * v
+    var flops = 4.0 * Float64(n) ** 3 - 4.0 * Float64(n) ** 3 / 3.0
+    _row("svdvals", n, ns, flops, abs(total - frob) / frob)
+
+
+def bench_svd[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
+    var a = _general[n](ctx)
+
+    def work() raises {mut a}:
+        var f = svd[dtype, n, n](a)
+        keep(f.u.buffer.unsafe_ptr())
+
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
+    var f = svd[dtype, n, n](a)
+    var d = _diag[n](ctx, f.s)
+    var ud = matmul[dtype, n, n, n](f.u, d)
+    var vt = transpose[dtype, n, n](f.v)
+    var back = matmul[dtype, n, n, n](ud, vt)
+    var flops = 14.0 * Float64(n) ** 3 + 8.0 * Float64(n) ** 3
+    _row("svd", n, ns, flops, _max_abs_diff[n, _general_entry](back))
+
+
+def bench_eigvals[n: Int](ctx: DeviceContext) raises:
+    var a = _general[n](ctx)
+
+    def work() raises {mut a}:
+        var w = eigvals[dtype, n](a)
+        keep(w.re.buffer.unsafe_ptr())
+
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
+    var w = eigvals[dtype, n](a)
+    _row(
+        "eigvals",
+        n,
+        ns,
+        10.0 * Float64(n) ** 3,
+        _trace_gap[n, _general_entry](w.re),
+    )
+
+
+def bench_schur[n: Int](ctx: DeviceContext) raises:
+    var a = _general[n](ctx)
+
+    def work() raises {mut a}:
+        var f = schur[dtype, n](a)
+        keep(f.t.buffer.unsafe_ptr())
+
+    var ns = (
+        run(
+            work, num_warmup_iters=warmup_iters, max_runtime_secs=budget_secs
+        ).mean()
+        * 1e9
+    )
+    var f = schur[dtype, n](a)
+    var zt = matmul[dtype, n, n, n](f.z, f.t)
+    var z_t = transpose[dtype, n, n](f.z)
+    var back = matmul[dtype, n, n, n](zt, z_t)
+    _row(
+        "schur",
+        n,
+        ns,
+        25.0 * Float64(n) ** 3,
+        _max_abs_diff[n, _general_entry](back),
+    )
+
+
 def bench_blas1[n: Int](ctx: DeviceContext) raises:
     var x = _ramp[n](ctx, 1)
     var y = _ramp[n](ctx, 2)
@@ -451,6 +667,34 @@ def main() raises:
     bench_qr[256, 256](ctx)
     bench_qr[512, 512](ctx)
     bench_qr[1024, 1024](ctx)
+
+    print()
+    print("Spectral (ms is per call, GFLOP/s from Golub-Van Loan's count)")
+    print("op\tn\tms\tGFLOP/s\tmax |residual|")
+    bench_eigvalsh[128](ctx)
+    bench_eigvalsh[256](ctx)
+    bench_eigvalsh[512](ctx)
+    bench_eigvalsh[1024](ctx)
+    bench_eigh[128](ctx)
+    bench_eigh[256](ctx)
+    bench_eigh[512](ctx)
+    bench_eigh[1024](ctx)
+    bench_svdvals[128](ctx)
+    bench_svdvals[256](ctx)
+    bench_svdvals[512](ctx)
+    bench_svdvals[1024](ctx)
+    bench_svd[128](ctx)
+    bench_svd[256](ctx)
+    bench_svd[512](ctx)
+    bench_svd[1024](ctx)
+    bench_eigvals[128](ctx)
+    bench_eigvals[256](ctx)
+    bench_eigvals[512](ctx)
+    bench_eigvals[1024](ctx)
+    bench_schur[128](ctx)
+    bench_schur[256](ctx)
+    bench_schur[512](ctx)
+    bench_schur[1024](ctx)
 
     print()
     print("BLAS-1 (us is per call, GB/s over the traffic the op must move)")
