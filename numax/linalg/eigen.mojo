@@ -28,7 +28,7 @@ from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.builtin.sort import sort as _std_sort
-from std.math import hypot as _hypot
+from std.math import copysign as _copysign, hypot as _hypot, sqrt as _sqrt
 from std.sys.info import align_of
 from std.utils import IndexList
 
@@ -100,33 +100,9 @@ struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
         itself, and the same `ponytail:` ceiling applies. A caller who only
         wants eigenvalues should not call this; `eigvalsh` does not.
         """
-        var ctx = self.reflectors.context()
-        var result = zeros[Self.dtype, Self.n, Self.n](ctx)
-        var host = result.to_host()
-        for i in range(Self.n):
-            host[i * Self.n + i] = Scalar[Self.dtype](1)
-        result.copy_from_host(host)
-
-        if Self.n < 3:
-            return result^
-
-        var packed = self.reflectors.view()
-        var taus = self.taus.view()
-        var vpad = zeros[Self.dtype, Self.n](ctx)
-        var product = zeros[Self.dtype, Self.n, Self.n](ctx)
-
-        var k = Self.n - 3
-        while k >= 0:
-            var this_tau = self.taus.to_host()[k]
-            if this_tau != 0:
-                _write_vpad[gpu=Self.gpu](packed, vpad.view(), k, Self.n, ctx)
-                # `y = Q^T v`, then `Q -= tau v y^T`.
-                var y = _row_combination[gpu=Self.gpu](result, vpad)
-                _rank_one_subtract[gpu=Self.gpu](
-                    result, vpad, y, this_tau, product, ctx
-                )
-            k -= 1
-        return result^
+        return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
+            self.reflectors, self.taus, Self.n - 2
+        )
 
 
 def _write_vpad[
@@ -658,6 +634,574 @@ def eigh[
     var q = reduced.q()
     var vectors = matmul[gpu=gpu](q, z_dev)
     return TensorEigh[dtype, n](values^, vectors^)
+
+
+# --------------------------------------------------- Hessenberg and Schur
+
+
+def _accumulate_reflectors[
+    dtype: DType, n: Int, gpu: Bool = False
+](
+    mut reflectors: Static[dtype, n, n], mut taus: Static[dtype, n], count: Int
+) raises -> Static[dtype, n, n]:
+    """`Q = H_0 H_1 ... H_{count-1}` from `count` reflectors held in LAPACK's
+    packed form -- column `k` carries `v` below row `k + 1` with its leading
+    `1` implicit -- accumulated in reverse so each reflection meets a
+    matrix that is already the product of the ones after it. LAPACK's
+    `orgtr` and `orghr` are both this.
+
+    Each step is `Q -= tau v (v^T Q)`, a matrix-vector product and a
+    rank-one update, both `linalg.matmul`: `O(n^3)` with one allocation per
+    step, the same shape and the same `ponytail:` ceiling as the reductions
+    that produced the reflectors. A caller who only wants eigenvalues never
+    calls this.
+    """
+    var ctx = reflectors.context()
+    var result = zeros[dtype, n, n](ctx)
+    var host = result.to_host()
+    for i in range(n):
+        host[i * n + i] = Scalar[dtype](1)
+    result.copy_from_host(host)
+    if count <= 0:
+        return result^
+
+    var packed = reflectors.view()
+    var vpad = zeros[dtype, n](ctx)
+    var product = zeros[dtype, n, n](ctx)
+    var tau_host = taus.to_host()
+    var k = count - 1
+    while k >= 0:
+        var this_tau = tau_host[k]
+        if this_tau != 0:
+            _write_vpad[gpu=gpu](packed, vpad.view(), k, n, ctx)
+            var y = _row_combination[gpu=gpu](result, vpad)
+            _rank_one_subtract[gpu=gpu](result, vpad, y, this_tau, product, ctx)
+        k -= 1
+    return result^
+
+
+def _store_column[
+    dtype: DType, n: Int, gpu: Bool = False
+](
+    mut dst: Static[dtype, n, n],
+    mut v: Static[dtype, n],
+    k: Int,
+    ctx: DeviceContext,
+) raises:
+    """`dst[:, k] = v`, on the device."""
+    var dv = dst.view()
+    var vv = v.view()
+
+    @always_inline
+    def fill[w: Int, alignment: Int = 1](coord: Coord) {var dv, var vv, var k}:
+        var i = coord_to_index_list(coord)[0]
+        dv.store[1](Coord(i, k), vv[Coord(i)])
+
+    elementwise[simd_width=1, target=_target[gpu]()](fill, Coord(n), ctx)
+
+
+def _zero_column_below[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n], k: Int, first: Int, ctx: DeviceContext) raises:
+    """`a[first.., k] = 0`, on the device: the entries a reflector
+    annihilates, written as the exact zeros they are rather than left to
+    the update that never touches its own column."""
+    var av = a.view()
+
+    @always_inline
+    def fill[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var av, var k, var first}:
+        var i = coord_to_index_list(coord)[0]
+        if i >= first:
+            av.store[1](Coord(i, k), Scalar[dtype](0))
+
+    elementwise[simd_width=1, target=_target[gpu]()](fill, Coord(n), ctx)
+
+
+struct TensorHessenberg[dtype: DType, n: Int, gpu: Bool = False](
+    Movable where dtype.is_floating_point() and n >= 1
+):
+    """The Hessenberg reduction `A = Q H Q^T`, device-resident: `H` upper
+    Hessenberg (zero below the first subdiagonal), `Q` orthogonal and held
+    as packed reflectors until `.q()` materializes it. `scipy.linalg.hessenberg`
+    with `calc_q=True` returns the pair; here `.h` is the matrix and `.q()`
+    is the factor, so `eigvals`, which never needs it, never forms it.
+    """
+
+    var h: Static[Self.dtype, Self.n, Self.n]
+    """The Hessenberg matrix, exact zeros below the subdiagonal."""
+
+    var reflectors: Static[Self.dtype, Self.n, Self.n]
+    """Column `k` holds `v` for reflector `k` below row `k + 1`, its
+    leading `1` implicit -- LAPACK's packed form, `TensorTridiagonal`'s."""
+
+    var taus: Static[Self.dtype, Self.n]
+    """One Householder scale per column; zero where the column was already
+    in Hessenberg form."""
+
+    def __init__(
+        out self,
+        var h: Static[Self.dtype, Self.n, Self.n],
+        var reflectors: Static[Self.dtype, Self.n, Self.n],
+        var taus: Static[Self.dtype, Self.n],
+    ):
+        self.h = h^
+        self.reflectors = reflectors^
+        self.taus = taus^
+
+    def q(mut self) raises -> Static[Self.dtype, Self.n, Self.n]:
+        """Materialize `Q`, LAPACK's `orghr`; see `_accumulate_reflectors`
+        for the cost."""
+        return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
+            self.reflectors, self.taus, Self.n - 2
+        )
+
+
+def hessenberg[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> TensorHessenberg[
+    dtype, n, gpu
+] where dtype.is_floating_point():
+    """**Tier 2.** Reduce a general square `a` to upper Hessenberg form by
+    Householder reflections, device-resident. LAPACK's `gehrd`,
+    `scipy.linalg.hessenberg`.
+
+    The shape is `sytrd`'s, minus the symmetry: the same single-block
+    kernel forms each column's reflector, and then `A <- (I - tau v v^T) A
+    (I - tau v v^T)` is two matrix-vector products and two rank-one
+    updates through `linalg.matmul`, each over the whole matrix with the
+    padded reflector -- `vpad` is zero at and above `k`, so the leading
+    block is untouched for free and nothing is staged. The row `v^T A` has
+    its first `k + 1` entries cleared before the left update so column `k`,
+    already written as `(beta, 0, ...)`, is not disturbed; the right update
+    never reaches it, since `vpad` is zero there.
+
+    `ponytail:` unblocked, and the same two ceilings as `sytrd` -- the
+    whole matrix per reflector (about `5n^3` flops against LAPACK's
+    `10n^3/3`) and matrix-vector shaped products. The upgrade is the blocked
+    `gehrd` with `lahr2`, which accumulates a panel's reflectors and applies
+    them as GEMMs.
+
+    `numax.linalg.array.hessenberg` is the `FloatLike`-generic sibling for
+    matrices small enough to live in registers.
+    """
+    var ctx = a.context()
+    var work = zeros[dtype, n, n](ctx)
+    var reflectors = zeros[dtype, n, n](ctx)
+    var taus = zeros[dtype, n](ctx)
+    var vpad = zeros[dtype, n](ctx)
+    var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
+    var product = zeros[dtype, n, n](ctx)
+
+    var wv = work.view()
+    var tv = taus.view()
+    var vv = vpad.view()
+    var sv = scratch.view()
+
+    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+
+    for k in range(n - 2):
+        comptime if gpu:
+            ctx.enqueue_function[
+                sytd2_column[
+                    dtype,
+                    ALayout=type_of(wv).LayoutType,
+                    VLayout=type_of(vv).LayoutType,
+                    TauLayout=type_of(tv).LayoutType,
+                    SLayout=type_of(sv).LayoutType,
+                    gpu=True,
+                ]
+            ](
+                wv,
+                vv,
+                tv,
+                sv,
+                Int32(k),
+                Int32(n),
+                grid_dim=1,
+                block_dim=_PANEL_THREADS,
+            )
+            ctx.synchronize()
+        else:
+            sytd2_column(wv, vv, tv, sv, Int32(k), Int32(n))
+
+        var this_tau = taus.to_host()[k]
+        if this_tau == 0:
+            continue
+
+        _store_column[gpu=gpu](reflectors, vpad, k, ctx)
+        _zero_column_below[gpu=gpu](work, k, k + 2, ctx)
+
+        # Left: `A -= tau v (v^T A)`, with the row cleared over the columns
+        # already finished.
+        var y = _row_combination[gpu=gpu](work, vpad)
+        _zero_prefix[gpu=gpu](y, k + 1, ctx)
+        _rank_one_subtract[gpu=gpu](work, vpad, y, this_tau, product, ctx)
+
+        # Right: `A -= tau (A v) v^T`, on the left-updated matrix.
+        var u = matvec[gpu=gpu](work, vpad)
+        _rank_one_subtract[gpu=gpu](work, u, vpad, this_tau, product, ctx)
+
+    _ = scratch^
+    return TensorHessenberg[dtype, n, gpu](work^, reflectors^, taus^)
+
+
+comptime _MAX_QR_SWEEPS_PER_N = 30
+"""Francis sweeps allowed in total, per matrix dimension -- EISPACK's and
+LAPACK's `30 n`. Reaching it means the Hessenberg matrix carries a NaN or
+an infinity, and the raise says so rather than looping forever."""
+
+
+def _hqr[
+    dtype: DType, wantt: Bool, wantz: Bool
+](
+    mut h: List[Scalar[dtype]], mut z: List[Scalar[dtype]], n: Int
+) raises -> Tuple[
+    List[Scalar[dtype]], List[Scalar[dtype]]
+] where dtype.is_floating_point():
+    """Francis double-shift QR on the upper Hessenberg `h` (row-major
+    `n x n`, in place). EISPACK's `hqr2`, which is LAPACK's `dlahqr`.
+
+    **Tier 2, host-side.** Each sweep chases a `3 x 3` bulge down the
+    active block with Householder reflectors of order three, deflates on a
+    test of the data, and takes an exceptional shift every tenth sweep --
+    none of which has a GEMM to hand anything to. Returns the eigenvalues
+    as `(real, imaginary)` in LAPACK's order; a complex pair sits in
+    consecutive slots with the positive imaginary part first.
+
+    With `wantt` the whole quasi-triangular `T` is kept -- the reflectors
+    are applied to every column to the right and every row above -- and
+    the strict lower band the chase never writes (the two entries each
+    reflector annihilates in the column to its left, mathematically zero)
+    is cleared at the end, so `T` is the Schur form and not the Schur form
+    plus stale bulge entries. Without it only the active block is updated,
+    which is all the eigenvalues need. With `wantz` the same reflectors are
+    accumulated into `z`, which the caller passes as the identity.
+
+    A converged `2 x 2` block with real eigenvalues is split by one
+    rotation, so every surviving `2 x 2` block on `T`'s diagonal has a
+    complex conjugate pair -- the standard real Schur form.
+    """
+    var wr = List[Scalar[dtype]](length=n, fill=0)
+    var wi = List[Scalar[dtype]](length=n, fill=0)
+    if n == 0:
+        return (wr^, wi^)
+    var eps = _eps[dtype]()
+    var zero = Scalar[dtype](0)
+
+    var anorm = zero
+    for i in range(n):
+        var j0 = i - 1 if i > 0 else 0
+        for j in range(j0, n):
+            anorm += abs(h[i * n + j])
+
+    var en = n - 1
+    var t = zero
+    var itn = _MAX_QR_SWEEPS_PER_N * n
+    var x: Scalar[dtype]
+    var y: Scalar[dtype]
+    var w: Scalar[dtype]
+    var p = zero
+    var q = zero
+    var r = zero
+    var zz: Scalar[dtype]
+    var s: Scalar[dtype]
+
+    while en >= 0:
+        var its = 0
+        while True:
+            # A negligible subdiagonal splits off the block `l .. en`.
+            var l = en
+            while l > 0:
+                s = abs(h[(l - 1) * n + (l - 1)]) + abs(h[l * n + l])
+                if s == zero:
+                    s = anorm
+                if abs(h[l * n + (l - 1)]) <= eps * s:
+                    h[l * n + (l - 1)] = zero
+                    break
+                l -= 1
+            x = h[en * n + en]
+            if l == en:
+                # One root.
+                wr[en] = x + t
+                wi[en] = zero
+                h[en * n + en] = x + t
+                en -= 1
+                break
+            y = h[(en - 1) * n + (en - 1)]
+            w = h[en * n + (en - 1)] * h[(en - 1) * n + en]
+            if l == en - 1:
+                # Two roots.
+                p = Scalar[dtype](0.5) * (y - x)
+                q = p * p + w
+                zz = _sqrt(abs(q))
+                h[en * n + en] = x + t
+                x = x + t
+                h[(en - 1) * n + (en - 1)] = y + t
+                if q >= zero:
+                    # A real pair: split the block with one rotation.
+                    zz = p + _copysign(zz, p)
+                    wr[en - 1] = x + zz
+                    wr[en] = wr[en - 1]
+                    if zz != zero:
+                        wr[en] = x - w / zz
+                    wi[en - 1] = zero
+                    wi[en] = zero
+                    var xx = h[en * n + (en - 1)]
+                    s = abs(xx) + abs(zz)
+                    p = xx / s
+                    q = zz / s
+                    r = _sqrt(p * p + q * q)
+                    p = p / r
+                    q = q / r
+                    var j_first = en - 1
+                    for j in range(j_first, n if wantt else en + 1):
+                        var top = h[(en - 1) * n + j]
+                        h[(en - 1) * n + j] = q * top + p * h[en * n + j]
+                        h[en * n + j] = q * h[en * n + j] - p * top
+                    var i_first = 0 if wantt else l
+                    for i in range(i_first, en + 1):
+                        var left = h[i * n + (en - 1)]
+                        h[i * n + (en - 1)] = q * left + p * h[i * n + en]
+                        h[i * n + en] = q * h[i * n + en] - p * left
+                    comptime if wantz:
+                        for i in range(n):
+                            var left = z[i * n + (en - 1)]
+                            z[i * n + (en - 1)] = q * left + p * z[i * n + en]
+                            z[i * n + en] = q * z[i * n + en] - p * left
+                else:
+                    wr[en - 1] = x + p
+                    wr[en] = x + p
+                    wi[en - 1] = zz
+                    wi[en] = -zz
+                en -= 2
+                break
+
+            if itn == 0:
+                raise Error(
+                    "eigvals/schur: the QR iteration did not converge in ",
+                    _MAX_QR_SWEEPS_PER_N * n,
+                    " sweeps; the matrix likely holds a NaN or an infinity",
+                )
+            if its == 10 or its == 20:
+                # Exceptional shift.
+                t += x
+                for i in range(en + 1):
+                    h[i * n + i] = h[i * n + i] - x
+                s = abs(h[en * n + (en - 1)]) + abs(h[(en - 1) * n + (en - 2)])
+                x = Scalar[dtype](0.75) * s
+                y = x
+                w = Scalar[dtype](-0.4375) * s * s
+            its += 1
+            itn -= 1
+
+            # Two consecutive small subdiagonals let the sweep start below
+            # `l`: the first column of the shift polynomial, and where it is
+            # negligible against its neighbours.
+            var m = en - 2
+            while m >= l:
+                zz = h[m * n + m]
+                r = x - zz
+                s = y - zz
+                p = (r * s - w) / h[(m + 1) * n + m] + h[m * n + (m + 1)]
+                q = h[(m + 1) * n + (m + 1)] - zz - r - s
+                r = h[(m + 2) * n + (m + 1)]
+                s = abs(p) + abs(q) + abs(r)
+                p = p / s
+                q = q / s
+                r = r / s
+                if m == l:
+                    break
+                var tst1 = abs(p) * (
+                    abs(h[(m - 1) * n + (m - 1)])
+                    + abs(zz)
+                    + abs(h[(m + 1) * n + (m + 1)])
+                )
+                var tst2 = abs(h[m * n + (m - 1)]) * (abs(q) + abs(r))
+                if tst2 <= eps * tst1:
+                    break
+                m -= 1
+            for i in range(m + 2, en + 1):
+                h[i * n + (i - 2)] = zero
+                if i != m + 2:
+                    h[i * n + (i - 3)] = zero
+
+            # The double step: chase the bulge from `m` to `en`.
+            for k in range(m, en):
+                var notlast = k != en - 1
+                if k != m:
+                    p = h[k * n + (k - 1)]
+                    q = h[(k + 1) * n + (k - 1)]
+                    r = h[(k + 2) * n + (k - 1)] if notlast else zero
+                    x = abs(p) + abs(q) + abs(r)
+                    if x == zero:
+                        continue
+                    p = p / x
+                    q = q / x
+                    r = r / x
+                s = _copysign(_sqrt(p * p + q * q + r * r), p)
+                if k != m:
+                    h[k * n + (k - 1)] = -s * x
+                elif l != m:
+                    h[k * n + (k - 1)] = -h[k * n + (k - 1)]
+                p = p + s
+                x = p / s
+                y = q / s
+                zz = r / s
+                q = q / p
+                r = r / p
+                for j in range(k, n if wantt else en + 1):
+                    p = h[k * n + j] + q * h[(k + 1) * n + j]
+                    if notlast:
+                        p = p + r * h[(k + 2) * n + j]
+                        h[(k + 2) * n + j] = h[(k + 2) * n + j] - p * zz
+                    h[(k + 1) * n + j] = h[(k + 1) * n + j] - p * y
+                    h[k * n + j] = h[k * n + j] - p * x
+                var i_last = en if en < k + 3 else k + 3
+                for i in range(0 if wantt else l, i_last + 1):
+                    p = x * h[i * n + k] + y * h[i * n + (k + 1)]
+                    if notlast:
+                        p = p + zz * h[i * n + (k + 2)]
+                        h[i * n + (k + 2)] = h[i * n + (k + 2)] - p * r
+                    h[i * n + (k + 1)] = h[i * n + (k + 1)] - p * q
+                    h[i * n + k] = h[i * n + k] - p
+                comptime if wantz:
+                    for i in range(n):
+                        p = x * z[i * n + k] + y * z[i * n + (k + 1)]
+                        if notlast:
+                            p = p + zz * z[i * n + (k + 2)]
+                            z[i * n + (k + 2)] = z[i * n + (k + 2)] - p * r
+                        z[i * n + (k + 1)] = z[i * n + (k + 1)] - p * q
+                        z[i * n + k] = z[i * n + k] - p
+
+    comptime if wantt:
+        for i in range(n):
+            for j in range(i - 1):
+                h[i * n + j] = zero
+    return (wr^, wi^)
+
+
+struct Eigenvalues[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point() and n >= 1
+):
+    """`eigvals`'s result: the spectrum as a real and an imaginary tensor.
+
+    A `dtype`-monomorphic `Tensor` cannot hold a `Complex`, the constraint
+    `numax.fft`'s `Spectrum` answers the same way; `numax.linalg.array.eigvals`
+    returns `Array[Complex[T], n]` because `Array` can. A complex pair sits
+    in consecutive slots, positive imaginary part first, and a real
+    eigenvalue has `im == 0` exactly.
+    """
+
+    var re: Static[Self.dtype, Self.n]
+    """Real parts, in LAPACK's deflation order -- no particular order."""
+
+    var im: Static[Self.dtype, Self.n]
+    """Imaginary parts; exactly zero for a real eigenvalue."""
+
+    def __init__(
+        out self,
+        var re: Static[Self.dtype, Self.n],
+        var im: Static[Self.dtype, Self.n],
+    ):
+        self.re = re^
+        self.im = im^
+
+
+def eigvals[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> Eigenvalues[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** The eigenvalues of a general square `a`, real or
+    complex, as a `(re, im)` pair. `numpy.linalg.eigvals`,
+    `scipy.linalg.eigvals`.
+
+    `hessenberg` reduces `a` device-resident with the cubic term in
+    `linalg.matmul`, then the Francis double-shift QR iteration runs on
+    the Hessenberg matrix on the host -- `O(n^2)` per sweep and a few
+    sweeps per eigenvalue, tier 2 by numax's definition and declared so in
+    `_hqr` where it happens. Nothing is accumulated, so this is the cheap
+    half of `schur`. `eigvalsh` is the symmetric route, with real output
+    and a better algorithm; use it when the matrix is symmetric.
+
+    Eigenvalues come out in LAPACK's deflation order, not sorted; a
+    complex pair is adjacent with the positive imaginary part first.
+    `numax.linalg.array.eigvals` is the fixed-sweep, differentiable
+    sibling for matrices small enough to live in registers.
+    """
+    var ctx = a.context()
+    var reduced = hessenberg[gpu=gpu](a)
+    var h = reduced.h.to_host()
+    var z = List[Scalar[dtype]]()
+    var values = _hqr[dtype, False, False](h, z, n)
+    var re = Static[dtype, n](ctx, values[0].copy())
+    var im = Static[dtype, n](ctx, values[1].copy())
+    return Eigenvalues[dtype, n](re^, im^)
+
+
+struct TensorSchur[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point() and n >= 1
+):
+    """`schur`'s result: `a = z t z^T` with `t` real quasi-triangular and
+    `z` orthogonal. A struct rather than SciPy's `(T, Z)` tuple, for the
+    reason `qr_factor` returns a `TensorQR`.
+    """
+
+    var t: Static[Self.dtype, Self.n, Self.n]
+    """The real Schur form: upper triangular except for `2 x 2` diagonal
+    blocks, each holding one complex conjugate pair of eigenvalues, exact
+    zeros below the band."""
+
+    var z: Static[Self.dtype, Self.n, Self.n]
+    """The Schur vectors, orthogonal: `z^T a z == t`."""
+
+    def __init__(
+        out self,
+        var t: Static[Self.dtype, Self.n, Self.n],
+        var z: Static[Self.dtype, Self.n, Self.n],
+    ):
+        self.t = t^
+        self.z = z^
+
+
+def schur[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> TensorSchur[
+    dtype, n
+] where dtype.is_floating_point():
+    """**Tier 2.** The real Schur decomposition `a = Z T Z^T`.
+    `scipy.linalg.schur(a, output="real")`.
+
+    Three steps, two of them GEMM-shaped: `hessenberg` reduces `a`
+    device-resident, the Francis iteration triangularizes the Hessenberg
+    matrix on the host while accumulating its reflectors into `Z_h`, and
+    the Schur vectors of `a` are `Q Z_h` with `Q` the reduction's factor
+    -- one `matmul`.
+
+    `ponytail:` the middle step is the ceiling, and the same one `eigh`
+    names: applying each order-three reflector to every column of `T` and
+    every column of `Z_h` is `O(n^3)` of scalar host work at a small
+    constant, the one term with no MAX in it. The upgrade is LAPACK's
+    multishift QR with aggressive early deflation (`dhseqr`), whose
+    reflector products are GEMM-shaped.
+
+    This is the form every matrix function in `numax.linalg.matfuncs`
+    beyond `expm` is built on.
+    """
+    var ctx = a.context()
+    var reduced = hessenberg[gpu=gpu](a)
+    var h = reduced.h.to_host()
+    var z = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        z[i * n + i] = Scalar[dtype](1)
+    _ = _hqr[dtype, True, True](h, z, n)
+    var t = Static[dtype, n, n](ctx, h^)
+    var z_h = Static[dtype, n, n](ctx, z^)
+    var q = reduced.q()
+    var vectors = matmul[gpu=gpu](q, z_h)
+    return TensorSchur[dtype, n](t^, vectors^)
 
 
 # ----------------------------------------------------------------- SVD

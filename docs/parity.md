@@ -189,10 +189,16 @@ exist.
   which the very same sweep diagonalizes, its eigenvectors interleaving
   `B`'s singular vectors. LAPACK's `dbdsvdx` takes that route too. `pinv`,
   `cond`, `matrix_rank` and `lstsq`'s `"svd"` method are its dependents --
-  each one SVD and a few lines, delegating underneath. What is still missing
-  over `Tensor` is the Hessenberg reduction `eigvals` starts from and its own
-  sweep. `numax/linalg/__init__.mojo` carries the
-  reasoning.
+  each one SVD and a few lines, delegating underneath. The general
+  spectrum takes the same two phases over a Hessenberg form: `hessenberg`
+  reduces device-resident through the same reflector kernel and four
+  `matmul`-shaped launches per column, then the Francis double-shift QR
+  iteration -- EISPACK's `hqr2`, LAPACK's `dlahqr` -- runs on the host,
+  `eigvals` reading the eigenvalues off its deflations and `schur` keeping
+  the quasi-triangular `T` and accumulating the reflectors into the Schur
+  vectors, brought back through the reduction's `Q` in one `matmul`. Same
+  host ceiling as `eigh`, same upgrade (multishift QR with aggressive early
+  deflation, `dhseqr`). `numax/linalg/__init__.mojo` carries the reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere, and
   nothing at all on Metal or AMD, so `numax.fft` over `Tensor` is an

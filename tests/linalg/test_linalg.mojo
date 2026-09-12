@@ -29,6 +29,7 @@ from numax.linalg.array import (
     eigh,
     eigvals,
     forward_substitution,
+    hessenberg,
     inverse,
     lstsq,
     lu,
@@ -1106,3 +1107,36 @@ def test_asum_and_axpy_agree_with_their_definitions() raises:
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+def test_hessenberg_is_zero_below_the_subdiagonal_and_keeps_the_spectrum() raises:
+    var a = general3()
+    var h = hessenberg[P, 3](a)
+    assert_almost_equal(s(h[6]), 0.0, atol=1e-14)
+    # Similar to `a`: same trace, same eigenvalues.
+    var trace_a = s(a[0]) + s(a[4]) + s(a[8])
+    var trace_h = s(h[0]) + s(h[4]) + s(h[8])
+    assert_almost_equal(trace_h, trace_a, atol=1e-12)
+    var from_a = eigvals[P, 3](a)
+    var from_h = eigvals[P, 3](h)
+    for i in range(3):
+        var matched = False
+        for j in range(3):
+            if (
+                abs(s(from_a[i].re) - s(from_h[j].re)) < 1e-8
+                and abs(s(from_a[i].im) - s(from_h[j].im)) < 1e-8
+            ):
+                matched = True
+        assert_true(matched)
+
+
+def test_hessenberg_of_a_symmetric_matrix_is_tridiagonal() raises:
+    var a = Array[P, 16](fill=pv(0.0))
+    for i in range(4):
+        for j in range(4):
+            a[i * 4 + j] = pv(1.0 / Float64(i + j + 1))
+    var h = hessenberg[P, 4](a)
+    for i in range(4):
+        for j in range(4):
+            if i > j + 1 or j > i + 1:
+                assert_almost_equal(s(h[i * 4 + j]), 0.0, atol=1e-13)

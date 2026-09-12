@@ -60,9 +60,17 @@ def _jacobi_rotation[T: FloatLike](numerator: T, denominator: T) -> Tuple[T, T]:
     return (cosine^, sine^)
 
 
-def _hessenberg[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
-    """`Q.T @ A @ Q` in upper Hessenberg form, by `n - 2` Householder
-    reflections applied from both sides."""
+def hessenberg[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
+    """`H = Q^T A Q` in upper Hessenberg form, by `n - 2` Householder
+    reflections applied from both sides. `scipy.linalg.hessenberg(a)`
+    without `Q`; the `Tensor` tier's `hessenberg` returns both.
+
+    Tier 1: a fixed `n - 2` reflections, each a fixed amount of work, with
+    the one division guarded -- differentiable at `Dual` and launchable in
+    a kernel. The step `eigvals` starts from, public so a caller who wants
+    the reduced matrix itself (a Krylov method, a condensed form to hand
+    on) does not have to redo it.
+    """
     var h = _zeros[T, n * n]()
     for i in range(n * n):
         h[i] = a[i].copy()
@@ -249,7 +257,7 @@ def eigvals[
 
     No MAX equivalent exists at any size -- MAX ships no eigensolver.
     """
-    var h = _hessenberg[T, n](a)
+    var h = hessenberg[T, n](a)
     comptime if n >= 2:
         for _ in range(sweeps):
             _qr_sweep[T, n](h, _wilkinson_shift[T, n](h))

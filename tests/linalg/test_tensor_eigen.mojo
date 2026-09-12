@@ -1,10 +1,13 @@
 """Tests for `numax.linalg.eigen`, the spectral factorizations over `Tensor`.
 
-The reduction is checked by the two properties that define it rather than
-against a table of numbers: `Q^T A Q` is tridiagonal, and it is *similar*
-to `A`, so `Q T Q^T` reconstructs the matrix it came from. A wrong
-reflector fails the first; a reflector applied on one side only fails the
-second while passing the first, which is why both are here.
+The reductions are checked by the two properties that define them rather
+than against a table of numbers: `Q^T A Q` has the promised shape
+(tridiagonal, Hessenberg, quasi-triangular), and it is *similar* to `A`,
+so `Q T Q^T` reconstructs the matrix it came from. A wrong reflector fails
+the first; a reflector applied on one side only fails the second while
+passing the first, which is why both are here. The general spectrum is
+also checked against `scipy.linalg.eigvals` on a matrix with two complex
+pairs.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
@@ -14,15 +17,19 @@ from max.gpu.host import DeviceContext
 from numax.core.array import Static, to_array, transpose, zeros
 from numax.core.plain import Plain
 from numax.linalg import (
+    Eigenvalues,
     cond,
     eigh,
+    eigvals,
     eigvalsh,
     gebrd,
+    hessenberg,
     lstsq,
     matmul,
     matrix_rank,
     matvec,
     pinv,
+    schur,
     svd,
     svdvals,
     sytrd,
@@ -706,3 +713,281 @@ def test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient() raise
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+# ------------------------------------------------ Hessenberg, eigvals, schur
+
+
+def _general[n: Int](values: List[Float64]) raises -> Static[dtype, n, n]:
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, n, n](ctx)
+    var host = a.to_host()
+    for i in range(n * n):
+        host[i] = Scalar[dtype](values[i])
+    a.copy_from_host(host)
+    return a^
+
+
+def _matrix_a() raises -> Static[dtype, 4, 4]:
+    """Nonsymmetric with four real eigenvalues (SciPy: -2.1975, 1.0844,
+    2.2685, 6.8446), trace 8, determinant -37."""
+    return _general[4](
+        [
+            4.0,
+            1.0,
+            -2.0,
+            2.0,
+            1.0,
+            2.0,
+            0.0,
+            1.0,
+            -2.0,
+            0.0,
+            3.0,
+            -2.0,
+            2.0,
+            1.0,
+            -2.0,
+            -1.0,
+        ]
+    )
+
+
+def _matrix_b() raises -> Static[dtype, 4, 4]:
+    """Two complex pairs, `1 +- 2.449i` and `2 +- 2i`; trace 6, determinant 56.
+    """
+    return _general[4](
+        [
+            1.0,
+            -3.0,
+            0.5,
+            0.0,
+            2.0,
+            1.0,
+            0.0,
+            1.5,
+            0.0,
+            0.0,
+            2.0,
+            -4.0,
+            0.0,
+            0.0,
+            1.0,
+            2.0,
+        ]
+    )
+
+
+def test_hessenberg_is_zero_below_the_subdiagonal_and_a_similarity() raises:
+    comptime n = 4
+    var a = _matrix_a()
+    var original = _copy_of(a)
+    var reduced = hessenberg(a)
+    var h = reduced.h.to_host()
+    for i in range(n):
+        for j in range(n):
+            if i > j + 1:
+                assert_equal(h[i * n + j], Scalar[dtype](0))
+    var q = reduced.q()
+    var qt = transpose(q)
+    var identity = matmul(qt, q).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(identity[i * n + j], want, atol=1e-12)
+    # Q H Q^T reconstructs A.
+    var half = matmul(q, reduced.h)
+    var back = matmul(half, qt).to_host()
+    var source = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
+
+
+def test_hessenberg_of_a_two_by_two_is_itself() raises:
+    var a = _general[2]([1.0, 2.0, 3.0, 4.0])
+    var reduced = hessenberg(a)
+    var h = reduced.h.to_host()
+    assert_equal(h[0], 1.0)
+    assert_equal(h[3], 4.0)
+    var q = reduced.q().to_host()
+    assert_equal(q[0], 1.0)
+    assert_equal(q[1], 0.0)
+
+
+def _sorted_pairs(
+    mut values: Eigenvalues[dtype, 4]
+) raises -> Tuple[List[Float64], List[Float64]]:
+    """Eigenvalues sorted by real part, then imaginary part."""
+    var re = values.re.to_host()
+    var im = values.im.to_host()
+    var order = List[Int](capacity=4)
+    for i in range(4):
+        order.append(i)
+    for i in range(1, 4):
+        var j = i
+        while j > 0:
+            var a = order[j]
+            var b = order[j - 1]
+            var earlier = Float64(re[a]) < Float64(re[b]) - 1e-9 or (
+                abs(Float64(re[a]) - Float64(re[b])) <= 1e-9
+                and Float64(im[a]) < Float64(im[b])
+            )
+            if not earlier:
+                break
+            order[j] = b
+            order[j - 1] = a
+            j -= 1
+    var sre = List[Float64](capacity=4)
+    var sim = List[Float64](capacity=4)
+    for i in range(4):
+        sre.append(Float64(re[order[i]]))
+        sim.append(Float64(im[order[i]]))
+    return (sre^, sim^)
+
+
+def test_eigvals_matches_scipy_for_a_real_spectrum() raises:
+    var a = _matrix_a()
+    var values = eigvals(a)
+    var sorted = _sorted_pairs(values)
+    var want: List[Float64] = [
+        -2.197516977439422,
+        1.0843644637732162,
+        2.268531406431242,
+        6.844621107234967,
+    ]
+    for i in range(4):
+        assert_almost_equal(sorted[0][i], want[i], atol=1e-12)
+        assert_equal(sorted[1][i], 0.0)
+
+
+def test_eigvals_matches_scipy_for_two_complex_pairs() raises:
+    var b = _matrix_b()
+    var values = eigvals(b)
+    var sorted = _sorted_pairs(values)
+    var want_re: List[Float64] = [1.0, 1.0, 2.0, 2.0]
+    var want_im: List[Float64] = [
+        -2.4494897427831783,
+        2.4494897427831783,
+        -2.0,
+        2.0,
+    ]
+    for i in range(4):
+        assert_almost_equal(sorted[0][i], want_re[i], atol=1e-12)
+        assert_almost_equal(sorted[1][i], want_im[i], atol=1e-12)
+    # Trace and determinant identities on the same spectrum.
+    var re = values.re.to_host()
+    var im = values.im.to_host()
+    var trace = Float64(0)
+    for i in range(4):
+        trace += Float64(re[i])
+    assert_almost_equal(trace, 6.0, atol=1e-12)
+    # The pairs are adjacent, positive imaginary part first.
+    for i in range(0, 4, 2):
+        assert_equal(re[i], re[i + 1])
+        assert_equal(im[i], -im[i + 1])
+        assert_equal(im[i] > 0, True)
+
+
+def test_eigvals_of_a_quarter_turn_are_the_imaginary_units() raises:
+    var c = _general[2]([0.0, -1.0, 1.0, 0.0])
+    var values = eigvals(c)
+    var re = values.re.to_host()
+    var im = values.im.to_host()
+    assert_almost_equal(re[0], 0.0, atol=1e-15)
+    assert_almost_equal(re[1], 0.0, atol=1e-15)
+    assert_almost_equal(im[0], 1.0, atol=1e-15)
+    assert_almost_equal(im[1], -1.0, atol=1e-15)
+
+
+def test_eigvals_agrees_with_eigvalsh_on_a_symmetric_matrix() raises:
+    comptime n = 5
+    var a = _hilbert[n]()
+    var b = _hilbert[n]()
+    var general = eigvals(a)
+    var symmetric = eigvalsh(b).to_host()
+    var re = general.re.to_host()
+    var im = general.im.to_host()
+    # Sort the general ones ascending to compare.
+    var vals = List[Float64](capacity=n)
+    for i in range(n):
+        assert_equal(im[i], 0.0)
+        vals.append(Float64(re[i]))
+    for i in range(1, n):
+        var j = i
+        while j > 0 and vals[j] < vals[j - 1]:
+            var tmp = vals[j]
+            vals[j] = vals[j - 1]
+            vals[j - 1] = tmp
+            j -= 1
+    for i in range(n):
+        assert_almost_equal(vals[i], Float64(symmetric[i]), atol=1e-12)
+
+
+def test_schur_reconstructs_and_is_quasi_triangular() raises:
+    comptime n = 4
+    var b = _matrix_b()
+    var original = _copy_of(b)
+    var decomposed = schur(b)
+    var t = decomposed.t.to_host()
+    # Exact zeros below the first subdiagonal.
+    for i in range(n):
+        for j in range(n):
+            if i > j + 1:
+                assert_equal(t[i * n + j], Scalar[dtype](0))
+    # Every surviving 2x2 diagonal block carries a complex pair.
+    var i = 0
+    while i < n - 1:
+        if t[(i + 1) * n + i] != 0:
+            var p = Float64(t[i * n + i] - t[(i + 1) * n + (i + 1)])
+            var disc = p * p + 4.0 * Float64(
+                t[i * n + (i + 1)] * t[(i + 1) * n + i]
+            )
+            assert_equal(disc < 0, True)
+            i += 2
+        else:
+            i += 1
+    var zt = transpose(decomposed.z)
+    var identity = matmul(zt, decomposed.z).to_host()
+    for r in range(n):
+        for c in range(n):
+            var want = Scalar[dtype](1.0) if r == c else Scalar[dtype](0.0)
+            assert_almost_equal(identity[r * n + c], want, atol=1e-12)
+    var half = matmul(decomposed.z, decomposed.t)
+    var back = matmul(half, zt).to_host()
+    var source = original.to_host()
+    for k in range(n * n):
+        assert_almost_equal(back[k], source[k], atol=1e-12)
+
+
+def test_schur_of_a_real_spectrum_is_triangular_with_the_eigenvalues_on_the_diagonal() raises:
+    comptime n = 4
+    var a = _matrix_a()
+    var original = _copy_of(a)
+    var decomposed = schur(a)
+    var t = decomposed.t.to_host()
+    for i in range(1, n):
+        assert_almost_equal(t[i * n + (i - 1)], Scalar[dtype](0), atol=1e-12)
+    var diag = List[Float64](capacity=n)
+    for i in range(n):
+        diag.append(Float64(t[i * n + i]))
+    for i in range(1, n):
+        var j = i
+        while j > 0 and diag[j] < diag[j - 1]:
+            var tmp = diag[j]
+            diag[j] = diag[j - 1]
+            diag[j - 1] = tmp
+            j -= 1
+    var want: List[Float64] = [
+        -2.197516977439422,
+        1.0843644637732162,
+        2.268531406431242,
+        6.844621107234967,
+    ]
+    for i in range(n):
+        assert_almost_equal(diag[i], want[i], atol=1e-12)
+    var zt = transpose(decomposed.z)
+    var half = matmul(decomposed.z, decomposed.t)
+    var back = matmul(half, zt).to_host()
+    var source = original.to_host()
+    for k in range(n * n):
+        assert_almost_equal(back[k], source[k], atol=1e-12)

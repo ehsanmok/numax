@@ -71,7 +71,15 @@ from .blas import (
     outer,
 )
 from .cholesky import cholesky, cholesky_solve, slogdet_cholesky
-from .eigen import eigh, eigvals, eigvalsh, matrix_rank, svd, svdvals
+from .eigen import (
+    eigh,
+    eigvals,
+    eigvalsh,
+    hessenberg,
+    matrix_rank,
+    svd,
+    svdvals,
+)
 from .lu import PivotedLU, det, lu, lu_factor, slogdet
 from .matfuncs import expm, sqrtm
 from .misc import cond, norm, trace

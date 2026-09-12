@@ -95,9 +95,8 @@ cannot be built from an immutable binding.
 
 ## Not here yet
 
-`eigvals` has no `Tensor` overload yet; `numax.linalg.array` has it for
-matrices small enough to live in registers. `tridiagonal_solve` will stay
-`Array`-only -- Thomas is already linear and has nothing to hand a GEMM.
+`tridiagonal_solve` will stay `Array`-only -- Thomas is already linear
+and has nothing to hand a GEMM.
 
 **The symmetric eigenproblem is here**, and its shape is the shape every
 spectral factorization will take. `sytrd` reduces a symmetric matrix to
@@ -119,7 +118,17 @@ vectors back as `Q Z` through one `matmul`.
 and the singular values are the eigenvalues of the Golub-Kahan
 tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
 no new numerics, only the doubling that route costs at `vectors=True`.
-`pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it. `eigvals` waits on the same phases over a Hessenberg form.
+`pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it.
+
+The general spectrum takes the same two phases over a Hessenberg form:
+`hessenberg` reduces device-resident through the same reflector kernel
+and four `matmul`-shaped launches per column, then the Francis
+double-shift QR iteration (EISPACK's `hqr2`) runs on the host --
+`eigvals` reads the eigenvalues off its deflations as a `(re, im)` pair,
+and `schur` keeps the quasi-triangular `T`, accumulates the reflectors
+into the Schur vectors and brings them back through the reduction's `Q`
+in one `matmul`. That accumulation is the same `O(n^3)` host ceiling
+`eigh` names, with multishift QR as the upgrade.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of
@@ -155,14 +164,20 @@ from .blas import (
 )
 from .cholesky import cholesky, cholesky_solve
 from .eigen import (
+    Eigenvalues,
     TensorBidiagonal,
     TensorEigh,
+    TensorHessenberg,
     TensorSVD,
+    TensorSchur,
     TensorTridiagonal,
     eigh,
+    eigvals,
     eigvalsh,
     gebrd,
+    hessenberg,
     matrix_rank,
+    schur,
     svd,
     svdvals,
     sytrd,
