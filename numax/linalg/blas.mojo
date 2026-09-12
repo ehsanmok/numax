@@ -607,19 +607,6 @@ def matmul[
 
     Raises when `a`'s columns and `b`'s rows disagree, which is the check
     the static overload gets from the type system for free.
-
-    **A single output column is padded first**, for the reason `matvec`
-    gives at length: MAX routes `n == 1` to its GEMV kernel, which reads
-    the output in whole SIMD vectors without masking the tail, so an `m`
-    that is not a multiple of the lane count runs off the end of the
-    allocation. It is a crash rather than a wrong answer, and it is
-    architecture-dependent -- `float64` on Apple's NEON has two lanes, so
-    every even `m` is aligned and the fault never shows there, while the
-    same call dies on an x86-64 runner at four or eight. `matvec` grows
-    the matrix for its own static shapes; this does the same when the
-    extents are only known at run time, which is the path `tensordot`
-    reaches whenever the contraction leaves one column. A workaround for
-    the pinned `max ==26.5`, to go when MAX's GEMV masks its own tail.
     """
     if a.dim[1]() != b.dim[0]():
         raise Error(
@@ -633,33 +620,9 @@ def matmul[
             b.dim[1](),
         )
     var ctx = a.context()
-    comptime lanes = simd_width_of[dtype]()
-    var rows = a.dim[0]()
-
-    if b.dim[1]() == 1 and rows % lanes != 0:
-        # Over-allocate the destination and hand MAX a view that claims
-        # only the real rows. The kernel writes whole vectors past the
-        # end; they land in slack this function allocated for exactly
-        # that, rather than in whatever followed the buffer. Nothing is
-        # copied: the result is the same storage read at the honest
-        # shape, which is the retyping `tensordot` above does anyway.
-        var padded_rows = ((rows + lanes - 1) // lanes) * lanes
-        var slack = zeros_dyn[dtype, 2](padded_rows, 1, ctx=ctx)
-        var sv = slack.view()
-        var honest = TileTensor(
-            sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, 1))
-        )
-        _max_matmul[target=_target[gpu]()](honest, a.view(), b.view(), ctx)
-        ctx.synchronize()
-        return Dynamic[dtype, 2](
-            slack.buffer.copy(),
-            row_major(_dyn_shape[2](rows, 1)),
-            slack.host_addressable,
-        )
-
-    var result = zeros_dyn[dtype, 2](rows, b.dim[1](), ctx=ctx)
+    var result = zeros_dyn[dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
     var c = result.view()
-    _max_matmul[target=_target[gpu]()](c, a.view(), b.view(), ctx)
+    _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
     ctx.synchronize()
     return result^
 
@@ -813,6 +776,56 @@ def tensordot[
     var b2 = Dynamic[dtype, 2](
         b.buffer.copy(), row_major(_dyn_shape[2](k, n)), b.host_addressable
     )
+
+    # A contraction that leaves one column is a matrix-vector product, and
+    # that is the one shape not to hand to `matmul`: MAX routes `n == 1`
+    # to a GEMV kernel that stores whole SIMD vectors with no masked tail,
+    # so a row count that is not a multiple of the lane width comes back
+    # with the tail wrong -- uninitialized memory here, and on a machine
+    # with wider lanes than the one this was written on, a crash. The
+    # arithmetic saved is nothing: `m * k` multiply-adds is a BLAS-2 shape
+    # that no GEMM accelerates, so numax writes it as one `elementwise`
+    # over the output and reads both operands through flat rank-1 views,
+    # which is the indexing that stays correct at every extent.
+    if n == 1:
+        var ctx = a.context()
+        var out = zeros_dyn[dtype, 1](m, ctx=ctx)
+        var av = a2.view()
+        var bv = b2.view()
+        var flat_a = TileTensor(
+            av.ptr_at_offset(Coord(0, 0)), row_major(Coord(m * k))
+        )
+        var flat_b = TileTensor(
+            bv.ptr_at_offset(Coord(0, 0)), row_major(Coord(k))
+        )
+        var flat_out = out.view()
+
+        @always_inline
+        def contract[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var flat_a, var flat_b, var flat_out, var k}:
+            var i = coord_to_index_list(coord)[0]
+            var total = Scalar[dtype](0)
+            for j in range(k):
+                total += flat_a[Coord(i * k + j)] * flat_b[Coord(j)]
+            flat_out.store[1](coord, total)
+
+        elementwise[simd_width=1, target=_target[gpu]()](
+            contract, Coord(m), ctx
+        )
+        ctx.synchronize()
+
+        var extents_1 = List[Int](capacity=rank)
+        for d in range(ra - axes):
+            extents_1.append(a.dim_at(d))
+        for d in range(rb - axes):
+            extents_1.append(b.dim_at(axes + d))
+        return Dynamic[dtype, rank](
+            out.buffer.copy(),
+            row_major(_dyn_shape_from[rank](extents_1)),
+            out.host_addressable,
+        )
+
     var c = matmul[dtype, gpu](a2, b2)
 
     var extents = List[Int](capacity=rank)
