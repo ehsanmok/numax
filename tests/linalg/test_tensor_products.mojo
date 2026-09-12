@@ -136,6 +136,39 @@ def test_tensordot_contracts_two_axes_of_a_rank_three_tensor() raises:
                 )
 
 
+def test_tensordot_leaves_one_column_at_every_row_count() raises:
+    """A contraction that leaves a single output column is a GEMV, and
+    MAX's GEMV reads the output in whole SIMD vectors without masking the
+    tail -- so a row count that is not a multiple of the lane width used
+    to run off the end of the allocation and crash.
+
+    That makes it an architecture-dependent fault rather than a wrong
+    number: `float64` has two lanes on Apple's NEON, where every even row
+    count is aligned and nothing shows, and four or eight on x86-64,
+    where the `m = 2` case below killed the Linux CI runner outright.
+    Sweeping the row count from one to nine covers both sides of every
+    lane width numax is built for, so this fails on whichever machine has
+    the tail the padding is missing.
+    """
+
+    @parameter
+    for rows in range(1, 10):
+        var values = List[Float64](capacity=rows * 4)
+        for i in range(rows * 4):
+            values.append(Float64(i) * 0.25 - 1.0)
+        var a = _filled[rows, 2, 2](values)
+        var b = _filled[2, 2]([1.5, -0.5, 2.0, 0.25])
+        var c = tensordot[axes=2](a, b)
+        assert_equal(c.dim_at(0), rows)
+        var got = c.to_host()
+        var weights: List[Float64] = [1.5, -0.5, 2.0, 0.25]
+        for i in range(rows):
+            var want = 0.0
+            for j in range(4):
+                want += values[i * 4 + j] * weights[j]
+            assert_almost_equal(Float64(got[i]), want, atol=1e-12)
+
+
 def test_tensordot_raises_on_mismatched_contracted_extents() raises:
     var a = _ramp[2, 3](6, 0.0)
     var b = _ramp[4, 2](8, 0.0)

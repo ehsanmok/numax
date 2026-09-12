@@ -607,6 +607,19 @@ def matmul[
 
     Raises when `a`'s columns and `b`'s rows disagree, which is the check
     the static overload gets from the type system for free.
+
+    **A single output column is padded first**, for the reason `matvec`
+    gives at length: MAX routes `n == 1` to its GEMV kernel, which reads
+    the output in whole SIMD vectors without masking the tail, so an `m`
+    that is not a multiple of the lane count runs off the end of the
+    allocation. It is a crash rather than a wrong answer, and it is
+    architecture-dependent -- `float64` on Apple's NEON has two lanes, so
+    every even `m` is aligned and the fault never shows there, while the
+    same call dies on an x86-64 runner at four or eight. `matvec` grows
+    the matrix for its own static shapes; this does the same when the
+    extents are only known at run time, which is the path `tensordot`
+    reaches whenever the contraction leaves one column. A workaround for
+    the pinned `max ==26.5`, to go when MAX's GEMV masks its own tail.
     """
     if a.dim[1]() != b.dim[0]():
         raise Error(
@@ -620,9 +633,33 @@ def matmul[
             b.dim[1](),
         )
     var ctx = a.context()
-    var result = zeros_dyn[dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
+    comptime lanes = simd_width_of[dtype]()
+    var rows = a.dim[0]()
+
+    if b.dim[1]() == 1 and rows % lanes != 0:
+        # Over-allocate the destination and hand MAX a view that claims
+        # only the real rows. The kernel writes whole vectors past the
+        # end; they land in slack this function allocated for exactly
+        # that, rather than in whatever followed the buffer. Nothing is
+        # copied: the result is the same storage read at the honest
+        # shape, which is the retyping `tensordot` above does anyway.
+        var padded_rows = ((rows + lanes - 1) // lanes) * lanes
+        var slack = zeros_dyn[dtype, 2](padded_rows, 1, ctx=ctx)
+        var sv = slack.view()
+        var honest = TileTensor(
+            sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, 1))
+        )
+        _max_matmul[target=_target[gpu]()](honest, a.view(), b.view(), ctx)
+        ctx.synchronize()
+        return Dynamic[dtype, 2](
+            slack.buffer.copy(),
+            row_major(_dyn_shape[2](rows, 1)),
+            slack.host_addressable,
+        )
+
+    var result = zeros_dyn[dtype, 2](rows, b.dim[1](), ctx=ctx)
     var c = result.view()
-    _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
+    _max_matmul[target=_target[gpu]()](c, a.view(), b.view(), ctx)
     ctx.synchronize()
     return result^
 
