@@ -10,30 +10,26 @@ ways:
   `numax.integrate.array.rk4` integrates every trajectory via `numax.core.tensor.map` at
   native SIMD width -- no different from `ode.mojo`'s own CPU path once the
   initial conditions exist.
-- **GPU**: initial conditions are drawn *on-device*, one value per thread,
-  via `std.random.philox.Random` called directly inside a `map[gpu=True]`
-  kernel body -- not through `numax.stats.uniform`, which is host-only
-  (see `numax/stats/random.mojo`'s own docstring for why). Each thread seeds its
-  stream from a shared seed plus its own flat index, so every thread's
-  draw is independent and the whole ensemble is reproducible from one
-  scalar seed with no shared mutable state -- exactly the property
-  `std.random`'s global generator cannot offer inside a kernel.
+- **GPU**: the same call with `gpu=True` and a device context,
+  `uniform[dtype, n, gpu=True](-2, 2, ctx=gpu)`, draws the initial
+  conditions *on-device*, one thread per element, with no host round
+  trip: `numax.stats.random` fills from `std.random.philox.Random` seeded
+  per element from one scalar seed, so every thread's draw is independent
+  and the whole ensemble is reproducible. The same `Generator(seed)` on
+  the host produces the identical tensor, bit for bit.
 
-Both ensembles integrate the same equation and are checked against each
-other in distribution (sample mean of the final states), not
-element-for-element -- the CPU and GPU paths draw from different generators
-(`std.random.rand` vs. `std.random.philox.Random`) on purpose, so they are
-expected to produce different individual trajectories from the same seed
-value, not identical ones.
+Both ensembles integrate the same equation. The initial conditions are
+checked element for element -- the host `Generator` and the device fill
+share one stream -- and the final states in distribution (sample mean),
+since the RK4 steps round differently on the two processors.
 """
 
 from max.gpu.host import DeviceContext
-from std.random import Random
 
 from numax import Plain, Static
 from numax.core.numeric import FloatLike
 from numax.integrate.array import rk4
-from numax.stats import seed, uniform
+from numax.stats import Generator, uniform
 from numax.core.tensor import map
 
 comptime dtype = DType.float32
@@ -57,23 +53,6 @@ def trajectory_step[w: Int](y0: SIMD[dtype, w]) -> SIMD[dtype, w]:
     ).v
 
 
-def gpu_initial_condition_step[w: Int](idx: SIMD[dtype, w]) -> SIMD[dtype, w]:
-    """One GPU thread, one independent draw from `[-2, 2)`.
-
-    `idx` is this thread's own flat position (fed in as a plain index
-    tensor, since `map`'s `step` only ever sees the value at its own
-    position) -- used as `Random`'s per-thread `offset`, so every thread's
-    stream is independent even though every thread shares the same `seed`.
-    """
-    var result = SIMD[dtype, w](0)
-    for lane in range(w):
-        var offset = UInt64(idx[lane])
-        var r = Random(seed=rng_seed, offset=offset)
-        var u = r.step_uniform()[0]
-        result[lane] = Scalar[dtype](u) * 4.0 - 2.0
-    return result
-
-
 def sample_mean(xs: List[Scalar[dtype]]) -> Float64:
     var total = Float64(0)
     for i in range(len(xs)):
@@ -83,9 +62,9 @@ def sample_mean(xs: List[Scalar[dtype]]) -> Float64:
 
 def main() raises:
     # --- CPU: numax.stats draws the initial conditions ---
-    seed(2026)
     var cpu = DeviceContext(api="cpu")
-    var y0_cpu = uniform[dtype, n](-2, 2, ctx=cpu)
+    var rng = Generator(seed=Int(rng_seed))
+    var y0_cpu = rng.uniform[dtype, n](-2, 2, ctx=cpu)
 
     comptime Ensemble = Static[dtype, n]
     var yt_cpu = Ensemble(cpu)
@@ -96,42 +75,30 @@ def main() raises:
     print("  sample mean of y(1):", sample_mean(yt_cpu.to_host()))
     print()
 
-    # --- GPU: std.random.philox draws the initial conditions on-device ---
+    # --- GPU: the same draw, filled on the device ---
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 
-    var flat_indices = List[Scalar[dtype]](capacity=n)
-    for i in range(n):
-        flat_indices.append(Scalar[dtype](i))
-    var idx_tensor = Ensemble(ctx)
-    # One staged write for the whole buffer; `idx_tensor[i] = ...` would map
-    # the device to the host once per element.
-    idx_tensor.copy_from_host(flat_indices)
-
-    var y0_gpu = Ensemble(ctx)
+    var device_rng = Generator(seed=Int(rng_seed))
+    var y0_gpu = device_rng.uniform[dtype, n, gpu=True](-2, 2, ctx=ctx)
     var yt_gpu = Ensemble(ctx)
 
     comptime block_size = 256
     comptime num_blocks = (n + block_size - 1) // block_size
-
-    ctx.enqueue_function[
-        map[
-            LayoutType=Ensemble.LayoutType,
-            step=gpu_initial_condition_step,
-            gpu=True,
-        ]
-    ](
-        idx_tensor.view(),
-        y0_gpu.view(),
-        grid_dim=num_blocks,
-        block_dim=block_size,
-    )
     ctx.enqueue_function[
         map[LayoutType=Ensemble.LayoutType, step=trajectory_step, gpu=True]
     ](y0_gpu.view(), yt_gpu.view(), grid_dim=num_blocks, block_dim=block_size)
     ctx.synchronize()
 
     var y0_gpu_host = y0_gpu.to_host()
+    var y0_cpu_host = y0_cpu.to_host()
+    var identical = 0
+    for i in range(n):
+        if y0_gpu_host[i] == y0_cpu_host[i]:
+            identical += 1
+    print(
+        "initial conditions identical on host and device:", identical, "of", n
+    )
     var yt_gpu_host = yt_gpu.to_host()
 
     print("GPU ensemble:", n, "trajectories, initial conditions ~ U(-2, 2)")
@@ -139,8 +106,7 @@ def main() raises:
     print("  sample mean of y(1):", sample_mean(yt_gpu_host))
     print()
     print(
-        "Both ensembles draw from the same theoretical distribution, so"
-        " their sample means agree within Monte Carlo noise -- not"
-        " bit-for-bit, since the CPU path used `std.random.rand` and the"
-        " GPU path used `std.random.philox.Random` directly."
+        "The initial conditions are one Philox stream read on two"
+        " processors, so they agree bit for bit; the integrated states agree"
+        " in distribution, since RK4 rounds differently on each."
     )

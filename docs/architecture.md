@@ -269,8 +269,9 @@ survey of what MAX does ship.
 - **`numax.io`, `numax.stats.random`** — `nmx.save`/`nmx.load`, a binary format
   of numax's own since MAX ships no array I/O, plus `numpy.save`/`numpy.load`
   for `.npy` interchange, so a program ported from NumPy can ingest the files
-  it already has; and sampling over `std.random` on the host, with `Generator`
-  for a named stream and no `Random[FloatLike]` conformer, because RNG is not
+  it already has; and sampling from MAX's Philox stream on the host or the
+  device (`gpu=True`), the same tensor either way, with `Generator` for a
+  named stream and no `Random[FloatLike]` conformer, because RNG is not
   differentiable.
 
 ## Static and runtime shapes

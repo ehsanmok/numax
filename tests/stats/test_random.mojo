@@ -1,10 +1,15 @@
-"""Tests for `numax.stats`.
+"""Tests for `numax.stats.random`.
 
 `uniform`/`normal`/`exponential` are checked two ways: fixed-seed
 reproducibility (two draws separated only by the same `seed(...)` call
 must match exactly), and the sample mean/stddev of a large draw landing
 within tolerance of the distribution's theoretical moments. `seed` itself
-is exercised implicitly by every other test here.
+is exercised implicitly by every other test here. The stream layout the
+module docstring promises -- element `i` is word `i` of
+`Random(seed, offset=i // 4).step()` -- is pinned against `std.random`'s
+Philox directly, which is also what makes the host and device fills agree
+bit for bit (the device half of that claim is checked on Metal by hand,
+since this suite runs on the CPU).
 """
 
 from std.testing import (
@@ -16,7 +21,17 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.stats import Generator, exponential, normal, seed, uniform
+from std.random import Random
+
+from numax.stats import (
+    Generator,
+    exponential,
+    normal,
+    randbool,
+    randint,
+    seed,
+    uniform,
+)
 
 comptime dtype = DType.float32
 
@@ -163,3 +178,89 @@ def test_a_generator_is_unaffected_by_the_global_seed() raises:
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+def test_the_stream_layout_is_philox_word_i() raises:
+    """A `float32` element `i` is the top 24 bits of word `i % 4` of Philox
+    step `i // 4`, scaled by `2^-24`; a `float64` element takes the two
+    words of pair `i % 2` of step `i // 2`."""
+    var rng = Generator(seed=99)
+    var xs = rng.uniform[DType.float32, 12](0, 1).to_host()
+    for i in range(12):
+        var r = Random(seed=UInt64(99), offset=UInt64(i // 4))
+        var word = r.step()[i % 4]
+        var want = Float32(word >> 8) * 5.960464477539063e-08
+        assert_equal(xs[i], want)
+        assert_true(xs[i] >= 0.0 and xs[i] < 1.0)
+    var rng64 = Generator(seed=99)
+    var ys = rng64.uniform[DType.float64, 6](0, 1).to_host()
+    for i in range(6):
+        var r = Random(seed=UInt64(99), offset=UInt64(i // 2))
+        var words = r.step()
+        var pair = 2 * (i % 2)
+        var bits = (UInt64(words[pair]) << 32) | UInt64(words[pair + 1])
+        var want = Float64(bits >> 11) * 1.1102230246251565e-16
+        assert_equal(ys[i], want)
+
+
+def test_a_generator_ignores_the_global_seed() raises:
+    seed(1)
+    var ga = Generator(seed=5)
+    var a = ga.uniform[dtype, 8]().to_host()
+    seed(2)
+    var gb = Generator(seed=5)
+    var b = gb.uniform[dtype, 8]().to_host()
+    for i in range(8):
+        assert_equal(a[i], b[i])
+    var gc = Generator(seed=6)
+    var c = gc.uniform[dtype, 8]().to_host()
+    var differ = 0
+    for i in range(8):
+        if a[i] != c[i]:
+            differ += 1
+    assert_true(differ >= 7, msg="two seeds gave the same stream")
+
+
+def test_multi_dimensional_shapes_fill_every_element() raises:
+    var ctx = DeviceContext(api="cpu")
+    var rng = Generator(seed=3)
+    var xs = rng.uniform[dtype, 4, 8](10, 11, ctx=ctx)
+    assert_equal(xs.size(), 32)
+    var flat = xs.to_host()
+    for i in range(32):
+        assert_true(flat[i] >= 10.0 and flat[i] < 11.0)
+
+
+def test_randint_is_integral_and_in_range() raises:
+    var ctx = DeviceContext(api="cpu")
+    seed(8)
+    comptime n = 4000
+    var xs = randint[DType.int32, n](-3, 4, ctx=ctx).to_host()
+    var seen = List[Int](length=7, fill=0)
+    for i in range(n):
+        var v = Int(xs[i])
+        assert_true(v >= -3 and v < 4)
+        seen[v + 3] += 1
+    for k in range(7):
+        # Each of the seven values should appear about n/7 ~= 571 times.
+        assert_true(
+            seen[k] > 400 and seen[k] < 750,
+            msg=String("bucket ", k, ": ", seen[k]),
+        )
+    var fs = randint[DType.float64, 8](0, 100, ctx=ctx).to_host()
+    for i in range(8):
+        assert_equal(fs[i], Float64(Int(fs[i])))
+
+
+def test_randbool_hits_its_probability() raises:
+    var ctx = DeviceContext(api="cpu")
+    seed(9)
+    comptime n = 20_000
+    var xs = randbool[DType.bool, n](0.3, ctx=ctx).to_host()
+    var trues = 0
+    for i in range(n):
+        if xs[i]:
+            trues += 1
+    var fraction = Float64(trues) / Float64(n)
+    # stddev of the fraction is sqrt(0.3 * 0.7 / 20000) ~= 0.0032.
+    assert_true(abs(fraction - 0.3) < 0.02, msg=String("fraction ", fraction))
