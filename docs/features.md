@@ -281,11 +281,14 @@ front.
 
 | Surface — over `Tensor`, from `numax.optimize` | Tier | Where |
 |---|---|---|
-| `minimize` — `scipy.optimize.minimize`, `method="bfgs"` (an `n × n` inverse Hessian kept on the device) or `"cg"` (one direction vector), returning `TensorMinimizeResult` | 2 | [`optimize/minimize.mojo`](../numax/optimize/minimize.mojo) |
+| `minimize` — `scipy.optimize.minimize`, `method="bfgs"` (an `n × n` inverse Hessian kept on the device), `"l-bfgs"` (the last `memory` pairs, no matrix), `"cg"` (one direction vector) or `"powell"` (derivative-free, no `jac`), returning `TensorMinimizeResult`; an overload with `lower`/`upper` minimizes over a box by projection | 2 | [`optimize/minimize.mojo`](../numax/optimize/minimize.mojo) |
+| `root` — `scipy.optimize.root` for a square system, `method="newton"` (the step through `numax.linalg.solve`) or `"lm"` (through `least_squares`), returning `TensorRootResult` | 2 | [`optimize/root.mojo`](../numax/optimize/root.mojo) |
+| `nnls`, `lsq_linear` — `scipy.optimize.nnls` and `lsq_linear(bounds=...)`, the normal equations formed on the device and a projected Newton active-set iteration on the host, returning `TensorLinearResult` | 2 | [`optimize/linear.mojo`](../numax/optimize/linear.mojo) |
 | `least_squares`, `curve_fit` — Levenberg-Marquardt, the damped step through `numax.linalg.lstsq`'s blocked device-resident QR rather than the normal equations, returning `TensorFitResult` | 2 | [`optimize/least_squares.mojo`](../numax/optimize/least_squares.mojo) |
 
-This tier takes the derivative as an argument — `jac` for `minimize`,
-`jacobian` for the fits — which the `Array` tier does not. A `Tensor` is
+This tier takes the derivative as an argument — `jac` for `minimize` and
+`root`, `jacobian` for the fits — which the `Array` tier does not
+(`"powell"` is the exception, and takes none). A `Tensor` is
 `dtype`-monomorphic, so no `Gradient` fits in one, and a finite difference
 would be a silent accuracy regression against the sibling of the same name.
 It earns its keep when the vectors are long: the driver's bookkeeping is
