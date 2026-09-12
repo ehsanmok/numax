@@ -8,22 +8,18 @@ Mojo can't retroactively add a trait to a type from outside its defining
 module, so a bare `SIMD` can't conform to `FloatLike` directly -- `Plain` is
 the thin wrapper that lets it. Instantiating a `FloatLike` kernel with `Plain`
 is the baseline: no derivative, no extra precision, just the hardware.
+
+`exp`, `ln` and `erf` come from `numax.core.libm` rather than `std.math`:
+at float64 the standard library's are `1e5`, `9e6` and `2e8` ulp off at
+the pinned release (its own `erfc`, `sin`, `cos` and `sqrt` are within a
+few ulp and are used directly), and every accuracy row in the library
+sat on that floor. `libm` is fdlibm's algorithms in SIMD form, within one
+ulp, and defers to `std.math` at every other dtype.
 """
 
-from std.math import (
-    ceil,
-    copysign,
-    cos,
-    erf,
-    erfc,
-    exp,
-    floor,
-    log,
-    sin,
-    sqrt,
-    trunc,
-)
+from std.math import ceil, copysign, cos, erfc, floor, sin, sqrt, trunc
 
+from .libm import erf, exp, log
 from .numeric import FloatLike
 
 

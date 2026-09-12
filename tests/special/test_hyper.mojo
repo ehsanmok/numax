@@ -33,14 +33,14 @@ def test_riemann_zeta_matches_mpmath_on_both_sides_of_the_pole() raises:
         1.0000000009313275,
     ]
     for i in range(8):
-        assert_almost_equal(s(zeta(pv(xs[i]))), want[i], rtol=1e-8)
+        assert_almost_equal(s(zeta(pv(xs[i]))), want[i], rtol=1e-12)
     # Below the pole: the same formula, no reflection.
-    assert_almost_equal(s(zeta(pv(1.1))), 10.584448464950801, rtol=1e-8)
-    assert_almost_equal(s(zeta(pv(0.5))), -1.4603545088095868, rtol=1e-8)
+    assert_almost_equal(s(zeta(pv(1.1))), 10.584448464950801, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(0.5))), -1.4603545088095868, rtol=1e-10)
     assert_almost_equal(s(zeta(pv(0.0))), -0.5, atol=1e-9)
-    assert_almost_equal(s(zeta(pv(-0.5))), -0.20788622497735457, rtol=1e-8)
-    assert_almost_equal(s(zeta(pv(-1.5))), -0.025485201889833036, rtol=1e-7)
-    assert_almost_equal(s(zeta(pv(-2.5))), 0.008516928777850331, rtol=1e-7)
+    assert_almost_equal(s(zeta(pv(-0.5))), -0.20788622497735457, rtol=1e-10)
+    assert_almost_equal(s(zeta(pv(-1.5))), -0.025485201889833036, rtol=1e-9)
+    assert_almost_equal(s(zeta(pv(-2.5))), 0.008516928777850331, rtol=1e-9)
     # zeta(-1) = -1/12, zeta(2) = pi^2 / 6.
     assert_almost_equal(s(zeta(pv(-1.0))), -1.0 / 12.0, atol=1e-9)
     assert_almost_equal(s(zeta(pv(2.0))), 1.6449340668482264, rtol=1e-9)
@@ -48,10 +48,10 @@ def test_riemann_zeta_matches_mpmath_on_both_sides_of_the_pole() raises:
 
 def test_hurwitz_zeta_matches_mpmath_and_reduces_to_riemann() raises:
     assert_almost_equal(
-        s(zeta(pv(2.0), pv(3.0))), 0.39493406684822646, rtol=1e-8
+        s(zeta(pv(2.0), pv(3.0))), 0.39493406684822646, rtol=1e-12
     )
     assert_almost_equal(
-        s(zeta(pv(3.5), pv(0.5))), 11.620804663441895, rtol=1e-8
+        s(zeta(pv(3.5), pv(0.5))), 11.620804663441895, rtol=1e-12
     )
     assert_almost_equal(s(zeta(pv(2.5), pv(1.0))), s(zeta(pv(2.5))), rtol=1e-13)
 

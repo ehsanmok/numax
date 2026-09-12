@@ -43,9 +43,9 @@ def erfinv[T: FloatLike](y: T) -> T:
 
     Tier 1. A starting guess, then three Newton steps against the trait's
     own `erf`/`erfc`, so the result is limited by those two functions'
-    accuracy rather than the guess's -- at `Plain` that is `std.math`'s
-    floor, about `2e-8` absolute for `erf` at `float64` (the inherited
-    floor `findings.mdc` records), a few ULP for `erfc` in the tail.
+    accuracy rather than the guess's -- at `Plain` that is one ulp for
+    `erf` (`numax.core.libm`) and a few ulp for `erfc`, and `pixi run
+    accuracy` reads `erfinv` at `1.4e-15` relative.
 
     The guess has two regions on `w = -ln((1 - y)(1 + y))`. Below `w = 5`
     it is Giles's central polynomial (*Approximating the erfinv function*,

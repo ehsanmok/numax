@@ -564,8 +564,12 @@ needs the extent in the type.
 ## Accuracy
 
 Every approximation documents an error bound, and `pixi run accuracy` measures
-it against checked-in [mpmath](https://mpmath.org/) references at 50 digits
-(`erf`'s A&S 7.1.26 bound of ~1.5e-7 measures 1.38e-07). One caveat: Mojo's
-`std.math` `exp`/`log`/`erf` are not correctly rounded at `float64`, so every
-function built on them inherits that floor — invisible at `float32`. Details:
+it against checked-in [mpmath](https://mpmath.org/) references at 50 digits.
+`Plain`'s float64 `exp`, `ln` and `erf` are numax's own
+([`numax/core/libm.mojo`](../numax/core/libm.mojo), fdlibm's algorithms in
+SIMD form, within one ulp) because Mojo's `std.math` versions are not
+correctly rounded at `float64`; with them in place the special functions
+measure at `1e-15` to `1e-13` relative, and the A&S polynomial families
+(`j0`..`y1`, the elliptic integrals, `default_erf_approx`) at the bounds
+their sources quote. Details:
 [`bench/accuracy/README.md`](../bench/accuracy/README.md).

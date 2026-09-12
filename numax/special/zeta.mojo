@@ -14,11 +14,12 @@ infinite as it should.
 Checked in mpmath before transcription at `N = 10, M = 8`: within `1e-18`
 of `zeta(s)` for `s` in `[-2.5, 30]` and of `zeta(s, q)` at `q = 0.5` and
 `q = 3` -- far below double precision, so what `pixi run accuracy`
-measures is `exp`'s floor through the `(k+q)^{-s} = exp(-s ln(k+q))`
-powers, not the formula's. The Riemann overload takes its logarithms from
-an exact compile-time table for that reason; the Hurwitz one has to take
-them at run time and inherits `ln`'s larger floor as well, amplified below
-`s = 1` where the answer is a small difference of large terms. Further from the origin than `s =
+measures is rounding through the `(k+q)^{-s} = exp(-s ln(k+q))` powers,
+not the formula's error: `6e-16` relative above the pole, `8e-11` below
+it, where `zeta(-2.5) = 0.0085` is a small difference of terms near `300`
+and each term's last bit is `1e-13` of the answer. The Riemann overload
+takes its logarithms from an exact compile-time table; the Hurwitz one
+takes them at run time. Further from the origin than `s =
 -2.5` the Bernoulli corrections grow and `M = 8` is no longer enough; the
 formula is meant for the half-plane the Dirichlet series and its first
 continuation cover, which is what SciPy's `zeta` covers too (it returns
@@ -38,9 +39,10 @@ comptime _M = 8
 comptime _TINY = 1e-300
 
 # `ln k` for `k = 1 .. 11`, so the Riemann overload's powers `k^{-s} =
-# exp(-s ln k)` take an exact logarithm rather than `std.math.log`'s
-# (`2e-9` relative, `bench/accuracy/README.md`), which at `s = -2.5` on a
-# term of size 300 would cost `1e-6` absolute in a `0.0085` answer.
+# exp(-s ln k)` take a logarithm correct to the last bit rather than a
+# rounded one: at `s = -2.5` each term is near 300 and the answer is
+# `0.0085`, so half an ulp of `ln k` is already `4e-14` of the answer,
+# and the table costs nothing.
 comptime _LN: Array[Float64, 11] = [
     0.0,
     0.6931471805599453,

@@ -1,13 +1,9 @@
 """Tests for the exponential, sine, cosine and Fresnel integrals against
 mpmath at 25 digits, on both sides of every blend threshold, plus the
-symmetries and the derivatives the definitions imply.
-
-The tolerances differ by function on purpose. `Si` and the Fresnel pair
-never call `ln` and are held to `1e-13`; `exp1`, `expi`, `expn` and `Ci`
-have a `ln x` term in their series region and inherit `std.math.log`'s
-`2e-9` relative floor (`bench/accuracy/README.md`), so they are held to
-`1e-8` relative -- which is where the algorithm's own error would be
-visible if it were larger.
+symmetries and the derivatives the definitions imply. Every function is
+held to `1e-13` relative: the series and continued fractions are at the
+rounding floor, and `Plain`'s `ln` (`numax.core.libm`) no longer costs the
+logarithmic ones anything.
 """
 
 from std.math import exp as _exp, sin as _sin
@@ -41,7 +37,7 @@ def test_exp1_matches_mpmath_across_the_blend() raises:
         9.835525290649882e-11,
     ]
     for i in range(7):
-        assert_almost_equal(s(exp1(pv(xs[i]))), want[i], rtol=1e-8, atol=1e-20)
+        assert_almost_equal(s(exp1(pv(xs[i]))), want[i], rtol=1e-13, atol=1e-20)
 
 
 def test_expi_matches_mpmath_on_both_sides_of_zero() raises:
@@ -66,10 +62,10 @@ def test_expi_matches_mpmath_on_both_sides_of_zero() raises:
     ]
     for i in range(7):
         assert_almost_equal(
-            s(expi(pv(xs[i]))), positive[i], rtol=1e-8, atol=1e-9
+            s(expi(pv(xs[i]))), positive[i], rtol=1e-13, atol=1e-9
         )
         assert_almost_equal(
-            s(expi(pv(-xs[i]))), negative[i], rtol=1e-8, atol=1e-20
+            s(expi(pv(-xs[i]))), negative[i], rtol=1e-13, atol=1e-20
         )
 
 
@@ -105,12 +101,16 @@ def test_expn_matches_mpmath() raises:
         8.307130599417691e-11,
     ]
     for i in range(7):
-        assert_almost_equal(s(expn(2, pv(xs[i]))), n2[i], rtol=1e-8, atol=1e-20)
-        assert_almost_equal(s(expn(5, pv(xs[i]))), n5[i], rtol=1e-8, atol=1e-20)
+        assert_almost_equal(
+            s(expn(2, pv(xs[i]))), n2[i], rtol=1e-13, atol=1e-20
+        )
+        assert_almost_equal(
+            s(expn(5, pv(xs[i]))), n5[i], rtol=1e-13, atol=1e-20
+        )
     assert_almost_equal(s(expn(0, pv(2.0))), 0.06766764161830635, rtol=1e-13)
-    assert_almost_equal(s(expn(1, pv(2.0))), 0.04890051070806112, rtol=1e-9)
+    assert_almost_equal(s(expn(1, pv(2.0))), 0.04890051070806112, rtol=1e-13)
     # `expn(1, x)` is `exp1(x)`: two routes to one function agree.
-    assert_almost_equal(s(expn(1, pv(0.7))), s(exp1(pv(0.7))), rtol=1e-9)
+    assert_almost_equal(s(expn(1, pv(0.7))), s(exp1(pv(0.7))), rtol=1e-13)
 
 
 def test_sici_matches_mpmath_and_is_odd_in_si() raises:
@@ -138,10 +138,10 @@ def test_sici_matches_mpmath_and_is_odd_in_si() raises:
     for i in range(8):
         var both = sici(pv(xs[i]))
         assert_almost_equal(s(both[0]), si[i], atol=1e-13)
-        assert_almost_equal(s(both[1]), ci[i], rtol=1e-8, atol=1e-9)
+        assert_almost_equal(s(both[1]), ci[i], rtol=1e-13, atol=1e-9)
     var negative = sici(pv(-2.5))
     assert_almost_equal(s(negative[0]), -1.7785201734438267, atol=1e-13)
-    assert_almost_equal(s(negative[1]), 0.2858711963653835, rtol=1e-8)
+    assert_almost_equal(s(negative[1]), 0.2858711963653835, rtol=1e-13)
     # d/dx Si(x) = sin(x) / x, on both sides of the threshold.
     var below = sici(D(pv(1.5), pv(1.0)))
     assert_almost_equal(Float64(below[0].deriv.v), _sin(1.5) / 1.5, atol=1e-12)

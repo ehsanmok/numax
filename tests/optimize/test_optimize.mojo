@@ -8,7 +8,8 @@ difference rather than taking it on faith.
 """
 
 from std.collections import Array
-from std.math import cos as cos_f64, exp as exp_f64, pi, sin as sin_f64
+from std.math import cos as cos_f64, pi, sin as sin_f64
+from numax.core.libm import exp as exp_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Gradient, Plain
@@ -425,8 +426,9 @@ def test_the_fitted_jacobian_is_exact_where_a_difference_is_not() raises:
     var shifted = Float64(decay[P](P(1.5), plain^).v)
     var difference_error = abs((shifted - base) / h - exact)
 
-    # Both routes call the same `exp`, so the AD result differs from the
-    # closed form only by the rounding of one multiply.
+    # Both routes call the same `exp` -- numax's own, from `numax.core.libm`,
+    # not `std.math`'s -- so the AD result differs from the closed form only
+    # by the rounding of one multiply.
     assert_true(ad_error < 1e-15)
     assert_true(difference_error > 1e-9)
     assert_true(difference_error > ad_error * 1e6)

@@ -43,12 +43,10 @@ from std.math import (
     copysign as _std_copysign,
     cos as _std_cos,
     cosh as _std_cosh,
-    exp as _std_exp,
     exp2 as _std_exp2,
     expm1 as _std_expm1,
     floor as _std_floor,
     hypot as _std_hypot,
-    log as _std_log,
     log10 as _std_log10,
     log1p as _std_log1p,
     log2 as _std_log2,
@@ -64,6 +62,11 @@ from std.math import (
 )
 
 from layout.tile_layout import TensorLayout, row_major
+
+# `exp` and `log` at float64 are numax's own one-ulp versions; `std.math`'s
+# are `1e5` and `9e6` ulp off there (`numax/core/libm.mojo`).
+from .libm import exp as _std_exp
+from .libm import log as _std_log
 from .array import (
     Dynamic,
     Static,

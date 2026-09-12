@@ -223,6 +223,7 @@ test-beta = "mojo -I . tests/special/test_beta.mojo"
 test-hessian = "mojo -I . tests/core/test_hessian.mojo"
 test-sqrt = "mojo -I . tests/core/test_sqrt.mojo"
 test-numeric = "mojo -I . tests/core/test_numeric.mojo"
+test-libm = "mojo -I . tests/core/test_libm.mojo"
 test-solve = "mojo -I . tests/optimize/test_solve.mojo"
 test-quadrature = "mojo -I . tests/integrate/test_quadrature.mojo"
 test-tensor-quadrature = "mojo -I . tests/integrate/test_tensor_quadrature.mojo"
@@ -310,6 +311,7 @@ tests = { depends-on = [
     "test-hessian",
     "test-sqrt",
 "test-numeric",
+"test-libm",
     "test-solve",
     "test-quadrature",
     "test-tensor-quadrature",

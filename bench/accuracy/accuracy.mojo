@@ -32,27 +32,15 @@ context, not indictments.
 
 ## Read the primitives section first
 
-The primitives are printed first because they are not context -- they are a
-floor under everything below them. This harness found that Mojo's
-`std.math` `exp`, `log`, and `erf` are *not* correctly rounded at float64:
-`exp(1.0)` comes back as `2.718281828459813` against a true
-`2.718281828459045`, wrong from the 13th significant digit. `sin` and
-`sqrt`, by contrast, are exact to the last bit.
-
-That matters for reading every other row. `gamma` is a 9-term Lanczos
-approximation that would be good to nearly full float64 in exact
-arithmetic, but it is built from `ln` and `exp`, so the ~4e-9 relative
-error reported for it is mostly inherited rather than its own. The same
-goes for `lgamma`, `lambertw`, the Bessel and elliptic families, and the
-incomplete gamma and beta functions. Their true algorithmic error is
-somewhere at or below what is printed, and this harness cannot separate the
-two without a correctly-rounded `exp`/`ln` to build on.
-
-None of this is a problem at the `dtype` `numax` is normally used at.
-Float32 has an epsilon of about 1.2e-7, so a 2e-9 primitive error is two
-orders of magnitude below the representable resolution and cannot be
-observed at all. It only becomes the limiting factor at float64, which is
-exactly where this harness operates in order to see the algorithms.
+The primitives are printed first because everything below is built on
+them. At float64 `Plain`'s `exp`, `ln` and `erf` are numax's own
+(`numax/core/libm.mojo`, fdlibm's algorithms in SIMD form) and measure at
+one ulp; `erfc`, `sin` and `sqrt` are `std.math`'s and are within a few
+ulp too. This harness is what found the need: at the pinned release
+`std.math`'s float64 `exp`, `log` and `erf` are `1e5`, `9e6` and `2e8` ulp
+off (`exp(1.0)` came back `2.718281828459813` against `2.718281828459045`),
+and until `libm` replaced them every row below sat on that floor rather
+than on its algorithm's error. The rows now read the algorithms.
 """
 
 from std.math import sqrt as std_sqrt
@@ -202,10 +190,10 @@ def main():
     )
 
     # --- Primitives ---------------------------------------------------
-    # First, because everything below inherits their error. See this
-    # module's docstring: `exp`/`ln` are not correctly rounded here, so the
-    # special functions built on them cannot be measured below that floor.
-    section("Primitives -- the floor under everything below")
+    # First, because everything below is built on them: `Plain.exp` and
+    # `Plain.ln` are `numax.core.libm`'s at float64, `sin`/`sqrt` are
+    # `std.math`'s, and all four should read at one ulp.
+    section("Primitives -- what everything below is built on")
 
     var s = Stats()
     var xs = materialize[EXP_MID_X]()
@@ -237,22 +225,22 @@ def main():
 
     # --- erf/erfc -----------------------------------------------------
     section("Error function")
-    # `Plain.erf` delegates to `std.math.erf`, so this measures libm rather
-    # than any `numax` approximation -- worth reporting precisely because
-    # near-zero ULP is the evidence that the delegation is real.
+    # `Plain.erf` is `numax.core.libm.erf` (fdlibm's rational form below
+    # `0.84375`, `1 - erfc` above); `erfc` is still `std.math`'s, which is
+    # within a few ulp. Near-zero ULP here is the evidence for both.
     s = Stats()
     xs = materialize[ERF_MID_X]()
     refs = materialize[ERF_MID_REF]()
     for i in range(ERF_MID_N):
         s.observe(xs[i], erf(p(xs[i])).v[0], refs[i])
-    s.report("erf (Plain->std.math), [-3,3]")
+    s.report("erf (Plain, libm), [-3,3]")
 
     s = Stats()
     xs = materialize[ERF_SMALL_X]()
     refs = materialize[ERF_SMALL_REF]()
     for i in range(ERF_SMALL_N):
         s.observe(xs[i], erf(p(xs[i])).v[0], refs[i])
-    s.report("erf (Plain->std.math), [1e-8,1e-2]")
+    s.report("erf (Plain, libm), [1e-8,1e-2]")
 
     # The A&S 7.1.26 approximation `Compensated`/`Decimal` fall back to.
     # Its documented bound is ~1.5e-7 absolute; this is where that gets
@@ -272,9 +260,9 @@ def main():
     s.report("erfc (Plain->std.math), [1,6]")
 
     # `erfinv` is numax's own: a two-region starting guess plus three
-    # Newton steps against `erf`/`erfc`, so what this measures is the floor
-    # `std.math` hands down rather than the guess, which the Newton steps
-    # square away.
+    # Newton steps against `erf`/`erfc`, so what this measures is the
+    # accuracy of `erf` seen through a derivative, the guess having been
+    # squared away by the Newton steps.
     s = Stats()
     xs = materialize[ERFINV_MID_X]()
     refs = materialize[ERFINV_MID_REF]()
@@ -291,7 +279,7 @@ def main():
 
     # --- combinatorics ------------------------------------------------
     # `factorial`, `comb` and `poch` are `exp` of `lgamma` differences, so
-    # what they inherit is `lgamma`'s floor amplified by the exponential;
+    # what they inherit is `lgamma`'s error amplified by the exponential;
     # the rows say how much of it survives at moderate arguments.
     section("Combinatorics")
     s = Stats()

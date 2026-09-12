@@ -36,14 +36,10 @@ terms below `1.5`, fraction to depth 60 above) within `2e-15` relative;
 axis (series to 120 terms below `40`, the asymptotic sum to 20 terms
 above) within `5e-14` relative.
 
-What `pixi run accuracy` measures is larger for four of them, and the
-reason is the primitive rather than the algorithm: every series region
-carries a `ln x` term, and `std.math.log` is off by up to `8e-10` absolute
-(`bench/accuracy/README.md`), so `exp1`, `expi`, `expn` and `Ci` read
-`~3e-9` relative at their worst point while `Si` and the Fresnel pair,
-which never take a logarithm, read `1e-15`. The floor is inherited, not
-introduced, and a correctly rounded `ln` would collapse the four to the
-others' level with no change here.
+`pixi run accuracy` reads all of them at `1e-15` relative: `exp1`,
+`expi`, `expn` and `Ci` carry a `ln x` term in their series region, and
+with `Plain`'s `ln` at one ulp (`numax.core.libm`) it costs them nothing
+against `Si` and the Fresnel pair, which never take a logarithm.
 
 ## The MAX gate
 

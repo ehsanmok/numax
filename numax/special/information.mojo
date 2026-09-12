@@ -73,10 +73,10 @@ def rel_entr[T: FloatLike](x: T, y: T) -> T:
     is the Kullback-Leibler divergence. Defined for `x, y >= 0`; a
     negative argument gives NaN where SciPy gives `inf`.
 
-    Formed as `x (ln x - ln y)` rather than `x ln(x / y)`: `Plain.ln`
-    saturates at the largest finite argument, so `ln(x / 0) = ln(inf)`
-    would come back as `709.78` where `-ln(0) = -(-inf)` is the infinity
-    SciPy returns.
+    Formed as `x (ln x - ln y)` rather than `x ln(x / y)`, so `y = 0`
+    reaches the result as `-ln(0) = +inf` with no division by zero on the
+    way, and the `x = 0` lane is selected to `0` before its `ln` can be
+    `-inf`.
     """
     var zero = _is_zero(x)
     var guarded_x = max_of(x, T.constant(_TINY))

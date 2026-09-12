@@ -1,15 +1,15 @@
 """Tests for the arbitrary-order Bessel functions against mpmath, on both
 sides of every blend (`x = 2`, the order-reduction steps, the sign of `v`)
-and at the closed forms the half-integer orders reduce to.
-
-Tolerances: the algorithm is at `1e-14`; what the mpmath comparisons are
-held to is the floor of `std.math`'s `exp` and `log` (`4e-12` relative on
-`exp(10)`, `2.6e-10` absolute on `log(25)`, `bench/accuracy/README.md`),
-which enter through `x^{mu} = exp(mu ln(x/2))` in Temme's series and the
-`e^{x}` that `iv`/`kv` put back on the scaled pair.
+and at the closed forms the half-integer orders reduce to. Held to
+`1e-12` relative against mpmath; `pixi run accuracy` has the four
+functions at `1e-15` to `4e-13` over `[0.01, 150]`.
 """
 
-from std.math import cos as _cos, exp as _exp, sin as _sin, sqrt as _sqrt
+from std.math import cos as _cos, sin as _sin, sqrt as _sqrt
+
+# numax's one-ulp `exp`, not `std.math`'s: at `x = 12` the latter is `4e-12`
+# off, which is more than the functions under test.
+from numax.core.libm import exp as _exp
 from std.testing import TestSuite, assert_almost_equal
 
 from numax import Dual, Plain
@@ -68,11 +68,11 @@ def test_jv_matches_mpmath_across_orders_and_both_regions() raises:
     ]
     for i in range(10):
         assert_almost_equal(
-            s(jv(pv(vs[i]), pv(xs[i]))), want[i], rtol=1e-9, atol=1e-18
+            s(jv(pv(vs[i]), pv(xs[i]))), want[i], rtol=1e-12, atol=1e-18
         )
     # Deep in the small-x, high-order corner the value is 1e-40.
     assert_almost_equal(
-        s(jv(pv(10.0), pv(0.001))), 2.6911443943049994e-40, rtol=1e-9
+        s(jv(pv(10.0), pv(0.001))), 2.6911443943049994e-40, rtol=1e-12
     )
 
 
@@ -103,24 +103,24 @@ def test_yv_matches_mpmath_across_orders_and_both_regions() raises:
         -0.038697431333456954,
     ]
     for i in range(10):
-        assert_almost_equal(s(yv(pv(vs[i]), pv(xs[i]))), want[i], rtol=1e-9)
+        assert_almost_equal(s(yv(pv(vs[i]), pv(xs[i]))), want[i], rtol=1e-12)
     assert_almost_equal(
-        s(yv(pv(10.0), pv(0.001))), -1.1828049377990414e38, rtol=1e-9
+        s(yv(pv(10.0), pv(0.001))), -1.1828049377990414e38, rtol=1e-12
     )
 
 
 def test_negative_orders_reflect_and_are_exact_at_integers() raises:
     assert_almost_equal(
-        s(jv(pv(-0.5), pv(2.0))), -0.23478571040624846, rtol=1e-10
+        s(jv(pv(-0.5), pv(2.0))), -0.23478571040624846, rtol=1e-12
     )
     assert_almost_equal(
-        s(yv(pv(-0.5), pv(2.0))), 0.5130161365618278, rtol=1e-10
+        s(yv(pv(-0.5), pv(2.0))), 0.5130161365618278, rtol=1e-12
     )
     assert_almost_equal(
-        s(jv(pv(-1.0 / 3.0), pv(1.2))), 0.45158544421603014, rtol=1e-10
+        s(jv(pv(-1.0 / 3.0), pv(1.2))), 0.45158544421603014, rtol=1e-12
     )
     assert_almost_equal(
-        s(yv(pv(-1.0 / 3.0), pv(1.2))), 0.5573537618891734, rtol=1e-10
+        s(yv(pv(-1.0 / 3.0), pv(1.2))), 0.5573537618891734, rtol=1e-12
     )
     # J_{-2} = J_2 and Y_{-2} = Y_2 exactly: the sin(2 pi) is a true zero.
     assert_almost_equal(
@@ -130,7 +130,7 @@ def test_negative_orders_reflect_and_are_exact_at_integers() raises:
         s(yv(pv(-2.0), pv(3.0))), s(yv(pv(2.0), pv(3.0))), rtol=1e-15
     )
     assert_almost_equal(
-        s(jv(pv(-2.0), pv(3.0))), 0.4860912605858911, rtol=1e-10
+        s(jv(pv(-2.0), pv(3.0))), 0.4860912605858911, rtol=1e-12
     )
     # J_{-3}(0.01) = -J_3(0.01): a Y_3 of size 1e8 would swamp a
     # sin(3 pi) rounding error here.
@@ -146,13 +146,13 @@ def test_half_integer_orders_are_elementary() raises:
     for i in range(5):
         var x = xs[i]
         var amp = _sqrt(2.0 / (PI * x))
-        assert_almost_equal(s(jv(pv(0.5), pv(x))), amp * _sin(x), atol=1e-11)
-        assert_almost_equal(s(yv(pv(0.5), pv(x))), -amp * _cos(x), atol=1e-11)
+        assert_almost_equal(s(jv(pv(0.5), pv(x))), amp * _sin(x), atol=1e-13)
+        assert_almost_equal(s(yv(pv(0.5), pv(x))), -amp * _cos(x), atol=1e-13)
         assert_almost_equal(
-            s(kv(pv(0.5), pv(x))), _sqrt(PI / (2.0 * x)) * _exp(-x), rtol=1e-10
+            s(kv(pv(0.5), pv(x))), _sqrt(PI / (2.0 * x)) * _exp(-x), rtol=1e-12
         )
         assert_almost_equal(
-            s(kve(pv(0.5), pv(x))), _sqrt(PI / (2.0 * x)), rtol=1e-11
+            s(kve(pv(0.5), pv(x))), _sqrt(PI / (2.0 * x)), rtol=1e-12
         )
 
 
@@ -193,21 +193,21 @@ def test_iv_kv_match_mpmath_and_the_scaled_forms_agree() raises:
     for i in range(7):
         var v = pv(vs[i])
         var x = pv(xs[i])
-        assert_almost_equal(s(iv(v, x)), want_i[i], rtol=1e-9)
-        assert_almost_equal(s(kv(v, x)), want_k[i], rtol=1e-9)
-        assert_almost_equal(s(ive(v, x)), want_i[i] * _exp(-xs[i]), rtol=1e-9)
-        assert_almost_equal(s(kve(v, x)), want_k[i] * _exp(xs[i]), rtol=1e-9)
+        assert_almost_equal(s(iv(v, x)), want_i[i], rtol=1e-12)
+        assert_almost_equal(s(kv(v, x)), want_k[i], rtol=1e-12)
+        assert_almost_equal(s(ive(v, x)), want_i[i] * _exp(-xs[i]), rtol=1e-12)
+        assert_almost_equal(s(kve(v, x)), want_k[i] * _exp(xs[i]), rtol=1e-12)
     # Where iv itself would be e^150: the scaled pair is what is returned.
     assert_almost_equal(
-        s(ive(pv(2.5), pv(150.0))), 0.031926373911096574, rtol=1e-11
+        s(ive(pv(2.5), pv(150.0))), 0.031926373911096574, rtol=1e-12
     )
     assert_almost_equal(
-        s(kve(pv(2.5), pv(150.0))), 0.10439296856664777, rtol=1e-11
+        s(kve(pv(2.5), pv(150.0))), 0.10439296856664777, rtol=1e-12
     )
     # Negative order: I_{-v} = I_v + (2/pi) sin(pi v) K_v; K is even.
-    assert_almost_equal(s(iv(pv(-0.5), pv(2.0))), 2.122591620177637, rtol=1e-10)
+    assert_almost_equal(s(iv(pv(-0.5), pv(2.0))), 2.122591620177637, rtol=1e-12)
     assert_almost_equal(
-        s(iv(pv(-1.0 / 3.0), pv(1.2))), 1.4018033311387195, rtol=1e-10
+        s(iv(pv(-1.0 / 3.0), pv(1.2))), 1.4018033311387195, rtol=1e-12
     )
     assert_almost_equal(
         s(kv(pv(-0.5), pv(2.0))), s(kv(pv(0.5), pv(2.0))), rtol=1e-15
@@ -217,23 +217,23 @@ def test_iv_kv_match_mpmath_and_the_scaled_forms_agree() raises:
 
 def test_spherical_bessel_functions() raises:
     assert_almost_equal(
-        s(spherical_jn(2, pv(4.0))), 0.27628368577135015, rtol=1e-11
+        s(spherical_jn(2, pv(4.0))), 0.27628368577135015, rtol=1e-12
     )
     assert_almost_equal(
-        s(spherical_jn(5, pv(0.5))), 2.9774668754574457e-06, rtol=1e-10
+        s(spherical_jn(5, pv(0.5))), 2.9774668754574457e-06, rtol=1e-12
     )
     assert_almost_equal(
-        s(spherical_yn(1, pv(2.0))), -0.35061200427605527, rtol=1e-11
+        s(spherical_yn(1, pv(2.0))), -0.35061200427605527, rtol=1e-12
     )
     assert_almost_equal(
-        s(spherical_yn(3, pv(10.0))), -0.09532747887656891, rtol=1e-11
+        s(spherical_yn(3, pv(10.0))), -0.09532747887656891, rtol=1e-12
     )
     # j_0(x) = sin(x) / x, including the limit at zero.
     assert_almost_equal(
         s(spherical_jn(0, pv(1.7))), _sin(1.7) / 1.7, rtol=1e-14
     )
-    assert_almost_equal(s(spherical_jn(0, pv(1e-9))), 1.0, rtol=1e-11)
-    assert_almost_equal(s(spherical_jn(0, pv(0.0))), 1.0, rtol=1e-11)
+    assert_almost_equal(s(spherical_jn(0, pv(1e-9))), 1.0, rtol=1e-12)
+    assert_almost_equal(s(spherical_jn(0, pv(0.0))), 1.0, rtol=1e-12)
 
 
 def test_bessel_functions_differentiate() raises:
@@ -241,15 +241,15 @@ def test_bessel_functions_differentiate() raises:
     I_{v+1}) / 2`, and the mpmath derivatives of `Y_1` and `K_{0.3}`, at
     `Dual`."""
     var j = jv(D(pv(2.5), pv(0.0)), D(pv(7.5), pv(1.0)))
-    assert_almost_equal(Float64(j.deriv.v), 0.035148154689586764, rtol=1e-10)
+    assert_almost_equal(Float64(j.deriv.v), 0.035148154689586764, rtol=1e-12)
     var i = iv(D(pv(2.5), pv(0.0)), D(pv(3.0), pv(1.0)))
-    assert_almost_equal(Float64(i.deriv.v), 1.8367005844906648, rtol=1e-10)
+    assert_almost_equal(Float64(i.deriv.v), 1.8367005844906648, rtol=1e-12)
     var y = yv(D(pv(1.0), pv(0.0)), D(pv(3.0), pv(1.0)))
-    assert_almost_equal(Float64(y.deriv.v), 0.26862520174885707, rtol=1e-10)
+    assert_almost_equal(Float64(y.deriv.v), 0.26862520174885707, rtol=1e-12)
     # Not at `x = 2` itself: that is the blend seam, where the clamps'
     # `|x - 2|` has no derivative and `Dual` reads the kink.
     var k = kv(D(pv(0.3), pv(0.0)), D(pv(2.3), pv(1.0)))
-    assert_almost_equal(Float64(k.deriv.v), -0.09706608589578762, rtol=1e-10)
+    assert_almost_equal(Float64(k.deriv.v), -0.09706608589578762, rtol=1e-12)
 
 
 def main() raises:

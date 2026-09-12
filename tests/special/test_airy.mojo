@@ -1,11 +1,7 @@
 """Tests for the Airy functions and the Struve function against mpmath, on
 every side of their blends and at the identities that tie them to the
-Bessel functions they are built from.
-
-Held to `1e-10` (`airy`) and `1e-8` (`struve`) against mpmath: the
-algorithms are at `1e-14`, and the gap is `std.math`'s `exp` and `log`
-floor (`bench/accuracy/README.md`) through `e^{zeta}` in `Bi` and
-`(x/2)^{v-1} = exp((v-1) ln(x/2))` in the Struve asymptotic sum.
+Bessel functions they are built from. Held to `1e-12` relative; `pixi run
+accuracy` has `Ai`/`Bi` at `4e-13`/`2e-12` and `struve` at `1e-15`.
 """
 
 from std.math import cos as _cos, sqrt as _sqrt
@@ -96,10 +92,10 @@ def test_airy_matches_mpmath_in_all_three_regions() raises:
     ]
     for i in range(11):
         var got = airy(pv(xs[i]))
-        assert_almost_equal(s(got[0]), ai[i], rtol=1e-10)
-        assert_almost_equal(s(got[1]), aip[i], rtol=1e-10)
-        assert_almost_equal(s(got[2]), bi[i], rtol=1e-10)
-        assert_almost_equal(s(got[3]), bip[i], rtol=1e-10)
+        assert_almost_equal(s(got[0]), ai[i], rtol=1e-12)
+        assert_almost_equal(s(got[1]), aip[i], rtol=1e-12)
+        assert_almost_equal(s(got[2]), bi[i], rtol=1e-12)
+        assert_almost_equal(s(got[3]), bip[i], rtol=1e-12)
 
 
 def test_airy_derivative_slots_agree_with_dual() raises:
@@ -150,7 +146,9 @@ def test_struve_matches_mpmath_on_both_sides_of_forty() raises:
         1078117.4081070055,
     ]
     for i in range(9):
-        assert_almost_equal(s(struve(pv(vs[i]), pv(xs[i]))), want[i], rtol=1e-8)
+        assert_almost_equal(
+            s(struve(pv(vs[i]), pv(xs[i]))), want[i], rtol=1e-12
+        )
 
 
 def test_struve_half_order_is_elementary_and_differentiates() raises:
@@ -162,10 +160,10 @@ def test_struve_half_order_is_elementary_and_differentiates() raises:
         assert_almost_equal(
             s(struve(pv(0.5), pv(x))),
             _sqrt(2.0 / (PI * x)) * (1.0 - _cos(x)),
-            rtol=1e-9,
+            rtol=1e-12,
         )
     var d = struve(D(pv(1.0), pv(0.0)), D(pv(5.0), pv(1.0)))
-    assert_almost_equal(Float64(d.deriv.v), -0.3467792049354978, rtol=1e-9)
+    assert_almost_equal(Float64(d.deriv.v), -0.3467792049354978, rtol=1e-12)
 
 
 def main() raises:

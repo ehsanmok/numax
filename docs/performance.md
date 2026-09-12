@@ -244,16 +244,17 @@ family lands at 1.6e-08 to 3.9e-08 absolute across both branches and
 their blend; the orthogonal polynomial recurrences are exact to within
 rounding, at 3 to 253 ULP.
 
-One caveat governs the whole table, and the harness found it: Mojo's
-`std.math` `exp`, `log`, and `erf` are not correctly rounded at float64
-(`exp(1.0)` is wrong from the 13th significant digit, while `sin` and
-`sqrt` are exact). Every `numax` function built on `exp`/`ln` inherits
-that floor, so their measured float64 errors are an upper bound on their
-own error rather than a measurement of it. At float32 -- the `dtype`
-this library is normally used at -- the floor sits two orders of
-magnitude below the representable resolution and cannot be observed.
-See `bench/accuracy/README.md` for the full table and the defect
-writeup.
+The harness also found what governed the whole table until it was
+fixed: Mojo's `std.math` `exp`, `log`, and `erf` are not correctly rounded
+at float64 (`exp(1.0)` is wrong from the 13th significant digit, `log`
+has a `2e-10` absolute floor, `erf` uses float32 coefficients, while
+`sin`, `sqrt` and `erfc` are within a few ulp). `Plain` now takes those
+three from `numax/core/libm.mojo` -- fdlibm's algorithms in SIMD form,
+within one ulp -- and every function built on them dropped from `1e-9`
+to `1e-15` relative in the same run: `erf` to 2.1e-16, `lgamma` to
+2.8e-14, the incomplete gamma and beta to `1e-15`, the real-order Bessel
+family to `1e-15`. See `bench/accuracy/README.md` for the full table and
+the writeup.
 
 ## Cross the tiers past N (dense linalg)
 
