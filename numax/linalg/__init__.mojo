@@ -183,7 +183,15 @@ from .eigen import (
     sytrd,
 )
 from .lu import TensorLU, det, lu_factor, slogdet
-from .matfuncs import expm
+from .matfuncs import (
+    cosm,
+    expm,
+    fractional_matrix_power,
+    funm,
+    logm,
+    sinm,
+    sqrtm,
+)
 from .misc import cond, fro, inf, neg_inf, norm, trace
 from .qr import TensorQR, lstsq, qr_factor
 from .special_matrices import (

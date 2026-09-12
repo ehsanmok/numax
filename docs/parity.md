@@ -127,14 +127,14 @@ exist.
   reductions listed under "What is still missing"; `matrix_transpose` is
   `numax.core.array.transpose`.
 - **No matrix functions.** `expm`, `logm`, `sqrtm` and `funm` return
-  nothing at the pin -- the only `expm` in the tree is a substring of
-  `expm1` in `nn/activations.mojo`, which is elementwise and a different
-  operation entirely. numax writes `expm` -- **extend**, and a clean one:
-  scaling and squaring with a Pade approximant is matrix products plus one
-  solve, so the cubic term goes to `linalg.matmul` and the shape is MAX's
-  own. The rest are deferred behind a Schur decomposition, which is the
-  same iterative sweep already deferred for `eigvals`;
-  `numax/linalg/matfuncs.mojo` names the resumption commit.
+nothing at the pin -- the only `expm` in the tree is a substring of
+`expm1` in `nn/activations.mojo`, which is elementwise and a different
+operation entirely. numax writes all of them -- **extend**: `expm` by
+scaling and squaring with every product in `linalg.matmul`, and `sqrtm`,
+`logm`, `funm`, `cosm`, `sinm` and `fractional_matrix_power` on the real
+Schur form `numax.linalg.schur` produces, a host recurrence over the
+quasi-triangular factor between two `matmul`s. `numax/linalg/matfuncs.mojo`
+has each algorithm and its ceiling.
 - **No banded or Toeplitz solver.** Searched at the pin: `solve_banded`,
   `solveh_banded`, `cholesky_banded` and `solve_toeplitz` return nothing
   across the four roots, which follows from there being no dense triangular

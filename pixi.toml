@@ -245,6 +245,7 @@ test-special-matrices = "mojo -I . tests/linalg/test_special_matrices.mojo"
 test-banded = "mojo -I . tests/linalg/test_banded.mojo"
 test-matfuncs = "mojo -I . tests/linalg/test_matfuncs.mojo"
 test-tensor-eigen = "mojo -I . tests/linalg/test_tensor_eigen.mojo"
+test-tensor-matfuncs = "mojo -I . tests/linalg/test_tensor_matfuncs.mojo"
 test-panel = "mojo -I . tests/linalg/test_panel.mojo"
 test-interp = "mojo -I . tests/interpolate/test_interp.mojo"
 test-tensor-interp = "mojo -I . tests/interpolate/test_tensor_interp.mojo"
@@ -333,6 +334,7 @@ tests = { depends-on = [
   "test-banded",
   "test-matfuncs",
   "test-tensor-eigen",
+"test-tensor-matfuncs",
     "test-panel",
     "test-interp",
     "test-tensor-interp",

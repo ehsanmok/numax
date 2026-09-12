@@ -970,6 +970,10 @@ def _hqr[
                             var left = z[i * n + (en - 1)]
                             z[i * n + (en - 1)] = q * left + p * z[i * n + en]
                             z[i * n + en] = q * z[i * n + en] - p * left
+                    # The rotation annihilates this entry; write the zero it
+                    # is, as `dlanv2` does, so the block partition downstream
+                    # reads two real eigenvalues and not a complex block.
+                    h[en * n + (en - 1)] = zero
                 else:
                     wr[en - 1] = x + p
                     wr[en] = x + p
