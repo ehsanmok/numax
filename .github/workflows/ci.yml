@@ -70,23 +70,56 @@ jobs:
       - name: Run unit tests
         # The Mojo runtime segfaults transiently inside
         # `libKGENCompilerRTShared` on a fresh process before any user code
-        # runs; the next invocation succeeds. Retry up to three times so the
-        # job only fails when the crash is stable rather than flaky. `set +e`
-        # is deliberate so the loop can observe a non-zero exit.
+        # runs; the next invocation succeeds.
+        #
+        # The retry is **per suite**, not per aggregate, and the difference
+        # decides whether the job is usable. `pixi run tests` is 87
+        # processes; retrying the whole thing re-rolls all 87 starts to
+        # recover from one flake, so the chance of a clean pass falls off a
+        # cliff as suites are added, and three attempts of eighty-seven can
+        # all die on a different suite each time. That is what it did. Each
+        # suite here gets its own three attempts, so one flaky start costs
+        # one rerun of one file, and a suite that is genuinely broken still
+        # fails three times and fails the job -- the guarantee is unchanged,
+        # only the granularity.
+        #
+        # `set +e` is deliberate so the loops can observe a non-zero exit.
+        # The disk report at the end is diagnostic: a runner that fills up
+        # mid-run would look exactly like a flaky crash.
         run: |
           set +e
-          for attempt in 1 2 3; do
-            echo "── tests attempt $attempt/3 ──"
-            pixi run tests
-            rc=$?
-            if [ $rc -eq 0 ]; then
-              exit 0
+          suites=$(sed -n '/^tests = { depends-on = \[/,/^] }/p' pixi.toml \
+            | grep -oE '"[^"]+"' | tr -d '"')
+          if [ -z "$suites" ]; then
+            echo "── could not read the suite list from pixi.toml ──"
+            exit 1
+          fi
+          total=$(echo $suites | wc -w | tr -d ' ')
+          echo "── $total suites, three attempts each ──"
+          failed=""
+          for suite in $suites; do
+            ok=0
+            for attempt in 1 2 3; do
+              pixi run "$suite"
+              rc=$?
+              if [ $rc -eq 0 ]; then
+                ok=1
+                break
+              fi
+              echo "── $suite attempt $attempt/3 failed (rc=$rc), retrying ──"
+              sleep 2
+            done
+            if [ $ok -ne 1 ]; then
+              echo "── $suite failed all three attempts ──"
+              failed="$failed $suite"
             fi
-            echo "── attempt $attempt failed (rc=$rc), retrying ──"
-            sleep 5
           done
-          echo "── all 3 attempts failed (rc=$rc) ──"
-          exit $rc
+          echo "── disk after the run ──"
+          df -h . | tail -1
+          if [ -n "$failed" ]; then
+            echo "── failed suites:$failed ──"
+            exit 1
+          fi
 
       - name: Run CPU examples
         run: pixi run examples-cpu
