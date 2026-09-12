@@ -400,6 +400,11 @@ example-random-ensemble = "mojo -I . examples/intermediate/random_ensemble.mojo"
 example-wave-packet = "mojo -I . examples/intermediate/wave_packet.mojo"
 example-interference = "mojo -I . examples/intermediate/interference.mojo"
 example-quantum-well = "mojo -I . examples/advanced/quantum_well.mojo"
+# The 0.2 surfaces: the spectral decompositions and matrix functions over
+# `Tensor`, the `scipy.stats`/NumPy statistics surface, and `scipy.signal`.
+example-spectral = "mojo -I . examples/advanced/spectral.mojo"
+example-stats-surface = "mojo -I . examples/intermediate/stats_surface.mojo"
+example-signal-processing = "mojo -I . examples/intermediate/signal_processing.mojo"
 examples = { depends-on = [
     "examples-cpu",
     "example-softmax",
@@ -453,6 +458,9 @@ examples-cpu = { depends-on = [
     "example-npy-to-cholesky",
     "example-optimize",
     "example-scipy-surface",
+    "example-spectral",
+    "example-stats-surface",
+    "example-signal-processing",
     "example-wave-packet",
     "example-interference",
 ] }

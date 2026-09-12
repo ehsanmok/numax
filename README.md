@@ -15,11 +15,14 @@
 ## What νMAX is
 
 A numerical computing library built on
-[MAX](https://max.modular.com/docs/): special functions, linear algebra,
-quadrature, ODE solvers, FFTs, distributions, and a NumPy-named array surface,
-written in [Mojo](https://mojolang.org) against MAX's `TileTensor` and kernel
-infrastructure. Data lives in a MAX `DeviceBuffer`, so the `DeviceContext` you
-pass decides host or device: the same kernel, any accelerator, unmodified.
+[MAX](https://max.modular.com/docs/) -- what NumPy and SciPy provide, on MAX's
+tensors: special functions, dense linear algebra with its spectral
+decompositions, optimization, quadrature and ODE solvers, interpolation, FFTs,
+signal processing, distributions and statistics, and a NumPy-named array
+surface, written in [Mojo](https://mojolang.org) against MAX's `TileTensor` and
+kernel infrastructure. Data lives in a MAX `DeviceBuffer`, so the
+`DeviceContext` you pass decides host or device: the same kernel, any
+accelerator, unmodified.
 
 Here is what that buys you. Take the
 [quantum harmonic oscillator](https://en.wikipedia.org/wiki/Quantum_harmonic_oscillator),
@@ -113,12 +116,16 @@ runs the whole thing, CPU and GPU side by side.
   one type, not two. `Array[T, n]` is the register-resident half that carries
   the algorithms; [the section below](#start-with-tensor-cross-to-array-for-algorithms)
   is the map between them.
-- **NumPy and SciPy's ground.** Special functions, dense linear algebra,
-  quadrature, ODE solvers, FFTs, distributions, statistics, interpolation,
-  signal and a NumPy-named array surface, plus `.npy` read/write, so a
-  program ported from NumPy can ingest the files it already has and hand
-  results back the same way. Full inventory in
-  [`docs/features.md`](docs/features.md).
+- **NumPy and SciPy's ground.** Special functions at arbitrary order, dense
+  linear algebra through the spectral decompositions -- `eigh`, `svd`,
+  `schur` and the matrix functions on the Schur form -- optimization with
+  bounds, quadrature and ODE solvers, interpolation, FFTs at any length,
+  signal processing from filter design to the spectral estimators, the nine
+  `scipy.stats` distributions over whole tensors, the statistics surface from
+  `quantile` and `histogram` through the hypothesis tests, and a NumPy-named
+  array surface, plus `.npy` read/write, so a program ported from NumPy can
+  ingest the files it already has and hand results back the same way. Full
+  inventory in [`docs/features.md`](docs/features.md).
 - **Fast, and measured, per processor.** On an A10G's GPU, 61,013 M elem/s
   against a hand-written CUDA kernel's 60,352 and `torch.compile`'s 53,670,
   at ~82% of the card's bandwidth spec. On its CPU, 0.998x a hand-written
@@ -188,13 +195,17 @@ math, reductions along an axis, sorting, masking, reshaping, `.npy` files.
 is a value in registers whose element count is part of its type, generic over
 the `FloatLike` conformer rather than over a `DType`. That is what makes a
 Cholesky differentiate at `Dual` and run inside one GPU thread, one matrix
-per SIMD lane, so it is what the algorithms take: `fft`, `signal`,
-`interpolate`, and the fixed-step kernels in `optimize` and `integrate`.
-`linalg` has both, one tier per import: `numax.linalg` is the `Tensor` tier
-and goes through MAX, `numax.linalg.array` is the differentiable
-register-resident one, they share their names, and `to_tensor`/`to_array`
-cross between them. NumPy gets away with one array type because it needs
-neither property.
+per SIMD lane.
+
+**Every algorithmic subpackage now has both tiers**, one per import, sharing
+one set of names: `numax.linalg`, `numax.optimize`, `numax.integrate`,
+`numax.interpolate`, `numax.fft` and `numax.signal` are the `Tensor` tier and
+go through MAX, and `numax.linalg.array`, `numax.optimize.array` and their
+siblings are the differentiable register-resident one. Pick by what you need
+rather than by what exists: a device-resident matrix or a long recording
+wants the `Tensor` tier, a derivative through the algorithm wants the `Array`
+tier, and `to_tensor`/`to_array` cross between them. NumPy gets away with one
+array type because it needs neither property.
 
 `TileTensor` is MAX's borrowed view, a pointer and a layout that own nothing.
 `.view()` hands one to a kernel and that is the only place it appears; you do
@@ -204,7 +215,7 @@ not build one yourself.
 |---|---|---|---|
 | `Tensor` (`Static`, `Dynamic`) | yes, a MAX `DeviceBuffer` | in the layout type, compile time or run time per dimension | every NumPy-named call |
 | `TileTensor` | no, it borrows | from the tensor it views | `.view()`, at a kernel boundary |
-| `Array[T, n]` | it *is* the value, in registers | `n` at compile time | every SciPy-named algorithm |
+| `Array[T, n]` | it *is* the value, in registers | `n` at compile time | a SciPy-named algorithm you want to differentiate, or to run per SIMD lane |
 
 Crossing is explicit in both directions:
 
@@ -219,13 +230,20 @@ var back = to_tensor[f64, 3, 3](chol)  # Tensor again
 var direct = solve[P, 3](eye[P, 3](), ones[P, 3]())   # no tensor to lift
 ```
 
-So `Tensor` alone does not cover everything, and the boundary has two limits
-worth knowing early. A `Dynamic` tensor cannot lift until it names a shape,
-since `n` is a compile-time parameter. And `n`
-unrolls: a 64x64 Cholesky takes about a minute to compile, a 128x128 one does
-not finish, so the algorithm layer suits the small fixed-size problems that
-appear inside a kernel rather than a large matrix read off disk. Large
-run-time-sized decompositions are the gap this version leaves open.
+The crossing has two limits worth knowing early, and both are about the
+`Array` tier rather than about `Tensor`. A `Dynamic` tensor cannot lift until
+it names a shape, since `n` is a compile-time parameter. And `n` unrolls: a
+64x64 Cholesky takes about a minute to compile and a 128x128 one does not
+finish, so that tier suits the small fixed-size problems that appear inside a
+kernel rather than a large matrix read off disk.
+
+Which is what the `Tensor` tier is for, and it no longer stops at the
+factorizations: `eigh`, `svd`, `schur` and the matrix functions on the Schur
+form all run there, blocked and device-resident. What that tier does not do
+is differentiate, because a `Tensor` is monomorphic in a `DType` and a
+conformer is a struct -- so the two tiers are a real choice and not a
+staging area. Run-time *extents* for a decomposition are the gap this version
+still leaves open: a `Dynamic` tensor has to name its shape first.
 
 ### Coming from NumPy and SciPy
 
@@ -398,35 +416,60 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
 | `a.sum(axis=1)`, `a.mean(axis=1)` | `sum[axis=1](a)`, `mean[axis=1](a)` | same name as the whole-tensor form; one axis drops, the rest survive |
 | `np.linalg.solve(A, b)` | `solve(A, b)`, or `solve[P, n](A, b)` from `numax.linalg.array` | the first is blocked pivoted LU with its trailing update in MAX's GEMM; the second differentiates |
-| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr_factor`, and `qr`/`svd`/`eigh` from `numax.linalg.array` | `cholesky` and `qr_factor` are blocked over `Tensor`; `svd`/`eigh` are `Array`-only so far |
-| `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq` from `numax.linalg.array`, or `qr_factor(A).solve(b)` over `Tensor` | no symmetry assumed; both least-squares routes factor instead of forming the normal equations |
+| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr_factor`, `svd`, `eigh` | all four over `Tensor`, and all four in `numax.linalg.array` too. The `Tensor` ones are blocked with their cubic term in MAX's GEMM; the `Array` ones are register-resident and differentiate |
+| `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq`, or `qr_factor(A).solve(b)` | `eigvals` assumes no symmetry and returns `(re, im)` as two tensors, since a `dtype`-monomorphic tensor holds no complex number; every least-squares route factors instead of forming the normal equations |
 | `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
 | `np.kron`, `np.linalg.matrix_power`, `np.inner` | `kron`, `matrix_power[dtype, n, p]`, `inner` | `inner` is `a @ b.T` without materializing the transpose |
 | `np.linalg.slogdet` | `slogdet(A)` | `(sign, ln\|det\|)`, for the ordinary matrices whose determinant overflows |
 | `np.linalg.norm(v, ord)` | `norm[dtype, n, ord](v)` | a vector overload beside the matrix one; `ord=0` is `count_nonzero` |
-| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names, from `numax.linalg.array` | `matrix_rank` returns a count per SIMD lane; `svdvals` comes back in `svd`'s order, which is not sorted |
-| `scipy.linalg.toeplitz` / `circulant` / `companion` / `block_diag` | same names | plus `hankel`, `hilbert`, `khatri_rao`, `convolution_matrix` |
+| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names | over `Tensor`, `eigvalsh` is ascending and `svdvals` descending; the `numax.linalg.array` forms are unsorted and `matrix_rank` there returns a count per SIMD lane |
+| `np.linalg.pinv`, `np.linalg.cond` | `pinv`, `cond` | both one SVD and a few lines on top of it; `pinv` takes NumPy's `rcond` |
+| `scipy.linalg.schur`, `hessenberg` | `schur`, `hessenberg` | real Schur form, so a complex pair stays a `2 x 2` block rather than splitting into eigenvalues that are not there |
+| `np.tensordot`, `np.cross` | `tensordot[axes=k]`, `cross` | `tensordot` reshapes to a matrix and hands the contraction to MAX's GEMM; `einsum` stays out |
+| `np.linalg.tensorsolve`, `tensorinv` | `tensorsolve`, `tensorinv` | the rank-n shapes read as a square matrix, which is what NumPy's do |
+| `scipy.linalg.toeplitz` / `circulant` / `companion` / `block_diag` | same names | plus `hankel`, `hilbert`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie`. `dft` and `invhilbert` stay out, on grounds [`docs/parity.md`](docs/parity.md) records |
 | `scipy.linalg.solve_banded` / `solveh_banded` / `solve_toeplitz` | same names | SciPy's diagonal-ordered `ab` storage verbatim; host-side by declaration |
 | `scipy.linalg.solve_circulant` | `solve_circulant` | three FFTs and a division, so power-of-two `n` |
 | `scipy.linalg.expm` | `expm(A)` | and `expm[T, n, squarings]` over `Array`, which differentiates at `Dual` |
-| `scipy.linalg.sqrtm` | `sqrtm[P, n](A)` from `numax.linalg.array` | **symmetric positive definite only**, stated rather than checked: a negative eigenvalue arrives as a NaN. The general case waits on a Schur decomposition |
-| `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound |
+| `scipy.linalg.sqrtm`, `logm`, `funm` | `sqrtm`, `logm`, `funm[f=...]`, `cosm`, `sinm`, `fractional_matrix_power` | over `Tensor` these are the general case: the Bjorck-Hammarling and block Parlett recurrences on the real Schur form, so repeated and defective eigenvalues are handled rather than dividing by zero. `funm`'s `f` is any `FloatLike` kernel, which is where the two halves of the library meet. `sqrtm[P, n]` from `numax.linalg.array` is the SPD-only one that differentiates |
+| `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound, checked by `pixi run accuracy` |
+| `scipy.special.jv/yv/iv/kv`, `airy`, `struve` | same names, plus `spherical_jn`/`spherical_yn`, `ive`/`kve` | arbitrary real order, not just the integer-order `j0`..`y1` |
+| `scipy.special.erfinv`, `zeta`, `expi`, `sici`, `fresnel`, `owens_t` | same names, plus `exp1`/`expn`, `hyp1f1`/`hyp2f1`, `poch`, `factorial`/`comb`/`perm` | tier 1 throughout, so every one compiles into a `map[gpu=True]` body |
+| `scipy.special.logsumexp` | `logsumexp` | over `Tensor`, driving MAX's own `OnlineLogSumExp` monoid through the `rowwise` scaffolder |
+| `scipy.special.xlogy`, `rel_entr`, `kl_div` | same names, plus `entr`, `xlog1py`, `logit` | the information-theoretic set, each with the limit at zero defined the way SciPy defines it |
+| `scipy.integrate.trapezoid` / `simpson` | `trapezoid(y, dx=...)`, `simpson`, `cumulative_trapezoid` | SciPy's signature: these integrate **samples** in a `Tensor`. The function-taking forms are `numax.integrate.array`, where they differentiate |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |
 | `scipy.integrate.solve_ivp` | `solve_ivp`, or `rk4` for fixed steps | |
 | `solve_ivp(method="BDF")` | `solve_ivp_stiff` | implicit, so the step size follows accuracy rather than stability |
-| `scipy.interpolate.CubicSpline` | `CubicSpline[T, n]` | built once, `__call__` evaluates |
+| `scipy.interpolate.CubicSpline` | `CubicSpline[dtype, n]` | built once, `__call__` evaluates, `[nu=k]` differentiates and `.integrate` integrates. Knots need not be uniform, and `bc_type` is SciPy's `not-a-knot`/`natural`/`clamped` |
+| `scipy.interpolate.PchipInterpolator` / `Akima1DInterpolator` | same names, plus `CubicHermiteSpline` | the shape-preserving siblings, same evaluation surface |
+| `np.interp`, `scipy.interpolate.RegularGridInterpolator` | `interp`, `RegularGridInterpolator` | `interp` is a vectorized `searchsorted` and a gather, one launch each |
 | `scipy.optimize.root_scalar` / `minimize` | `root_scalar[f](bracket=(a, b))` / `minimize[n, f](x0)` | over `Array`, no `jac`, `fprime` or `fprime2` anywhere — every derivative comes from `Dual` or `Gradient` |
-| `minimize` over a large vector | `minimize[dtype, n, f, jac](x0)` from `numax.optimize` | the `Tensor` tier, which takes `jac` because a tensor cannot hold a `Gradient` |
+| `minimize` over a large vector | `minimize[dtype, n, f, jac](x0)` from `numax.optimize` | the `Tensor` tier, which takes `jac` because a tensor cannot hold a `Gradient`. `bfgs`, `l-bfgs`, `cg` and `powell`; limited memory is the one to reach for when a dense inverse Hessian will not fit |
+| `minimize(method="L-BFGS-B", bounds=...)` | `minimize[...](x0, lower, upper)` | projected gradient on the free set; `powell` needs no `jac` at all |
+| `scipy.optimize.nnls`, `lsq_linear` | `nnls(A, b)`, `lsq_linear(A, b, lo, hi)` | one box-constrained QP, the normal equations formed on the device and the active set settled on the host |
 | `scipy.optimize.minimize_scalar` | `minimize_scalar[f]()` | `brent`, `golden`, `bounded`; a bracket is a direction, bounds are a constraint |
 | `minimize(method="Nelder-Mead")` / `"CG"` | `minimize[n, f, method="nelder-mead"]` / `method="cg"` | SciPy's own method spelling; `bfgs`, `cg` and `nelder_mead` are also callable by name |
-| `scipy.optimize.root` | `root[n, f](x0)` | `method="lm"`, over the same `least_squares`; check `f_x`, not `converged` |
+| `scipy.optimize.root` | `root[n, f](x0)` over `Array`, `root[dtype, n, f, jac](x0)` over `Tensor` | `newton` and `lm`; check `residual_norm`, not only `converged`, since a system with no root still has points where `\|\|F\|\|` stops falling |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
-| `np.fft.fft`, `np.fft.rfft` | `fft`, `rfft` | power of two either way. `numax.fft` is the `Tensor` tier, a real/imaginary pair across `log2(n) + 1` device stages; `numax.fft.array` is `Array[Complex[T], n]` and differentiates |
-| `scipy.signal.lfilter` / `firwin` | `lfilter`, `firwin` | a recursion `convolve` cannot express, and taps to run through it |
+| `np.fft.fft`, `np.fft.rfft`, `np.fft.irfft` | `fft`, `rfft`, `irfft` | **any length** over `Tensor`: radix-2 at a power of two, Bluestein's chirp-z otherwise. `numax.fft` is the `Tensor` tier, a real/imaginary pair across `log2(n) + 1` device stages; `numax.fft.array` is `Array[Complex[T], n]`, differentiates, and stays power-of-two |
+| `np.fft.fft2` / `rfft2` / `fftshift` | `fft2`, `ifft2`, `rfft2`, `fftshift`, `ifftshift`, `next_fast_len` | rectangular, one axis at a time, device-resident between them |
+| `scipy.fft.dct` / `dst` | `dct`, `idct`, `dst`, `idst` | types I through IV, each a real projection of one complex DFT |
+| `scipy.signal.convolve` / `correlate` / `fftconvolve` | same names | `full`/`same`/`valid`. The direct form is one launch of dot products; which route is faster depends on the kernel length and [`docs/performance.md`](docs/performance.md) measures the crossover rather than guessing |
+| `scipy.signal.lfilter` / `filtfilt` / `sosfilt` | same names, plus `lfilter_zi` | recurrences, so host-side by declaration: sample `k` needs sample `k - 1`, which leaves neither a GEMM nor independent lanes |
+| `scipy.signal.firwin` / `butter` / `freqz` | same names | `firwin` covers every band shape; `butter` is IIR design, which used to be out of scope here and is a recorded reversal rather than a quiet addition |
+| `scipy.signal.medfilt` / `savgol_filter` / `detrend` / `resample` | same names | a window per lane, so these are the filters that go to a device unchanged |
+| `scipy.signal.get_window` and the window factories | `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `boxcar`, `get_window` | SciPy's symmetric and periodic forms both |
+| `scipy.signal.welch` / `spectrogram` / `stft` / `hilbert` | same names from `numax.signal`, plus `periodogram`, `find_peaks` | each one batched transform over framed input |
 | `np.save` / `np.load` | `numpy.save` / `numpy.load` | real `.npy`, readable by NumPy |
-| `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit |
+| `stats.norm.cdf(x)` | `norm.cdf(x, mu, sigma)` | nine distributions, parameters explicit, all eight `scipy.stats` methods each (`pdf`/`logpdf`, `cdf`/`logcdf`, `sf`/`logsf`, `ppf`, `isf`). **`x` may be a whole `Tensor`**, which is one `elementwise` launch and runs on a device with `gpu=True` |
+| `np.quantile`, `np.percentile`, `np.median` | `quantile`, `percentile`, `median` | all thirteen NumPy `method=` interpolations, plus the `nan*` forms and `iqr` |
+| `np.histogram`, `np.bincount`, `np.digitize` | same names, plus `histogram2d`, `histogramdd` | NumPy's edge rules, weights and `density` included |
+| `np.cov`, `np.corrcoef` | `cov`, `corrcoef` | plus `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore` |
+| `scipy.stats.ttest_ind`, `chisquare`, `ks_1samp` | same names, plus `ttest_1samp`/`ttest_rel`, `f_oneway`, `mannwhitneyu` | each a statistic and a tail of `t`/`chi2`/`f`/`norm`, returning `statistic` and `pvalue` |
+| `scipy.stats.describe`, `skew`, `kurtosis` | same names, plus `sem`, `gmean`, `hmean`, `entropy`, `trim_mean` | |
 | `np.random.default_rng(0)` | `Generator(seed=0)` | or `seed(0)` for the global stream |
 
 Every row above is runnable: `pixi run example-scipy-surface` prints the
@@ -585,16 +628,21 @@ says which it is rather than leaving you to read the body.
 
 Tier 1 runs a fixed number of iterations and never branches per lane, which is
 what makes it launchable on a GPU and callable at any conformer. That covers
-the conformers themselves, the tensor engine, `special`, `linalg`,
-`interpolate`, `fft`, `signal`, and the fixed-step half of `optimize` and
-`integrate`. Per-lane choices are arithmetic blends built from `copysign`
+the conformers themselves, the tensor engine, all of `special`, and the
+`Array` tiers -- `linalg.array`, `interpolate.array`, `fft.array`,
+`signal.array`, and the fixed-step half of `optimize.array` and
+`integrate.array`. Per-lane choices are arithmetic blends built from `copysign`
 rather than `if`, because the lanes of one SIMD value can disagree about which
 branch they want.
 
 Tier 2 is free to loop until it converges and to branch on the data it sees. It
 is `Plain`-only and host-side: `ops`, `elementwise`, `logic`, `sorting`, `io`,
-the tensor reductions in `stats`, the converge-to-tolerance minimizers in
-`optimize`, and the adaptive `quad`/`solve_ivp` in `integrate`.
+the tensor reductions and the whole statistics surface in `stats`, the
+converge-to-tolerance minimizers in `optimize`, the adaptive
+`quad`/`solve_ivp` in `integrate`, and the `Tensor` tier of `linalg` --
+including the spectral decompositions, whose reduction to band form is
+blocked and device-resident but whose sweep over that band is a host loop
+that deflates on a test of the data.
 
 Tier 1 never calls tier 2, so a kernel you can launch stays launchable. Where
 both make sense the library ships both: `newton` at a fixed iteration count and
@@ -654,6 +702,18 @@ same source produces both device rows. Full sweeps from 64K to 67M, both sync
 shapes, and the methodology: [`docs/performance.md`](docs/performance.md),
 [`bench/README.md`](bench/README.md).
 
+**Where this version is slow, stated rather than omitted.** Everything that
+is one `elementwise` launch or one batched transform is ahead of SciPy on the
+same processor -- `norm.cdf` 5.4x, `interp` 9.4x, `welch` 12x, `medfilt` and
+`savgol_filter` about 2x. Everything that is still a host loop is behind it
+by roughly what a scalar loop costs against C: `quantile` 0.05x, `lfilter`
+0.08x, `cov` 0.11x. The spectral decompositions are the sharpest case, at
+0.002-0.11 of LAPACK at `n = 1024`, because the reduction to band form is
+blocked and device-resident but accumulating the eigenvectors is `O(n^3)` of
+scalar Givens rotations on the host. Every one of those numbers, and what
+would close each gap, is in
+[`docs/performance.md`](docs/performance.md).
+
 **Dense linalg is a separate measurement, on separate hardware** (EPYC 7R32
 host, A10G device), `float32` because MAX's `matmul` does not compile for GPU
 at `float64`. GFLOP/s at `n = 1024`, higher is better:
@@ -711,10 +771,13 @@ factorizations have no MLX counterpart there. ROCm is reached by the same
 
 Every approximation documents an error bound, and `pixi run accuracy` checks it
 against checked-in [mpmath](https://mpmath.org/) references at 50 digits
-(`erf`'s A&S 7.1.26 bound of ~1.5e-7 measures 1.38e-07). One caveat: Mojo's
-`std.math` `exp`/`log`/`erf` are not correctly rounded at `float64`, so every
-function built on them inherits that floor, which is invisible at `float32`.
-Details: [`bench/accuracy/README.md`](bench/accuracy/README.md).
+(`erf`'s A&S 7.1.26 bound of ~1.5e-7 measures 1.38e-07). At `float64` the
+bounds run 1e-15 to 1e-13 across the table. Getting there meant not using
+Mojo's `std.math` at that width: its `exp`, `log` and `erf` are off by 1e5,
+9e6 and 2e8 ulp respectively, so `Plain` calls numax's own fdlibm versions in
+`numax/core/libm.mojo` instead, and every function built on them stopped
+inheriting that floor. Details:
+[`bench/accuracy/README.md`](bench/accuracy/README.md).
 
 ## Testing
 

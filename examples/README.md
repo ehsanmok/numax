@@ -36,17 +36,22 @@ Multi-feature compositions -- more than one concept per file.
 | [npy_to_cholesky.mojo](intermediate/npy_to_cholesky.mojo) | The seam between numax's two array types, starting from NumPy itself: a matrix built by `numpy` through `std.python` and saved, loaded back as a `Tensor`, lifted with `to_array` into the `FloatLike` layer, factored by `numax.linalg.cholesky` and checked against `np.linalg.cholesky`, then lowered with `to_tensor` and saved for NumPy to reload. The same lift at `Dual` yields `d(det A)/dA[0,0]`, which is the part NumPy has no answer for. |
 | [wave_packet.mojo](intermediate/wave_packet.mojo) | A 2-D Gaussian wave packet on a `meshgrid`: the density along a cut, the carrier recovered by counting sign changes of `Re psi`, and the packet's spread differentiated with respect to its own width -- `d<x^2>/d(sigma)` from the same kernel that computes `<x^2>`. |
 | [interference.mojo](intermediate/interference.mojo) | Two-source interference over a coordinate grid in one `map`, with the fringe maxima and their spacing measured down the far column, plus the far-field phase differentiated with respect to the slit separation. |
+| [stats_surface.mojo](intermediate/stats_surface.mojo) | `scipy.stats` and the NumPy statistics over a `Tensor`: `norm.cdf` of a whole tensor in one launch, quantiles, a histogram, the correlation family, a regression and a t-test |
+| [signal_processing.mojo](intermediate/signal_processing.mojo) | `scipy.signal` end to end on one two-tone recording: `firwin` and `butter` design, `convolve` against `fftconvolve`, `lfilter`/`filtfilt`, `medfilt`/`savgol_filter`, and `welch` with `find_peaks` recovering both tones |
 | [random_ensemble.mojo](intermediate/random_ensemble.mojo) | `numax.stats.uniform` drawing an ODE ensemble's initial conditions on CPU, versus `std.random.philox.Random` drawing them independently per GPU thread inside a `map[gpu=True]` kernel. Needs a GPU. |
 
 ## advanced/
 
-GPU + ensembles -- needs the actual hardware.
+The deep end: GPU kernels, ensembles, and the algorithms with the most
+moving parts. The GPU ones need real hardware, and the note below says
+which those are.
 
 | File | What it shows |
 |---|---|
 | [gaussian_gpu.mojo](advanced/gaussian_gpu.mojo) | The same kernel and types as `basic/gaussian.mojo` run on GPU via `numax.core.tensor.map[gpu=True]`, no code changes versus the CPU example. |
 | [ode.mojo](advanced/ode.mojo) | 1024 ODE trajectories, one GPU thread each, with solution sensitivities from the same integrator. |
 | [unified_tensor_gpu.mojo](advanced/unified_tensor_gpu.mojo) | One `numax.core.array.Tensor` type on both devices: the `DeviceContext` handed to the factory decides host or accelerator, `.view()` is the same `TileTensor` either way, and the two results agree to within one float32 ulp. |
+| [spectral.mojo](advanced/spectral.mojo) | Eigenvalues, singular values and matrix functions over `Tensor`: `eigvalsh`/`eigh`, `svdvals`/`svd` with `pinv`/`cond`/`matrix_rank`, `eigvals`/`schur` on a matrix with complex pairs, and `logm`/`sqrtm`/`funm` on the Schur form, each checked against the identity that defines it |
 | [quantum_well.mojo](advanced/quantum_well.mojo) | One discretized Schrodinger operator, four answers from one `FloatLike` function: the ground-state energy, `dE0/dw` by Hellmann-Feynman at `Dual`, the frequency that hits a target energy via `newton`, and a 256-well sweep with the whole 24x24 `eigh` inside a single GPU thread, matching CPU exactly. |
 
 ## GPU note

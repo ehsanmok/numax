@@ -12,10 +12,13 @@ minimize_scalar(f, method="bounded",       minimize_scalar[f, method="bounded"](
                 bounds=(-1, 1))                bounds=(-1.0, 1.0))
 solve_banded((1, 1), ab, b)                solve_banded[dtype, 1, 1, n](ab, b)
 expm(A)                                    expm[dtype, n](A)
-eigvalsh(A), svdvals(A), sqrtm(A)          eigvalsh[P, n](A), and so on
+eigvalsh(A), svdvals(A), sqrtm(A)          eigvalsh[dtype, n](A), and so on
+nnls(A, b)                                 nnls(A, b)
+minimize(f, x0, method="L-BFGS-B",         minimize[dtype, n, f, jac,
+         bounds=bounds)                        method="l-bfgs"](x0, lo, hi)
 ```
 
-Two differences are real and worth seeing rather than reading about.
+Three differences are real and worth seeing rather than reading about.
 
 **No derivative is ever passed.** SciPy's `minimize` takes `jac=`, its
 `root_scalar` takes `fprime=` and `fprime2=`. Nothing here does, at the
@@ -26,6 +29,16 @@ from the same function the caller already wrote.
 **The shapes are in the types.** `minimize[2, ...]` says two variables at
 compile time, which is what lets the result carry an `Array[Float64, 2]`
 rather than a heap vector.
+
+**Which tier a name comes from is a choice, not a limitation.** The
+factorizations, the spectra and the matrix functions all exist twice, and
+the two are different algorithms rather than two spellings: over `Tensor`
+they are blocked and device-resident, over `Array` they are register-
+resident and differentiate at `Dual`. The linalg section below calls the
+`Tensor` tier, which is what `from numax.linalg import ...` gives you; the
+optimize section above calls the `Array` tier, which is where an objective
+can be an ordinary `FloatLike` kernel with no `jac` argument. Both are the
+SciPy name.
 """
 
 from std.collections import Array
@@ -35,8 +48,16 @@ from max.gpu.host import DeviceContext
 
 from numax import FloatLike, Plain
 from numax.core.array import Static
-from numax.linalg import expm, solve_banded, toeplitz
-from numax.linalg.array import eigvalsh, sqrtm, svdvals
+from numax.linalg import (
+    eigvalsh,
+    expm,
+    logm,
+    solve_banded,
+    sqrtm,
+    svdvals,
+    toeplitz,
+)
+from numax.optimize import nnls
 from numax.optimize.array import (
     minimize,
     minimize_scalar,
@@ -210,27 +231,69 @@ def main() raises:
     print("    ", rotated[0], rotated[1])
     print("    ", rotated[2], rotated[3])
 
-    # eigvalsh / svdvals / sqrtm are the `Array` tier, so the first
-    # parameter is a conformer rather than a `DType`. Same SciPy names.
-    var spectrum = eigvalsh[P, 3](spd())
-    print(
-        "\n  eigvalsh(A)   w =",
-        spectrum[0].v,
-        spectrum[1].v,
-        spectrum[2].v,
+    # eigvalsh / svdvals / sqrtm over `Tensor`, so the first parameter is
+    # a `DType` and the argument is a device-resident matrix. Same SciPy
+    # names, and `numax.linalg.array` has the same three for the conformer
+    # tier one import away.
+    var symmetric = Static[dtype, 3, 3](
+        ctx, [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
     )
+    var spectrum = eigvalsh[dtype, 3](symmetric).to_host()
+    print("\n  eigvalsh(A)   w =", spectrum[0], spectrum[1], spectrum[2])
+    print("    ascending, and they sum to the trace, 11")
 
-    var singular = svdvals[P, 3](spd())
-    print(
-        "  svdvals(A)    s =",
-        singular[0].v,
-        singular[1].v,
-        singular[2].v,
+    var for_svd = Static[dtype, 3, 3](
+        ctx, [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
     )
-    print("    -- in svd's order, which is not sorted")
+    var singular = svdvals[dtype, 3, 3](for_svd).to_host()
+    print("  svdvals(A)    s =", singular[0], singular[1], singular[2])
+    print("    descending, which the Array tier's is not")
 
-    # sqrtm is SPD-only here, and the check is that X @ X recovers A.
-    var half = sqrtm[P, 3](spd())
-    print("\n  sqrtm(A)")
-    for i in range(3):
-        print("    ", half[i * 3].v, half[i * 3 + 1].v, half[i * 3 + 2].v)
+    # sqrtm over `Tensor` is the general Bjorck-Hammarling recurrence on
+    # the real Schur form, not the SPD-only Array version -- so a matrix
+    # with complex eigenvalues has a real square root here.
+    var for_root = Static[dtype, 2, 2](ctx, [1.0, -3.0, 2.0, 1.0])
+    var half = sqrtm[dtype, 2](for_root).to_host()
+    print("\n  sqrtm([[1, -3], [2, 1]])  -- eigenvalues 1 +- 2.449i")
+    print("    ", half[0], half[1])
+    print("    ", half[2], half[3])
+
+    var for_log = Static[dtype, 2, 2](ctx, [1.0, -3.0, 2.0, 1.0])
+    var logarithm = logm[dtype, 2](for_log).to_host()
+    print("  logm(same)")
+    print("    ", logarithm[0], logarithm[1])
+    print("    ", logarithm[2], logarithm[3])
+
+    # nnls(A, b) -- least squares with the answer held at or above zero,
+    # which is the constraint a physical quantity usually carries.
+    var design = Static[dtype, 5, 3](
+        ctx,
+        [
+            1.0,
+            2.0,
+            0.5,
+            2.0,
+            1.0,
+            1.0,
+            0.5,
+            1.0,
+            3.0,
+            1.0,
+            0.0,
+            2.0,
+            0.0,
+            1.0,
+            0.0,
+        ],
+    )
+    var observations = Static[dtype, 5](ctx, [1.0, 2.0, -1.0, 0.5, 3.0])
+    var constrained = nnls(design, observations)
+    var coefficients = constrained.x.to_host()
+    print(
+        "\n  nnls(A, b)    x =",
+        coefficients[0],
+        coefficients[1],
+        coefficients[2],
+    )
+    print("    residual =", constrained.residual_norm)
+    print("    the third coefficient is held at zero by the constraint")
