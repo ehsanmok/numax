@@ -488,7 +488,11 @@ What this machine says:
   panel made recursive, and the block defaults retuned after each. The
   `parallelize` one was worth more than the other five together. A seventh
   change then moved `qr_factor` 34.0 -> 37.6 on its own, by staging `C`
-  through `pack_block` instead of a scalar `elementwise` walk. `axpy`
+  through `pack_block` instead of a scalar `elementwise` walk. An eighth
+  -- the block step's nine launches cut to seven, and to six on the
+  solve path -- moved nothing measurable: 39.8 ms before against 38.3
+  and 40.5 in two runs after at `n = 1024`, and on Metal 39.3 -> 38.9 ms
+  at `n = 512`, all inside the run-to-run band. `axpy`
   moved separately, 70.2 -> 91.5 GB/s on the host and 23.9 -> 58.0 on
   Metal, by not zeroing a buffer it overwrites.
 - Every block default was measured after the change that moved it, and
@@ -505,15 +509,21 @@ What this machine says:
 - **What is left, in the order the profile puts it.** Cholesky is bounded
   by its trailing GEMM at ~68% of a much shorter run, and with the flops
   already halved the rest of that distance is GEMM shape rather than waste.
-  LU is still bounded by its panel even after the recursion. QR has had its
-  staging copy widened and carries two remaining items, neither of them the
-  cleanup they were filed as: `T` rebuilt on every `q()` and `solve()` is
-  argued against by `numax/linalg/qr.mojo`'s own docstring (`nb^3 / 3`
-  against the products it enables) and needs measuring before it is
-  changed, and `V` packed twice per panel is structural -- `v` feeds
-  `V Y` and `v_t` feeds `V^T C`, and `matmul` transposes `b` and never
-  `a`, so one materialized orientation is unavoidable. The nine launches
-  per block step are still nine.
+  LU is still bounded by its panel even after the recursion. QR's launch
+  count has been cut and turned out not to be the cost: `larft_panel`
+  builds `T^T` directly instead of a pack transposing it, one
+  `pack_reflectors` writes `V` and `V^T` together (the second
+  materialized orientation is structural -- `matmul` transposes `b` and
+  never `a` -- but the second launch was not), and a block spanning full
+  rows is read in place rather than staged. Seven launches per step, six
+  on the solve path, and the tables did not move, which is the
+  measurement the backlog item was waiting for: at `n = 512` on Metal a
+  QR is 32 steps, so the 64 launches removed were well under a
+  millisecond of a 39 ms run, and the rest is the single-block panel.
+  What remains for QR is that panel, and `T` rebuilt on every `q()` and
+  `solve()`, which `numax/linalg/qr.mojo`'s own docstring argues against
+  changing (`nb^3 / 3` against the products it enables) and which needs
+  measuring before it is.
 
 ### The ceiling row is not the ceiling a blocked factorization can reach
 

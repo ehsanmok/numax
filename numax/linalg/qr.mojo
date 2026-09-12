@@ -75,9 +75,11 @@ struct _ReflectorWork[dtype: DType](Movable):
     is a sub-block of a larger matrix has to be copied dense before it can
     be multiplied -- that is `staged`, and it is also why `V` is
     materialized into `v`/`v_t` rather than read where `geqr2_panel` left
-    it. `matmul` will not read and write one buffer, so `w` and `y` are
-    separate. And it stores to `c` whether an epilogue is supplied or not,
-    so `product` exists to be thrown away.
+    it (both orientations from one launch; `T` or `T^T` is built directly
+    by `larft_panel`, so there is no transposed copy of it here). `matmul`
+    will not read and write one buffer, so `w` and `y` are separate. And it
+    stores to `c` whether an epilogue is supplied or not, so `product`
+    exists to be thrown away.
 
     Sized for the widest step of a whole factorization, so later steps use
     a prefix.
@@ -86,7 +88,6 @@ struct _ReflectorWork[dtype: DType](Movable):
     var v: Dynamic[Self.dtype, 2]
     var v_t: Dynamic[Self.dtype, 2]
     var t_block: Dynamic[Self.dtype, 2]
-    var t_t: Dynamic[Self.dtype, 2]
     var w: Dynamic[Self.dtype, 2]
     var y: Dynamic[Self.dtype, 2]
     var product: Dynamic[Self.dtype, 2]
@@ -99,7 +100,6 @@ struct _ReflectorWork[dtype: DType](Movable):
         self.v = zeros_dyn[Self.dtype, 2](rows, block, ctx=ctx)
         self.v_t = zeros_dyn[Self.dtype, 2](block, rows, ctx=ctx)
         self.t_block = zeros_dyn[Self.dtype, 2](block, block, ctx=ctx)
-        self.t_t = zeros_dyn[Self.dtype, 2](block, block, ctx=ctx)
         self.w = zeros_dyn[Self.dtype, 2](block, wide, ctx=ctx)
         self.y = zeros_dyn[Self.dtype, 2](block, wide, ctx=ctx)
         self.product = zeros_dyn[Self.dtype, 2](rows, wide, ctx=ctx)
@@ -126,10 +126,15 @@ def _apply_block_reflector[
     col0: Int,
     mut work: _ReflectorWork[dtype],
     ctx: DeviceContext,
-) raises where dtype.is_floating_point():
+    full_rows: Bool = False,
+) raises where (
+    dtype.is_floating_point() and _View[dtype, CLayout].flat_rank == 2
+):
     """`C := (I - V T V^T) C` for the panel at `k`, or with `T^T` at
     `transposed=True`, where `C` is the `rows x width` block of `c` at
-    `(row0, col0)`. LAPACK's `larfb`, side left.
+    `(row0, col0)`. LAPACK's `larfb`, side left. `full_rows` says the block
+    spans `c`'s whole width from column `0`, which makes it contiguous in
+    memory and lets it be read in place rather than staged.
 
     Three matrix products and nothing else: `W = V^T C`, `Y = T W`,
     `C -= V Y`. Every one is `linalg.matmul`, and that is what makes a
@@ -137,6 +142,14 @@ def _apply_block_reflector[
     formation of `Q` alike -- MAX's GEMM rather than numax's loop. The
     `nb` rank-one updates this replaces are the difference between a QR
     that reaches GEMM throughput and one that does not.
+
+    Launches per step, after the fusions `docs/performance.md` filed as
+    the QR backlog: `larft_panel` builds `T` or `T^T` directly (no
+    transposing pack), one `pack_reflectors` writes `V` and `V^T` together
+    (not two), `C` is staged only when it is a strided sub-block (a block
+    spanning full rows is read in place), and the last product subtracts
+    into `c` through `matmul`'s epilogue. Six launches on the solve path
+    and seven in the factorization, from nine.
 
     `C` is staged dense on the way in because `matmul` reads a strided
     operand as if it were contiguous, and comes back through `matmul`'s
@@ -178,6 +191,7 @@ def _apply_block_reflector[
                 TauLayout=TauLayout,
                 TLayout=type_of(t_block).LayoutType,
                 gpu=True,
+                transposed=transposed,
             ]
         ](
             a,
@@ -190,7 +204,9 @@ def _apply_block_reflector[
             block_dim=_PANEL_THREADS,
         )
     else:
-        larft_panel(a, taus, t_block, Int32(k), Int32(nb), Int32(m))
+        larft_panel[transposed=transposed](
+            a, taus, t_block, Int32(k), Int32(nb), Int32(m)
+        )
 
     var v: _Dense[dtype] = TileTensor(
         work.v.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, nb))
@@ -198,8 +214,7 @@ def _apply_block_reflector[
     var v_t: _Dense[dtype] = TileTensor(
         work.v_t.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, rows))
     )
-    pack_reflectors[target=_target[gpu]()](a, v, k, nb, rows, False, ctx)
-    pack_reflectors[target=_target[gpu]()](a, v_t, k, nb, rows, True, ctx)
+    pack_reflectors[target=_target[gpu]()](a, v, v_t, k, nb, rows, ctx)
 
     var staged: _Dense[dtype] = TileTensor(
         work.staged.view().ptr_at_offset(Coord(0, 0)),
@@ -219,8 +234,14 @@ def _apply_block_reflector[
     # With no pad column to fill this is exactly `pack_block`, whose copy
     # walks `j` contiguously in both source and destination and so takes the
     # native SIMD width. `_MIN_GEMM_COLS` is 2, so the scalar zero-filling
-    # walk is reached only by a `width == 1` tail.
-    if padded == width:
+    # walk is reached only by a `width == 1` tail. And a block that spans
+    # `c`'s full rows is already dense in memory, so it is read where it is
+    # and the copy is not made at all.
+    if full_rows and padded == width:
+        staged = TileTensor(
+            c.ptr_at_offset(Coord(row0, 0)), row_major(Coord(rows, width))
+        )
+    elif padded == width:
         pack_block[target=_target[gpu]()](
             c, staged, row0, col0, rows, width, ctx
         )
@@ -235,25 +256,12 @@ def _apply_block_reflector[
     )
     _max_matmul[target=_target[gpu]()](w, v_t, staged, ctx)
 
-    # `Y = T W`, with `T` transposed into its own block first when asked:
-    # `matmul` transposes `b`, never `a`.
-    var factor: _Dense[dtype]
-    comptime if transposed:
-        var t_t: _Dense[dtype] = TileTensor(
-            work.t_t.view().ptr_at_offset(Coord(0, 0)),
-            row_major(Coord(nb, nb)),
-        )
-        pack_block[trans=True, target=_target[gpu]()](
-            t_block, t_t, 0, 0, nb, nb, ctx
-        )
-        factor = t_t
-    else:
-        factor = t_block
-
+    # `Y = T W`, or `T^T W`: `larft_panel` built whichever was asked for,
+    # since `matmul` transposes `b` and never `a`.
     var y: _Dense[dtype] = TileTensor(
         work.y.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, padded))
     )
-    _max_matmul[target=_target[gpu]()](y, factor, w, ctx)
+    _max_matmul[target=_target[gpu]()](y, t_block, w, ctx)
 
     var product: _Dense[dtype] = TileTensor(
         work.product.view().ptr_at_offset(Coord(0, 0)),
@@ -462,6 +470,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
                 0,
                 work,
                 ctx,
+                full_rows=True,
             )
 
         ctx.synchronize()

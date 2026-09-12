@@ -1089,6 +1089,7 @@ def larft_panel[
     TauLayout: TensorLayout,
     TLayout: TensorLayout,
     gpu: Bool = False,
+    transposed: Bool = False,
 ](
     a: _View[dtype, ALayout],
     tau: _View[dtype, TauLayout],
@@ -1105,11 +1106,13 @@ def larft_panel[
     with `T` in hand the trailing block's update is
     `C -= V (T^T (V^T C))`, and every factor of that is a GEMM.
 
-    `t_block` is a dense `nb x nb` scratch, cleared here before its upper
-    triangle is built, so a caller that reuses one scratch across panels
-    of different widths reads zeros where it expects them. `V` is read where `geqr2`
-    left it -- the strict lower trapezoid of the panel, unit diagonal
-    implicit.
+    `t_block` is a dense `nb x nb` scratch, cleared here and then built in
+    its upper triangle -- or, with `transposed`, its lower one: `T^T`
+    directly, so the caller that applies `I - V T^T V^T` reads it as it
+    is rather than packing a transposed copy in a launch of its own. The
+    clearing is what lets one scratch serve panels of different widths.
+    `V` is read where `geqr2` left it -- the strict lower trapezoid of the
+    panel, unit diagonal implicit.
 
     Column `i` costs `i` dot products of length `m - k - i`, one per
     thread, and then one `i x i` triangular multiply that thread 0 does
@@ -1136,8 +1139,18 @@ def larft_panel[
         e += nt
     _sync[gpu]()
 
+    # `T[row, col]` lives at `(row, col)`, or at `(col, row)` when the
+    # transpose is what is being built; every access below goes through
+    # this one swap.
+    @always_inline
+    def at(row: Int, col: Int) -> Coord[Int, Int]:
+        comptime if transposed:
+            return Coord(col, row)
+        else:
+            return Coord(row, col)
+
     if lane == 0:
-        t_block.store[1](Coord(0, 0), tau[Coord(k0)])
+        t_block.store[1](at(0, 0), tau[Coord(k0)])
     _sync[gpu]()
 
     for i in range(1, n_b):
@@ -1150,7 +1163,7 @@ def larft_panel[
             var total = a[Coord(k0 + i, k0 + p)]
             for r in range(k0 + i + 1, rows):
                 total += a[Coord(r, k0 + p)] * a[Coord(r, k0 + i)]
-            t_block.store[1](Coord(p, i), -this_tau * total)
+            t_block.store[1](at(p, i), -this_tau * total)
             p += nt
         _sync[gpu]()
 
@@ -1160,9 +1173,9 @@ def larft_panel[
             for q in range(i):
                 var total = Scalar[dtype](0)
                 for r in range(q, i):
-                    total += t_block[Coord(q, r)] * t_block[Coord(r, i)]
-                t_block.store[1](Coord(q, i), total)
-            t_block.store[1](Coord(i, i), this_tau)
+                    total += t_block[at(q, r)] * t_block[at(r, i)]
+                t_block.store[1](at(q, i), total)
+            t_block.store[1](at(i, i), this_tau)
         _sync[gpu]()
 
 
@@ -1170,25 +1183,29 @@ def pack_reflectors[
     dtype: DType,
     ALayout: TensorLayout,
     DLayout: TensorLayout,
+    TLayout: TensorLayout,
     target: StaticString = "cpu",
 ](
     a: _View[dtype, ALayout],
     dst: _View[dtype, DLayout],
+    dst_t: _View[dtype, TLayout],
     k: Int,
     nb: Int,
     rows: Int,
-    trans: Bool,
     ctx: DeviceContext,
 ) raises:
     """Materialize the panel's `V` -- unit lower trapezoidal, `rows x nb`
-    -- into the dense `dst`, or its transpose.
+    -- into the dense `dst`, and its transpose into `dst_t`, in one
+    launch.
 
     `geqr2_panel` stores `V` implicitly: the diagonal is an unwritten `1`,
     everything above it belongs to `R`, and only the strict lower trapezoid
     is really there. `matmul` cannot be told that, so the operand is built
-    once per panel step. `trans` is a run-time argument rather than a
-    parameter because both forms are needed in the same step and
-    instantiating the kernel twice would only grow the binary.
+    once per panel step -- and since it transposes `b` and never `a`, the
+    step needs `V` for `V Y` and `V^T` for `V^T C` both. One walk over
+    `(rows, nb)` writes each entry to both destinations; the transposed
+    store is strided, but it was strided as its own launch too, and a
+    launch is what this saves.
     """
     if rows <= 0 or nb <= 0:
         return
@@ -1196,21 +1213,19 @@ def pack_reflectors[
     @always_inline
     def fill[
         w: Int, alignment: Int = 1
-    ](coord: Coord) {var a, var dst, var k, var nb, var trans}:
+    ](coord: Coord) {var a, var dst, var dst_t, var k, var nb}:
         var at = coord_to_index_list(coord)
-        var i = at[1] if trans else at[0]
-        var j = at[0] if trans else at[1]
+        var i = at[0]
+        var j = at[1]
         var value = Scalar[dtype](0)
         if i == j:
             value = Scalar[dtype](1)
         elif i > j:
             value = a[Coord(k + i, k + j)]
         dst.store[1](coord, value)
+        dst_t.store[1](Coord(j, i), value)
 
-    if trans:
-        elementwise[simd_width=1, target=target](fill, Coord(nb, rows), ctx)
-    else:
-        elementwise[simd_width=1, target=target](fill, Coord(rows, nb), ctx)
+    elementwise[simd_width=1, target=target](fill, Coord(rows, nb), ctx)
 
 
 def trsm_diag[
