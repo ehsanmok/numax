@@ -122,10 +122,13 @@ exist.
   `numax/prelude.mojo` protects. `multi_dot` chooses an association order
   for a chain of *differently shaped* products, and numax carries a
   tensor's shape in its type, so the chain cannot be held in one
-  homogeneously typed container to begin with. `cross`, `tensordot`,
-  `tensorsolve` and `tensorinv` wait on the general broadcasting and rank-n
-  reductions listed under "What is still missing"; `matrix_transpose` is
-  `numax.core.array.transpose`.
+  homogeneously typed container to begin with. `cross` is an
+  `elementwise` map (extend); `tensordot` in NumPy's integer form is one
+  run-time-shape `linalg.matmul` on the two buffers retyped as matrices
+  (delegate underneath), and `tensorsolve`/`tensorinv` are `solve` and
+  `inverse` on a tensor retyped as the square matrix its element count
+  says it is, so all four are delegations with a reshape around them;
+  `matrix_transpose` is `numax.core.array.transpose`.
 - **No matrix functions.** `expm`, `logm`, `sqrtm` and `funm` return
 nothing at the pin -- the only `expm` in the tree is a substring of
 `expm1` in `nn/activations.mojo`, which is elementwise and a different

@@ -34,7 +34,7 @@ to MAX, and leave the `Array` tier to the thing only it can do: run
 from algorithm import rowwise
 from algorithm.reduce_op import ReduceSum
 from layout import Coord, TileTensor, coord_to_index_list
-from layout.tile_layout import row_major
+from layout.tile_layout import TensorLayout, row_major
 from layout.tile_tensor import PointerStorage
 from linalg.bmm import batched_matmul as _max_batched_matmul
 from linalg.matmul import matmul as _max_matmul
@@ -44,7 +44,15 @@ from std.math import sqrt as _sqrt
 from std.sys.info import simd_width_of
 from std.utils import IndexList
 
-from ..core.array import Dynamic, Static, copy, zeros_dyn
+from ..core.array import (
+    copy,
+    Dynamic,
+    Static,
+    Tensor,
+    zeros_dyn,
+    _dyn_shape,
+    _dyn_shape_from,
+)
 
 
 @always_inline
@@ -640,3 +648,143 @@ def batched_matmul[
     )
     ctx.synchronize()
     return result^
+
+
+# --------------------------------------------------- cross and tensordot
+
+
+def cross[
+    dtype: DType, gpu: Bool = False
+](mut a: Static[dtype, 3], mut b: Static[dtype, 3]) raises -> Static[dtype, 3]:
+    """The cross product of two 3-vectors. `numpy.cross(a, b)`.
+
+    One `elementwise` map over the three outputs, `out[i] = a[i+1] b[i+2]
+    - a[i+2] b[i+1]` with the indices mod 3 -- MAX ships no cross product,
+    and there is nothing to delegate three multiplies to. The `n x 3`
+    overload takes rows of vectors.
+    """
+    var ctx = a.context()
+    var out = Static[dtype, 3]._uninitialized(ctx)
+    var av = a.view()
+    var bv = b.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
+        var i = coord_to_index_list(coord)[0]
+        var j = (i + 1) % 3
+        var k = (i + 2) % 3
+        ov.store[1](
+            coord, av[Coord(j)] * bv[Coord(k)] - av[Coord(k)] * bv[Coord(j)]
+        )
+
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(3), ctx)
+    return out^
+
+
+def cross[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, 3], mut b: Static[dtype, n, 3]) raises -> Static[
+    dtype, n, 3
+]:
+    """Row-wise cross products of two `n x 3` tensors, `out[r] = cross(a[r],
+    b[r])`. `numpy.cross` on stacks of vectors."""
+    var ctx = a.context()
+    var out = Static[dtype, n, 3]._uninitialized(ctx)
+    var av = a.view()
+    var bv = b.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
+        var at = coord_to_index_list(coord)
+        var r = at[0]
+        var i = at[1]
+        var j = (i + 1) % 3
+        var k = (i + 2) % 3
+        ov.store[1](
+            coord,
+            av[Coord(r, j)] * bv[Coord(r, k)]
+            - av[Coord(r, k)] * bv[Coord(r, j)],
+        )
+
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, 3), ctx)
+    return out^
+
+
+def tensordot[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    axes: Int = 2,
+    gpu: Bool = False,
+](
+    mut a: Tensor[dtype, ALayout], mut b: Tensor[dtype, BLayout]
+) raises -> Dynamic[dtype, ALayout.rank + BLayout.rank - 2 * axes] where (
+    axes >= 0
+    and axes <= ALayout.rank
+    and axes <= BLayout.rank
+    and ALayout.rank + BLayout.rank - 2 * axes >= 1
+):
+    """Contract the last `axes` dimensions of `a` with the first `axes` of
+    `b`. `numpy.tensordot(a, b, axes)` in its integer form: `axes=1` is the
+    ordinary product of the trailing and leading dimensions, `axes=2` (the
+    default, NumPy's) the double contraction, `axes=0` the outer product of
+    two tensors.
+
+    **Delegate underneath.** Every tensordot is one matrix product: `a`
+    read as `(M, K)` with `M` the product of its leading extents and `K` of
+    the contracted ones, `b` read as `(K, N)`, and the result `(M, N)` read
+    back at the combined shape. Row-major storage makes all three readings
+    free -- the buffer is retyped, never copied -- so the whole operation is
+    one `linalg.matmul` at run-time extents. NumPy's tuple form, naming
+    arbitrary axes on each side, is `transpose(a, *order)` first and this
+    second; the contracted extents are checked at run time and raise on a
+    mismatch, which a `Dynamic` result cannot express in its type.
+
+    The result is a `Dynamic` because its rank, not its extents, is what
+    the types carry here: the extents of `a` and `b` are behind two
+    different layouts and cannot both be spelled in one compile-time pack.
+    """
+    comptime ra = ALayout.rank
+    comptime rb = BLayout.rank
+    comptime rank = ra + rb - 2 * axes
+    var m = 1
+    for d in range(ra - axes):
+        m *= a.dim_at(d)
+    var k = 1
+    for d in range(axes):
+        var extent = a.dim_at(ra - axes + d)
+        if b.dim_at(d) != extent:
+            raise Error(
+                "tensordot: contracted extent ",
+                d,
+                " is ",
+                extent,
+                " in a and ",
+                b.dim_at(d),
+                " in b",
+            )
+        k *= extent
+    var n = 1
+    for d in range(rb - axes):
+        n *= b.dim_at(axes + d)
+
+    var a2 = Dynamic[dtype, 2](
+        a.buffer.copy(), row_major(_dyn_shape[2](m, k)), a.host_addressable
+    )
+    var b2 = Dynamic[dtype, 2](
+        b.buffer.copy(), row_major(_dyn_shape[2](k, n)), b.host_addressable
+    )
+    var c = matmul[dtype, gpu](a2, b2)
+
+    var extents = List[Int](capacity=rank)
+    for d in range(ra - axes):
+        extents.append(a.dim_at(d))
+    for d in range(rb - axes):
+        extents.append(b.dim_at(axes + d))
+    return Dynamic[dtype, rank](
+        c.buffer.copy(),
+        row_major(_dyn_shape_from[rank](extents)),
+        c.host_addressable,
+    )

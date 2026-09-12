@@ -148,11 +148,12 @@ from .banded import (
     solveh_banded,
     solve_toeplitz,
 )
-from .basic import inverse, pinv, solve
+from .basic import inverse, pinv, solve, tensorinv, tensorsolve
 from .blas import (
     asum,
     axpy,
     batched_matmul,
+    cross,
     dot,
     inner,
     kron,
@@ -161,6 +162,7 @@ from .blas import (
     matvec,
     nrm2,
     outer,
+    tensordot,
 )
 from .cholesky import cholesky, cholesky_solve
 from .eigen import (

@@ -26,7 +26,17 @@ MAX ships no `solve`, no `inv` and no pseudo-inverse at any size, so
 nothing here delegates.
 """
 
-from ..core.array import Static, eye
+from layout import Coord
+from layout.tile_layout import TensorLayout, row_major
+
+from ..core.array import (
+    Dynamic,
+    Static,
+    Tensor,
+    _LayoutOf,
+    _dyn_shape_from,
+    eye,
+)
 
 from .blas import inner
 from .eigen import svd
@@ -117,3 +127,142 @@ def pinv[
             v_scaled[i * n + j] = v_scaled[i * n + j] * inv
     var scaled = Static[dtype, n, n](a.context(), v_scaled^)
     return inner[gpu=gpu](scaled, factored.u)
+
+
+# ---------------------------------------------- tensorsolve and tensorinv
+
+
+def _isqrt(n: Int) -> Int:
+    """The integer square root, exact where `n` is a perfect square;
+    evaluable at compile time."""
+    if n <= 0:
+        return 0
+    var x = n
+    var y = (x + 1) // 2
+    while y < x:
+        x = y
+        y = (x + n // x) // 2
+    return x
+
+
+def _static_size[LayoutType: TensorLayout]() -> Int:
+    """The element count of a compile-time shape, read off the layout
+    *type* so it can fix a `where`-clause-sized matrix before any tensor
+    exists."""
+    return row_major(Coord[*LayoutType._shape_types]()).size()
+
+
+def tensorsolve[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    mut a: Tensor[dtype, ALayout], mut b: Tensor[dtype, BLayout]
+) raises -> Dynamic[dtype, ALayout.rank - BLayout.rank] where (
+    dtype.is_floating_point() and ALayout.rank - BLayout.rank >= 1
+):
+    """Solve `tensordot(a, x, axes=x.ndim) == b` for `x`.
+    `numpy.linalg.tensorsolve(a, b)`.
+
+    `a`'s shape is `b.shape + x.shape` with the two halves of equal
+    element count `M`, so `a` read as `M x M` is a square system and `x`
+    is its solution read at `a`'s trailing extents -- one `solve`, and
+    therefore LAPACK-shaped LU on the device, with every reshape a
+    retyping of the same buffer. `M` is the integer square root of `a`'s
+    element count, fixed at compile time from its layout; `b`'s size and
+    `a`'s leading extents are checked against it at run time.
+    """
+    comptime total = _static_size[ALayout]()
+    comptime m = _isqrt(total)
+    comptime assert (
+        m * m == total
+    ), "tensorsolve: a's element count must be a perfect square"
+    comptime rank_b = BLayout.rank
+    comptime rank_x = ALayout.rank - rank_b
+    if b.size() != m:
+        raise Error("tensorsolve: b has ", b.size(), " elements; a implies ", m)
+    var leading = 1
+    for d in range(rank_b):
+        leading *= a.dim_at(d)
+    if leading != m:
+        raise Error(
+            "tensorsolve: a's first ",
+            rank_b,
+            " extents multiply to ",
+            leading,
+            ", not the ",
+            m,
+            " its element count implies",
+        )
+    var square = Static[dtype, m, m](
+        a.buffer.copy(),
+        rebind[_LayoutOf[m, m]](row_major[m, m]()),
+        a.host_addressable,
+    )
+    var rhs = Static[dtype, m](
+        b.buffer.copy(),
+        rebind[_LayoutOf[m]](row_major[m]()),
+        b.host_addressable,
+    )
+    var x = solve[dtype, m, gpu](square, rhs)
+    var extents = List[Int](capacity=rank_x)
+    for d in range(rank_b, rank_b + rank_x):
+        extents.append(a.dim_at(d))
+    return Dynamic[dtype, rank_x](
+        x.buffer.copy(),
+        row_major(_dyn_shape_from[rank_x](extents)),
+        x.host_addressable,
+    )
+
+
+def tensorinv[
+    dtype: DType, ALayout: TensorLayout, ind: Int = 2, gpu: Bool = False
+](mut a: Tensor[dtype, ALayout]) raises -> Dynamic[dtype, ALayout.rank] where (
+    dtype.is_floating_point() and ind >= 1 and ind < ALayout.rank
+):
+    """The inverse of `a` with respect to `tensordot` at `ind` axes:
+    `tensordot(tensorinv(a), a, ind)` is the identity.
+    `numpy.linalg.tensorinv(a, ind)`.
+
+    `a`'s first `ind` extents and its remaining ones must each multiply to
+    the same `M` -- `M` fixed at compile time as the square root of the
+    element count, the split checked at run time; `a` read as `M x M` is
+    inverted with `inverse` and the result read back with the two halves
+    of the shape swapped, so it contracts against `a`'s leading axes.
+    """
+    comptime total = _static_size[ALayout]()
+    comptime m = _isqrt(total)
+    comptime assert (
+        m * m == total
+    ), "tensorinv: a's element count must be a perfect square"
+    comptime rank = ALayout.rank
+    var leading = 1
+    for d in range(ind):
+        leading *= a.dim_at(d)
+    if leading != m:
+        raise Error(
+            "tensorinv: the first ",
+            ind,
+            " extents multiply to ",
+            leading,
+            ", not the ",
+            m,
+            " the element count implies",
+        )
+    var square = Static[dtype, m, m](
+        a.buffer.copy(),
+        rebind[_LayoutOf[m, m]](row_major[m, m]()),
+        a.host_addressable,
+    )
+    var inv = inverse[dtype, m, gpu](square)
+    var extents = List[Int](capacity=rank)
+    for d in range(ind, rank):
+        extents.append(a.dim_at(d))
+    for d in range(ind):
+        extents.append(a.dim_at(d))
+    return Dynamic[dtype, rank](
+        inv.buffer.copy(),
+        row_major(_dyn_shape_from[rank](extents)),
+        inv.host_addressable,
+    )
