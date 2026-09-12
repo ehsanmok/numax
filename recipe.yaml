@@ -40,16 +40,21 @@ requirements:
 about:
   homepage: https://github.com/ehsanmok/numax
   license: Apache-2.0 WITH LLVM-exception
-  summary: Numerical computing for Mojo on MAX -- special functions, linear algebra, quadrature, ODEs, FFTs and statistics, each kernel written once.
+  summary: Numerical computing for Mojo on MAX -- what NumPy and SciPy provide, on MAX's tensors, each kernel written once and running on any device MAX drives.
   description: |
-    numax is a numerical computing library for Mojo built on MAX: special
-    functions, dense linear algebra, quadrature, ODE solvers, FFTs,
-    distributions, statistics, interpolation, signal processing, and a
+    numax is a numerical computing library for Mojo built on MAX -- what
+    NumPy and SciPy provide, on MAX's tensors: special functions, dense
+    linear algebra with its spectral decompositions (eigh, svd, schur and
+    the matrix functions on the Schur form), optimization (minimize with
+    l-bfgs and bounds, root, nnls), quadrature and ODE solvers,
+    interpolation, FFTs at any length, signal processing, the nine
+    scipy.stats distributions over tensors, the NumPy statistics surface
+    from quantile and histogram through the hypothesis tests, and a
     NumPy-named array surface with .npy interchange. The SciPy entry points
-    are spelled the way SciPy spells them, method strings included --
-    minimize, minimize_scalar, root_scalar and root over optimize, and
-    solve_banded, solve_toeplitz, expm and the structured matrix
-    constructors over linalg.
+    are spelled the way SciPy spells them, method strings included. Every
+    Tensor entry point runs on the host or on any device MAX drives through
+    one gpu parameter, and the device-resident work -- factorizations,
+    reductions, transforms, sampling -- never rounds through the host.
 
     Every kernel is written once against a trait (FloatLike), so the type
     you call it with decides what comes back: a value (Plain), a derivative

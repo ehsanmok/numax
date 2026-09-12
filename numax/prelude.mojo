@@ -9,8 +9,10 @@ brings the conformers, `Tensor` and its creation and manipulation surface
 `expand_dims`/`roll`/`tile`/`repeat`, `broadcast_shapes` and
 `take_along_axis` -- the elementwise math, the comparisons, the constants,
 the seam to the `Array` layer, and the entry points of `numax.special`,
-`numax.linalg`, `numax.stats` and `numax.io` that a program reaches for
-first.
+`numax.linalg` (factorizations, spectra, matrix functions, the structured
+constructors), `numax.optimize`, `numax.integrate`, `numax.interpolate`,
+`numax.fft`, `numax.signal`, `numax.stats` and `numax.io` that a program
+reaches for first.
 
 This module declares no tier of its own -- it re-exports, and each name
 carries the tier of the module that defines it.
@@ -28,7 +30,10 @@ The nine `scipy.stats` distribution namespaces are not here either:
 `gamma` and `beta` would collide with the special functions of those names.
 Reach for them as `numax.stats.norm`, `numax.stats.chi2`, and so on.
 `numax.core.array.slice` stays out on the same principle, since `slice` is
-what a reader expects to mean Mojo's own slicing.
+what a reader expects to mean Mojo's own slicing. And `hilbert` is here as
+the `scipy.linalg` matrix only; the `scipy.signal` transform of the same
+name is `numax.signal.hilbert`, because one name means one thing on the
+flat surface.
 
 Import the subpackage instead when you want everything: `from numax import
 ...` is the full flat surface, and `from numax.linalg import ...` is one
@@ -246,21 +251,35 @@ from .linalg import (
     asum,
     axpy,
     batched_matmul,
+    block_diag,
     cholesky,
     cholesky_solve,
+    circulant,
+    companion,
     cond,
+    cosm,
+    cross,
     det,
     eigh,
     eigvals,
     eigvalsh,
+    expm,
+    fractional_matrix_power,
+    funm,
+    hankel,
     hessenberg,
+    hilbert,
     schur,
     dot,
     fro,
     inf,
+    inner,
     inverse,
+    kron,
+    logm,
     lu_factor,
     matmul,
+    matrix_power,
     matrix_rank,
     matvec,
     norm,
@@ -269,10 +288,20 @@ from .linalg import (
     lstsq,
     pinv,
     qr_factor,
+    sinm,
+    slogdet,
     solve,
+    solve_banded,
+    solve_toeplitz,
     solve_triangular,
+    sqrtm,
     svd,
     svdvals,
+    sytrd,
+    tensordot,
+    tensorinv,
+    tensorsolve,
+    toeplitz,
     trace,
 )
 
@@ -357,7 +386,10 @@ from .stats.random import (
 
 # Algorithms.
 from .optimize.least_squares import curve_fit, least_squares
+from .optimize.linear import lsq_linear, nnls
 from .optimize.minimize import minimize
+from .optimize.root import root
+from .integrate.integrate import quad, quad_vec, solve_ivp
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 from .integrate.ode import dopri5, rk4_system
 from .interpolate.interp import horner, interp
@@ -385,6 +417,32 @@ from .fft.fft import (
     rfftfreq,
 )
 from .fft.trig import dct, dst, idct, idst
+
+# Signal processing. `hilbert` the transform is not here -- see the
+# docstring.
+from .signal.convolution import convolve, correlate, fftconvolve
+from .signal.windows import (
+    bartlett,
+    blackman,
+    boxcar,
+    get_window,
+    hamming,
+    hann,
+    kaiser,
+)
+from .signal.filters import (
+    detrend,
+    filtfilt,
+    firwin,
+    lfilter,
+    medfilt,
+    resample,
+    savgol_filter,
+    sosfilt,
+)
+from .signal.spectral import periodogram, spectrogram, stft, welch
+from .signal.peaks import find_peaks
+from .signal.design import butter, freqz
 
 # I/O.
 from .io.io import nmx

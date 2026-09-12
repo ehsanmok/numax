@@ -250,8 +250,11 @@ survey of what MAX does ship.
   operators on `Tensor`, the elementwise math surface, and comparisons
   returning `Static[DType.bool]`. `Plain`-only, tier 2.
 - **`numax.stats`** — whole-tensor reductions, every one taking a `Tensor`,
-  with `argmax`/`argmin` routed to `nn.argmaxmin`, and the distributions as
-  nine `scipy.stats`-shaped namespaces (`norm.cdf`, `chi2.ppf`, ...). `mean`/`variance`/`stddev`/`cumsum` also have a
+  with `argmax`/`argmin` routed to `nn.argmaxmin`; the quantiles, histograms,
+  correlation family, shape statistics and hypothesis tests as host-side
+  routines over a `Tensor` (each a few sums and a distribution tail); and the
+  distributions as nine `scipy.stats`-shaped namespaces (`norm.cdf`,
+  `chi2.ppf`, ...) with `Tensor` overloads driven through `map`. `mean`/`variance`/`stddev`/`cumsum` also have a
   `FloatLike`-generic form over `List[T]`, so calling them at `Compensated`
   recovers precision a long summation loses at `Plain` — the one place this
   surface and the composable-type spine meet.
@@ -260,11 +263,14 @@ survey of what MAX does ship.
   `matvec` and `batched_matmul` are MAX kernels outright, and
   `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked so their cubic term
   is a matrix product and goes back to MAX.
+  The spectral decompositions -- `sytrd`, `eigh`/`eigvalsh`, `svd`/`svdvals`,
+  `hessenberg`, `eigvals`, `schur` and the matrix functions on the Schur
+  form -- are here too, their reductions blocked through the same GEMM and
+  their band iterations on the host, tier 2 and declared.
   `numax.linalg.array` is the `Array[T, n*n]` tier — the same operations
-  `FloatLike`-generic and register-resident, plus `eigh`/`eigvals`/`svd`
-  which have no `Tensor` form, where the point is differentiability rather
-  than speed: MAX's kernels are monomorphic in a raw `dtype`, so no `Dual`
-  passes through them. The flat surface exports the `Tensor` tier only, so a
+  `FloatLike`-generic and register-resident, where the point is
+  differentiability rather than speed: MAX's kernels are monomorphic in a
+  raw `dtype`, so no `Dual` passes through them. The flat surface exports the `Tensor` tier only, so a
   file wanting both aliases one; `to_tensor`/`to_array` cross between them.
 - **`numax.io`, `numax.stats.random`** — `nmx.save`/`nmx.load`, a binary format
   of numax's own since MAX ships no array I/O, plus `numpy.save`/`numpy.load`

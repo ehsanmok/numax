@@ -1,9 +1,12 @@
 """numax: one kernel, several meanings.
 
-A numerical computing library built on MAX: special functions, linear
-algebra, quadrature, ODE solvers, FFTs, distributions, and a NumPy-named
-array surface, written in Mojo against MAX's `TileTensor` and kernel
-infrastructure.
+A numerical computing library built on MAX -- what NumPy and SciPy
+provide, on MAX's tensors: special functions, dense linear algebra with
+its spectral decompositions, optimization, quadrature and ODE solvers,
+interpolation, FFTs, signal processing, distributions and statistics, and
+a NumPy-named array surface, written in Mojo against MAX's `TileTensor`
+and kernel infrastructure. Every `Tensor` entry point runs on the host or
+on any device MAX drives, through one `gpu` parameter.
 
 **One kernel, several meanings.** Every function is written once against
 the `FloatLike` trait. The type you call it with decides what comes back:
@@ -52,14 +55,14 @@ is safe; its own docstring lists them and where to reach them.
 | Subpackage | Contents |
 |---|---|
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows` -- is `numax.core.tensor` |
-| `numax.special` | Γ and B, `erf`, Bessel `J`/`Y`, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, activations |
-| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner` are MAX kernels, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace` build on those; `kron`/`matrix_power` and the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`), the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) and `expm` sit beside them. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names: `cholesky`, `lu`, `qr`, `eigh`, `eigvals`, `eigvalsh`, `svd`, `svdvals`, `solve`, `lstsq`, `inverse`, `pinv`, `det`, `slogdet`, `trace`, `cond`, `matrix_rank`, norms, `dot`/`nrm2`/`outer`, `matmul`, `expm`, `sqrtm`, `tridiagonal_solve` |
+| `numax.special` | Γ and B with their incomplete forms, `erf`/`erfc`/`erfinv`/`erfcinv`, Bessel at integer (`j0`...`y1`) and arbitrary order (`jv`/`yv`/`iv`/`kv`, `spherical_jn`/`spherical_yn`), Airy, Struve, the exponential integrals `expi`/`exp1`/`expn`, `sici`/`fresnel`, `zeta`, `hyp1f1`/`hyp2f1`, Owen's T, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, `factorial`/`comb`/`perm`/`poch`, the information-theoretic `xlogy`/`rel_entr`/`kl_div`/`entr`, activations, and `logsumexp` over `Tensor` through MAX's `OnlineLogSumExp` monoid. Every one is tier 1: fixed iteration, launchable inside a kernel, with its error bound checked by `pixi run accuracy` |
+| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner`/`tensordot`/`cross` are MAX kernels or one GEMM each, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace`/`tensorsolve`/`tensorinv` build on those. The spectral decompositions are here too: `sytrd`, `eigvalsh`/`eigh`, `svdvals`/`svd` (rectangular, sorted) with `pinv`/`cond`/`matrix_rank` on top, `hessenberg`, `eigvals` (a real/imaginary pair), `schur`, and the matrix functions on the Schur form -- `expm`, `sqrtm`, `logm`, `funm`, `cosm`/`sinm`, `fractional_matrix_power`. `kron`/`matrix_power`, the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `pascal`, `hadamard`, `helmert`, `fiedler`, `leslie`, `block_diag`, `khatri_rao`, `convolution_matrix`, ...) and the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) sit beside them. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names -- the same factorizations, spectra and solves register-resident, where the point is differentiating through them |
 | `numax.optimize` | `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, box bounds), `root`, `nnls`/`lsq_linear` and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize.array` is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
 | `numax.integrate` | `trapezoid`/`simpson`/`cumulative_trapezoid` over sampled `Tensor`s with `scipy.integrate`'s signatures; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively; `numax.integrate.array` is the `FloatLike` tier that integrates a function -- Gauss-Legendre, Simpson and trapezoid at a fixed node count, `rk4`/`dopri5` at a fixed step -- and differentiates at `Dual` |
 | `numax.interpolate` | `interp`, `horner`, and non-uniform cubic splines -- `CubicSpline` with SciPy's boundary conditions, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- over a `Tensor` of query points, any derivative order, `integrate`; the least-squares `Chebyshev.fit(x, y)` and `chebval`; 2-D `RegularGridInterpolator`; `numax.interpolate.array` is the `FloatLike` tier with Horner, cubic splines and Chebyshev fits of a function, which differentiate at `Dual` |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, rectangular `fft2`/`ifft2`/`rfft2`, `fftshift`/`ifftshift`, `fftfreq`/`rfftfreq` over `Tensor` at any length -- radix-2 at a power of two, Bluestein otherwise -- device-resident across `log2(n) + 1` stages per axis; `dct`/`idct`/`dst`/`idst` types I-IV; `numax.fft.array` is the register-resident tier that differentiates, and adds circular convolution. MAX ships no forward transform at all |
-| `numax.signal` | `convolve`/`correlate` in NumPy's three modes and `fftconvolve` over `Tensor`, the window factories in SciPy's symmetric and periodic forms, `lfilter`/`filtfilt`/`sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample`, the multiband `firwin`, `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, and `butter`/`freqz`; `numax.signal.array` is the `FloatLike` tier with the direct sums, `lfilter`, `firwin` and compile-time windows |
-| `numax.stats` | `sum`/`mean`/`median`/`mode`/`argmax`..., the nine `scipy.stats`-shaped distribution namespaces (`numax.stats.norm.cdf`, ...), plus `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` |
+| `numax.signal` | `convolve`/`correlate` in NumPy's three modes and `fftconvolve` over `Tensor`, the window factories in SciPy's symmetric and periodic forms, `lfilter`/`filtfilt`/`sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample`, the multiband `firwin`, `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert` (reached as `numax.signal.hilbert`: the flat surface's `hilbert` is the matrix), `find_peaks`, and `butter`/`freqz`; `numax.signal.array` is the `FloatLike` tier with the direct sums, `lfilter`, `firwin` and compile-time windows |
+| `numax.stats` | The NumPy reductions -- `sum`/`mean`/`median`/`mode`/`argmax`/`cumsum`/..., `quantile`/`percentile` under every NumPy method, the `nan*` family, `ptp`/`average`/`moment` -- plus `histogram`/`histogram2d`/`histogramdd`/`bincount`/`digitize`, the correlation family (`cov`, `corrcoef`, `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore`), the shape statistics (`skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `iqr`, `trim_mean`, `describe`), the hypothesis tests (`ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu`), the nine `scipy.stats`-shaped distribution namespaces with all eight methods over scalars and `pdf`/`cdf`/`ppf` over `Tensor` (`numax.stats.norm.cdf(x)`, ...), and sampling -- `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` and `Generator` -- from MAX's Philox stream on the host or the device |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), and numax's own `NMX1` `nmx.save`/`nmx.load`. Printing is `print(a)`, since `Tensor` is `Writable` |
 
 ## The two tiers
@@ -469,11 +472,14 @@ from .signal.filters import (
     savgol_filter,
     sosfilt,
 )
+
+# `hilbert` the transform stays at `numax.signal.hilbert`: the flat surface
+# already owns `hilbert` the matrix from `numax.linalg`, and one name is
+# exported from one module here, as everywhere.
 from .signal.spectral import (
     STFT,
     Periodogram,
     Spectrogram,
-    hilbert,
     periodogram,
     spectrogram,
     stft,
