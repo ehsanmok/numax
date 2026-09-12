@@ -597,8 +597,19 @@ def _powell[
     line minimization along each direction, then the direction of largest
     decrease replaced by the net displacement, with the extrapolation test
     that keeps the set from going degenerate. Stops when an iteration's
-    relative decrease in `f` falls below `tol`; `grad_norm` reports that
-    decrease, there being no gradient."""
+    decrease in `f` falls below `tol` *relative to the size of `f`, plus
+    an absolute floor*; `grad_norm` reports that relative decrease, there
+    being no gradient.
+
+    The floor is not a detail. A purely relative test -- Numerical
+    Recipes' own, `2|df| <= tol (|f_a| + |f_b|)` -- never fires when the
+    minimum value is zero, because both sides shrink together and the
+    ratio stays of order one however close the iterate gets. Rosenbrock
+    is exactly that case, and at a tight `tol` the loop would then run
+    every one of `max_iter` iterations with the answer already correct,
+    each one a full set of line searches over a function it reaches
+    through a host round trip. `scipy.optimize`'s `_minimize_powell`
+    carries the same `+ 1e-20`, and for the same reason."""
     var ctx = x0.context()
     var x = _to_list[dtype, n_vars](x0)
     if bounded:
@@ -634,10 +645,9 @@ def _powell[
             if before - f_x > biggest:
                 biggest = before - f_x
                 biggest_index = i
-        last_decrease = (
-            2 * abs(f_start - f_x) / (abs(f_start) + abs(f_x) + 1e-300)
-        )
-        if last_decrease <= tol:
+        var scale = abs(f_start) + abs(f_x)
+        last_decrease = 2 * abs(f_start - f_x) / (scale + 1e-300)
+        if 2 * abs(f_start - f_x) <= tol * scale + 1e-20:
             return TensorMinimizeResult[dtype, n_vars](
                 _as_tensor[dtype, n_vars](x, ctx),
                 f_x,
