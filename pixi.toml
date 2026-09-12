@@ -208,6 +208,9 @@ test-gamma = "mojo -I . tests/special/test_gamma.mojo"
 test-information = "mojo -I . tests/special/test_information.mojo"
 test-expint = "mojo -I . tests/special/test_expint.mojo"
 test-hyper = "mojo -I . tests/special/test_hyper.mojo"
+test-besselv = "mojo -I . tests/special/test_besselv.mojo"
+test-airy = "mojo -I . tests/special/test_airy.mojo"
+test-owens = "mojo -I . tests/special/test_owens.mojo"
 test-bessel = "mojo -I . tests/special/test_bessel.mojo"
 test-lambertw = "mojo -I . tests/special/test_lambertw.mojo"
 test-decimal = "mojo -I . tests/core/test_decimal.mojo"
@@ -292,6 +295,9 @@ tests = { depends-on = [
     "test-information",
     "test-expint",
     "test-hyper",
+"test-besselv",
+"test-airy",
+"test-owens",
     "test-bessel",
     "test-lambertw",
     "test-decimal",

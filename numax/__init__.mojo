@@ -273,7 +273,21 @@ from .special.activations import (
     swish,
     tanh,
 )
-from .special.bessel import j0, j1, y0, y1
+from .special.airy import airy
+from .special.bessel import (
+    iv,
+    ive,
+    j0,
+    j1,
+    jv,
+    kv,
+    kve,
+    spherical_jn,
+    spherical_yn,
+    y0,
+    y1,
+    yv,
+)
 from .special.beta import beta, betainc, betaincc
 from .special.elliptic import elliptic_e, elliptic_k
 from .special.erf import erf, erfc, erfcinv, erfinv
@@ -297,6 +311,8 @@ from .special.logsumexp import logsumexp
 from .special.lambertw import lambertw, lambertw_m1
 from .special.legendre import legendre_p
 from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
+from .special.owens import owens_t
+from .special.struve import struve
 
 # Dense linear algebra over `Tensor` -- `numax.linalg`. The
 # `FloatLike`-generic `Array` tier is `numax.linalg.array`, deliberately not

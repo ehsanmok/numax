@@ -144,6 +144,51 @@ def build() -> list[Case]:
     )
     cases.append(
         Case(
+            "jv_25", "jv(2.5, x), [0.01, 150]", clustered(0.01, 150.0),
+            lambda x: mp.besselj(mp.mpf("2.5"), x),
+        )
+    )
+    cases.append(
+        Case(
+            "yv_25", "yv(2.5, x), [0.01, 150]", clustered(0.01, 150.0),
+            lambda x: mp.bessely(mp.mpf("2.5"), x),
+        )
+    )
+    cases.append(
+        Case(
+            "ive_25", "ive(2.5, x), [0.01, 150]", clustered(0.01, 150.0),
+            lambda x: mp.besseli(mp.mpf("2.5"), x) * mp.exp(-x),
+        )
+    )
+    cases.append(
+        Case(
+            "kve_25", "kve(2.5, x), [0.01, 150]", clustered(0.01, 150.0),
+            lambda x: mp.besselk(mp.mpf("2.5"), x) * mp.exp(x),
+        )
+    )
+    cases.append(
+        Case("airy_ai", "airy Ai, [-40, 8]", clustered(-40.0, 8.0), mp.airyai)
+    )
+    cases.append(
+        Case("airy_bi", "airy Bi, [-40, 8]", clustered(-40.0, 8.0), mp.airybi)
+    )
+    cases.append(
+        Case(
+            "struve_1", "struve(1, x), [0.01, 100]", clustered(0.01, 100.0),
+            lambda x: mp.struveh(1, x),
+        )
+    )
+    cases.append(
+        Case(
+            "owens_t_h", "owens_t(h, 0.7), h in [0, 6]", clustered(0.0, 6.0),
+            lambda h: mp.quad(
+                lambda x: mp.exp(-h * h * (1 + x * x) / 2) / (1 + x * x),
+                [0, mp.mpf("0.7")],
+            ) / (2 * mp.pi),
+        )
+    )
+    cases.append(
+        Case(
             "expi_neg",
             "expi, -[0.05, 30]",
             [-t for t in logarithmic(0.05, 30.0)],

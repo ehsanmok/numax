@@ -21,7 +21,10 @@ from numax.special import gamma, j0, erf, gaussian
 | `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit` -- the `0 log 0` conventions as blends |
 | `logsumexp` | `logsumexp` over an `Array` (tier 1) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid (tier 2, the one delegation here) |
 | `beta` | `beta`, `betainc`, `betaincc` |
-| `bessel` | `j0`, `j1`, `y0`, `y1` |
+| `bessel` | `j0`, `j1`, `y0`, `y1` by A&S polynomials; `jv`, `yv`, `iv`, `kv`, `ive`, `kve`, `spherical_jn`, `spherical_yn` of any real order by Temme's method, fixed-depth continued fractions and held-or-taken recurrences |
+| `airy` | `airy` -- `(Ai, Ai', Bi, Bi')`, series in the middle and the Bessel forms on both sides |
+| `struve` | `struve` -- the Bessel-function series over Miller's recurrence to `x = 40`, the asymptotic expansion past it |
+| `owens` | `owens_t` -- two fixed Gauss-Legendre rules after the argument reduction |
 | `elliptic` | `elliptic_k`, `elliptic_e` |
 | `lambertw` | `lambertw`, `lambertw_m1` |
 | `legendre`, `orthopoly` | `legendre_p`; Chebyshev `T`/`U`, Hermite `H`, Laguerre `L` |
@@ -41,7 +44,21 @@ from .activations import (
     swish,
     tanh,
 )
-from .bessel import j0, j1, y0, y1
+from .airy import airy
+from .bessel import (
+    iv,
+    ive,
+    j0,
+    j1,
+    jv,
+    kv,
+    kve,
+    spherical_jn,
+    spherical_yn,
+    y0,
+    y1,
+    yv,
+)
 from .beta import beta, betainc, betaincc
 from .elliptic import elliptic_e, elliptic_k
 from .erf import erf, erfc, erfcinv, erfinv
@@ -65,3 +82,5 @@ from .zeta import zeta
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p
 from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
+from .owens import owens_t
+from .struve import struve

@@ -89,6 +89,13 @@ from numax import (
     poch,
     sici,
     zeta,
+    airy,
+    ive,
+    jv,
+    kve,
+    owens_t,
+    struve,
+    yv,
 )
 from numax.special.lambertw import lambertw_m1
 from numax.core.numeric import default_erf_approx
@@ -390,6 +397,64 @@ def main():
     for i in range(HYP2F1_MID_N):
         s.observe(xs[i], hyp2f1(p(0.5), p(1.5), p(2.5), p(xs[i])).v[0], refs[i])
     s.report("hyp2f1(0.5, 1.5, 2.5, x) (series | Pfaff), [-5,0.9]")
+
+    # --- Bessel of real order, Airy, Struve, Owen ---------------------
+    section("Bessel of real order, Airy, Struve, Owen")
+    s = Stats()
+    xs = materialize[JV_25_X]()
+    refs = materialize[JV_25_REF]()
+    for i in range(JV_25_N):
+        s.observe(xs[i], jv(p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("jv(2.5, x) (Temme, CF depth 260), [0.01,150]")
+
+    s = Stats()
+    xs = materialize[YV_25_X]()
+    refs = materialize[YV_25_REF]()
+    for i in range(YV_25_N):
+        s.observe(xs[i], yv(p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("yv(2.5, x) (Temme series | Steed CF2 at 2), [0.01,150]")
+
+    s = Stats()
+    xs = materialize[IVE_25_X]()
+    refs = materialize[IVE_25_REF]()
+    for i in range(IVE_25_N):
+        s.observe(xs[i], ive(p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("ive(2.5, x) (scaled, Wronskian with kve), [0.01,150]")
+
+    s = Stats()
+    xs = materialize[KVE_25_X]()
+    refs = materialize[KVE_25_REF]()
+    for i in range(KVE_25_N):
+        s.observe(xs[i], kve(p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("kve(2.5, x) (Temme series | CF2 at 2), [0.01,150]")
+
+    s = Stats()
+    xs = materialize[AIRY_AI_X]()
+    refs = materialize[AIRY_AI_REF]()
+    for i in range(AIRY_AI_N):
+        s.observe(xs[i], airy(p(xs[i]))[0].v[0], refs[i])
+    s.report("airy Ai (J,Y | series | I,K at 1.5), [-40,8]")
+
+    s = Stats()
+    xs = materialize[AIRY_BI_X]()
+    refs = materialize[AIRY_BI_REF]()
+    for i in range(AIRY_BI_N):
+        s.observe(xs[i], airy(p(xs[i]))[2].v[0], refs[i])
+    s.report("airy Bi (J,Y | series | I,K at 1.5), [-40,8]")
+
+    s = Stats()
+    xs = materialize[STRUVE_1_X]()
+    refs = materialize[STRUVE_1_REF]()
+    for i in range(STRUVE_1_N):
+        s.observe(xs[i], struve(p(1.0), p(xs[i])).v[0], refs[i])
+    s.report("struve(1, x) (Bessel series | asymptotic at 40), [0.01,100]")
+
+    s = Stats()
+    xs = materialize[OWENS_T_H_X]()
+    refs = materialize[OWENS_T_H_REF]()
+    for i in range(OWENS_T_H_N):
+        s.observe(xs[i], owens_t(p(xs[i]), p(0.7)).v[0], refs[i])
+    s.report("owens_t(h, 0.7) (GL64 | GL64 in u at h=2), h in [0,6]")
 
     # --- gamma family -------------------------------------------------
     section("Gamma family")

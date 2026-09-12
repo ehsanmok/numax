@@ -184,7 +184,10 @@ differentiable or extra-precise through whichever conformer instantiates it.
 | [`information`](../numax/special/information.mojo) | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit` -- SciPy's `0 log 0` conventions applied as blends, so they run in a kernel and differentiate |
 | [`logsumexp`](../numax/special/logsumexp.mojo) | `logsumexp` over an `Array` (tier 1, the softmax's gradient at `Dual`) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid on the `rowwise` scaffolder (tier 2, `dot`'s shape) |
 | [`beta`](../numax/special/beta.mojo) | `beta`, `betainc`, `betaincc` |
-| [`bessel`](../numax/special/bessel.mojo) | `j0`, `j1`, `y0`, `y1` |
+| [`bessel`](../numax/special/bessel.mojo) | `j0`, `j1`, `y0`, `y1` (A&S polynomials, `5e-8`); `jv`, `yv`, `iv`, `kv`, `ive`, `kve`, `spherical_jn`, `spherical_yn` for any real order `|v| <= 30` and `0 < x <= 200` -- Temme's method with fixed-depth continued fractions and held-or-taken recurrences, `1e-10` against mpmath, on Metal at float32 |
+| [`airy`](../numax/special/airy.mojo) | `airy` -- `(Ai, Ai', Bi, Bi')` for `|x| <= 44`: the Maclaurin series inside `1.5`, `K`/`I` at `zeta = (2/3) x^{3/2}` to the right, `J`/`Y` to the left |
+| [`struve`](../numax/special/struve.mojo) | `struve` -- `H_v(x)` for `v >= 0`: DLMF's Bessel-function series over Miller's recurrence to `x = 40`, the asymptotic expansion past it |
+| [`owens`](../numax/special/owens.mojo) | `owens_t` -- Owen's `T(h, a)`, two fixed 64-node Gauss-Legendre rules after reducing to `h >= 0`, `0 <= a <= 1` |
 | [`elliptic`](../numax/special/elliptic.mojo) | `elliptic_k`, `elliptic_e` |
 | [`lambertw`](../numax/special/lambertw.mojo) | `lambertw`, `lambertw_m1` |
 | [`legendre`](../numax/special/legendre.mojo) | `legendre_p` |

@@ -231,6 +231,8 @@ from .special.gamma import digamma, gamma, lgamma
 from .special.expint import exp1, expi, expn, fresnel, sici
 from .special.hyper import hyp1f1, hyp2f1
 from .special.zeta import zeta
+from .special.airy import airy
+from .special.bessel import iv, jv, kv, yv
 from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
 from .special.logsumexp import logsumexp
 from .special.beta import beta

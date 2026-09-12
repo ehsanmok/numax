@@ -140,6 +140,37 @@ off by `1.85e-10` on its own. `expi`'s 4.75e+13 absolute is `Ei(60) ~
 series the asymptotic sum takes over from at `x = 40`. The
 `expn(n, x)` family shares `exp1`'s route and floor.
 
+### Bessel of real order, Airy, Struve, Owen
+
+| function / domain | max abs | max rel | max ULP |
+| --- | --- | --- | --- |
+| `jv(2.5, x)` (Temme, CF depth 260), [0.01, 150] | 3.23e-12 | 1.50e-10 | 917,811 |
+| `yv(2.5, x)` (Temme series \| Steed CF2 at 2), [0.01, 150] | 1.05e-05 | 1.50e-10 | 1,157,793 |
+| `ive(2.5, x)` (scaled, Wronskian with `kve`), [0.01, 150] | 1.59e-12 | 1.50e-10 | 917,342 |
+| `kve(2.5, x)` (Temme series \| CF2 at 2), [0.01, 150] | 1.67e-05 | 1.51e-10 | 836,838 |
+| `airy` `Ai` (`J`,`Y` \| series \| `I`,`K` at 1.5), [-40, 8] | 7.70e-11 | 1.64e-09 | 11,100,962 |
+| `airy` `Bi` (`J`,`Y` \| series \| `I`,`K` at 1.5), [-40, 8] | 7.45e-06 | 1.65e-10 | 968,713 |
+| `struve(1, x)` (Bessel series \| asymptotic at 40), [0.01, 100] | 8.96e-10 | 9.34e-10 | 8,071,654 |
+| `owens_t(h, 0.7)` (GL64 \| GL64 in `u` at 2), h in [0, 6] | 1.70e-14 | 7.52e-12 | 55,125 |
+
+Every algorithm in this block was transcribed from a Python prototype
+that agreed with mpmath to `1e-14` or better over the same grids, so
+none of these numbers is the algorithm's. They are `std.math.log`'s. Its
+error is about `2e-10` *absolute* regardless of the argument -- `log(0.8)`
+is off by `1.85e-10`, `log(25)` by `2.6e-10` -- which is a relative error
+of `8e-10` on `ln 0.8`, and Temme's series for `Y_mu` and `K_mu` below
+`x = 2` is built on `d = -ln(x/2)`, both through `x^{mu} = e^{mu d}` and
+directly as a factor on one of its two terms. The four Bessel rows all
+peak between `x = 0.7` and `x = 1.5`, where `x/2` is nearest `1` and the
+relative error of the logarithm is largest; `Ai`'s `1.6e-9` is
+`K_{1/3}(zeta)` at `zeta = 1.6`, the same term. `Bi` on that side is
+dominated by `I`, which does not see `d`, and is at the `exp` floor
+(`4e-12` relative on `exp(10)`). `struve`'s `9e-10` is `lgamma(v + 1/2)`
+in the series' prefactor, `lgamma`'s own floor above. `owens_t` sees only
+`exp` and `erfc`. Above `x = 2` every row is at `1e-13` or better.
+`yv`'s and `kve`'s absolute columns are `Y_{2.5}(0.01) = -1.1e7` and
+`K_{2.5}(0.01) e^{0.01} = 1.6e5` at the same relative floor.
+
 ### Zeta and hypergeometric
 
 | function / domain | max abs | max rel | max ULP |
