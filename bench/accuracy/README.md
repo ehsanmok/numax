@@ -124,10 +124,10 @@ level as `factorial` rather than above it.
 | `exp1` (series \| fraction at 1.5), [0.05, 30] | 6.09e-10 | 2.94e-09 | 14,126,675 |
 | `expi` (series \| asymptotic at 40), [0.05, 60] | 4.75e+13 | 2.70e-09 | 13,179,031 |
 | `expi` (`-exp1(-x)`), -[0.05, 30] | 6.09e-10 | 2.94e-09 | 14,126,675 |
-| `Si` (series \| `E1(ix)` fraction at 2), [0.05, 60] | 4.44e-16 | 1.39e-15 | 10 |
+| `Si` (series \| `E1(ix)` fraction at 2), [0.05, 60] | 2.22e-16 | 2.02e-16 | 1 |
 | `Ci` (series \| `E1(ix)` fraction at 2), [0.05, 60] | 6.84e-10 | 4.66e-09 | 28,390,179 |
-| Fresnel `S` (series \| `erfc` fraction at 2), [0.01, 10] | 1.22e-15 | 3.09e-14 | 153 |
-| Fresnel `C` (series \| `erfc` fraction at 2), [0.01, 10] | 1.33e-15 | 1.02e-14 | 59 |
+| Fresnel `S` (series \| `erfc` fraction at 2), [0.01, 10] | 1.22e-15 | 2.45e-15 | 11 |
+| Fresnel `C` (series \| `erfc` fraction at 2), [0.01, 10] | 1.33e-15 | 3.56e-15 | 16 |
 
 Two rows at `1e-15` and four at `3e-9`, and the split is exactly which
 functions take a logarithm. `Si` and the Fresnel pair are series and

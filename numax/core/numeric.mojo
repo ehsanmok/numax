@@ -162,35 +162,38 @@ trait FloatLike(Copyable, Deinitable, Movable):
 
 
 def max_of[T: FloatLike](a: T, b: T) -> T:
-    """The larger of `a` and `b`, lane-wise and branchless.
+    """The larger of `a` and `b`, lane-wise and branchless, as an exact
+    selection: the sign of `a - b` (read off through `copysign`) picks one
+    operand and the result *is* that operand, bit for bit.
 
-    `max(a, b) = (a + b + |a - b|) / 2`, an identity needing only
-    operations the trait already has. Lives here, next to the trait, rather
-    than in any one kernel: clamping an argument into a function's valid
-    domain before it reaches `ln` (so that *both* sides of a blend are safe
-    to evaluate everywhere) is the single most common thing every kernel in
-    `numax` does, and it shouldn't be re-derived per module.
+    Lives here, next to the trait, rather than in any one kernel: clamping
+    an argument into a function's valid domain before it reaches `ln` (so
+    that *both* sides of a blend are safe to evaluate everywhere) is the
+    single most common thing every kernel in `numax` does, and it
+    shouldn't be re-derived per module.
 
-    One trap, because the identity is arithmetic rather than a hardware
-    `max`: it needs `a + b` and `a - b` to both be representable without
-    losing the smaller operand. Clamping with a floor many orders of
-    magnitude below the other argument doesn't work --
-    `max_of(-1.0, 1e-30)` returns exactly `0.0` in float64, not `1e-30`,
-    because `-1 + 1e-30` rounds back to `-1` and the two terms cancel. So a
-    tiny floor guards a value that's *already near zero* (which is the
-    usual case: an argument clamped to its support first) but does not
-    rescue an arbitrarily negative one. Clamp to `0` first, or use a floor
-    within range of the values actually being clamped.
+    It used to be the identity `(a + b + |a - b|) / 2`, which is a maximum
+    only when `a + b` and `a - b` both hold the smaller operand exactly:
+    `min_of(1e-9, 2)` came out as `1.00000008e-9` (the `2 +- 1e-9` sums
+    keep sixteen digits of `2`, seven of the `1e-9`), `min_of(1e-30, 2)`
+    as exactly `0`, and `max_of(-1, 1e-30)` as `0` -- and every tier-1
+    kernel that clamps a small argument before a blend inherited the loss:
+    `sici(1e-9)` read `1.00000008e-9`. The selection form has none of
+    that, at the price of one `copysign` more.
+
+    Where `a == b` the `>=` side wins, so `max_of(x, x)` is `x`; a NaN in
+    either operand propagates, as it did before.
     """
-    var diff = a - b
-    return (a + b + diff.abs()) / T.constant(2.0)
+    var take_a = ge_indicator(a, b)
+    return a * take_a + b * (T.one() - take_a)
 
 
 def min_of[T: FloatLike](a: T, b: T) -> T:
     """The smaller of `a` and `b`, lane-wise and branchless -- `max_of`'s
-    identity with the `|a - b|` term subtracted instead of added."""
-    var diff = a - b
-    return (a + b - diff.abs()) / T.constant(2.0)
+    exact selection with the indicator flipped: `a` where `a <= b`, else
+    `b`."""
+    var take_a = ge_indicator(b, a)
+    return a * take_a + b * (T.one() - take_a)
 
 
 def ge_indicator[T: FloatLike](x: T, threshold: T) -> T:

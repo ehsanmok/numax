@@ -153,15 +153,10 @@ def _safe_ln[T: FloatLike](x: T) -> T:
     outside the support, because a branchless blend evaluates both sides.
     This keeps that evaluation finite so the discarded side contributes a
     large negative number rather than the `inf - inf` NaN that would
-    survive multiplication by a `0` indicator.
-
-    Note the two-stage clamp. Flooring straight at `_TINY` is not enough
-    for an argument that can be arbitrarily negative -- `max_of` is an
-    arithmetic identity, and `max_of(-1.0, 1e-30)` cancels to exactly `0.0`
-    (see its own docstring). Clamping at `0` first is exact, and the second
-    clamp then lifts that `0` to `_TINY` as intended.
+    survive multiplication by a `0` indicator. `max_of` is an exact
+    selection, so one clamp does it even for an arbitrarily negative `x`.
     """
-    return max_of(max_of(x, T.constant(0.0)), T.constant(_TINY)).ln()
+    return max_of(x, T.constant(_TINY)).ln()
 
 
 def _log_beta[T: FloatLike](a: T, b: T) -> T:

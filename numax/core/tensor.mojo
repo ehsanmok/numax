@@ -162,7 +162,7 @@ from max.gpu.host import DeviceContext
 from std.gpu import block_idx, global_idx, thread_idx
 from std.memory import stack_allocation
 
-from .numeric import FloatLike
+from .numeric import FloatLike, max_of
 from .plain import Plain
 
 
@@ -172,15 +172,10 @@ def add_op[T: FloatLike](a: T, b: T) -> T:
 
 
 def max_op[T: FloatLike](a: T, b: T) -> T:
-    """The larger of two `FloatLike` values, lane-wise.
-
-    `max(a, b) = (a + b + |a - b|) / 2` -- an identity that only needs
-    operations `FloatLike` already requires (`abs`, `__add__`, `__neg__`,
-    `constant`, `__truediv__`), so this needs no `max` method on the trait
-    itself.
-    """
-    var diff = a - b
-    return (a + b + diff.abs()) / T.constant(2.0)
+    """The larger of two `FloatLike` values, lane-wise -- `max_of` from
+    `numax.core.numeric`, the exact selection, under the name the
+    reduction scaffolding pairs with `add_op`."""
+    return max_of(a, b)
 
 
 def add_combine[
