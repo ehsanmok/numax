@@ -1392,6 +1392,40 @@ def test_tensor_qr_block_size_does_not_change_the_answer() raises:
         assert_almost_equal(Float64(one[i]), Float64(other[i]), atol=1e-10)
 
 
+def test_tensor_qr_with_a_ragged_last_panel_reconstructs_the_matrix() raises:
+    """`n = 7` at `block = 4` leaves a last panel of width three, which
+    `q()` applies first; the full panels that follow it then view the
+    same `T` scratch at a wider row stride. Anything the narrow step left
+    in what the wide step reads as its unwritten triangle breaks `Q`, and
+    that is what this catches: the tail of width `block - 1` is the case
+    where the narrow step's upper triangle lands in the wide step's lower
+    one."""
+    var ctx = _cpu()
+    comptime m = 11
+    comptime n = 7
+    var entries = List[Scalar[DType.float64]](capacity=m * n)
+    for i in range(m * n):
+        var h = (i * 2654435761 + 12345) % 16777216
+        var d = 2.0 if (i % n) == (i // n) else 0.0
+        entries.append(Scalar[DType.float64](Float64(h) / 16777216.0 - 0.5 + d))
+    var a = Static[DType.float64, m, n](ctx, entries.copy())
+    var factorization = qr_factor[DType.float64, m, n, False, 4](a)
+    var upper = factorization.r()
+    var orthogonal = factorization.q()
+
+    var product = matmul(orthogonal, upper).to_host()
+    for i in range(m * n):
+        assert_almost_equal(
+            Float64(product[i]), Float64(entries[i]), atol=1e-10
+        )
+    var transposed = transpose[DType.float64, m, n](orthogonal)
+    var gram = matmul(transposed, orthogonal).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(Float64(gram[i * n + j]), want, atol=1e-10)
+
+
 def test_tensor_qr_of_a_square_matrix_reconstructs_it() raises:
     """`m == n` is the boundary of the `m >= n` constraint, and the case
     where the last panel has nothing to its right."""

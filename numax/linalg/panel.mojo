@@ -1105,8 +1105,9 @@ def larft_panel[
     with `T` in hand the trailing block's update is
     `C -= V (T^T (V^T C))`, and every factor of that is a GEMM.
 
-    `t_block` is a dense `nb x nb` scratch; only its upper triangle is
-    written and the caller packs it from there. `V` is read where `geqr2`
+    `t_block` is a dense `nb x nb` scratch, cleared here before its upper
+    triangle is built, so a caller that reuses one scratch across panels
+    of different widths reads zeros where it expects them. `V` is read where `geqr2`
     left it -- the strict lower trapezoid of the panel, unit diagonal
     implicit.
 
@@ -1123,6 +1124,17 @@ def larft_panel[
     var k0 = Int(k)
     var n_b = Int(nb)
     var rows = Int(m)
+
+    # Clear the whole block first. Only one triangle is written below, and
+    # `t_block` is a view at this step's `nb` over a scratch sized for the
+    # widest one: a ragged last panel, or the full panels that follow it
+    # when `Q` is formed in reverse, would otherwise read the previous
+    # step's entries through a different row stride as the other triangle.
+    var e = lane
+    while e < n_b * n_b:
+        t_block.store[1](Coord(e // n_b, e % n_b), Scalar[dtype](0))
+        e += nt
+    _sync[gpu]()
 
     if lane == 0:
         t_block.store[1](Coord(0, 0), tau[Coord(k0)])
