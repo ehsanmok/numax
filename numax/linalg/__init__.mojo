@@ -37,8 +37,8 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `fro`, `inf`, `neg_inf` | `_misc` |
-| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD`, `matrix_rank` | `_decomp`, `_decomp_svd`, plus LAPACK's `sytrd`/`gebrd` |
-| `matfuncs` | `expm` | `_matfuncs` |
+| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD`, `matrix_rank`, `hessenberg`, `TensorHessenberg`, `eigvals`, `Eigenvalues`, `schur`, `TensorSchur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
+| `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `fractional_matrix_power` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
