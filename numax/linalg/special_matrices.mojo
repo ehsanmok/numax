@@ -37,12 +37,23 @@ roots, which is how `numpy.roots` is implemented and what
 does the same job for `numax.signal.convolve`: it is the matrix `C` with
 `C @ v == convolve(a, v)`. `block_diag` and `khatri_rao` are assembly.
 
-`dft` is deliberately absent. Its entries are complex and there is no
+The seven index rules that were once deferred -- `pascal`, `invpascal`,
+`hadamard`, `helmert`, `fiedler`, `fiedler_companion` and `leslie` -- are
+here in the same shape: one `elementwise` map each, the entry a function
+of `(i, j)` and at most a vector argument. `fiedler_companion` is the
+better-conditioned sibling of `companion` for a root finder; `invpascal`
+is the closed-form inverse rather than a call to `inverse`.
+
+`dft` and `invhilbert` are deliberately absent, on the grounds
+`hilbert` and the parity record give (`invhilbert`'s entries need integer
+arithmetic to mean anything past `n = 12`). `dft`'s entries are complex and there is no
 complex `Tensor` -- `numax.fft` carries a spectrum as a real/imaginary
 `Spectrum` pair instead -- so the choice is a signature that is not SciPy's
 or a wait for a complex tensor surface, which `docs/parity.md` records as
 not absorbed on purpose. A half-shape is worse than the absence.
 """
+
+from std.math import sqrt
 
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
@@ -375,4 +386,299 @@ def convolution_matrix[
     elementwise[simd_width=1, target=_target[gpu]()](
         step, Coord(m + n - 1, n), ctx
     )
+    return out^
+
+
+# ---------------------------------------------------- the index rules
+
+
+def _binomial[dtype: DType](top: Int, bottom: Int) -> Scalar[dtype]:
+    """`C(top, bottom)` by the multiplicative rule in the tensor's own
+    `dtype` -- not `Float64`, which a Metal kernel cannot hold -- exact
+    while the result is below the dtype's integer range (`2^53` at
+    float64, `2^24` at float32); zero outside `0 <= bottom <= top`."""
+    if bottom < 0 or bottom > top:
+        return Scalar[dtype](0)
+    var k = bottom if bottom < top - bottom else top - bottom
+    var value = Scalar[dtype](1)
+    for step in range(1, k + 1):
+        value = value * Scalar[dtype](top - k + step) / Scalar[dtype](step)
+    return value
+
+
+def pascal[
+    n: Int,
+    dtype: DType = DType.float64,
+    kind: StaticString = "symmetric",
+    gpu: Bool = False,
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n] where (
+    n >= 1
+):
+    """The `n x n` Pascal matrix. `scipy.linalg.pascal(n, kind)`.
+
+    `"symmetric"` (the default) has `out[i, j] = C(i + j, i)`, `"lower"`
+    has `C(i, j)` on and below the diagonal, `"upper"` is its transpose;
+    the symmetric one is `lower @ upper`. Entries are binomial
+    coefficients computed by the multiplicative rule in the tensor's
+    `dtype`, exact while below `2^53` at float64 -- through `n = 28` for
+    the symmetric kind, whose largest entry is `C(2n - 2, n - 1)`, and `n =
+    56` for the triangular ones -- and below `2^24` at float32.
+    SciPy's `exact=True` integer form is not offered at this tier.
+    """
+    var device = ctx.value() if ctx else DeviceContext(api="cpu")
+    var out = Static[dtype, n, n]._uninitialized(device)
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
+        var at = coord_to_index_list(coord)
+        var i = at[0]
+        var j = at[1]
+        var value: Scalar[dtype]
+        comptime if kind == "lower":
+            value = _binomial[dtype](i, j)
+        elif kind == "upper":
+            value = _binomial[dtype](j, i)
+        else:
+            value = _binomial[dtype](i + j, i)
+        ov.store[1](coord, value)
+
+    comptime if not (kind == "symmetric" or kind == "lower" or kind == "upper"):
+        raise Error("pascal: kind must be 'symmetric', 'lower' or 'upper'")
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, n), device)
+    return out^
+
+
+def invpascal[
+    n: Int,
+    dtype: DType = DType.float64,
+    kind: StaticString = "symmetric",
+    gpu: Bool = False,
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n] where (
+    n >= 1
+):
+    """The inverse of the `n x n` Pascal matrix of the same `kind`, in
+    closed form rather than by inverting. `scipy.linalg.invpascal(n, kind)`.
+
+    The lower kind's inverse is `(-1)^(i - j) C(i, j)`, the upper's its
+    transpose, and the symmetric's is `(-1)^(i - j) sum_{k} C(i + k, k)
+    C(i + k, i + k - j)` over `k < n - i` for `j <= i`, mirrored -- SciPy's
+    formula, which is the product of the two triangular inverses written
+    out. Exact while the sums stay below `2^53`, the same range as
+    `pascal`.
+    """
+    var device = ctx.value() if ctx else DeviceContext(api="cpu")
+    var out = Static[dtype, n, n]._uninitialized(device)
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
+        var at = coord_to_index_list(coord)
+        var i = at[0]
+        var j = at[1]
+        var value: Scalar[dtype]
+        comptime if kind == "lower":
+            value = _binomial[dtype](i, j) * Scalar[dtype](
+                1 if (i - j) % 2 == 0 else -1
+            )
+        elif kind == "upper":
+            value = _binomial[dtype](j, i) * Scalar[dtype](
+                1 if (j - i) % 2 == 0 else -1
+            )
+        else:
+            var row = i if i >= j else j
+            var col = j if i >= j else i
+            var total = Scalar[dtype](0)
+            for k in range(n - row):
+                total += _binomial[dtype](row + k, k) * _binomial[dtype](
+                    row + k, row + k - col
+                )
+            value = total * Scalar[dtype](1 if (row - col) % 2 == 0 else -1)
+        ov.store[1](coord, value)
+
+    comptime if not (kind == "symmetric" or kind == "lower" or kind == "upper"):
+        raise Error("invpascal: kind must be 'symmetric', 'lower' or 'upper'")
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, n), device)
+    return out^
+
+
+def hadamard[
+    n: Int, dtype: DType = DType.float64, gpu: Bool = False
+](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n] where (
+    n >= 1
+):
+    """The `n x n` Sylvester Hadamard matrix, `n` a power of two.
+    `scipy.linalg.hadamard(n)`.
+
+    `out[i, j] = (-1)^popcount(i & j)`, the closed form of the recursive
+    `[[H, H], [H, -H]]` construction, so it is one index rule rather than
+    `log2 n` stackings. `H^T H == n I`. A non-power-of-two `n` is a
+    compile-time error.
+    """
+    comptime assert (n & (n - 1)) == 0, "hadamard: n must be a power of two"
+    var device = ctx.value() if ctx else DeviceContext(api="cpu")
+    var out = Static[dtype, n, n]._uninitialized(device)
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
+        var at = coord_to_index_list(coord)
+        var bits = at[0] & at[1]
+        var parity = 0
+        while bits != 0:
+            parity ^= bits & 1
+            bits >>= 1
+        ov.store[1](coord, Scalar[dtype](1 - 2 * parity))
+
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, n), device)
+    return out^
+
+
+def helmert[
+    n: Int, dtype: DType = DType.float64, full: Bool = False, gpu: Bool = False
+](ctx: Optional[DeviceContext] = None) raises -> Static[
+    dtype, n - 1 + (1 if full else 0), n
+] where (dtype.is_floating_point() and n >= 2):
+    """The Helmert matrix of order `n`: `n - 1` orthonormal rows, each
+    orthogonal to the constant vector, or with `full=True` the `n x n`
+    orthogonal matrix whose first row is the constant `1 / sqrt(n)`.
+    `scipy.linalg.helmert(n, full)`.
+
+    Row `i` of the full matrix (`i >= 1`) is `1 / sqrt(i (i + 1))` in its
+    first `i` entries, `-i / sqrt(i (i + 1))` at entry `i`, zero after --
+    the contrasts that turn a vector into its successive deviations from
+    running means, which is what the matrix is for in the analysis of
+    variance.
+    """
+    var device = ctx.value() if ctx else DeviceContext(api="cpu")
+    comptime rows = n - 1 + (1 if full else 0)
+    var out = Static[dtype, rows, n]._uninitialized(device)
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
+        var at = coord_to_index_list(coord)
+        var i = at[0] + (0 if full else 1)
+        var j = at[1]
+        var value: Scalar[dtype]
+        if i == 0:
+            value = Scalar[dtype](1) / sqrt(Scalar[dtype](n))
+        else:
+            var scale = Scalar[dtype](1) / sqrt(
+                Scalar[dtype](i) * Scalar[dtype](i + 1)
+            )
+            if j < i:
+                value = scale
+            elif j == i:
+                value = -Scalar[dtype](i) * scale
+            else:
+                value = Scalar[dtype](0)
+        ov.store[1](coord, value)
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        step, Coord(rows, n), device
+    )
+    return out^
+
+
+def fiedler[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n]) raises -> Static[dtype, n, n] where n >= 1:
+    """The Fiedler matrix of `a`, `out[i, j] = |a[i] - a[j]|`.
+    `scipy.linalg.fiedler(a)`. Symmetric with a zero diagonal; for a
+    strictly increasing `a` its inverse is tridiagonal and it has one
+    positive and `n - 1` negative eigenvalues, the property it is named
+    for."""
+    var ctx = a.context()
+    var out = Static[dtype, n, n]._uninitialized(ctx)
+    var av = a.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var ov}:
+        var at = coord_to_index_list(coord)
+        ov.store[1](coord, abs(av[Coord(at[0])] - av[Coord(at[1])]))
+
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, n), ctx)
+    return out^
+
+
+def fiedler_companion[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n]) raises -> Static[dtype, n - 1, n - 1] where (
+    dtype.is_floating_point() and n >= 3
+):
+    """Fiedler's pentadiagonal companion matrix of the polynomial with
+    coefficients `a`, highest degree first. `scipy.linalg.fiedler_companion(a)`.
+
+    The same eigenvalues as `companion(a)` -- the polynomial's roots -- in
+    a matrix with only `2 n - 3` nonzeros arranged within two of the
+    diagonal, which is what makes it the better-conditioned choice for a
+    root finder. SciPy's index rule, with `c = a / a[0]`: `out[0, 0] =
+    -c[1]`, `out[1, 0] = 1`; on even rows `i`, `out[i, i + 1] = -c[i + 2]`
+    and `out[i, i + 2] = 1`; on even rows `i >= 2`, `out[i, i - 1] = -c[i +
+    1]`; on odd rows `i >= 3`, `out[i, i - 2] = 1`. `a[0]` must be
+    nonzero, as for `companion`.
+    """
+    var ctx = a.context()
+    var out = Static[dtype, n - 1, n - 1]._uninitialized(ctx)
+    var av = a.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var ov}:
+        var at = coord_to_index_list(coord)
+        var i = at[0]
+        var j = at[1]
+        var lead = av[Coord(0)]
+        var value = Scalar[dtype](0)
+        if i == 0 and j == 0:
+            value = -av[Coord(1)] / lead
+        elif i == 1 and j == 0:
+            value = Scalar[dtype](1)
+        elif i % 2 == 0:
+            if j == i + 1:
+                value = -av[Coord(i + 2)] / lead
+            elif j == i + 2:
+                value = Scalar[dtype](1)
+            elif i >= 2 and j == i - 1:
+                value = -av[Coord(i + 1)] / lead
+        elif i >= 3 and j == i - 2:
+            value = Scalar[dtype](1)
+        ov.store[1](coord, value)
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        step, Coord(n - 1, n - 1), ctx
+    )
+    return out^
+
+
+def leslie[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut f: Static[dtype, n], mut s: Static[dtype, n - 1]) raises -> Static[
+    dtype, n, n
+] where (n >= 2):
+    """The Leslie matrix of fecundities `f` and survivals `s`: `f` along
+    the first row, `s` along the first subdiagonal, zero elsewhere.
+    `scipy.linalg.leslie(f, s)`. Its dominant eigenvalue is the
+    population's asymptotic growth rate."""
+    var ctx = f.context()
+    var out = Static[dtype, n, n]._uninitialized(ctx)
+    var fv = f.view()
+    var sv = s.view()
+    var ov = out.view()
+
+    @always_inline
+    def step[w: Int, alignment: Int = 1](coord: Coord) {var fv, var sv, var ov}:
+        var at = coord_to_index_list(coord)
+        var i = at[0]
+        var j = at[1]
+        if i == 0:
+            ov.store[1](coord, fv[Coord(j)])
+        elif j == i - 1:
+            ov.store[1](coord, sv[Coord(j)])
+        else:
+            ov.store[1](coord, Scalar[dtype](0))
+
+    elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, n), ctx)
     return out^

@@ -161,9 +161,10 @@ has each algorithm and its ceiling.
   its entries exceed what `float64` represents exactly, so computing them
   there and calling the result an inverse would be a claim numax cannot
   back. `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`,
-  `fiedler_companion` and `leslie` are simply not written yet -- each is a
-  short index rule of the same shape as the eight that are, so they are a
-  follow-up rather than a decision.
+  `fiedler_companion` and `leslie` are written too, each a short index
+  rule of the same shape as the first eight -- `invpascal` in closed form
+  rather than by inverting, `hadamard` as `(-1)^popcount(i & j)` rather
+  than `log2 n` stackings.
 - **`scipy.linalg`, almost all of it.** One decomposition ships,
   `qr_factorization` (Householder, CPU-only, scalar loops), and it is on the
   older `LayoutTensor`, which numax denies rather than bridges — interop is

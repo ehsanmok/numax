@@ -21,15 +21,25 @@ from max.gpu.host import DeviceContext
 
 from numax import Plain
 from numax.core.array import Static, to_array
+from numax.core.array import transpose
+from numax.linalg import eigvals as tensor_eigvals
 from numax.linalg import (
     block_diag,
     circulant,
     companion,
     convolution_matrix,
+    fiedler,
+    fiedler_companion,
+    hadamard,
     hankel,
+    helmert,
     hilbert,
+    invpascal,
     khatri_rao,
+    leslie,
+    matmul,
     matvec,
+    pascal,
     toeplitz,
 )
 from numax.linalg.array import eigvals
@@ -252,3 +262,238 @@ def test_convolution_matrix_times_a_vector_is_a_convolution() raises:
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
+
+
+# --- the index rules ---------------------------------------------------------
+
+
+def _vector[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
+    var ctx = DeviceContext(api="cpu")
+    var entries = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        entries.append(Scalar[dtype](values[i]))
+    return Static[dtype, n](ctx, entries^)
+
+
+def test_pascal_symmetric_lower_and_upper() raises:
+    var sym = pascal[4]().to_host()
+    var want: List[Float64] = [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        3,
+        4,
+        1,
+        3,
+        6,
+        10,
+        1,
+        4,
+        10,
+        20,
+    ]
+    for i in range(16):
+        assert_equal(Float64(sym[i]), want[i])
+    var low = pascal[4, kind="lower"]().to_host()
+    var want_low: List[Float64] = [
+        1,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        1,
+        2,
+        1,
+        0,
+        1,
+        3,
+        3,
+        1,
+    ]
+    var up = pascal[4, kind="upper"]().to_host()
+    for i in range(4):
+        for j in range(4):
+            assert_equal(Float64(low[i * 4 + j]), want_low[i * 4 + j])
+            assert_equal(Float64(up[i * 4 + j]), want_low[j * 4 + i])
+    # The symmetric one is lower @ upper.
+    var l = pascal[4, kind="lower"]()
+    var u = pascal[4, kind="upper"]()
+    var product = matmul(l, u).to_host()
+    for i in range(16):
+        assert_equal(Float64(product[i]), want[i])
+
+
+def test_invpascal_is_the_inverse_in_every_kind() raises:
+    comptime n = 5
+    var p = pascal[n]()
+    var q = invpascal[n]()
+    var identity = matmul(p, q).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(Float64(identity[i * n + j]), want, atol=1e-12)
+    var pl = pascal[n, kind="lower"]()
+    var ql = invpascal[n, kind="lower"]()
+    var idl = matmul(pl, ql).to_host()
+    var pu = pascal[n, kind="upper"]()
+    var qu = invpascal[n, kind="upper"]()
+    var idu = matmul(pu, qu).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(Float64(idl[i * n + j]), want, atol=1e-12)
+            assert_almost_equal(Float64(idu[i * n + j]), want, atol=1e-12)
+    # SciPy: invpascal(4)[3] == [-1, 3, -3, 1] up to the symmetric formula.
+    var q4 = invpascal[4]().to_host()
+    var want4: List[Float64] = [
+        4,
+        -6,
+        4,
+        -1,
+        -6,
+        14,
+        -11,
+        3,
+        4,
+        -11,
+        10,
+        -3,
+        -1,
+        3,
+        -3,
+        1,
+    ]
+    for i in range(16):
+        assert_equal(Float64(q4[i]), want4[i])
+
+
+def test_hadamard_matches_sylvesters_construction_and_is_orthogonal() raises:
+    var h4 = hadamard[4]().to_host()
+    var want: List[Float64] = [
+        1,
+        1,
+        1,
+        1,
+        1,
+        -1,
+        1,
+        -1,
+        1,
+        1,
+        -1,
+        -1,
+        1,
+        -1,
+        -1,
+        1,
+    ]
+    for i in range(16):
+        assert_equal(Float64(h4[i]), want[i])
+    comptime n = 8
+    var h = hadamard[n]()
+    var ht = hadamard[n]()
+    var ht_t = transpose(ht)
+    var gram = matmul(ht_t, h).to_host()
+    for i in range(n):
+        for j in range(n):
+            var expect = Float64(n) if i == j else 0.0
+            assert_equal(Float64(gram[i * n + j]), expect)
+
+
+def test_helmert_rows_are_orthonormal_contrasts() raises:
+    comptime n = 5
+    var h = helmert[n]()
+    var ht = transpose(h)
+    var gram = matmul(h, ht).to_host()
+    for i in range(n - 1):
+        for j in range(n - 1):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(
+                Float64(gram[i * (n - 1) + j]), want, atol=1e-14
+            )
+    # Each row sums to zero: orthogonal to the constant vector.
+    var rows = h.to_host()
+    for i in range(n - 1):
+        var total = 0.0
+        for j in range(n):
+            total += Float64(rows[i * n + j])
+        assert_almost_equal(total, 0.0, atol=1e-14)
+    var full = helmert[n, full=True]()
+    var host = full.to_host()
+    for j in range(n):
+        assert_almost_equal(
+            Float64(host[j]), 1.0 / 2.23606797749979, atol=1e-15
+        )
+    var fullt = transpose(full)
+    var square = matmul(full, fullt).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = 1.0 if i == j else 0.0
+            assert_almost_equal(Float64(square[i * n + j]), want, atol=1e-14)
+
+
+def test_fiedler_is_the_absolute_difference_table() raises:
+    var a = _vector[3]([1.0, 4.0, 9.0])
+    var f = fiedler(a).to_host()
+    var want: List[Float64] = [0, 3, 8, 3, 0, 5, 8, 5, 0]
+    for i in range(9):
+        assert_equal(Float64(f[i]), want[i])
+
+
+def test_fiedler_companion_has_the_polynomial_roots_as_eigenvalues() raises:
+    """`x^3 - 6x^2 + 11x - 6 = (x-1)(x-2)(x-3)`, and a degree-5 one against
+    `companion`'s spectrum."""
+    var a = _vector[4]([1.0, -6.0, 11.0, -6.0])
+    var fc = fiedler_companion(a)
+    var host = fc.to_host()
+    # SciPy: [[6, -11, 1], [1, 0, 0], [0, 6, 0]] for c = a / a[0].
+    var want: List[Float64] = [6.0, -11.0, 1.0, 1.0, 0.0, 0.0, 0.0, 6.0, 0.0]
+    for i in range(9):
+        assert_equal(Float64(host[i]), want[i])
+    var values = eigvals[P, 3](to_array[P](fc))
+    var found = List[Float64]()
+    for i in range(3):
+        assert_almost_equal(Float64(values[i].im.v), 0.0, atol=1e-8)
+        found.append(Float64(values[i].re.v))
+    for expected in [1.0, 2.0, 3.0]:
+        var matched = False
+        for got in found:
+            if abs(got - expected) < 1e-8:
+                matched = True
+        assert_true(matched)
+    var b = _vector[6]([2.0, -3.0, 1.0, 4.0, -2.0, 0.5])
+    var fc5 = fiedler_companion(b)
+    var b_again = _vector[6]([2.0, -3.0, 1.0, 4.0, -2.0, 0.5])
+    var c5 = companion(b_again)
+    # Both spectra through the Tensor tier's Francis iteration, which
+    # deflates; the Array tier's fixed sweeps are not a reference here.
+    var ev_f = tensor_eigvals(fc5)
+    var ev_c = tensor_eigvals(c5)
+    var f_re = ev_f.re.to_host()
+    var f_im = ev_f.im.to_host()
+    var c_re = ev_c.re.to_host()
+    var c_im = ev_c.im.to_host()
+    for i in range(5):
+        var matched = False
+        for j in range(5):
+            if (
+                abs(Float64(f_re[i]) - Float64(c_re[j])) < 1e-9
+                and abs(Float64(f_im[i]) - Float64(c_im[j])) < 1e-9
+            ):
+                matched = True
+        assert_true(matched)
+
+
+def test_leslie_places_fecundities_and_survivals() raises:
+    var f = _vector[3]([0.1, 2.0, 1.0])
+    var s = _vector[2]([0.2, 0.8])
+    var l = leslie(f, s).to_host()
+    var want: List[Float64] = [0.1, 2.0, 1.0, 0.2, 0.0, 0.0, 0.0, 0.8, 0.0]
+    for i in range(9):
+        assert_equal(Float64(l[i]), want[i])
