@@ -19,7 +19,7 @@ conformers, not floats: `jv(P.constant(0.5), P.constant(2.0))`, never
 `jv(0.5, 2.0)`.
 """
 
-from std.math import atan, cos, exp, sin, sqrt
+from std.math import atan, cos, sin, sqrt
 
 from numax import (
     Dual,
@@ -109,6 +109,12 @@ def main():
         "--- lambertw, W0 branch (now valid down to the branch point"
         " x=-1/e, not just x >= 0) ---"
     )
+    # `w exp(w) == x` is the definition, so it is the check -- and the
+    # exponential in it is `Plain`'s own rather than `std.math`'s, for the
+    # reason the `erfinv` block below spells out: at float64 `std.math.exp`
+    # is ~1e-11 relative off, which is larger than anything `lambertw`
+    # contributes, so the check would be reporting the reference's error
+    # as the library's.
     for x_raw in [-0.36787944, -0.3, -0.1, 0.0, 1.0, 2.718281828459045, 10.0]:
         var x = Dual[Plain[dtype, width]](
             Plain[dtype, width].constant(x_raw),
@@ -123,7 +129,7 @@ def main():
             " W'(x)=",
             w.deriv,
             " check w*exp(w)=",
-            w.value.v * exp(w.value.v),
+            (w.value * w.value.exp()).v,
         )
 
     print("--- lambertw_m1, the other real branch (-1/e <= x < 0, w <= -1) ---")
@@ -139,7 +145,7 @@ def main():
             " W_-1(x)=",
             w.value,
             " check w*exp(w)=",
-            w.value.v * exp(w.value.v),
+            (w.value * w.value.exp()).v,
         )
 
     print("--- elliptic_k / elliptic_e (parameter m = k^2, 0 <= m <= 1) ---")
