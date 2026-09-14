@@ -264,7 +264,7 @@ struct Interval[Inner: FloatLike](
         `max_of` is negative exactly when `lo < 0 < hi`.
         """
         var zero = Self.Inner.constant(0.0)
-        var mig = max_of(zero, max_of(self.lo.copy(), -self.hi))
+        var mig = max_of(zero, max_of(self.lo.copy(), zero - self.hi))
         var mag = max_of(self.lo.abs(), self.hi.abs())
         return Self(mig^, mag^)
 
@@ -281,7 +281,11 @@ struct Interval[Inner: FloatLike](
         var zero = Self.Inner.constant(0.0)
         var magnitudes = self.abs()
         var all_positive = ge_indicator(sign_source.lo.copy(), zero)
-        var all_negative = ge_indicator(-sign_source.hi, zero) * (
+        # `zero - hi` rather than `-hi`: negating a `+0.0` upper bound gives
+        # `-0.0`, which `copysign` reads as negative, so a source ending
+        # exactly at zero used to count as straddling it -- and
+        # `max_of([2.9, 3.0], 3.0)` came back `[0, 6]`.
+        var all_negative = ge_indicator(zero - sign_source.hi, zero) * (
             Self.Inner.one() - all_positive
         )
         var straddles = Self.Inner.one() - all_positive - all_negative

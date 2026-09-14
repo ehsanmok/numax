@@ -13,6 +13,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Compensated, Dual, FloatLike, Plain
 from numax.core.interval import Interval
+from numax.core.numeric import max_of
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]
@@ -232,6 +233,32 @@ def test_cos_falls_back_to_the_trivial_enclosure_when_it_spans_both() raises:
     var c = _interval(0.0, 100.0 * _PI).cos()
     assert_almost_equal(c.lo.v[0], -1.0, atol=1e-12)
     assert_almost_equal(c.hi.v[0], 1.0, atol=1e-12)
+
+
+def test_copysign_treats_a_source_ending_at_zero_as_non_positive() raises:
+    # `[-0.1, 0.0]` is entirely at or below zero, and zero counts as
+    # positive, so the sign is genuinely ambiguous only at the single
+    # point `0`; `copysign`'s own convention resolves that toward `+`.
+    # Negating the `+0.0` upper bound to test "all negative" produced
+    # `-0.0`, which reads as negative, so the source was treated as
+    # straddling zero and both signs came back.
+    var magnitude = _interval(2.0, 3.0)
+    var from_non_positive = magnitude.copysign(_interval(-0.1, 0.0))
+    assert_almost_equal(from_non_positive.lo.v, P.constant(-3.0).v)
+    assert_almost_equal(from_non_positive.hi.v, P.constant(-2.0).v)
+
+
+def test_max_of_an_interval_ending_at_the_threshold_is_the_threshold() raises:
+    # The consequence that surfaced it: `max_of([2.9, 3.0], 3.0)` came back
+    # `[0, 6]`, and every kernel that clamps into a branch's domain --
+    # `numax.special.j0` at `max_of(|x|, 3)` -- returned NaN over any
+    # interval touching the branch point.
+    var clamped = max_of(_interval(2.9, 3.0), I.constant(3.0))
+    assert_almost_equal(clamped.lo.v, P.constant(3.0).v)
+    assert_almost_equal(clamped.hi.v, P.constant(3.0).v)
+    var above = max_of(_interval(3.0, 3.5), I.constant(3.0))
+    assert_almost_equal(above.lo.v, P.constant(3.0).v)
+    assert_almost_equal(above.hi.v, P.constant(3.5).v)
 
 
 def test_inflate_widens_both_ends() raises:
