@@ -6,6 +6,7 @@ entry is part of the public surface: `from numax import <name>` reaches all of
 it flat, and `from numax.<subpackage> import <name>` reaches one subsystem.
 Anything prefixed `_` is internal and excluded.
 
+For what numax is for and what it does not claim, see [`why.md`](why.md).
 For the design rationale — the trait, the fixed-iteration invariant, the
 tensor/GPU layer — see [`architecture.md`](architecture.md). For what numax
 absorbs from NumPy/SciPy, routes to MAX, or leaves out, see
@@ -65,7 +66,7 @@ decides what a call returns.
 |---|---|---|
 | `Plain[dtype, width]` | Ordinary `SIMD`, at hardware speed — the baseline every kernel runs at unless you ask for something else. `map` over a `Plain` kernel measures 0.998x a hand-written raw-SIMD loop | [`core/plain.mojo`](../numax/core/plain.mojo) |
 | `Dual[Inner]` | Forward-mode autodiff: `f(x)` and `f'(x)` from one call, by the chain rule built into the arithmetic. Nests for second derivatives | [`core/dual.mojo`](../numax/core/dual.mojo), [`gaussian.mojo`](../examples/basic/gaussian.mojo) |
-| `Gradient[Inner, n_vars]` | Every `∂f/∂xᵢ` from one call; over `Dual` it is a full Hessian and Hessian-vector products | [`core/gradient.mojo`](../numax/core/gradient.mojo), [`hessian.mojo`](../examples/basic/hessian.mojo) |
+| `Gradient[Inner, n_vars]` | Every `∂f/∂xᵢ` from one call, forward-mode: cost grows with `n_vars` (sublinearly — 32 variables cost about 12x one), which is the right trade below a few dozen inputs and the wrong one for a large parameter vector; there is no reverse mode, by measurement ([`parity.md`](parity.md)). Over `Dual` it is a full Hessian and Hessian-vector products | [`core/gradient.mojo`](../numax/core/gradient.mojo), [`hessian.mojo`](../examples/basic/hessian.mojo) |
 | `Compensated[dtype, width]` | A value carried as `a + b`, with `b` holding the rounding error `a` lost — roughly double `dtype`'s precision, same algorithm | [`core/compensated.mojo`](../numax/core/compensated.mojo), [`statistics.mojo`](../examples/intermediate/statistics.mojo) |
 | `Decimal[width, scale]` | Exact base-10 fixed point (`0.1 + 0.2 == 0.3`), scoped to modest magnitudes and single-digit `scale`; the transcendentals are fixed-iteration series rounded to that grid, so `gamma` lands within a few parts in ten thousand at `scale = 6` | [`core/decimal.mojo`](../numax/core/decimal.mojo), [`enclosures.mojo`](../examples/intermediate/enclosures.mojo) |
 | `Complex[Inner]` | Complex over any other conformer; `Complex[Dual[...]]` differentiates holomorphically | [`core/complex.mojo`](../numax/core/complex.mojo), [`complex.mojo`](../examples/basic/complex.mojo) |
@@ -100,8 +101,8 @@ siblings rather than replacements.
 
 | Tier | Rule | Who |
 |---|---|---|
-| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, `linalg`, `interpolate`, `fft`, `signal`, `optimize.solve`, `integrate`'s fixed-node quadrature and fixed-step ODE steps |
-| **Tier 2** | Free to loop or branch on data; `Plain`-only, host-side | `ops`, `elementwise`, `logic`, `sorting`, `io`, `stats`'s tensor reductions, `optimize`'s converge-to-tolerance minimizers, `integrate`'s adaptive `quad`/`solve_ivp` |
+| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate.array`, `fft.array`, `signal.array`, `optimize.array`'s fixed-iteration `newton`/`halley`/`bisection`, `integrate.array`'s fixed-node quadrature and fixed-step ODE steps |
+| **Tier 2** | Free to loop or branch on data; `Plain`-only, host-side | `ops`, `elementwise`, `logic`, `sorting`, `io`, `stats`'s tensor reductions, the `Tensor` tiers of `linalg`, `interpolate`, `fft` and `signal` (host-orchestrated; `gpu=True` still runs MAX's kernels), `optimize`'s converge-to-tolerance minimizers, `integrate`'s adaptive `quad`/`solve_ivp` |
 
 ## `numax.core` — the tensor engine
 

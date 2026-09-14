@@ -64,4 +64,6 @@ about:
     derivative needs no separate implementation. Tensors own MAX
     DeviceBuffers and carry their shape in their layout type, with extents
     either compiled in or supplied at run time, so numax.core.tensor drives
-    any of it across MAX's TileTensor on CPU or GPU.
+    any of it across MAX's TileTensor on CPU or GPU. Young and experimental,
+    so APIs may change; docs/why.md says what it is for and what it does
+    not claim.

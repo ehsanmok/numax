@@ -360,3 +360,17 @@ Also absent, each a decision: sparse matrices, iterative solvers, distributed
 execution, and dtype promotion. The first three are a different library's job;
 the fourth is a compile error waiting to happen in a language that infers
 parameters, so `astype` is explicit.
+
+Reverse-mode autodiff is absent by measurement rather than by omission.
+Every derivative conformer is forward-mode: `Dual` costs one pass per
+direction and `Gradient[T, n]` carries all `n` partials through one pass,
+at a cost that grows with `n` (sublinearly -- 32 variables cost about 12x
+one, not 32x). A tape-based reverse mode was prototyped to a working,
+numerically correct `FloatLike` conformer, ran inside a Metal kernel, and
+was rejected head to head: 11x slower than `Gradient` at two variables,
+break-even near sixteen, 2x ahead at thirty-two. Per-element kernels have
+single-digit input counts, squarely where a tape loses. The trigger to
+revisit is a real caller differentiating with respect to more than about
+sixteen inputs, a fitted parameter vector say; the `Tensor` tier's
+`minimize` takes `jac` explicitly for that reason, since a tensor cannot
+hold a `Gradient`.

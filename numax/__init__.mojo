@@ -8,13 +8,23 @@ a NumPy-named array surface, written in Mojo against MAX's `TileTensor`
 and kernel infrastructure. Every `Tensor` entry point runs on the host or
 on any device MAX drives, through one `gpu` parameter.
 
+Two axes, co-equal: a composable type layer, where one kernel written
+against `FloatLike` means several things depending on the type it is
+called with, and NumPy/SciPy parity built MAX-first, where every kernel
+MAX ships is called rather than rewritten and every one it lacks is
+written in MAX's idiom.
+
 **One kernel, several meanings.** Every function is written once against
 the `FloatLike` trait. The type you call it with decides what comes back:
-a value (`Plain`), a derivative (`Dual`), extra precision
-(`Compensated`), exact base-10 fixed point (`Decimal`), a complex result
-(`Complex`), a full gradient (`Gradient`), or an interval bound
-(`Interval`). They nest, so autodiff, precision and complex arithmetic
-compose instead of each needing its own copy of every kernel.
+a value (`Plain`), a derivative (`Dual`), a full gradient (`Gradient`),
+extra precision (`Compensated`), exact base-10 fixed point (`Decimal`), a
+complex result (`Complex`), or an interval bound (`Interval`). They nest,
+so autodiff, precision and complex arithmetic compose instead of each
+needing its own copy of every kernel. Because the decompositions,
+quadrature rules, ODE steps and root solvers are themselves written this
+way, a whole algorithm -- a 24x24 eigensolve, a Newton iteration over it
+-- runs inside one GPU thread at `Dual` as readily as at `Plain`
+(`examples/advanced/quantum_well.mojo`).
 
 **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory decides host or device memory: the
@@ -22,6 +32,26 @@ same kernel, any accelerator, unmodified. Nothing else changes, and
 `.view()` yields the `TileTensor` every MAX kernel takes. Its shape lives
 in its layout type, so `Static[f32, 2, 3]` and `Dynamic[f32, 2]` -- extents
 compiled in, extents supplied at run time -- are one type, not two.
+
+**NumPy and SciPy's ground.** The SciPy entry points are spelled the way
+SciPy spells them, method strings included, and `.npy` files round-trip
+byte for byte, so a program ported from NumPy ingests the files it has
+and hands results back the same way. The full inventory is
+`docs/features.md`; what is routed to MAX, written here, or left out on
+purpose -- sparse, iterative solvers, distributed execution, dtype
+promotion, reverse-mode autodiff -- is `docs/parity.md`.
+
+**Measured, per processor.** CPU and GPU numbers are never mixed into one
+comparison, and `docs/performance.md` carries every figure with the
+harness that produced it, including where this version is slow: the
+spectral decompositions on `Tensor` are at 0.002-0.11 of LAPACK at
+`n = 1024`, because accumulating eigenvectors is still a host loop.
+
+**Accurate on purpose.** Every approximation documents an error bound,
+`pixi run accuracy` checks it against mpmath references at 50 digits, and
+`Plain` carries its own one-ulp `exp`, `ln` and `erf` at `float64`.
+
+Young and experimental, so APIs may change.
 
 ```mojo
 from numax import Dual, FloatLike, Plain, f32
@@ -49,8 +79,9 @@ from numax.linalg.array import cholesky    # ... or by tier
 ```
 
 `numax.prelude` leaves out the names that would shadow a Mojo builtin
-(`sum`, `min`, `max`, `abs`, `all`, `any`, `round`) so that a star import
-is safe; its own docstring lists them and where to reach them.
+(`sum`, `prod`, `min`, `max`, `abs`, `all`, `any`, `round`, `copysign`) so
+that a star import is safe; its own docstring lists them and where to
+reach them.
 
 | Subpackage | Contents |
 |---|---|

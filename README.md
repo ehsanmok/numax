@@ -90,53 +90,73 @@ it also returns $dE_0/d\omega$, which is the Hellmann-Feynman theorem arriving
 without perturbation theory being written anywhere. Handed to `newton` it runs
 backwards, finding the frequency that puts the ground state at a chosen energy
 from a derivative the caller never supplied. Handed to `map`, the entire 24x24
-eigensolve runs inside a single GPU thread, 256 wells at once, and matches the
-host path bit for bit.
+eigensolve runs inside a single GPU thread, 256 wells at once. And the other
+three answers run the same way: `dE_0/d\omega` at `Dual` for every well, and
+`newton` from 256 starting guesses, each thread carrying its own chain of
+`Dual` eigensolves, all agreeing with the CPU path to a few `float32` ulp.
 
 The percent or so between these numbers and the continuum ($E_0 = \omega/2$, so
 $0.5$ and $2.0$) is the 24-point grid, not the library. The derivative is exact
-for the discretized operator, and inherits that same offset.
+for the discretized operator, and inherits that same offset. The example is
+`float32` because Metal has no `double`; the same source at `float64` runs on
+CUDA only.
 [`examples/advanced/quantum_well.mojo`](examples/advanced/quantum_well.mojo)
 runs the whole thing, CPU and GPU side by side.
 
 ## Why νMAX
 
-- **One kernel, several meanings.** Every function is written once against the
-  `FloatLike` trait. The type you call it with decides what comes back: a value
-  (`Plain`), a derivative (`Dual`), a full gradient (`Gradient`), extra
-  precision (`Compensated`), exact base-10 fixed point (`Decimal`), a complex
-  result (`Complex`), an interval bound (`Interval`). They nest, so autodiff,
-  precision and complex arithmetic compose instead of each needing its own copy
-  of every kernel.
-- **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
-  `DeviceContext` you pass a factory decides host or device memory. Nothing else
-  changes, and `.view()` yields the `TileTensor` every MAX kernel takes. Its
-  shape lives in its layout type, so `Static[f32, 2, 3]` with the extents
-  compiled in and `Dynamic[f32, 2]` with the extents supplied at run time are
-  one type, not two. `Array[T, n]` is the register-resident half that carries
-  the algorithms; [the section below](#start-with-tensor-cross-to-array-for-algorithms)
-  is the map between them.
-- **NumPy and SciPy's ground.** Special functions at arbitrary order, dense
+Three things, each with a file that proves it. The long form, with the
+alternatives compared and what numax does not claim, is
+[`docs/why.md`](docs/why.md).
+
+- **Whole algorithms inside a kernel, at any numeric type.** Every function
+  is written once against the `FloatLike` trait, and so are the
+  decompositions, quadrature rules, ODE steps and root solvers. So the type
+  you call with decides what comes back -- a value (`Plain`), a derivative
+  (`Dual`), a full gradient (`Gradient`), extra precision (`Compensated`),
+  exact base-10 fixed point (`Decimal`), a complex result (`Complex`), an
+  interval bound (`Interval`) -- and a whole eigensolve, ODE integration or
+  Newton solve runs inside one GPU thread, or across SIMD lanes on the CPU,
+  from the same source. Tier 1 code is launchable by construction and says
+  so in its docstring.
+  [`quantum_well.mojo`](examples/advanced/quantum_well.mojo),
+  [`ode.mojo`](examples/advanced/ode.mojo).
+- **Derivatives, bounds and precision through SciPy's algorithms, with no
+  adjoint rule written.** `Dual` through Cholesky, `eigh`, an integral, an
+  ODE and every special function; `Gradient[Dual[Plain], n]` is a Hessian
+  by nesting; `Complex[Dual[Plain]]` differentiates holomorphically;
+  `Interval` encloses `erf` exactly and `j0` loosely, and the example shows
+  where an enclosure stops.
+  [`npy_to_cholesky.mojo`](examples/intermediate/npy_to_cholesky.mojo),
+  [`hessian.mojo`](examples/basic/hessian.mojo),
+  [`enclosures.mojo`](examples/intermediate/enclosures.mojo).
+- **The missing `scipy` for MAX, built MAX-first.** What NumPy and SciPy
+  provide, on MAX's tensors: special functions at arbitrary order, dense
   linear algebra through the spectral decompositions -- `eigh`, `svd`,
   `schur` and the matrix functions on the Schur form -- optimization with
   bounds, quadrature and ODE solvers, interpolation, FFTs at any length,
   signal processing from filter design to the spectral estimators, the nine
   `scipy.stats` distributions over whole tensors, the statistics surface from
-  `quantile` and `histogram` through the hypothesis tests, and a NumPy-named
-  array surface, plus `.npy` read/write, so a program ported from NumPy can
-  ingest the files it already has and hand results back the same way. Full
-  inventory in [`docs/features.md`](docs/features.md).
-- **Fast, and measured, per processor.** On an A10G's GPU, 61,013 M elem/s
-  against a hand-written CUDA kernel's 60,352 and `torch.compile`'s 53,670,
-  at ~82% of the card's bandwidth spec. On its CPU, 0.998x a hand-written
-  raw-SIMD loop and 4.3x NumPy. CPU and GPU
-  numbers are never mixed into one comparison; see
-  [`docs/performance.md`](docs/performance.md).
-- **Accurate on purpose.** Every approximation documents an error bound, and
-  `pixi run accuracy` checks it against checked-in mpmath references at 50
-  digits.
+  `quantile` and `histogram` through the hypothesis tests, a NumPy-named
+  array surface and `.npy` read/write. Every kernel MAX ships is called, not
+  rewritten; every one it lacks is written in MAX's idiom on `TileTensor`,
+  with its `O(n^3)` term in `linalg.matmul` and no per-vendor code anywhere.
+  `Tensor` owns a MAX `DeviceBuffer`, so the `DeviceContext` you pass decides
+  host or device, and `target="gpu"` is the whole of numax's device
+  participation. Full inventory in [`docs/features.md`](docs/features.md);
+  what is delegated, extended or left out in [`docs/parity.md`](docs/parity.md).
 
-Young and experimental, so APIs may change.
+Under all three: measured per processor, never mixing CPU and GPU numbers
+(`docs/performance.md` has every figure with its harness, including the
+paragraph below on where this version is slow); every approximation carries
+an error bound that `pixi run accuracy` checks against mpmath at 50 digits;
+and `Plain` has its own one-ulp `exp`, `ln` and `erf` at `float64`.
+
+Young and experimental, so APIs may change. Not here yet, each on purpose:
+fancy indexing and owned slicing, dtype promotion (`astype` is explicit),
+GPU launches over run-time shapes, reverse-mode autodiff (`Gradient` is
+forward and was measured against a tape), sparse matrices, Krylov solvers
+and distributed execution. [`docs/why.md`](docs/why.md) says why for each.
 
 ## Install
 
@@ -537,10 +557,15 @@ var plain_var = variance(plain_list)           # float32 accumulation
 var comp_var = variance(comp_list).value       # ~double precision, same code
 ```
 
-`Compensated` carries the rounding error ordinary arithmetic discards.
+`Compensated` carries the rounding error ordinary arithmetic discards. The
+same swap gives an enclosure (`Interval`) or exact base-10 arithmetic
+(`Decimal`) through the special functions, and the example is honest about
+where an interval stops being an enclosure.
 
 > **Run it:** `pixi run example-statistics` ·
 > [`examples/intermediate/statistics.mojo`](examples/intermediate/statistics.mojo)
+> · `pixi run example-enclosures` ·
+> [`examples/intermediate/enclosures.mojo`](examples/intermediate/enclosures.mojo)
 
 ### The same kernel, on the GPU
 
@@ -668,7 +693,8 @@ on the M3 Pro. CuPy is CUDA-only and MLX macOS-only, hence the two gaps.
 
 CuPy's column is a hand-written `cupy.ElementwiseKernel` — CUDA C for this
 one expression. numax is at parity with it, from a kernel that names no
-device and no dtype, both pinned at 82% of the card's bandwidth. CuPy's
+device and no dtype, both at about 83% of the card's bandwidth spec by
+`bench-roofline`'s bytes-moved measurement. CuPy's
 *eager* path measures 20,375, the 3x cost of leaving `exp(-(x*x))` unfused;
 numax has no such column, because a `FloatLike` kernel is already fused
 before the walk begins.
@@ -733,7 +759,7 @@ separate table and not a column of the one above:
 |---|---|---|---|---|
 | numax, CPU | 1,475* | 83.4 | 86.9 | 80.3 |
 | SciPy (LAPACK + Accelerate), CPU | 1,393* | 280.1 | 231.9 | 162.8 |
-| numax, Metal | **1,800** | 65.2 | 19.0 | 16.9 |
+| numax, Metal | **1,800** | 65.2 | 18.8 | 16.8 |
 | PyTorch (MPS), Metal | 1,143 | 125.0 | 51.5 | 20.9 |
 
 \* Both CPU ceiling entries are the same kernel -- Apple Accelerate's

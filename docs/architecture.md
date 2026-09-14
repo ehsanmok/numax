@@ -1,9 +1,10 @@
 # Architecture
 
-> Companion to the top-level [README](../README.md). For what numax absorbs
-> from NumPy/SciPy and what it deliberately leaves out -- with the surveyed
-> MAX API surface those decisions rest on -- see
-> [`parity.md`](parity.md).
+> Companion to the top-level [README](../README.md). For what numax is for,
+> what it can show that the alternatives cannot, and what it does not
+> claim, see [`why.md`](why.md). For what numax absorbs from NumPy/SciPy
+> and what it deliberately leaves out -- with the surveyed MAX API surface
+> those decisions rest on -- see [`parity.md`](parity.md).
 
 `numax` is built on two co-equal axes:
 
