@@ -38,6 +38,7 @@ Multi-feature compositions -- more than one concept per file.
 | [interference.mojo](intermediate/interference.mojo) | Two-source interference over a coordinate grid in one `map`, with the fringe maxima and their spacing measured down the far column, plus the far-field phase differentiated with respect to the slit separation. |
 | [stats_surface.mojo](intermediate/stats_surface.mojo) | `scipy.stats` and the NumPy statistics over a `Tensor`: `norm.cdf` of a whole tensor in one launch, quantiles, a histogram, the correlation family, a regression and a t-test |
 | [signal_processing.mojo](intermediate/signal_processing.mojo) | `scipy.signal` end to end on one two-tone recording: `firwin` and `butter` design, `convolve` against `fftconvolve`, `lfilter`/`filtfilt`, `medfilt`/`savgol_filter`, and `welch` with `find_peaks` recovering both tones |
+| [enclosures.mojo](intermediate/enclosures.mojo) | The special functions at `Interval` and `Decimal`: `erf` enclosing its range exactly, `j0` enclosing loosely and tightening under subdivision, the dependency problem on `exp(-x*x)`, `gamma` where an interval stops being an enclosure, and `0.1 + 0.2 == 0.3` exactly with the transcendentals at fixed-point precision. |
 | [random_ensemble.mojo](intermediate/random_ensemble.mojo) | `numax.stats.uniform` drawing an ODE ensemble's initial conditions on CPU, versus `std.random.philox.Random` drawing them independently per GPU thread inside a `map[gpu=True]` kernel. Needs a GPU. |
 
 ## advanced/

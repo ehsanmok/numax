@@ -225,6 +225,7 @@ test-complex = "mojo -I . tests/core/test_complex.mojo"
 test-gradient = "mojo -I . tests/core/test_gradient.mojo"
 test-legendre = "mojo -I . tests/special/test_legendre.mojo"
 test-beta = "mojo -I . tests/special/test_beta.mojo"
+test-enclosure = "mojo -I . tests/special/test_enclosure.mojo"
 test-hessian = "mojo -I . tests/core/test_hessian.mojo"
 test-sqrt = "mojo -I . tests/core/test_sqrt.mojo"
 test-numeric = "mojo -I . tests/core/test_numeric.mojo"
@@ -316,6 +317,7 @@ tests = { depends-on = [
     "test-gradient",
     "test-legendre",
     "test-beta",
+    "test-enclosure",
     "test-hessian",
     "test-sqrt",
 "test-numeric",
@@ -405,6 +407,8 @@ example-quantum-well = "mojo -I . examples/advanced/quantum_well.mojo"
 example-spectral = "mojo -I . examples/advanced/spectral.mojo"
 example-stats-surface = "mojo -I . examples/intermediate/stats_surface.mojo"
 example-signal-processing = "mojo -I . examples/intermediate/signal_processing.mojo"
+# The special functions at `Interval` and `Decimal`.
+example-enclosures = "mojo -I . examples/intermediate/enclosures.mojo"
 examples = { depends-on = [
     "examples-cpu",
     "example-softmax",
@@ -461,6 +465,7 @@ examples-cpu = { depends-on = [
     "example-spectral",
     "example-stats-surface",
     "example-signal-processing",
+    "example-enclosures",
     "example-wave-packet",
     "example-interference",
 ] }
