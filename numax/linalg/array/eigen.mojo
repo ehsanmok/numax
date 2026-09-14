@@ -42,19 +42,34 @@ def _jacobi_rotation[T: FloatLike](numerator: T, denominator: T) -> Tuple[T, T]:
     latter cancels catastrophically for large `|zeta|`, which is exactly
     the common case near convergence.
 
-    `numerator` is the off-diagonal entry being annihilated. When it is
-    already zero the rotation should be the identity, and `guard_nonzero`
-    delivers that without an `if`: a floored denominator makes `zeta` huge,
-    which makes `t` about `1/(2*zeta)`, which is about zero, which makes
-    `(c, s) = (1, 0)`. A branch here would be a per-lane branch, since two
-    SIMD lanes can disagree about whether their entry has converged.
+    `numerator` is the off-diagonal entry being annihilated, and it is
+    exactly zero often -- every unfilled entry of a tridiagonal matrix, and
+    every converged pair late in the sweeps. The rotation must then be the
+    identity, and it must be so without an `if`, since two SIMD lanes can
+    disagree about whether their entry has converged. The `zeta` form gets
+    there by flooring `numerator` and letting `zeta` grow huge, and that is
+    where it fails at `Dual[Plain[float32]]`: the quotient rule squares
+    the floored denominator, `1e-30` squared is below `float32`'s smallest
+    normal, and the derivative comes out `0/0`. So the tangent is written
+    with `numerator` upstairs instead, the same identity multiplied
+    through by `2 * |numerator|`:
+
+        t = sign(denominator) * 2 * numerator
+            / (|denominator| + sqrt(denominator**2 + 4 * numerator**2))
+
+    A zero `numerator` now gives `t = 0` by a division whose denominator
+    is `2 * |denominator|`, finite and differentiable, and the floor is
+    only reached when the pair is already diagonal *and* degenerate --
+    the one case where the rotation genuinely has no derivative.
     """
-    var safe = guard_nonzero(numerator, T.constant(_PIVOT_FLOOR))
-    var zeta = denominator / (T.constant(2.0) * safe)
-    var magnitude = zeta.abs()
-    var tangent = T.one().copysign(zeta) / (
-        magnitude + (T.one() + zeta * zeta).sqrt()
+    var twice_numerator = T.constant(2.0) * numerator
+    var radius = (
+        denominator * denominator + twice_numerator * twice_numerator
+    ).sqrt()
+    var safe = guard_nonzero(
+        denominator.abs() + radius, T.constant(_PIVOT_FLOOR)
     )
+    var tangent = T.one().copysign(denominator) * twice_numerator / safe
     var cosine = T.one() / (T.one() + tangent * tangent).sqrt()
     var sine = tangent * cosine
     return (cosine^, sine^)

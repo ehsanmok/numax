@@ -806,6 +806,50 @@ def test_eigh_is_differentiable_at_dual() raises:
     assert_almost_equal(derivative_sum, 1.0, atol=1e-9)
 
 
+def test_eigh_derivative_survives_float32() raises:
+    # The Jacobi rotation used to floor a zero off-diagonal at `1e-30` and
+    # divide by it, and the quotient rule squares that denominator: below
+    # `float32`'s smallest normal, so every derivative through
+    # `eigh[Dual[Plain[float32]]]` came out NaN on a matrix with any exact
+    # zero off the diagonal -- which is every tridiagonal one. A diagonal
+    # matrix is the sharpest case: the eigenvalues are its entries and
+    # their derivatives with respect to `a[0, 0]` are `1` and `0`.
+    comptime P32 = Plain[DType.float32, 1]
+    comptime D32 = Dual[P32]
+    var a = Array[D32, 4](fill=D32.constant(0.0))
+    a[0] = D32(P32.constant(1.0), P32.one())
+    a[3] = D32.constant(2.0)
+    var values = eigh[D32, 2](a)[0].copy()
+    # `eigh` returns eigenvalues in no particular order; match by value.
+    for i in range(2):
+        var value = Float64(values[i].value.v)
+        var deriv = Float64(values[i].deriv.v)
+        if value < 1.5:
+            assert_almost_equal(value, 1.0, atol=1e-6)
+            assert_almost_equal(deriv, 1.0, atol=1e-6)
+        else:
+            assert_almost_equal(value, 2.0, atol=1e-6)
+            assert_almost_equal(deriv, 0.0, atol=1e-6)
+
+
+def test_eigh_float32_derivative_sums_to_the_trace() raises:
+    # The tridiagonal shape the quantum-well example builds, at `Dual` over
+    # `float32`: the eigenvalue derivatives still sum to `d(trace)/dA[0,0]`.
+    comptime P32 = Plain[DType.float32, 1]
+    comptime D32 = Dual[P32]
+    var a = Array[D32, 9](fill=D32.constant(0.0))
+    var entries = [4.0, 1.0, 0.0, 1.0, 5.0, 1.0, 0.0, 1.0, 6.0]
+    for i in range(9):
+        a[i] = D32.constant(entries[i])
+    a[0] = D32(P32.constant(4.0), P32.one())
+
+    var values = eigh[D32, 3](a)[0].copy()
+    var derivative_sum = 0.0
+    for i in range(3):
+        derivative_sum += Float64(values[i].deriv.v)
+    assert_almost_equal(derivative_sum, 1.0, atol=1e-5)
+
+
 def _fit_matrix() -> Array[P, 8]:
     """A 4x2 design matrix for `y = c0 + c1*t` at `t = 0, 1, 2, 3`."""
     var a = Array[P, 8](fill=P.constant(0.0))
