@@ -54,6 +54,8 @@ from .panel import (
     labrd_row,
     labrd_x,
     labrd_y,
+    lahr2_column,
+    lahr2_y,
     latrd_column,
     latrd_w,
     pack_block,
@@ -130,67 +132,6 @@ struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
         return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
             self.reflectors, self.taus, Self.n - 2, self.block
         )
-
-
-def _row_combination[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut q: Static[dtype, n, n], mut v: Static[dtype, n]) raises -> Static[
-    dtype, n
-]:
-    """`Q^T v`, as the matrix-vector product `linalg.matmul` reaches
-    through its own `transpose_b`-free path: `v^T Q` read as a row."""
-    var ctx = q.context()
-    var result = zeros[dtype, n](ctx)
-    var row: _Dense[dtype] = TileTensor(
-        v.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
-    )
-    var out: _Dense[dtype] = TileTensor(
-        result.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
-    )
-    _max_matmul[target=_target[gpu]()](out, row, q.view(), ctx)
-    ctx.synchronize()
-    return result^
-
-
-def _rank_one_subtract[
-    dtype: DType, n: Int, gpu: Bool = False
-](
-    mut q: Static[dtype, n, n],
-    mut v: Static[dtype, n],
-    mut y: Static[dtype, n],
-    scale: Scalar[dtype],
-    mut product: Static[dtype, n, n],
-    ctx: DeviceContext,
-) raises:
-    """`Q -= scale * v y^T`, through `matmul`'s epilogue so the scattered
-    store is the only pass over `Q`."""
-    var target = q.view()
-
-    @parameter
-    @always_inline
-    @__copy_capture(target, scale)
-    def subtract[
-        _dtype: DType,
-        lanes: SIMDLength,
-        *,
-        alignment: Int = align_of[SIMD[_dtype, lanes]](),
-    ](idx: IndexList[2], value: SIMD[_dtype, lanes]) capturing -> None:
-        var at = Coord(idx[0], idx[1])
-        target.store[lanes](
-            at,
-            target.load[lanes](at) - scale * rebind[SIMD[dtype, lanes]](value),
-        )
-
-    var col: _Dense[dtype] = TileTensor(
-        v.view().ptr_at_offset(Coord(0)), row_major(Coord(n, 1))
-    )
-    var row: _Dense[dtype] = TileTensor(
-        y.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
-    )
-    _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
-        product.view(), col, row, ctx
-    )
-    ctx.synchronize()
 
 
 def sytrd[
@@ -1352,11 +1293,12 @@ struct TensorHessenberg[dtype: DType, n: Int, gpu: Bool = False](
         the identity in panels of `block`, three GEMMs each. See
         `_accumulate_reflectors`.
 
-        A column whose reflection was the identity carries an unwritten
-        `v` of zeros here rather than the packed form the reduction left
-        in `sytrd`'s work matrix; both read the same, because `larft`
-        gives a zero `tau` a zero column of `T` and the panel never sees
-        that reflector again.
+        A column whose reflection was the identity carries the bare unit
+        vector `e_{k+1}` here rather than the packed form the reduction
+        left in `sytrd`'s work matrix; both read the same, because
+        `pack_reflectors` writes the unit itself and reads only below it,
+        and `larft` gives a zero `tau` a zero column of `T`, so the panel
+        never sees that reflector again.
         """
         return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
             self.reflectors, self.taus, Self.n - 2, self.block
@@ -1369,89 +1311,206 @@ def hessenberg[
     dtype.is_floating_point() and block >= 1
 ):
     """**Tier 2.** Reduce a general square `a` to upper Hessenberg form by
-    Householder reflections, device-resident. LAPACK's `gehrd`,
-    `scipy.linalg.hessenberg`.
+    Householder reflections, device-resident and blocked. LAPACK's
+    `gehrd` over `lahr2` panels, `scipy.linalg.hessenberg`.
 
-    The shape is `sytrd`'s, minus the symmetry: the same single-block
-    kernel forms each column's reflector, and then `A <- (I - tau v v^T) A
-    (I - tau v v^T)` is two matrix-vector products and two rank-one
-    updates through `linalg.matmul`, each over the whole matrix with the
-    padded reflector -- `vpad` is zero at and above `k`, so the leading
-    block is untouched for free and nothing is staged. The row `v^T A` has
-    its first `k + 1` entries cleared before the left update so column `k`,
-    already written as `(beta, 0, ...)`, is not disturbed; the right update
-    never reaches it, since `vpad` is zero there.
+    The shape is `sytrd`'s, minus the symmetry: a panel of `block` columns
+    is reduced one column at a time without touching the trailing block,
+    and then the whole panel goes out as a two-sided update in GEMMs. What
+    the panel accumulates is `V`, its triangular factor `T` -- so that
+    `Q = I - V T V^T` is the product of the panel's reflections -- and
+    `Y = A V T`, which is the right factor's whole effect:
 
-    `ponytail:` unblocked, and the same two ceilings as `sytrd` -- the
-    whole matrix per reflector (about `5n^3` flops against LAPACK's
-    `10n^3/3`) and matrix-vector shaped products. The upgrade is the blocked
-    `gehrd` with `lahr2`, which accumulates a panel's reflectors and applies
-    them as GEMMs.
+        A[:, k0+nb:]   -= Y V[k0+nb:, :]^T
+        A[k0+1:, k0+nb:] = (I - V T^T V^T) A[k0+1:, k0+nb:]
 
-    `block` is that panel width, carried on the result and read by `.q()`
-    alone until `lahr2` lands.
+    the first one `matmul` with the subtraction fused into its epilogue,
+    the second `larfb`'s three through `_apply_block_reflector`. The right
+    update reaches every row, including those above `k0`, because `A Q` is
+    a column operation; the left one starts at `k0 + 1`, where the
+    reflectors do.
+
+    **That takes the per-column whole-matrix traffic from four passes to
+    one.** The unblocked reduction did `v^T A`, a rank-one subtract, `A v`
+    and a second rank-one subtract for every column, all of them BLAS-2
+    over the whole matrix; this does `p = A v` and nothing else, with the
+    two rank-one updates deferred into the panel's GEMMs. `lahr2_column`
+    brings the next column up to date with the panel's own reflectors and
+    `lahr2_y` builds the panel's `Y` and `T`, both of them out of `O(n j)`
+    arithmetic that is threaded the way `latrd_w`'s is.
+
+    `block == 1` is the unblocked algorithm -- one column per panel, the
+    two updates restricted to exactly the rows and columns the masked
+    rank-one updates reached -- and `block == n` is one panel whose
+    trailing updates never run; a test pins every width against
+    `block == n`. `block` is also the panel width `.q()` forms `Q` in.
+
+    The trailing updates are **restricted to columns `k0 + nb` onward**,
+    and the panel's own columns are finished inside the loop instead:
+    `lahr2_column` writes the fully updated column back before the
+    reflector is formed from it, so rows above `k0` are current there too.
+    A whole-matrix update would write over the band entries and zeros the
+    panel just wrote. The reduction runs `n - 2` columns, so the panel
+    ends at `n - 2` at the latest and the trailing GEMM always has at
+    least two output columns -- the `_MIN_GEMM_COLS` shape a `labrd` panel
+    can reach and this one cannot.
+
+    **No host read per column.** `tau` is read on the device by
+    `lahr2_y`, so the `taus.to_host()[k]` synchronization the unblocked
+    reduction paid once per column is gone, and with it the branch that
+    skipped an identity reflection: a zero `tau` scales its column of `Y`
+    and of `T` to zero and the panel's updates then add nothing.
+
+    `ponytail:` what is left is the matrix-vector product, the ceiling
+    `sytrd` states at length. `p = A v` is one `matvec` over the whole
+    matrix per column -- taken over the whole matrix rather than the
+    trailing block because a strided sub-block cannot be handed to
+    `matmul` without staging it dense -- and LAPACK's `dgehrd` is half
+    BLAS-2 for the same reason. Closing it needs a two-stage reduction,
+    not a wider panel.
 
     `numax.linalg.array.hessenberg` is the `FloatLike`-generic sibling for
     matrices small enough to live in registers.
     """
+    comptime width = min(block, n)
     var ctx = a.context()
     var work = zeros[dtype, n, n](ctx)
     var reflectors = zeros[dtype, n, n](ctx)
     var taus = zeros[dtype, n](ctx)
     var vpad = zeros[dtype, n](ctx)
     var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
+    # The panel's `Y`, its dense `V` for the trailing GEMM, its triangular
+    # factor, and the reductions `lahr2_column`/`lahr2_y` share.
+    var yy = zeros[dtype, n, width](ctx)
+    var vp = zeros[dtype, n, width](ctx)
+    var tt = zeros[dtype, width, width](ctx)
+    var red = zeros[dtype, 2 * width + 2](ctx)
     var product = zeros[dtype, n, n](ctx)
 
     var wv = work.view()
+    var rfv = reflectors.view()
     var tv = taus.view()
     var vv = vpad.view()
     var sv = scratch.view()
+    var yv = yy.view()
+    var vpv = vp.view()
+    var ttv = tt.view()
+    var redv = red.view()
+    var pv = product.view()
 
     pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
 
-    for k in range(n - 2):
-        comptime if gpu:
-            ctx.enqueue_function[
-                sytd2_column[
-                    dtype,
-                    ALayout=type_of(wv).LayoutType,
-                    VLayout=type_of(vv).LayoutType,
-                    TauLayout=type_of(tv).LayoutType,
-                    SLayout=type_of(sv).LayoutType,
-                    gpu=True,
-                ]
-            ](
-                wv,
-                vv,
-                tv,
-                sv,
-                Int32(k),
-                Int32(n),
-                grid_dim=1,
-                block_dim=_PANEL_THREADS,
+    var lwork = _ReflectorWork[dtype](max(n - 1, 1), n, width, ctx)
+
+    var k0 = 0
+    while k0 < n - 2:
+        var nb = min(width, n - 2 - k0)
+
+        # A narrower panel writes only `nb` of the `width` columns the
+        # trailing GEMM reads. Clearing `Y` is enough -- it is one of the
+        # two operands, so a zero column there kills the stale column of
+        # `V` beside it -- and only the last panel can be narrow, so this
+        # runs at most once.
+        if nb < width:
+
+            @always_inline
+            def clear[w: Int, alignment: Int = 1](coord: Coord) {var yv}:
+                yv.store[1](coord, Scalar[dtype](0))
+
+            elementwise[simd_width=1, target=_target[gpu]()](
+                clear, Coord(n, width), ctx
             )
-            ctx.synchronize()
-        else:
-            sytd2_column(wv, vv, tv, sv, Int32(k), Int32(n))
 
-        var this_tau = taus.to_host()[k]
-        if this_tau == 0:
-            continue
+        for j in range(nb):
+            var i = k0 + j
 
-        _store_column[gpu=gpu](reflectors, vpad, k, ctx)
-        _zero_column_below[gpu=gpu](work, k, k + 2, ctx)
+            lahr2_column[target=_target[gpu]()](
+                wv, rfv, yv, ttv, redv, k0, j, width, n, ctx
+            )
 
-        # Left: `A -= tau v (v^T A)`, with the row cleared over the columns
-        # already finished.
-        var y = _row_combination[gpu=gpu](work, vpad)
-        _zero_prefix[gpu=gpu](y, k + 1, ctx)
-        _rank_one_subtract[gpu=gpu](work, vpad, y, this_tau, product, ctx)
+            comptime if gpu:
+                ctx.enqueue_function[
+                    sytd2_column[
+                        dtype,
+                        ALayout=type_of(wv).LayoutType,
+                        VLayout=type_of(vv).LayoutType,
+                        TauLayout=type_of(tv).LayoutType,
+                        SLayout=type_of(sv).LayoutType,
+                        gpu=True,
+                    ]
+                ](
+                    wv,
+                    vv,
+                    tv,
+                    sv,
+                    Int32(i),
+                    Int32(n),
+                    grid_dim=1,
+                    block_dim=_PANEL_THREADS,
+                )
+                ctx.synchronize()
+            else:
+                sytd2_column(wv, vv, tv, sv, Int32(i), Int32(n))
 
-        # Right: `A -= tau (A v) v^T`, on the left-updated matrix.
-        var u = matvec[gpu=gpu](work, vpad)
-        _rank_one_subtract[gpu=gpu](work, u, vpad, this_tau, product, ctx)
+            _store_column[gpu=gpu](reflectors, vpad, i, ctx)
+            _zero_column_below[gpu=gpu](work, i, i + 2, ctx)
 
+            # `p = A v` over the whole matrix: `vpad` is zero at and above
+            # `i`, so the columns the panel has already finished are never
+            # read and the ones it has not are still as the panel found
+            # them. The deferred update reaches `Y` inside `lahr2_y`.
+            var p = matvec[gpu=gpu](work, vpad)
+            lahr2_y[target=_target[gpu]()](
+                p.view(), rfv, yv, ttv, redv, tv, k0, j, n, ctx
+            )
+            # `p`'s last mention is `.view()`, and a view erases the
+            # origin; see `findings.mdc` on the queued free.
+            _ = p^
+
+        # `V` is a column range of `reflectors`, not dense, so it is
+        # packed once per panel rather than once per column.
+        pack_block[target=_target[gpu]()](rfv, vpv, 0, k0, n, nb, ctx)
+
+        var base = k0 + nb
+        # Right first, then left: `Q^T A Q` is `Q^T (A Q)`, and `Y` was
+        # built against the matrix as the panel found it.
+        _subtract_panel[gpu=gpu](
+            wv, yv, vpv, pv, 0, base, n, n - base, width, ctx
+        )
+        # The unit sits at row `k + 1` here and at row `k` in QR's frame,
+        # so the reflectors reach `larfb` through a view shifted one row
+        # down -- `_accumulate_reflectors`' adapter, the same one.
+        var shifted: _Dense[dtype] = TileTensor(
+            rfv.ptr_at_offset(Coord(1, 0)), row_major(Coord(n - 1, n))
+        )
+        _apply_block_reflector[transposed=True, gpu=gpu](
+            shifted,
+            tv,
+            wv,
+            k0,
+            nb,
+            n - 1,
+            n - 1 - k0,
+            n - base,
+            k0 + 1,
+            base,
+            lwork,
+            ctx,
+        )
+        k0 += nb
+
+    ctx.synchronize()
+    # Read by the launches above through origin-erased views whose owners
+    # are named nowhere else; see `findings.mdc` on the queued free.
     _ = scratch^
+    _ = vpad^
+    _ = yy^
+    _ = vp^
+    _ = tt^
+    _ = red^
+    _ = product^
+    _ = lwork^
+
     return TensorHessenberg[dtype, n, gpu](work^, reflectors^, taus^, block)
 
 
@@ -1799,10 +1858,10 @@ struct Eigenvalues[dtype: DType, n: Int](
 
 
 def eigvals[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Eigenvalues[
-    dtype, n
-] where dtype.is_floating_point():
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
+](mut a: Static[dtype, n, n]) raises -> Eigenvalues[dtype, n] where (
+    dtype.is_floating_point() and block >= 1
+):
     """**Tier 2.** The eigenvalues of a general square `a`, real or
     complex, as a `(re, im)` pair. `numpy.linalg.eigvals`,
     `scipy.linalg.eigvals`.
@@ -1819,9 +1878,15 @@ def eigvals[
     complex pair is adjacent with the positive imaginary part first.
     `numax.linalg.array.eigvals` is the fixed-sweep, differentiable
     sibling for matrices small enough to live in registers.
+
+    `block` is the reduction's `lahr2` panel width, the one thing here it
+    tunes -- nothing is accumulated, so the rotation batch is a single
+    entry whatever it says. The deflation order is not continuous in `H`,
+    and a different panel width moves `H` in the last bits, so two widths
+    may report the same spectrum in a different order.
     """
     var ctx = a.context()
-    var reduced = hessenberg[gpu=gpu](a)
+    var reduced = hessenberg[dtype, n, gpu, block](a)
     var h = reduced.h.to_host()
     # `wantz=False` makes the batch's `vectors` false, which shrinks every
     # buffer in it to one element; the values-only route pushes nothing and
@@ -1904,23 +1969,30 @@ def schur[
     factor, which is `inner`'s `transpose_b=True` product against that
     same `Z^T`, so `Z` is never transposed back.
 
-    `block` names two knobs, as `eigh`'s and `svd`'s do. `hessenberg`
-    takes it as the **panel width** `.q()` forms `Q` in. The Francis sweep
-    takes it as the **rotation window**: `block // 2` consecutive sweeps
-    batch together and a window spans at most `2 * block` columns of
-    `Z^T`, the halving because a Francis reflector reaches two columns
-    past its index where a Givens rotation reaches one. `block == 1`
-    recovers both unblocked algorithms exactly, and a test pins every
-    width against every other.
+    `block` names three knobs, as `eigh`'s and `svd`'s do. `hessenberg`
+    takes it as the **`lahr2` panel width** of the reduction and as the
+    panel width `.q()` forms `Q` in. The Francis sweep takes it as the
+    **rotation window**: `block // 2` consecutive sweeps batch together
+    and a window spans at most `2 * block` columns of `Z^T`, the halving
+    because a Francis reflector reaches two columns past its index where a
+    Givens rotation reaches one. `block == 1` recovers all three unblocked
+    algorithms exactly.
+
+    A test pins every width against every other, and it starts from an
+    already-Hessenberg matrix, which is load-bearing: the reduction's
+    panel width moves `H` in the last bits, and the Francis chase's
+    deflation order is **not** continuous in `H`. Two widths can therefore
+    return different, equally valid real Schur forms of the same matrix --
+    the same eigenvalues in a different order along the diagonal. A caller
+    who needs a reproducible ordering fixes `block`.
 
     **`ponytail:` `T` is still built on the host, and that is now the
     whole of the band iteration's cost.** At `n = 1024`, `float32`, on an
-    M3 Pro, with the machine not otherwise quiet: the vector accumulation
-    fell from 3,156 ms of scalar host work to 37 ms of windowed GEMMs, and
-    `schur` as a whole from 5,567 ms to 2,147 ms. What is left is the
-    unblocked `hessenberg` at 1,259 ms and the Francis iteration at 828,
-    of which 723 is the eigenvalues alone and 105 the extra work of
-    carrying the full `T`.
+    M3 Pro: `schur` is 1,099 ms, of which the `lahr2`-blocked `hessenberg`
+    is 146 and the Francis iteration the rest -- about 780 ms for the
+    eigenvalues alone and roughly 175 more for carrying the full `T`. The
+    vector accumulation is windowed GEMMs, down from 3,156 ms of scalar
+    host rotations before it was batched.
 
     That `T` term stays because the far-from-diagonal `wantt` row and
     column updates can be deferred only one sweep at a time -- the next
@@ -1950,28 +2022,6 @@ def schur[
 
 
 # ----------------------------------------------------------------- SVD
-
-
-def _zero_prefix[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut v: Static[dtype, n], count: Int, ctx: DeviceContext) raises:
-    """Zero `v[0 .. count)` on `v`'s device.
-
-    What confines a reflector's update to the trailing block: the product
-    `v^T A` or `A u` is taken over the whole matrix, and the entries that
-    would write the row or column just finished are cleared before the
-    rank-one update reads them -- the same load-bearing detail `sytrd`
-    records for its `w`.
-    """
-    var view = v.view()
-
-    @always_inline
-    def fill[w: Int, alignment: Int = 1](coord: Coord) {var view, var count}:
-        var i = coord_to_index_list(coord)[0]
-        if i < count:
-            view.store[1](coord, Scalar[dtype](0))
-
-    elementwise[simd_width=1, target=_target[gpu]()](fill, Coord(n), ctx)
 
 
 def _left_products[

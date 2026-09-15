@@ -599,7 +599,9 @@ puts sizes on it:
   GEMMs. The remaining `T` update -- the far-from-diagonal `wantt` rows
   and columns, which only multishift QR batches -- is 105 ms of it, down
   from 153 with the row walk vectorized, against 723 ms for the
-  values-only Francis iteration and 1,259 for the unblocked `hessenberg`.
+  values-only Francis iteration and 1,259 for the `hessenberg` of the day,
+  which was still unblocked -- the `lahr2` paragraph below supersedes that
+  last figure.
 
   And `sytrd` is blocked now -- a `latrd` panel of `block` columns, one
   rank-`2 * block` GEMM per panel instead of a rank-2 GEMM per column --
@@ -669,12 +671,46 @@ puts sizes on it:
   at 16 and `svd`'s at 64, where the same number is also the rotation
   window and the `q()`/`p()` panel.
 
-  `hessenberg` is **not** blocked: `lahr2` is the matching panel for it and
-  is not in this commit, so `eigvals` and `schur` keep the numbers above.
+  And `hessenberg` is blocked now too -- a `lahr2` panel of `block`
+  columns, the panel's `V`, `T` and `Y = A V T` accumulated per column and
+  the two-sided update deferred into one `transpose_b=True` GEMM on the
+  right and `larfb`'s three on the left -- so the `eigvals` and `schur`
+  rows above are stale as well. Measured on `bench_linalg`'s `_general`
+  fixture back to back against the commit before it, alternating binaries,
+  three rounds each and taking the minimum, same machine, `n = 1024`,
+  `float32`, load average 4.8 to 8.8:
 
-- **The reductions are BLAS-2, not BLAS-3.** *(Superseded for `sytrd` by
-  the `latrd` panel above, whose per-column arithmetic is threaded now
-  too, and for `gebrd` by the `labrd` panel; still true of `gehrd`.)* `eigvalsh` is `sytrd` plus an
+  | | before | after |
+  |---|---|---|
+  | `hessenberg`, `block = 16` | 1,474 | 108 |
+  | `hessenberg`, `block = 32` | 1,461 | 146 |
+  | `hessenberg`, `block = 64` | 1,457 | 199 |
+  | `eigvals`, `block = 16` | 2,261 | 915 |
+  | `eigvals`, `block = 32` | 2,263 | 924 |
+  | `eigvals`, `block = 64` | 2,280 | 999 |
+  | `schur`, `block = 32` | 2,442 | 1,099 |
+
+  The `before` column repeats because `block` reached only `.q()` there and
+  neither `hessenberg` nor `eigvals` forms `Q`; the spread across its three
+  rows is run-to-run noise and the size of the honest error bar on the
+  column. A factor of ten on the reduction, for the reason the `gebrd`
+  paragraph gives at a factor of four thirds: the unblocked reduction made
+  four whole-matrix passes per column and this makes one, `p = A v`. What
+  the reduction stops being is the term that matters -- `eigvals` is now
+  924 ms of which 146 is the reduction, so the host Francis iteration is
+  five sixths of it, and the ceiling `schur`'s docstring names is the whole
+  story.
+
+  The width sweep slopes up for `sytrd`'s reason and not a scheduling one:
+  a `lahr2` column costs `O(n * block)` in the panel's own reductions while
+  the only term blocking saves is the trailing GEMM. 32 stays the default,
+  because `eigvals` is nearly flat across it (924 against 915 and 999) and
+  because the same number is `.q()`'s panel width, which `schur` does form.
+
+- **The reductions are BLAS-2, not BLAS-3.** *(Superseded: `sytrd` by the
+  `latrd` panel above, whose per-column arithmetic is threaded now too,
+  `gebrd` by the `labrd` panel, and `gehrd` by the `lahr2` panel. The row
+  below is the *before* for all three.)* `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
   at matvec shapes), the B1a form whose B1b upgrade is `latrd` plus one

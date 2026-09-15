@@ -149,9 +149,12 @@ doubling itself stays until `bdsqr`.
 `pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it.
 
 The general spectrum takes the same two phases over a Hessenberg form:
-`hessenberg` reduces device-resident through the same reflector kernel
-and four `matmul`-shaped launches per column, then the Francis
-double-shift QR iteration (EISPACK's `hqr2`) runs on the host --
+`hessenberg` reduces device-resident and **blocked**, over `lahr2` panels
+of `block` columns -- the panel accumulates `V`, its triangular factor `T`
+and `Y = A V T`, and the two-sided update then goes out as one
+`transpose_b=True` GEMM on the right and `larfb`'s three on the left, which
+takes the whole-matrix traffic from four passes per column to one. Then the
+Francis double-shift QR iteration (EISPACK's `hqr2`) runs on the host --
 `eigvals` reads the eigenvalues off its deflations as a `(re, im)` pair,
 and `schur` keeps the quasi-triangular `T` and accumulates the chase's
 transformations into the Schur vectors. Those go into the same batch
@@ -160,8 +163,11 @@ three columns where a Givens rotation spans two; the `2 x 2` real split
 rotation rides along as a sweep of its own. `Z^T` stays device-resident
 and comes back through the reduction's `Q` -- `orghr`, the blocked walk
 `orgtr` uses -- as one `transpose_b=True` product, so `Z` is never
-transposed. `schur` takes a `block` naming both knobs, as `eigh`'s does:
-the panel width and the rotation window.
+transposed. `schur` takes a `block` naming all three knobs, as `eigh`'s
+does: the reduction's panel width, the panel `.q()` forms `Q` in, and the
+rotation window. Because the reduction's width moves `H` in the last bits
+and the chase's deflation order is not continuous in `H`, two widths may
+return equally valid Schur forms with the diagonal in a different order.
 
 What stays on the host there is `T` itself. The far-from-diagonal row and
 column updates can be deferred only one sweep at a time, so batching them

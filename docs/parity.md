@@ -246,9 +246,23 @@ has each algorithm and its ceiling.
   `B`'s singular vectors. LAPACK's `dbdsvdx` takes that route too. `pinv`,
   `cond`, `matrix_rank` and `lstsq`'s `"svd"` method are its dependents --
   each one SVD and a few lines, delegating underneath. The general
-  spectrum takes the same two phases over a Hessenberg form: `hessenberg`
-  reduces device-resident through the same reflector kernel and four
-  `matmul`-shaped launches per column, then the Francis double-shift QR
+  spectrum takes the same two phases over a Hessenberg form, and that
+  reduction is **blocked** too: `hessenberg` runs `lahr2` panels of
+  `block` columns, each column brought up to date with the panel's own
+  reflectors on both sides by `lahr2_column` -- the deferred right factor
+  `Y V[i, :]^T` first, then the left block reflector `V T^T (V^T b)` --
+  and `lahr2_y` building the panel's `Y = A V T` and the matching column
+  of `T` out of one shared set of `j` dot products, which is `larft`'s own
+  recurrence. The panel then goes out as `A[:, k0+nb:] -= Y V[k0+nb:, :]^T`
+  in one `transpose_b=True` GEMM with the subtraction in its epilogue and
+  `A[k0+1:, k0+nb:] <- (I - V T^T V^T) A[k0+1:, k0+nb:]` through the same
+  `_apply_block_reflector` QR uses, reached by the one-row-shifted view.
+  That takes the whole-matrix traffic from four passes per column --
+  `v^T A`, a rank-one subtract, `A v`, another -- to one, and the
+  per-column `taus.to_host()` synchronization is gone with it. What is
+  left is `p = A v`, `sytrd`'s ceiling again. `block == 1` is the
+  unblocked reduction and `block == n` one panel, both pinned by tests.
+  Then the Francis double-shift QR
   iteration -- EISPACK's `hqr2`, LAPACK's `dlahqr` -- runs on the host,
   `eigvals` reading the eigenvalues off its deflations and `schur` keeping
   the quasi-triangular `T` and accumulating the chase's transformations

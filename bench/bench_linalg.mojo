@@ -508,11 +508,13 @@ def bench_svd[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
     _row("svd", n, ns, flops, _max_abs_diff[n, _general_entry](back))
 
 
-def bench_eigvals[n: Int](ctx: DeviceContext) raises:
+def bench_eigvals[
+    n: Int, block: Int = 32
+](ctx: DeviceContext) raises where block >= 1:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var w = eigvals[dtype, n](a)
+        var w = eigvals[dtype, n, False, block](a)
         keep(w.re.buffer.unsafe_ptr())
 
     var ns = (
@@ -521,7 +523,7 @@ def bench_eigvals[n: Int](ctx: DeviceContext) raises:
         ).mean()
         * 1e9
     )
-    var w = eigvals[dtype, n](a)
+    var w = eigvals[dtype, n, False, block](a)
     _row(
         "eigvals",
         n,
@@ -741,3 +743,6 @@ def main() raises:
     bench_svdvals[1024, 16](ctx)
     bench_svdvals[1024, 32](ctx)
     bench_svdvals[1024, 64](ctx)
+    bench_eigvals[1024, 16](ctx)
+    bench_eigvals[1024, 32](ctx)
+    bench_eigvals[1024, 64](ctx)

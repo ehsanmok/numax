@@ -1550,6 +1550,157 @@ def test_hessenberg_q_is_orthogonal_at_every_block() raises:
     _hessenberg_q_at[n](b3)
 
 
+def _square_hash[n: Int]() raises -> Static[dtype, n, n]:
+    """A deterministic nonsymmetric `n x n` built from two hashes of
+    coprime period, so no row repeats within the sizes used here.
+
+    `_general_hash` has a single period-17 term, which at `n = 40` leaves
+    rows `i` and `i + 17` differing only in the diagonal: a trailing column
+    then reduces to one entry whose sign the two panel widths do not have
+    to agree on. `_rect_hash` records the same trap on the rectangular
+    side.
+    """
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, n, n](ctx)
+    var host = a.to_host()
+    for i in range(n):
+        for j in range(n):
+            host[i * n + j] = Scalar[dtype](
+                Float64((i * 37 + j * 11) % 17) * 0.125
+                + Float64((i * 13 + j * 29) % 11) * 0.0625
+                - 1.0
+            )
+        host[i * n + i] = Scalar[dtype](Float64(i) * 0.5 + 1.0)
+    a.copy_from_host(host)
+    return a^
+
+
+def _hessenberg_at[
+    n: Int, block: Int
+](
+    mut a: Static[dtype, n, n],
+    want_h: List[Scalar[dtype]],
+    want_q: List[Scalar[dtype]],
+) raises where (block >= 1 and n >= 1):
+    """Reduce at this panel width and pin `H` and `Q` entry by entry to the
+    reference, then check the similarity really holds."""
+    var original = _copy_of(a)
+    var reduced = hessenberg[dtype, n, False, block](a)
+    var h = reduced.h.to_host()
+    for i in range(n * n):
+        assert_almost_equal(h[i], want_h[i], atol=1e-12)
+    var q = reduced.q()
+    var qh = q.to_host()
+    for i in range(n * n):
+        assert_almost_equal(qh[i], want_q[i], atol=1e-12)
+
+    var qt = transpose(q)
+    var half = matmul(q, reduced.h)
+    var back = matmul(half, qt).to_host()
+    var source = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
+
+
+def test_hessenberg_blocking_does_not_change_the_answer() raises:
+    # `block` is the `lahr2` panel width: how many columns are reduced
+    # against the panel's own `V`, `T` and `Y` before the trailing block
+    # sees a GEMM. It changes the order the same arithmetic happens in and
+    # nothing else, so `H` and `Q` come out the same at every width.
+    # `block == 1` is the unblocked reduction and `block == n` is one panel
+    # whose trailing updates never run.
+    comptime n = 4
+    var ref_a = _matrix_a()
+    var wide_a = hessenberg[dtype, n, False, n](ref_a)
+    var ha = wide_a.h.to_host()
+    var qa = wide_a.q().to_host()
+    var a1 = _matrix_a()
+    _hessenberg_at[n, 1](a1, ha, qa)
+    var a2 = _matrix_a()
+    _hessenberg_at[n, 2](a2, ha, qa)
+    var a3 = _matrix_a()
+    _hessenberg_at[n, 3](a3, ha, qa)
+    var a4 = _matrix_a()
+    _hessenberg_at[n, n](a4, ha, qa)
+
+    var ref_b = _matrix_b()
+    var wide_b = hessenberg[dtype, n, False, n](ref_b)
+    var hb = wide_b.h.to_host()
+    var qb = wide_b.q().to_host()
+    var b1 = _matrix_b()
+    _hessenberg_at[n, 1](b1, hb, qb)
+    var b2 = _matrix_b()
+    _hessenberg_at[n, 2](b2, hb, qb)
+    var b3 = _matrix_b()
+    _hessenberg_at[n, 3](b3, hb, qb)
+    var b4 = _matrix_b()
+    _hessenberg_at[n, n](b4, hb, qb)
+
+    # Six columns is two panels at `block = 3` and four at `block = 2`,
+    # so the deferred update is read back more than once.
+    comptime m = 6
+    var ref_c = _general_hash[m]()
+    var wide_c = hessenberg[dtype, m, False, m](ref_c)
+    var hc = wide_c.h.to_host()
+    var qc = wide_c.q().to_host()
+    var c1 = _general_hash[m]()
+    _hessenberg_at[m, 1](c1, hc, qc)
+    var c2 = _general_hash[m]()
+    _hessenberg_at[m, 2](c2, hc, qc)
+    var c3 = _general_hash[m]()
+    _hessenberg_at[m, 3](c3, hc, qc)
+    var c4 = _general_hash[m]()
+    _hessenberg_at[m, m](c4, hc, qc)
+
+
+def _hessenberg_reduction_agrees[
+    n: Int, block: Int
+]() raises where block >= 1 and n >= 1:
+    """Reduce `_square_hash[n]` at a width that does not divide the
+    column count: the shape is Hessenberg, `Q` is orthonormal, the
+    similarity holds, and everything agrees with the unblocked run."""
+    var a = _square_hash[n]()
+    var original = _copy_of(a)
+    var reduced = hessenberg[dtype, n, False, block](a)
+    var h = reduced.h.to_host()
+    for i in range(n):
+        for j in range(n):
+            if i > j + 1:
+                assert_equal(h[i * n + j], Scalar[dtype](0))
+
+    var q = reduced.q()
+    var qt = transpose(q)
+    var gram = matmul(qt, q).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(gram[i * n + j], want, atol=1e-10)
+
+    var half = matmul(q, reduced.h)
+    var back = matmul(half, qt).to_host()
+    var source = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(back[i], source[i], atol=1e-10)
+
+    var plain = _square_hash[n]()
+    var unblocked = hessenberg[dtype, n, False, 1](plain)
+    var want_h = unblocked.h.to_host()
+    var want_q = unblocked.q().to_host()
+    var qh = q.to_host()
+    for i in range(n * n):
+        assert_almost_equal(h[i], want_h[i], atol=1e-11)
+        assert_almost_equal(qh[i], want_q[i], atol=1e-11)
+
+
+def test_hessenberg_at_a_ragged_panel() raises:
+    # `n = 7` at `block = 3` leaves a two-wide last panel (the reduction
+    # runs `n - 2` columns, not `n`); `n = 40` at `block = 8` is five
+    # panels, which is where a stale `Y` column from the previous panel
+    # would show up in the trailing GEMM.
+    _hessenberg_reduction_agrees[7, 3]()
+    _hessenberg_reduction_agrees[40, 8]()
+
+
 def test_hessenberg_of_a_two_by_two_is_itself() raises:
     var a = _general[2]([1.0, 2.0, 3.0, 4.0])
     var reduced = hessenberg(a)
@@ -1795,38 +1946,66 @@ def _schur_agrees[
         assert_almost_equal(z[i], want_z[i], atol=1e-12)
 
 
+def _hessenberg_form[
+    n: Int
+](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where n >= 1:
+    """`a` reduced to upper Hessenberg form, as a fixture in its own right.
+
+    A matrix that is already Hessenberg is reduced by *no* reflector at
+    any panel width -- every column's `tau` is zero, `Y` and `T` are zero,
+    and the trailing GEMMs subtract exact zeros -- so `schur` starting from
+    one runs bit-identical arithmetic at every `block`. That is what lets
+    the windowing test below pin `T` and `Z` entrywise.
+    """
+    var reduced = hessenberg[dtype, n, False, 1](a)
+    return _copy_of(reduced.h)^
+
+
 def test_schur_blocking_does_not_change_the_answer() raises:
-    # `block` decides only how many commuting reflectors ride in one GEMM,
-    # so every width has to produce the same `T` and the same `Z` -- signs
+    # `block` decides how many commuting rotations ride in one GEMM, so
+    # every width has to produce the same `T` and the same `Z` -- signs
     # included, since the transformations themselves are unchanged and only
     # their schedule moves. `block == 1` is the sharp end: one entry per
     # window, so the windows have to come out in exactly the order the
     # chase emitted them, and a tag that ran the other way would reverse
     # every sweep.
+    #
+    # The fixtures are already Hessenberg, and that is load-bearing.
+    # `block` is also `gehrd`'s panel width, and a wider panel reorders the
+    # reduction's arithmetic -- `H` moves in the last bits, and `_hqr`'s
+    # deflation order is not continuous in `H`: at `_matrix_a` the four
+    # real eigenvalues come out in a different order on the diagonal, a
+    # different but equally valid real Schur form. Starting from a matrix
+    # with nothing to reduce takes that term out and leaves the windowing
+    # as the only thing `block` changes.
     comptime n = 4
 
-    var ref_a = _matrix_a()
+    var source_a = _matrix_a()
+    var hess_a = _hessenberg_form(source_a)
+    var ref_a = _copy_of(hess_a)
     var wide_a = schur[dtype, n, False, n](ref_a)
     var ta = wide_a.t.to_host()
     var za = wide_a.z.to_host()
-    var a1 = _matrix_a()
+    var a1 = _copy_of(hess_a)
     _schur_agrees[n, 1](a1, ta, za)
-    var a2 = _matrix_a()
+    var a2 = _copy_of(hess_a)
     _schur_agrees[n, 2](a2, ta, za)
-    var a3 = _matrix_a()
+    var a3 = _copy_of(hess_a)
     _schur_agrees[n, n](a3, ta, za)
 
     # The second fixture has two complex pairs, so its chase never takes
     # the real `2 x 2` split and the first one never takes anything else.
-    var ref_b = _matrix_b()
+    var source_b = _matrix_b()
+    var hess_b = _hessenberg_form(source_b)
+    var ref_b = _copy_of(hess_b)
     var wide_b = schur[dtype, n, False, n](ref_b)
     var tb = wide_b.t.to_host()
     var zb = wide_b.z.to_host()
-    var b1 = _matrix_b()
+    var b1 = _copy_of(hess_b)
     _schur_agrees[n, 1](b1, tb, zb)
-    var b2 = _matrix_b()
+    var b2 = _copy_of(hess_b)
     _schur_agrees[n, 2](b2, tb, zb)
-    var b3 = _matrix_b()
+    var b3 = _copy_of(hess_b)
     _schur_agrees[n, n](b3, tb, zb)
 
 
@@ -1903,8 +2082,13 @@ def test_schur_ragged_window_sizes() raises:
     assert_equal(residual < 1e-9, True)
 
     # And at this size the windowing is doing real reordering, so the
-    # unblocked schedule has to land on the same decomposition.
-    var unblocked = _general_hash[n]()
-    _schur_agrees[n, 1](
-        unblocked, decomposed.t.to_host(), decomposed.z.to_host()
-    )
+    # unblocked schedule has to land on the same decomposition -- from an
+    # already-Hessenberg start, for the reason the blocking test above
+    # gives: otherwise `block` moves the reduction too and the chase is
+    # free to deflate in a different order.
+    var raw = _general_hash[n]()
+    var hess = _hessenberg_form(raw)
+    var wide = _copy_of(hess)
+    var windowed = schur[dtype, n, False, 8](wide)
+    var unblocked = _copy_of(hess)
+    _schur_agrees[n, 1](unblocked, windowed.t.to_host(), windowed.z.to_host())
