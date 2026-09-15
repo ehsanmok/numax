@@ -3,6 +3,15 @@ values on two 16-sample series: `cov` and `corrcoef` for a pair and for a
 three-variable matrix, `pearsonr`, `spearmanr` and `kendalltau` with their
 p-values, `linregress` with both standard errors, `rankdata` under all five
 tie methods, and `zscore`.
+
+`cov` and `corrcoef` moved onto MAX's `Welford` plus one GEMM in 0.2, so
+they also carry the cases a matrix product can get wrong where a
+triangle-mirroring host loop cannot: `ddof` 0, 1 and 2 with `bias`, a
+single variable, two observations, and `float32` -- where the GEMM
+reassociates the `n` products and the answer is only accurate to the
+`float32` epsilon times the sum of squares, not to the last bit. The
+`gpu=True`-on-a-CPU-tensor path is pinned too: it must return the host
+walk's values, since that is what the fallback runs.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_true
@@ -132,6 +141,180 @@ def test_cov_of_a_variable_matrix_matches_numpy() raises:
     var r = corrcoef(m).to_host()
     assert_almost_equal(Float64(r[1]), 0.9439184054429586, atol=1e-13)
     assert_almost_equal(Float64(r[4]), 1.0, atol=1e-15)
+
+
+def _matrix() raises -> Static[dtype, 3, 16]:
+    """`x`, `y` and `x * y` as three variables of sixteen observations."""
+    var xs = _x()
+    var ys = _y()
+    var rows = List[Scalar[dtype]](capacity=48)
+    for i in range(16):
+        rows.append(Scalar[dtype](xs[i]))
+    for i in range(16):
+        rows.append(Scalar[dtype](ys[i]))
+    for i in range(16):
+        rows.append(Scalar[dtype](xs[i] * ys[i]))
+    return Static[dtype, 3, 16](_cpu(), rows^)
+
+
+def test_cov_honours_ddof_and_bias() raises:
+    """`numpy.cov(m, ddof=k)` at `k = 0` and `k = 2`, and `bias=True` as
+    the alias for `ddof=0`. The divisor is the only thing that changes, so
+    all three come off one centering and one GEMM."""
+    var m = _matrix()
+    var unbiased: List[Float64] = [
+        2.406005859375,
+        1.9609375000000002,
+        0.8830810546875001,
+        1.9609375000000002,
+        1.79375,
+        1.2285937500000002,
+        0.8830810546875001,
+        1.2285937500000002,
+        6.077204589843751,
+    ]
+    var zero = cov(m, ddof=0).to_host()
+    var biased = cov(m, bias=True).to_host()
+    for i in range(9):
+        assert_almost_equal(Float64(zero[i]), unbiased[i], atol=1e-12)
+        assert_almost_equal(Float64(biased[i]), unbiased[i], atol=1e-12)
+    var two: List[Float64] = [
+        2.749720982142857,
+        2.241071428571429,
+        1.0092354910714285,
+        2.241071428571429,
+        2.05,
+        1.404107142857143,
+        1.0092354910714285,
+        1.404107142857143,
+        6.945376674107143,
+    ]
+    var by_two = cov(m, ddof=2).to_host()
+    for i in range(9):
+        assert_almost_equal(Float64(by_two[i]), two[i], atol=1e-12)
+    var raised = False
+    try:
+        _ = cov(m, ddof=16)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_cov_at_one_variable_and_at_two_observations() raises:
+    """The degenerate shapes the GEMM has to survive: a `1 x n` matrix is a
+    one-by-one product, and a `rows x 2` one leaves a single degree of
+    freedom."""
+    var xs = _x()
+    var single = List[Scalar[dtype]](capacity=16)
+    for i in range(16):
+        single.append(Scalar[dtype](xs[i]))
+    var one = Static[dtype, 1, 16](_cpu(), single^)
+    var c = cov(one).to_host()
+    assert_almost_equal(Float64(c[0]), 2.56640625, atol=1e-13)
+    var r = corrcoef(one).to_host()
+    assert_almost_equal(Float64(r[0]), 1.0, atol=1e-15)
+
+    var pair: List[Scalar[dtype]] = [
+        Scalar[dtype](1.0),
+        Scalar[dtype](3.0),
+        Scalar[dtype](2.0),
+        Scalar[dtype](-2.0),
+    ]
+    var narrow = Static[dtype, 2, 2](_cpu(), pair^)
+    var nc = cov(narrow).to_host()
+    _assert_pairs(nc, [2.0, -4.0, -4.0, 8.0], 1e-13)
+    var nr = corrcoef(narrow).to_host()
+    _assert_pairs(nr, [1.0, -1.0, -1.0, 1.0], 1e-14)
+
+
+def _assert_pairs(
+    got: List[Scalar[dtype]], want: List[Float64], atol: Float64
+) raises:
+    for i in range(len(want)):
+        assert_almost_equal(Float64(got[i]), want[i], atol=atol)
+
+
+def test_cov_at_float32_agrees_with_the_float64_answer() raises:
+    """`float32`, where the GEMM's reassociation shows.
+
+    The tolerance is `1e-5` absolute on entries of order one: the products
+    summed are `O(n)` terms of order `x^2`, so the error floor is the
+    `float32` epsilon (`1.2e-7`) times that sum, not the last bit of the
+    result.
+    """
+    comptime f32 = DType.float32
+    var xs = _x()
+    var ys = _y()
+    var rows = List[Scalar[f32]](capacity=32)
+    for i in range(16):
+        rows.append(Scalar[f32](xs[i]))
+    for i in range(16):
+        rows.append(Scalar[f32](ys[i]))
+    var m = Static[f32, 2, 16](_cpu(), rows^)
+    var c = cov(m).to_host()
+    assert_almost_equal(Float64(c[0]), 2.56640625, atol=1e-5)
+    assert_almost_equal(Float64(c[1]), 2.091666666666667, atol=1e-5)
+    assert_almost_equal(Float64(c[2]), 2.091666666666667, atol=1e-5)
+    assert_almost_equal(Float64(c[3]), 1.9133333333333333, atol=1e-5)
+    var r = corrcoef(m).to_host()
+    assert_almost_equal(Float64(r[0]), 1.0, atol=1e-15)
+    assert_almost_equal(Float64(r[1]), 0.9439184054429586, atol=1e-6)
+
+
+def test_cov_on_a_mismatched_target_returns_the_same_values() raises:
+    """`gpu=True` asked of a tensor on a CPU context falls back to the
+    pre-0.2 host loop and prints one line on `stderr`.
+
+    A CPU-only test can exercise only that half of the gate -- the
+    device-resident half needs a GPU context -- but it is the half that
+    pins the fallback still computes the right answer, which is the whole
+    point of falling back rather than raising.
+
+    `float32`, and not by accident: naming `gpu=True` instantiates the
+    device kernels whether or not the call takes that path, and a `float64`
+    body is rejected outright by Metal's compiler. Every `gpu=True`
+    instantiation in the tests is `float32` for that reason.
+    """
+    comptime f32 = DType.float32
+    var xs = _x()
+    var ys = _y()
+    var rows = List[Scalar[f32]](capacity=32)
+    for i in range(16):
+        rows.append(Scalar[f32](xs[i]))
+    for i in range(16):
+        rows.append(Scalar[f32](ys[i]))
+    var m = Static[f32, 2, 16](_cpu(), rows^)
+    var routed = cov(m).to_host()
+    var fallen = cov[gpu=True](m).to_host()
+    for i in range(4):
+        assert_almost_equal(Float64(fallen[i]), Float64(routed[i]), atol=1e-5)
+    var routed_r = corrcoef(m).to_host()
+    var fallen_r = corrcoef[gpu=True](m).to_host()
+    for i in range(4):
+        assert_almost_equal(
+            Float64(fallen_r[i]), Float64(routed_r[i]), atol=1e-6
+        )
+
+
+def test_corrcoef_of_a_variable_matrix_matches_numpy() raises:
+    """Every entry of `numpy.corrcoef(m)`, not just the two the `cov` test
+    spot-checks: the diagonal is exactly one and the matrix is symmetric to
+    the GEMM's own reassociation."""
+    var m = _matrix()
+    var r = corrcoef(m).to_host()
+    var want: List[Float64] = [
+        1.0,
+        0.9439184054429586,
+        0.23094060475758754,
+        0.9439184054429587,
+        1.0,
+        0.3721134913212128,
+        0.23094060475758757,
+        0.3721134913212128,
+        1.0,
+    ]
+    for i in range(9):
+        assert_almost_equal(Float64(r[i]), want[i], atol=1e-13)
 
 
 def test_pearsonr_spearmanr_and_kendalltau_match_scipy() raises:

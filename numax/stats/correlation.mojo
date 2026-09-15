@@ -2,16 +2,49 @@
 `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata` and
 `zscore`, with NumPy's and SciPy's conventions and SciPy's p-values.
 
-**Tier 2, host-side**, in `Float64`. Every routine here is a handful of
-sums over one or two vectors -- or, for the rank correlations, a sort and
-a pair count -- followed by a tail probability of Student's `t` or the
+**`cov` and `corrcoef` run where the tensor lives; the rest is tier 2,
+host-side, in `Float64`.**
+
+The split is about what the answer costs, not about taste. `pearsonr`,
+`spearmanr`, `kendalltau`, `linregress` and `zscore` are a handful of sums
+over one or two vectors -- or, for the rank correlations, a sort and a
+pair count -- followed by a tail probability of Student's `t` or the
 normal, and the p-value is the part that decides the placement: it comes
 from `numax.stats.t.sf` and `numax.stats.norm.sf`, scalar `FloatLike`
 kernels evaluated once. The data comes down once and the answer is a few
-scalars or a small matrix, so a device pass would move more than it
-computed. The one exception in spirit, `zscore`, returns a tensor the
-shape of its input and is host-side only because the whole-tensor
-`mean`/`stddev` it standardizes by are.
+scalars, so a device pass would move more than it computed. `zscore` is
+the one in spirit that could move, and is host-side only because the
+whole-tensor `mean`/`stddev` it standardizes by are read back as scalars
+anyway.
+
+`cov` and `corrcoef` are the ones that cannot stay: the covariance of
+`rows` variables over `n` observations is `O(rows^2 n)`, which this module
+used to spend in a `Float64` host loop over a `List[List[Float64]]`. It is
+three steps that MAX already has:
+
+1. **Means.** `numax.stats.mean[axis=1]`, which is MAX's `Welford` monoid
+   under its `rowwise` scaffolder, on either target.
+2. **Centering.** One `elementwise` writing `m[i, j] - mean[i]` into a
+   scratch, the means read through a freshly built rank-1 `Coord` -- the
+   lower-rank read `.cursor/rules/findings.mdc` records as safe.
+3. **The Gram matrix.** One `linalg.matmul` with `transpose_b=True`, so
+   `C C^T` is a single GEMM with no transposed copy materialized. This is
+   the MAX-first gate's answer: the expensive step is a matrix product,
+   MAX ships the matrix product, and numax writes the bookkeeping.
+
+`cov` then scales by `1 / (n - ddof)` and `corrcoef` divides by the outer
+product of the diagonal's square roots, each one small launch over
+`rows x rows`. Both take `gpu: Bool = False` last, and a call whose target
+and whose tensor's residency disagree falls back to the old host loop with
+one line on `stderr` -- `numax.core._drive`'s policy, the same one the
+elementwise surface and the reductions use.
+
+The GEMM **reassociates**: it sums the `n` products in tiles rather than
+left to right, so a `float32` covariance differs from the host loop's in
+the last bits, and the matrix is no longer forced symmetric by mirroring
+one triangle -- `c[i, j]` and `c[j, i]` are computed independently from
+the same data, as `numpy.cov`'s own `dot` computes them. `corrcoef`'s
+diagonal is still written as exactly `1`, as it was.
 
 ## Conventions
 
@@ -28,17 +61,31 @@ differs from SciPy's by the approximation's error and nothing else.
 
 ## The MAX gate
 
-Nothing: MAX has no covariance, correlation or ranking. **Extend.**
+MAX has no covariance, correlation or ranking entry point, and no
+partition or ranking kernel to build one on: **extend**. But the
+`O(rows^2 n)` step inside `cov` is a Gram matrix, and that is `linalg`'s
+`matmul` with `transpose_b=True`, so the extension is bookkeeping around a
+delegation rather than a kernel. Searched at the 26.5 pin across `linalg`,
+`nn`, `algorithm` and `layout`; `nn` has no covariance operator and
+`algorithm`'s reductions fold a row to a value, which is the mean, not the
+outer product.
 """
 
 from std.builtin.sort import sort as _sort
 from std.math import sqrt as _sqrt
+from std.sys.info import simd_width_of
 
-from layout.tile_layout import TensorLayout
+from layout import Coord, TileTensor, coord_to_index_list
+from layout.tile_layout import row_major, TensorLayout
+from layout.tile_tensor import PointerStorage
+from linalg.matmul import matmul as _max_matmul
+from max.algorithm.functional import elementwise
 
 from ..core.array import Static, Tensor
+from ..core._drive import _check_device, _dense, _flat, _notice, _target
 from ..core.plain import Plain
 from .distributions import norm, t
+from .statistics import mean as _mean_axis
 
 comptime _P = Plain[DType.float64]
 
@@ -83,41 +130,180 @@ def _normal_two_sided(z: Float64) -> Float64:
     return 2.0 * Float64(tail.v)
 
 
-def cov[
-    dtype: DType, n: Int
-](
-    mut x: Static[dtype, n],
-    mut y: Static[dtype, n],
-    bias: Bool = False,
-    ddof: Optional[Int] = None,
-) raises -> Static[dtype, 2, 2] where (dtype.is_floating_point() and n > 1):
-    """The covariance matrix of two variables, `[[var x, cov], [cov, var
-    y]]`. `numpy.cov(x, y, bias, ddof)`: `ddof = 1` by default, `0` with
-    `bias`, or as given."""
+comptime _Block[dtype: DType] = TileTensor[
+    dtype,
+    type_of(row_major(Coord(0, 0))),
+    MutAnyOrigin,
+    Storage=PointerStorage[element_width=1],
+]
+"""A run-time-shaped contiguous rank-2 view over a buffer this module owns
+-- the operand type `linalg.matmul` accepts, the shape
+`numax.linalg.common` uses for the same reason."""
+
+comptime _Row[dtype: DType] = TileTensor[
+    dtype,
+    type_of(row_major(Coord(0))),
+    MutAnyOrigin,
+    Storage=PointerStorage[element_width=1],
+]
+"""One row of a `_Block` retyped as a rank-1 destination, so a copy into it
+has the *same* extents as its rank-1 source. A cross-shape `elementwise`
+is the pattern `.cursor/rules/findings.mdc` records as unreliable at small
+extents; retyping the buffer costs nothing and cannot miscompute."""
+
+
+@always_inline
+def _lanes[dtype: DType, gpu: Bool]() -> Int:
+    """Native SIMD width on the host, one element per thread on the
+    device."""
+    comptime if gpu:
+        return 1
+    else:
+        return simd_width_of[dtype]()
+
+
+def _stack_rows[
+    dtype: DType, n: Int, gpu: Bool
+](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
+    dtype, 2, n
+]:
+    """`x` and `y` as the two rows of one `2 x n` matrix, where they live.
+
+    Two same-shape copies rather than one `elementwise` over `Coord(2, n)`
+    picking a source per row: each row of the destination is retyped as a
+    rank-1 view, so source and destination extents match.
+    """
+    var ctx = x.context()
+    var out = Static[dtype, 2, n]._uninitialized(ctx)
+    var ov = out.view()
+    var xs = _flat(x)
+    var ys = _flat(y)
+    var top: _Row[dtype] = TileTensor(
+        ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(n))
+    )
+    var bottom: _Row[dtype] = TileTensor(
+        ov.ptr_at_offset(Coord(1, 0)), row_major(Coord(n))
+    )
+
+    @always_inline
+    def first[w: Int, alignment: Int = 1](coord: Coord) {var xs, var top}:
+        top.store[w](coord, xs.load[w](coord))
+
+    @always_inline
+    def second[w: Int, alignment: Int = 1](coord: Coord) {var ys, var bottom}:
+        bottom.store[w](coord, ys.load[w](coord))
+
+    comptime lanes = _lanes[dtype, gpu]()
+    elementwise[simd_width=lanes, target=_target[gpu]()](first, Coord(n), ctx)
+    elementwise[simd_width=lanes, target=_target[gpu]()](second, Coord(n), ctx)
+    return out^
+
+
+def _centered[
+    dtype: DType, rows: Int, n: Int, gpu: Bool
+](mut m: Static[dtype, rows, n]) raises -> Static[
+    dtype, rows, n
+] where dtype.is_floating_point():
+    """`m` with each row's own mean subtracted, where `m` lives.
+
+    The means come from `numax.stats.mean[axis=1]`, which is MAX's
+    `Welford` monoid; the subtraction is one `elementwise` whose body reads
+    the rank-1 means through a freshly built `Coord`, the lower-rank read
+    recorded as safe. Source and destination have the same extents.
+    """
+    var ctx = m.context()
+    var means = _mean_axis[axis=1, gpu=gpu](m)
+    var out = Static[dtype, rows, n]._uninitialized(ctx)
+    var src = _dense(m)
+    var avg = _flat(means)
+    var dst = out.view()
+
+    @always_inline
+    def center[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var src, var avg, var dst}:
+        var at = coord_to_index_list(coord)
+        dst.store[w](
+            coord,
+            src.load[w](coord) - SIMD[dtype, w](avg[Coord(at[0])]),
+        )
+
+    elementwise[simd_width=_lanes[dtype, gpu](), target=_target[gpu]()](
+        center, Coord(rows, n), ctx
+    )
+    # `avg` is a view over `means`, whose last mention is the view itself.
+    _ = means^
+    return out^
+
+
+def _gram[
+    dtype: DType, rows: Int, n: Int, gpu: Bool
+](mut centered: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows]:
+    """`C C^T` for the centered `C`, in one GEMM.
+
+    `linalg.matmul` with `transpose_b=True` reads the right operand
+    transposed in place, so the Gram matrix costs one product and no
+    transposed copy. Two views of the same buffer because `matmul` takes
+    both operands mutably and rejects two live views sharing an origin --
+    the spelling `numax.linalg.cholesky`'s trailing update uses.
+    """
+    var ctx = centered.context()
+    var out = Static[dtype, rows, rows]._uninitialized(ctx)
+    var cv = centered.view()
+    var ov = out.view()
+    var left: _Block[dtype] = TileTensor(
+        cv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, n))
+    )
+    var right: _Block[dtype] = TileTensor(
+        cv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, n))
+    )
+    var product: _Block[dtype] = TileTensor(
+        ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, rows))
+    )
+    _max_matmul[transpose_b=True, target=_target[gpu]()](
+        product, left, right, ctx
+    )
+    ctx.synchronize()
+    return out^
+
+
+def _dof_of(bias: Bool, ddof: Optional[Int], n: Int) raises -> Int:
+    """NumPy's `ddof` rule, spelled once: `ddof` if given, else `0` under
+    `bias` and `1` otherwise."""
     var dof = ddof.value() if ddof else (0 if bias else 1)
-    var xs = _as_float64(x.to_host())
-    var ys = _as_float64(y.to_host())
-    var values = List[Scalar[dtype]](capacity=4)
-    values.append(Scalar[dtype](_covariance(xs, xs, dof)))
-    var cross = Scalar[dtype](_covariance(xs, ys, dof))
-    values.append(cross)
-    values.append(cross)
-    values.append(Scalar[dtype](_covariance(ys, ys, dof)))
-    return Static[dtype, 2, 2](x.context(), values^)
+    if n - dof <= 0:
+        raise Error("cov: not enough observations for ddof ", dof)
+    return dof
 
 
-def cov[
+def _cov_device[
+    dtype: DType, rows: Int, n: Int, gpu: Bool
+](mut m: Static[dtype, rows, n], dof: Int) raises -> Static[
+    dtype, rows, rows
+] where dtype.is_floating_point():
+    """Centre, one GEMM, one scaling launch."""
+    var ctx = m.context()
+    var centered = _centered[gpu=gpu](m)
+    var gram = _gram[gpu=gpu](centered)
+    var gv = gram.view()
+    var scale = Scalar[dtype](1) / Scalar[dtype](n - dof)
+
+    @always_inline
+    def rescale[w: Int, alignment: Int = 1](coord: Coord) {var gv, var scale}:
+        gv.store[1](coord, gv[coord] * scale)
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        rescale, Coord(rows, rows), ctx
+    )
+    _ = centered^
+    return gram^
+
+
+def _cov_host[
     dtype: DType, rows: Int, n: Int
-](
-    mut m: Static[dtype, rows, n],
-    bias: Bool = False,
-    ddof: Optional[Int] = None,
-) raises -> Static[dtype, rows, rows] where (
-    dtype.is_floating_point() and rows > 0 and n > 1
-):
-    """The covariance matrix of `rows` variables observed `n` times each,
-    one variable per row. `numpy.cov(m)` with its default `rowvar=True`."""
-    var dof = ddof.value() if ddof else (0 if bias else 1)
+](m: Static[dtype, rows, n], dof: Int) raises -> Static[dtype, rows, rows]:
+    """The pre-0.2 `O(rows^2 n)` host loop, kept as the fallback for a call
+    whose target and whose tensor's residency disagree."""
     var host = _as_float64(m.to_host())
     var series = List[List[Float64]]()
     for r in range(rows):
@@ -134,33 +320,10 @@ def cov[
     return Static[dtype, rows, rows](m.context(), values^)
 
 
-def corrcoef[
-    dtype: DType, n: Int
-](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
-    dtype, 2, 2
-] where (dtype.is_floating_point() and n > 1):
-    """The Pearson correlation matrix of two variables, ones on the
-    diagonal. `numpy.corrcoef(x, y)`."""
-    var xs = _as_float64(x.to_host())
-    var ys = _as_float64(y.to_host())
-    var r = _covariance(xs, ys, 0) / _sqrt(
-        _covariance(xs, xs, 0) * _covariance(ys, ys, 0)
-    )
-    var values = List[Scalar[dtype]](capacity=4)
-    values.append(Scalar[dtype](1))
-    values.append(Scalar[dtype](r))
-    values.append(Scalar[dtype](r))
-    values.append(Scalar[dtype](1))
-    return Static[dtype, 2, 2](x.context(), values^)
-
-
-def corrcoef[
+def _corrcoef_host[
     dtype: DType, rows: Int, n: Int
-](mut m: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows] where (
-    dtype.is_floating_point() and rows > 0 and n > 1
-):
-    """The Pearson correlation matrix of `rows` variables, one per row.
-    `numpy.corrcoef(m)`."""
+](m: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows]:
+    """`_cov_host`'s sibling: the pre-0.2 walk, for the mismatch path."""
     var host = _as_float64(m.to_host())
     var series = List[List[Float64]]()
     for r in range(rows):
@@ -180,6 +343,115 @@ def corrcoef[
             values[a * rows + b] = Scalar[dtype](r)
             values[b * rows + a] = Scalar[dtype](r)
     return Static[dtype, rows, rows](m.context(), values^)
+
+
+def cov[
+    dtype: DType, rows: Int, n: Int, gpu: Bool = False
+](
+    mut m: Static[dtype, rows, n],
+    bias: Bool = False,
+    ddof: Optional[Int] = None,
+) raises -> Static[dtype, rows, rows] where (
+    dtype.is_floating_point() and rows > 0 and n > 1
+):
+    """The covariance matrix of `rows` variables observed `n` times each,
+    one variable per row. `numpy.cov(m)` with its default `rowvar=True`.
+
+    `ddof = 1` by default, `0` under `bias`, or as given.
+
+    Centering through MAX's `Welford` monoid, then one
+    `linalg.matmul(transpose_b=True)` for `C C^T`, then one scaling launch
+    -- so this runs where `m` lives and is `O(rows^2 n)` at GEMM speed
+    rather than in a host loop. `gpu=True` on a tensor that is not on a GPU
+    context (or the reverse) falls back to that loop and says so on
+    `stderr`.
+
+    The GEMM reassociates, so a `float32` result differs from the host
+    loop's in the last bits, and `c[i, j]` and `c[j, i]` are computed
+    independently rather than mirrored -- `numpy.cov` does the same.
+    """
+    var dof = _dof_of(bias, ddof, n)
+    if not _check_device[gpu=gpu](m):
+        _notice[gpu]("cov")
+        return _cov_host(m, dof)
+    return _cov_device[gpu=gpu](m, dof)
+
+
+def cov[
+    dtype: DType, n: Int, gpu: Bool = False
+](
+    mut x: Static[dtype, n],
+    mut y: Static[dtype, n],
+    bias: Bool = False,
+    ddof: Optional[Int] = None,
+) raises -> Static[dtype, 2, 2] where (dtype.is_floating_point() and n > 1):
+    """The covariance matrix of two variables, `[[var x, cov], [cov, var
+    y]]`. `numpy.cov(x, y, bias, ddof)`: `ddof = 1` by default, `0` with
+    `bias`, or as given.
+
+    The two vectors are stacked into one `2 x n` matrix and handed to the
+    matrix overload, so there is one covariance algorithm here, not two.
+    """
+    var stacked = _stack_rows[gpu=gpu](x, y)
+    return cov[gpu=gpu](stacked, bias, ddof)
+
+
+def corrcoef[
+    dtype: DType, rows: Int, n: Int, gpu: Bool = False
+](mut m: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows] where (
+    dtype.is_floating_point() and rows > 0 and n > 1
+):
+    """The Pearson correlation matrix of `rows` variables, one per row.
+    `numpy.corrcoef(m)`.
+
+    `cov`'s Gram matrix divided by the outer product of its diagonal's
+    square roots. The `1 / (n - ddof)` cancels, so the unscaled Gram matrix
+    is what this reads and `corrcoef` takes no `ddof`. The diagonal is
+    written as exactly `1` rather than computed, which is what the host
+    walk did and what `numpy.corrcoef`'s clip amounts to.
+    """
+    if not _check_device[gpu=gpu](m):
+        _notice[gpu]("corrcoef")
+        return _corrcoef_host(m)
+    var ctx = m.context()
+    var centered = _centered[gpu=gpu](m)
+    var gram = _gram[gpu=gpu](centered)
+    var out = Static[dtype, rows, rows]._uninitialized(ctx)
+    var gv = _dense(gram)
+    var dst = out.view()
+
+    @always_inline
+    def normalize[w: Int, alignment: Int = 1](coord: Coord) {var gv, var dst}:
+        var at = coord_to_index_list(coord)
+        var i = at[0]
+        var j = at[1]
+        if i == j:
+            dst.store[1](coord, Scalar[dtype](1))
+        else:
+            dst.store[1](
+                coord,
+                gv[Coord(i, j)]
+                / (_sqrt(gv[Coord(i, i)]) * _sqrt(gv[Coord(j, j)])),
+            )
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        normalize, Coord(rows, rows), ctx
+    )
+    _ = centered^
+    _ = gram^
+    return out^
+
+
+def corrcoef[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
+    dtype, 2, 2
+] where (dtype.is_floating_point() and n > 1):
+    """The Pearson correlation matrix of two variables, ones on the
+    diagonal. `numpy.corrcoef(x, y)`. The pair is stacked into a `2 x n`
+    and handed to the matrix overload."""
+    var stacked = _stack_rows[gpu=gpu](x, y)
+    return corrcoef[gpu=gpu](stacked)
 
 
 @fieldwise_init

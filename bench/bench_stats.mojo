@@ -11,9 +11,11 @@ Four rows, one per shape of work the surface has:
 3. `quantile` at `q = 0.5` -- a host selection over a copy, against
    NumPy's partition, and the row that says what a host-side path costs at
    this size.
-4. `cov` and `corrcoef` of an `8 x 2^20` matrix -- host-side today, the
-   `O(rows^2 n)` in a `Float64` loop; the row measures what that costs
-   against the centering `map` and one `matmul` it could be.
+4. `cov` and `corrcoef` of an `8 x 2^20` matrix -- a centering
+   `elementwise` over MAX's `Welford` means and one `matmul` with
+   `transpose_b=True`, so the `O(rows^2 n)` runs at GEMM speed. The error
+   column is where the GEMM's reassociation shows against a `float64`
+   recomputation.
 
 The `bench/scipy/stats.py` baseline prints the same columns from
 `scipy.stats.norm.cdf`, `numpy.histogram`, `numpy.quantile`, `numpy.cov`
