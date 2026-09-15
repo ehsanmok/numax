@@ -5,6 +5,10 @@ group by hand, and against the identity that folding every axis in turn is
 the same as folding the whole tensor. The second is what catches an
 `outer`/`length`/`inner` split that is right at one axis and wrong at
 another, which a single spot check would not.
+
+`sum` and `prod` now fold through MAX's monoids, which reassociate, so they
+are asserted to a tolerance. `min`, `max`, `argmin` and `argmax` are
+order-independent and asserted exactly.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
@@ -85,15 +89,18 @@ def test_folding_every_axis_matches_the_whole_tensor_sum() raises:
 
 
 def test_min_max_and_prod_along_an_axis() raises:
+    """The extrema exactly, the product to a tolerance: `ReduceMin` and
+    `ReduceMax` return an element of the input whatever order they fold in,
+    while `ReduceProduct` reassociates."""
     var a = _ramp[2, 3]()  # [[1, 2, 3], [4, 5, 6]]
 
     var row_min = min[axis=1](a)
-    assert_almost_equal(row_min[0], Scalar[dtype](1.0))
-    assert_almost_equal(row_min[1], Scalar[dtype](4.0))
+    assert_equal(row_min[0], Scalar[dtype](1.0))
+    assert_equal(row_min[1], Scalar[dtype](4.0))
 
     var row_max = max[axis=1](a)
-    assert_almost_equal(row_max[0], Scalar[dtype](3.0))
-    assert_almost_equal(row_max[1], Scalar[dtype](6.0))
+    assert_equal(row_max[0], Scalar[dtype](3.0))
+    assert_equal(row_max[1], Scalar[dtype](6.0))
 
     var row_prod = prod[axis=1](a)
     assert_almost_equal(row_prod[0], Scalar[dtype](6.0))

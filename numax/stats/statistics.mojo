@@ -1,12 +1,29 @@
 """NumPy-named statistics, composed from `numax.core.tensor` and `FloatLike`.
 
-**Tier 2, with three exceptions.** `mean`, `variance` and `stddev` fold
-through MAX's `Welford` monoid over its `rowwise` scaffolder
-(`numax.core.rowwise`), so they are threaded on CPU, tiered on GPU under
-`gpu=True`, and never download the input -- only the resulting scalars come
-back. Every other reduction here still walks a host copy;
-`numax.core.tensor`'s `reduce` and `reduce_axis` are the GPU-launchable
-primitives underneath those.
+**Tier 2 in shape, both targets in fact, for the reductions.** `mean`,
+`variance` and `stddev` fold through MAX's `Welford` monoid over its
+`rowwise` scaffolder (`numax.core.rowwise`); `sum`, `prod`, `min` and `max`
+-- whole-tensor and along one axis -- fold through `ReduceSum`,
+`ReduceProduct`, `ReduceMin` and `ReduceMax`, and `argmax`/`argmin` over the
+whole tensor through `ArgMax`/`ArgMin`. All of them take `gpu: Bool = False`
+as their last compile-time parameter, are threaded on CPU and tiered on GPU
+under `gpu=True`, and never download the input -- only the resulting scalar
+or the reduced tensor comes back. A call whose target and whose tensor's
+residency disagree runs the pre-0.2 host walk and prints one line on
+`stderr` naming the fast spelling, the same policy `numax.core._drive` sets
+for the elementwise surface.
+
+`sum` and `prod` are therefore **reassociated**: MAX folds SIMD tiles and
+joins partials across threads or lanes, so they differ in the last bits from
+the strict left-to-right loops they replaced. `min`, `max`, `argmax` and
+`argmin` are order-independent and unchanged.
+
+What stays on a host copy, and says so in its own docstring: `median`,
+`mode`, `cumsum` and `cumprod` (a whole slice at once, or a running scan,
+rather than a monoid fold), the axis-wise `argmax`/`argmin` (which route to
+`nn.argmaxmin`, MAX's only axis-taking entry point), and everything composed
+out of those. `numax.core.tensor`'s `reduce` and `reduce_axis` remain the
+primitives for a fold outside MAX's monoid set.
 
 `docs/parity.md` picks statistics as a genuine `numax` gap with a
 selective axis-1 lift: MAX ships no NumPy-named `mean`/`var`/`std`/`median`/
@@ -76,8 +93,10 @@ extents are not: the result comes back run-time-shaped, since they are read
 from the input rather than named.
 
 `numax.core.tensor.reduce_axis` is the same fold one layer down, over a
-`TileTensor` a caller allocated the output for, and it launches on a GPU
-where these do not.
+`TileTensor` a caller allocated the output for, with an arbitrary `combine`
+instead of one of MAX's monoids. `sum`, `prod`, `min` and `max` no longer
+go through it: they call `numax.core.rowwise`'s `sum_axis`/`prod_axis`/
+`min_axis`/`max_axis`, which launch on either target.
 
 **Explicitly out of scope**, matching this module's own gap-only mandate:
 sorting, which now lives in `numax.core.sorting` as a tier-2 module (`sort`,
@@ -89,6 +108,8 @@ tier-2 terms `docs/architecture.md` sets out.
 
 from std.math import sqrt as _sqrt
 
+from std.utils import IndexList
+
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
 from layout.tile_tensor import PointerStorage
@@ -96,13 +117,23 @@ from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 from nn.cumsum import cumsum as _nn_cumsum
 
 from ..core.array import Dynamic, Static, Tensor, _dyn_shape_from
+from ..core._drive import _check_device, _dense, _flat, _notice
 from ..core.ops import (
     multiply as _multiply,
     power as _power,
     subtract as _subtract,
 )
 from ..core.numeric import FloatLike
-from ..core.rowwise import mean_variance_axis
+from ..core.rowwise import (
+    argmax_all,
+    argmin_all,
+    max_axis,
+    mean_variance_axis,
+    min_axis,
+    prod_axis,
+    reduce_all,
+    sum_axis,
+)
 
 
 @always_inline
@@ -111,7 +142,27 @@ def _target[gpu: Bool]() -> StaticString:
     return "gpu" if gpu else "cpu"
 
 
-def _fold_axis[
+def _axis_dst[
+    dtype: DType, LayoutType: TensorLayout, axis: Int
+](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank - 1
+] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
+    """A destination shaped like `xs` with `axis` dropped.
+
+    Run-time-shaped because the surviving extents are read from the input
+    rather than named, which is what `Dynamic` is for.
+    """
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank - 1)
+    for d in range(rank):
+        if d != axis:
+            extents.append(xs.dim_at(d))
+    return Dynamic[dtype, rank - 1](
+        xs.context(), row_major(_dyn_shape_from[rank - 1](extents))
+    )
+
+
+def _host_fold_axis[
     dtype: DType,
     LayoutType: TensorLayout,
     axis: Int,
@@ -119,7 +170,11 @@ def _fold_axis[
 ](xs: Tensor[dtype, LayoutType], init: Scalar[dtype]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
 ] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
-    """Fold `xs` along `axis` with `combine`, dropping that axis.
+    """Fold `xs` along `axis` with `combine` on the host, dropping that axis.
+
+    The retained fallback: what the axis reductions did before they routed
+    through `numax.core.rowwise`, kept verbatim so a host/device mismatch
+    answers with the old walk rather than a second implementation of it.
 
     A row-major tensor splits around any axis into `outer` (the extents
     before it, multiplied), `length` (the axis), and `inner` (the extents
@@ -144,13 +199,7 @@ def _fold_axis[
                 acc = combine(acc, values[(o * length + k) * inner + i])
             out.append(acc)
 
-    var extents = List[Int](capacity=rank - 1)
-    for d in range(rank):
-        if d != axis:
-            extents.append(xs.dim_at(d))
-    var result = Dynamic[dtype, rank - 1](
-        xs.context(), row_major(_dyn_shape_from[rank - 1](extents))
-    )
+    var result = _axis_dst[axis=axis](xs)
     result.copy_from_host(out)
     return result^
 
@@ -172,7 +221,7 @@ def _larger[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
 
 
 def sum[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
 ] where (
@@ -180,13 +229,33 @@ def sum[
     and axis >= 0
     and axis < LayoutType.rank
     and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
 ):
-    """`xs` summed along `axis`. `numpy.sum(a, axis=k)`."""
-    return _fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
+    """`xs` summed along `axis`. `numpy.sum(a, axis=k)`.
+
+    MAX's `ReduceSum` monoid over its `rowwise` scaffolder
+    (`numax.core.rowwise.sum_axis`), so it is threaded on CPU, tiered on
+    GPU under `gpu=True`, and never downloads `xs`. The sum is
+    reassociated, so it differs in the last bits from the host walk this
+    replaced.
+    """
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("sum")
+        return _host_fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
+    var out = _axis_dst[axis=axis](xs)
+    sum_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+        _dense(xs), out.view(), Optional(xs.context())
+    )
+    return out^
 
 
 def prod[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
 ] where (
@@ -194,13 +263,30 @@ def prod[
     and axis >= 0
     and axis < LayoutType.rank
     and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
 ):
-    """`xs` multiplied along `axis`. `numpy.prod(a, axis=k)`."""
-    return _fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
+    """`xs` multiplied along `axis`. `numpy.prod(a, axis=k)`.
+
+    MAX's `ReduceProduct` monoid, `sum`'s sibling, and reassociated for
+    the same reason.
+    """
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("prod")
+        return _host_fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
+    var out = _axis_dst[axis=axis](xs)
+    prod_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+        _dense(xs), out.view(), Optional(xs.context())
+    )
+    return out^
 
 
 def min[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
 ] where (
@@ -208,19 +294,33 @@ def min[
     and axis >= 0
     and axis < LayoutType.rank
     and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
 ):
     """The smallest element along `axis`. `numpy.min(a, axis=k)`.
 
-    Seeded with positive infinity, so an axis of length zero yields
-    infinity rather than reading an element that is not there.
+    MAX's `ReduceMin` monoid, whose identity is positive infinity, so an
+    axis of length zero yields infinity rather than reading an element
+    that is not there. Exact whatever order it folds in.
     """
-    return _fold_axis[axis=axis, combine=_smaller[dtype]](
-        xs, Scalar[dtype].MAX_FINITE
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("min")
+        return _host_fold_axis[axis=axis, combine=_smaller[dtype]](
+            xs, Scalar[dtype].MAX_FINITE
+        )
+    var out = _axis_dst[axis=axis](xs)
+    min_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+        _dense(xs), out.view(), Optional(xs.context())
     )
+    return out^
 
 
 def max[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
+    dtype: DType, LayoutType: TensorLayout, axis: Int, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
     dtype, LayoutType.rank - 1
 ] where (
@@ -228,12 +328,25 @@ def max[
     and axis >= 0
     and axis < LayoutType.rank
     and LayoutType.rank > 1
+    and TileTensor[
+        dtype,
+        LayoutType,
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ].is_row_major
 ):
-    """The largest element along `axis`. `numpy.max(a, axis=k)`. Seeded the
-    mirror of `min`'s."""
-    return _fold_axis[axis=axis, combine=_larger[dtype]](
-        xs, Scalar[dtype].MIN_FINITE
+    """The largest element along `axis`. `numpy.max(a, axis=k)`. MAX's
+    `ReduceMax` monoid, `min`'s mirror and exact for the same reason."""
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("max")
+        return _host_fold_axis[axis=axis, combine=_larger[dtype]](
+            xs, Scalar[dtype].MIN_FINITE
+        )
+    var out = _axis_dst[axis=axis](xs)
+    max_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+        _dense(xs), out.view(), Optional(xs.context())
     )
+    return out^
 
 
 def mean[
@@ -258,8 +371,8 @@ def mean[
     the monoid also produces is discarded here; `variance_axis` returns
     both from the one traversal for a caller that wants them together.
     """
-    var means = _welford_dst[axis=axis](xs)
-    var variances = _welford_dst[axis=axis](xs)
+    var means = _axis_dst[axis=axis](xs)
+    var variances = _axis_dst[axis=axis](xs)
     _welford_axis[axis=axis, gpu=gpu](xs, means, variances, 0)
     return means^
 
@@ -288,30 +401,10 @@ def variance_axis[
     MAX's `Welford` computes both regardless, so returning only one would
     mean reducing twice to get the other.
     """
-    var means = _welford_dst[axis=axis](xs)
-    var variances = _welford_dst[axis=axis](xs)
+    var means = _axis_dst[axis=axis](xs)
+    var variances = _axis_dst[axis=axis](xs)
     _welford_axis[axis=axis, gpu=gpu](xs, means, variances, ddof)
     return (means^, variances^)
-
-
-def _welford_dst[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](mut xs: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, LayoutType.rank - 1
-] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
-    """A destination shaped like `xs` with `axis` dropped.
-
-    Run-time-shaped because the surviving extents are read from the input
-    rather than named, which is what `Dynamic` is for.
-    """
-    comptime rank = LayoutType.rank
-    var extents = List[Int](capacity=rank - 1)
-    for d in range(rank):
-        if d != axis:
-            extents.append(xs.dim_at(d))
-    return Dynamic[dtype, rank - 1](
-        xs.context(), row_major(_dyn_shape_from[rank - 1](extents))
-    )
 
 
 def _welford_axis[
@@ -345,62 +438,111 @@ def _welford_axis[
     )
 
 
+def _reduce_whole[
+    dtype: DType, LayoutType: TensorLayout, monoid: StaticString, gpu: Bool
+](xs: Tensor[dtype, LayoutType]) raises -> Scalar[dtype]:
+    """`xs` folded to one value under MAX's `monoid`, where it lives.
+
+    The whole tensor is one row: `numax.core._drive._flat` builds the rank-1
+    view over its buffer and `numax.core.rowwise.reduce_all` folds along
+    axis 0. Only the resulting scalar comes back, so a device-resident `xs`
+    stays where it is -- the same shape `_welford` already had for the mean.
+    """
+    var ctx = xs.context()
+    var out = Static[dtype, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+        return tile
+
+    reduce_all[monoid=monoid, target=_target[gpu]()](
+        _flat(xs), out.view(), identity, xs.size(), Optional(ctx)
+    )
+    return out.to_host()[0]
+
+
 def sum[
-    dtype: DType, LayoutType: TensorLayout
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """The sum of every element of `xs`."""
-    var n = xs.size()
-    var values = xs.to_host()
-    var acc = Scalar[dtype](0)
-    for i in range(n):
-        acc += values[i]
-    return acc
+    """The sum of every element of `xs`. `numpy.sum(a)`.
+
+    MAX's `ReduceSum` monoid over its `rowwise` scaffolder, so this is
+    threaded on CPU, tiered on GPU under `gpu=True`, and never downloads
+    `xs`. The sum is reassociated -- MAX folds SIMD tiles and joins
+    partials -- so it differs in the last bits from the strict
+    left-to-right host loop this replaced, and from
+    `numax.core.tensor.reduce[add_combine]`.
+    """
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("sum")
+        var n = xs.size()
+        var values = xs.to_host()
+        var acc = Scalar[dtype](0)
+        for i in range(n):
+            acc += values[i]
+        return acc
+    return _reduce_whole[monoid="sum", gpu=gpu](xs)
 
 
 def prod[
-    dtype: DType, LayoutType: TensorLayout
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """The product of every element of `xs`."""
-    var n = xs.size()
-    var values = xs.to_host()
-    var acc = Scalar[dtype](1)
-    for i in range(n):
-        acc *= values[i]
-    return acc
+    """The product of every element of `xs`. `numpy.prod(a)`. MAX's
+    `ReduceProduct` monoid, `sum`'s sibling and reassociated with it."""
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("prod")
+        var n = xs.size()
+        var values = xs.to_host()
+        var acc = Scalar[dtype](1)
+        for i in range(n):
+            acc *= values[i]
+        return acc
+    return _reduce_whole[monoid="prod", gpu=gpu](xs)
 
 
 def min[
-    dtype: DType, LayoutType: TensorLayout
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """The smallest element of `xs`. `xs` must have at least one element."""
-    var n = xs.size()
-    var values = xs.to_host()
-    var best = values[0]
-    for i in range(1, n):
-        if values[i] < best:
-            best = values[i]
-    return best
+    """The smallest element of `xs`. `numpy.min(a)`, through MAX's
+    `ReduceMin` monoid; exact whatever order it folds in. `xs` must have at
+    least one element."""
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("min")
+        var n = xs.size()
+        var values = xs.to_host()
+        var best = values[0]
+        for i in range(1, n):
+            if values[i] < best:
+                best = values[i]
+        return best
+    return _reduce_whole[monoid="min", gpu=gpu](xs)
 
 
 def max[
-    dtype: DType, LayoutType: TensorLayout
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """The largest element of `xs`. `xs` must have at least one element."""
-    var n = xs.size()
-    var values = xs.to_host()
-    var best = values[0]
-    for i in range(1, n):
-        if values[i] > best:
-            best = values[i]
-    return best
+    """The largest element of `xs`. `numpy.max(a)`, `min`'s mirror through
+    `ReduceMax`. `xs` must have at least one element."""
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("max")
+        var n = xs.size()
+        var values = xs.to_host()
+        var best = values[0]
+        for i in range(1, n):
+            if values[i] > best:
+                best = values[i]
+        return best
+    return _reduce_whole[monoid="max", gpu=gpu](xs)
 
 
 def _welford[
@@ -526,7 +668,12 @@ def median[
     dtype, 1
 ] where dtype.is_floating_point():
     """The median of `xs` -- the average of the two middle elements when
-    `xs` has an even count, matching NumPy's default."""
+    `xs` has an even count, matching NumPy's default.
+
+    **Host-side**, unlike `sum`/`min`/`max`: a median needs the whole
+    sorted slice, not a monoid fold, so it downloads `xs` and sorts. It
+    takes no `gpu` parameter for that reason.
+    """
     return _median_of(xs.to_host())
 
 
@@ -543,7 +690,8 @@ def median[
     """`xs` reduced to its median along `axis`. `numpy.median(a, axis=k)`.
 
     A median is not a fold -- it needs the whole slice at once -- so this
-    gathers each slice rather than running `_fold_axis`. The even-count
+    gathers each slice on the host rather than folding through a monoid the
+    way `sum[axis=k]` does, and takes no `gpu` parameter. The even-count
     convention is `_median_of`'s, the same one the whole-tensor overload
     uses.
     """
@@ -574,7 +722,11 @@ def mode[
     dtype, 1
 ] where dtype.is_floating_point():
     """The most frequent value in `xs`; the smallest among ties, matching
-    `scipy.stats.mode`'s convention."""
+    `scipy.stats.mode`'s convention.
+
+    **Host-side** for `median`'s reason: a mode is a sort and a run count
+    over the whole slice, not a fold, so there is no `gpu` parameter.
+    """
     return _mode_of(xs.to_host())
 
 
@@ -589,7 +741,8 @@ def mode[
     and LayoutType.rank > 1
 ):
     """`xs` reduced to its most frequent value along `axis`.
-    `scipy.stats.mode(a, axis=k)`, smallest among ties."""
+    `scipy.stats.mode(a, axis=k)`, smallest among ties. **Host-side**, like
+    the whole-tensor overload."""
     var split = _axis_split[axis=axis](xs)
     var outer = split[0]
     var length = split[1]
@@ -612,30 +765,44 @@ def mode[
 
 
 def argmax[
-    dtype: DType, LayoutType: TensorLayout
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> Int where dtype.is_floating_point():
-    """The flat index of the largest element of `xs`, via `nn.argmaxmin`
-    (MAX-first: `numax` writes no comparison logic of its own here)."""
-    var n = xs.size()
-    var values = xs.to_host()
-    var flat = TileTensor(values, row_major(Coord(n)))
-    var out_storage = List[Scalar[DType.int64]](length=1, fill=0)
-    var out = TileTensor(out_storage, row_major[1]())
-    _nn_argmax(flat, 0, out)
-    return Int(out[0])
+    """The flat index of the largest element of `xs`. `numpy.argmax(a)`.
+
+    MAX's `ArgMax` monoid over its `rowwise` scaffolder
+    (`numax.core.rowwise.argmax_all`), which carries the winning index
+    beside the winning value, so the position comes out of the traversal
+    the comparison already does and `xs` is never downloaded. The first
+    index wins a tie, NumPy's rule. The axis-wise form below stays on
+    `nn.argmaxmin`, which is the only MAX entry point that takes an axis.
+    """
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("argmax")
+        var n = xs.size()
+        var values = xs.to_host()
+        var flat = TileTensor(values, row_major(Coord(n)))
+        var out_storage = List[Scalar[DType.int64]](length=1, fill=0)
+        var out = TileTensor(out_storage, row_major[1]())
+        _nn_argmax(flat, 0, out)
+        return Int(out[0])
+    return argmax_all[dtype, _target[gpu]()](_flat(xs), xs.context())
 
 
 def argmin[
-    dtype: DType, LayoutType: TensorLayout
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
 ](xs: Tensor[dtype, LayoutType]) raises -> Int where dtype.is_floating_point():
-    """The flat index of the smallest element of `xs`, via `nn.argmaxmin`."""
-    var n = xs.size()
-    var values = xs.to_host()
-    var flat = TileTensor(values, row_major(Coord(n)))
-    var out_storage = List[Scalar[DType.int64]](length=1, fill=0)
-    var out = TileTensor(out_storage, row_major[1]())
-    _nn_argmin(flat, 0, out)
-    return Int(out[0])
+    """The flat index of the smallest element of `xs`. `numpy.argmin(a)`,
+    `argmax`'s mirror through MAX's `ArgMin` monoid."""
+    if not _check_device[gpu=gpu](xs):
+        _notice[gpu]("argmin")
+        var n = xs.size()
+        var values = xs.to_host()
+        var flat = TileTensor(values, row_major(Coord(n)))
+        var out_storage = List[Scalar[DType.int64]](length=1, fill=0)
+        var out = TileTensor(out_storage, row_major[1]())
+        _nn_argmin(flat, 0, out)
+        return Int(out[0])
+    return argmin_all[dtype, _target[gpu]()](_flat(xs), xs.context())
 
 
 def _argn_axis[
@@ -802,6 +969,9 @@ def cumprod[
     Rank-1 in gives rank-1 out at the same length, so this is the same call
     it always was; at higher rank it flattens, which is what
     `numpy.cumprod` with no `axis` does.
+
+    **Host-side**: a scan carries every prefix forward, so it is not one of
+    MAX's monoids and takes no `gpu` parameter, unlike `prod`.
     """
     comptime n = LayoutType.static_product
     var values = xs.to_host()
@@ -821,7 +991,7 @@ def cumprod[
     """The running product along `axis`. `numpy.cumprod(a, axis=k)`.
 
     Keeps `xs`'s shape rather than dropping the axis -- a scan is not a
-    reduction.
+    reduction, and so runs **host-side** with no `gpu` parameter.
     """
     return Tensor[dtype, LayoutType](
         xs.context(),
@@ -949,7 +1119,8 @@ def cumsum[
     The counterpart of `cumprod`; the `List[T]` form below is the
     `FloatLike`-generic one. Rank-1 in gives rank-1 out at the same length,
     and at higher rank it flattens, which is what `numpy.cumsum` with no
-    `axis` does.
+    `axis` does. **Host-side**: `nn.cumsum` is called over a host copy, and
+    there is no `gpu` parameter the way `sum` has one.
     """
     comptime n = LayoutType.static_product
     var values = xs.to_host()
@@ -969,7 +1140,8 @@ def cumsum[
     """The running sum along `axis`. `numpy.cumsum(a, axis=k)`.
 
     Keeps `xs`'s shape rather than dropping the axis -- a scan is not a
-    reduction. Routed to `nn.cumsum`.
+    reduction. Routed to `nn.cumsum` over a host copy, **host-side** with no
+    `gpu` parameter.
     """
     return Tensor[dtype, LayoutType](
         xs.context(),

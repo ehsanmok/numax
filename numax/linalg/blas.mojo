@@ -16,10 +16,15 @@ run-time test.
 
 MAX ships no BLAS-1 by name, but it ships everything BLAS-1 is made of, so
 `dot`/`nrm2`/`asum`/`axpy`/`outer` are built here from MAX primitives
-rather than delegated. The reductions (`dot`, `nrm2`, `asum`)
-drive MAX's `ReduceSum` monoid over its `rowwise` scaffolder; the maps
-(`axpy`, `outer`) go through `max.algorithm.elementwise`. Both give SIMD
-width, CPU threading and GPU dispatch without numax naming any of them.
+rather than delegated. The reductions (`dot`, `nrm2`, `asum`) call
+`numax.core.rowwise.reduce_all`, which drives MAX's `ReduceSum` monoid over
+its `rowwise` scaffolder with the multiply, the square or the magnitude
+riding the per-tile transform; the maps (`axpy`, `outer`) go through
+`max.algorithm.elementwise`. Both give SIMD width, CPU threading and GPU
+dispatch without numax naming any of them. The fused sum used to be a
+private helper here; it moved to `numax.core.rowwise` when the statistics
+reductions wanted the same shape, which is the allowed direction --
+`linalg` depends on `core`.
 
 The two tiers together are the answer to a fair criticism of the `Array`
 versions: at
@@ -31,8 +36,6 @@ to MAX, and leave the `Array` tier to the thing only it can do: run
 `FloatLike`-generically, per SIMD lane, inside a kernel body.
 """
 
-from algorithm import rowwise
-from algorithm.reduce_op import ReduceSum
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
 from layout.tile_tensor import PointerStorage
@@ -44,6 +47,7 @@ from std.math import sqrt as _sqrt
 from std.sys.info import simd_width_of
 from std.utils import IndexList
 
+from ..core.rowwise import reduce_all
 from ..core.array import (
     copy,
     Dynamic,
@@ -59,87 +63,6 @@ from ..core.array import (
 def _target[gpu: Bool]() -> StaticString:
     """MAX's `target` string for numax's `gpu: Bool` parameter."""
     return "gpu" if gpu else "cpu"
-
-
-def _fused_sum[
-    dtype: DType,
-    n: Int,
-    gpu: Bool,
-    Contribute: (def[w: Int](SIMD[dtype, w], IndexList[1]) -> SIMD[dtype, w])
-    & RegisterPassable
-    & ImplicitlyCopyable,
-](
-    xs: TileTensor[
-        dtype,
-        _,
-        MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
-        linear_idx_type=_,
-    ],
-    dst: TileTensor[
-        dtype,
-        _,
-        MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
-        linear_idx_type=_,
-    ],
-    contribute: Contribute,
-    ctx: DeviceContext,
-) raises:
-    """`sum(contribute(xs[i], i))` over a rank-1 `xs`, into `dst[0]`.
-
-    The shape all three BLAS-1 reductions share. MAX's `rowwise` scaffolder
-    already takes a per-tile transform between the load and the fold, which
-    is exactly where `dot`'s multiply, `nrm2`'s square and `asum`'s
-    magnitude belong -- each reads one tile and none of them needs a second
-    pass. So the fold is `ReduceSum` in all three cases and only
-    `contribute` differs, which is why this is one function and not three.
-
-    Reassociated, as any monoid reduction is: the `Array` overloads sum
-    strictly in order and say so, and these will differ from them in the
-    last bits.
-    """
-    comptime target = "gpu" if gpu else "cpu"
-    comptime simd_width = rowwise.pick_simd_width[
-        ReduceSum[dtype, 1], target, 64, dtype
-    ]()
-    var src = xs
-    var out = dst
-
-    @always_inline
-    def body[
-        params: rowwise.ContextParams
-    ](row_coords: Coord, mut c: rowwise.Context[params]) {
-        var src, var out, var contribute
-    }:
-        @always_inline
-        def load[
-            width: Int, alignment: Int, coord_rank: Int
-        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
-            return src.load[width](Coord(idx))
-
-        var row = rowwise.Row[params, dtype, dtype, 0, 1, is_cached=False](
-            row_coords, n, c, load
-        )
-        var acc = row.reduce[ReduceSum[dtype, params.simd_width]](
-            contribute, load
-        ).acc
-
-        @always_inline
-        def write(oc: IndexList[1]) {var acc, var out}:
-            out.store[params.emit_tile_width](
-                Coord(0), acc.slice[params.emit_tile_width]()
-            )
-
-        row.emit(write)
-
-    rowwise.launch[
-        axis=0,
-        simd_width=simd_width,
-        target=target,
-        num_phases=1,
-        associative=True,
-    ](body, Coord(IndexList[1](n)), Optional(ctx))
 
 
 def dot[
@@ -168,7 +91,9 @@ def dot[
     ](tile: SIMD[dtype, w], idx: IndexList[1]) {var rhs} -> SIMD[dtype, w]:
         return tile * rhs.load[w](Coord(idx))
 
-    _fused_sum[dtype, n, gpu](a.view(), out.view(), times, ctx)
+    reduce_all[monoid="sum", target=_target[gpu]()](
+        a.view(), out.view(), times, n, Optional(ctx)
+    )
     return out.to_host()[0]
 
 
@@ -195,7 +120,9 @@ def nrm2[
     ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
         return tile * tile
 
-    _fused_sum[dtype, n, gpu](a.view(), out.view(), square, ctx)
+    reduce_all[monoid="sum", target=_target[gpu]()](
+        a.view(), out.view(), square, n, Optional(ctx)
+    )
     return _sqrt(out.to_host()[0])
 
 
@@ -218,7 +145,9 @@ def asum[
     ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
         return abs(tile)
 
-    _fused_sum[dtype, n, gpu](a.view(), out.view(), magnitude, ctx)
+    reduce_all[monoid="sum", target=_target[gpu]()](
+        a.view(), out.view(), magnitude, n, Optional(ctx)
+    )
     return out.to_host()[0]
 
 

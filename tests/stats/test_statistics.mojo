@@ -54,27 +54,82 @@ def _fixed_array() raises -> Static[dtype, 6]:
 
 
 def test_sum_matches_hand_computed_total() raises:
+    """A tolerance, not equality: `sum` folds through MAX's `ReduceSum`
+    monoid, which reassociates, so only the value is pinned and not the
+    rounding. These six values are exactly representable, so the tolerance
+    is not doing any work here -- it is stating the contract."""
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(sum(xs), Scalar[dtype](24))
+    assert_almost_equal(sum(xs), Scalar[dtype](24), atol=1e-5)
 
 
 def test_prod_matches_hand_computed_product() raises:
+    """Reassociated for `sum`'s reason, through `ReduceProduct`."""
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(prod(xs), Scalar[dtype](756))
+    assert_almost_equal(prod(xs), Scalar[dtype](756), atol=1e-3)
 
 
 def test_min_returns_the_smallest_element() raises:
+    """Exact: an extremum is the same value whatever order it folds in."""
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(min(xs), Scalar[dtype](1))
+    assert_equal(min(xs), Scalar[dtype](1))
 
 
 def test_max_returns_the_largest_element() raises:
+    """Exact, for `min`'s reason."""
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
-    assert_almost_equal(max(xs), Scalar[dtype](9))
+    assert_equal(max(xs), Scalar[dtype](9))
+
+
+def test_the_reductions_agree_with_a_host_walk_on_a_longer_vector() raises:
+    """Where the reassociation can actually show: 1000 values whose partial
+    sums are not exactly representable. The monoid's total is within a
+    float32 rounding of the left-to-right one, not equal to it."""
+    comptime n = 1000
+    var ctx = DeviceContext(api="cpu")
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(Scalar[dtype](sin(Float64(i) * 0.37)) + Scalar[dtype](3))
+    var xs = Static[dtype, n](ctx, values.copy())
+
+    var host_total = Scalar[dtype](0)
+    var host_min = values[0]
+    var host_max = values[0]
+    var host_argmax = 0
+    for i in range(n):
+        host_total += values[i]
+        if values[i] < host_min:
+            host_min = values[i]
+        if values[i] > host_max:
+            host_max = values[i]
+            host_argmax = i
+
+    assert_almost_equal(sum(xs), host_total, rtol=1e-5)
+    assert_equal(min(xs), host_min)
+    assert_equal(max(xs), host_max)
+    assert_equal(argmax(xs), host_argmax)
+
+
+def test_sum_asked_for_a_gpu_on_a_cpu_tensor_falls_back_and_says_so() raises:
+    """The device gate, from the only side a GPU-less CI can exercise.
+
+    `sum[gpu=True]` over a tensor on a CPU context cannot launch, so it
+    prints one line on `stderr` and runs the retained host walk. The claim
+    asserted is that it still answers, and answers what the default
+    spelling answers -- the fallback is the pre-0.2 behavior, not a second
+    implementation with its own bugs.
+    """
+    var ctx = DeviceContext(api="cpu")
+    var xs = _fixed_array()
+    assert_equal(sum[gpu=True](xs), sum(xs))
+    assert_equal(prod[gpu=True](xs), prod(xs))
+    assert_equal(min[gpu=True](xs), min(xs))
+    assert_equal(max[gpu=True](xs), max(xs))
+    assert_equal(argmax[gpu=True](xs), argmax(xs))
+    assert_equal(argmin[gpu=True](xs), argmin(xs))
 
 
 def test_mean_matches_hand_computed_average() raises:

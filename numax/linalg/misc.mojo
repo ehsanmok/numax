@@ -27,9 +27,9 @@ from std.math import sqrt as _sqrt
 from std.utils import IndexList
 
 from ..core.array import Static
-from ..core.rowwise import max_axis, sum_axis
+from ..core.rowwise import max_axis, reduce_all, sum_axis
 
-from .blas import _fused_sum, _target, asum as _asum, nrm2 as _nrm2
+from .blas import _target, asum as _asum, nrm2 as _nrm2
 from .eigen import svdvals
 
 
@@ -56,7 +56,7 @@ comptime _Flat[dtype: DType] = TileTensor[
 ]
 """A runtime-shaped rank-1 view over an existing pointer.
 
-What the whole-matrix reductions want: `_fused_sum` folds along one axis,
+What the whole-matrix reductions want: `reduce_all` folds a rank-1 view,
 and a Frobenius norm or a trace is a fold over every entry, so the matrix
 is read as the vector it already is in memory. Costs nothing -- same
 pointer, different layout."""
@@ -100,7 +100,9 @@ def trace[
     ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
         return tile
 
-    _fused_sum[dtype, n, gpu](dv, out.view(), identity, ctx)
+    reduce_all[monoid="sum", target=_target[gpu]()](
+        dv, out.view(), identity, n, Optional(ctx)
+    )
 
     # `view()` erases the origin, so `diagonal` is not kept alive by `dv`
     # and destruction is ASAP. See `numax.linalg.qr`.
@@ -156,7 +158,9 @@ def norm[
         ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
             return tile * tile
 
-        _fused_sum[dtype, n * n, gpu](flat, out.view(), square, ctx)
+        reduce_all[monoid="sum", target=_target[gpu]()](
+            flat, out.view(), square, n * n, Optional(ctx)
+        )
         return _sqrt(out.to_host()[0])
 
     var magnitudes = Static[dtype, n, n](ctx)

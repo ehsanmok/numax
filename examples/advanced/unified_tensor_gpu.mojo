@@ -7,11 +7,13 @@ and by nothing else. `DeviceContext(api="cpu")` puts it in host memory,
 parameters, the factory names, and `.view()`'s `TileTensor` type are
 identical either way.
 
-It then runs two of the NumPy-named routines on the same device tensor:
-`numax.exp`, and the comparison `numax.greater`, whose result is a
-`DType.bool` tensor written by the launch itself. Those took a host copy of
-the elements and walked them one at a time until 0.2; `exp[gpu=True]` and
-`greater[gpu=True]` now launch over the tensor where it already lives, and
+It then runs three of the NumPy-named routines on the same device tensor:
+`numax.exp`, the comparison `numax.greater`, whose result is a
+`DType.bool` tensor written by the launch itself, and the reduction
+`numax.stats.sum`, which folds through MAX's `ReduceSum` monoid and brings
+back only the scalar. Those took a host copy of the elements and walked
+them one at a time until 0.2; `exp[gpu=True]`, `greater[gpu=True]` and
+`sum[gpu=True]` now run over the tensor where it already lives, and
 `exp(a)` on a device tensor still answers -- on the host, with a line on
 `stderr` naming the spelling that would not have.
 
@@ -35,6 +37,7 @@ from max.gpu.host import DeviceContext
 from numax import Plain, exp, gaussian, greater
 from numax.core.array import Static, Tensor, linspace, zeros
 from numax.core.tensor import map
+from numax.stats import sum as tensor_sum
 
 comptime dtype = DType.float32
 comptime n = 1024
@@ -129,3 +132,18 @@ def main() raises:
             positives += 1
     print("greater mask positives =", positives, "of", n)
     print("greater mask identical on both devices:", mask_agrees)
+
+    # ---- a reduction, which never downloads the tensor: MAX's `ReduceSum`
+    # monoid folds it on the device and only the scalar crosses back. The
+    # fold is reassociated on both targets but by different tilings, so a
+    # float32 tolerance -- not equality -- is the honest bar ----
+    var device_sum = tensor_sum[gpu=True](gpu_xs)
+    var host_sum = tensor_sum(cpu_xs)
+    var sum_gap = device_sum - host_sum
+    if sum_gap < 0:
+        sum_gap = -sum_gap
+    print("sum cpu =", host_sum, " sum gpu =", device_sum)
+    print("|sum cpu - sum gpu| =", sum_gap)
+    # `linspace(-2, 2)` sums to zero by symmetry, so the scale to judge the
+    # gap against is the sum of magnitudes, about n/2 * 2 = 1024.
+    print("sum agrees to 1e-3 of the vector scale:", sum_gap <= 1.0)

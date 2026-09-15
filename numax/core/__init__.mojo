@@ -13,7 +13,7 @@ from numax.core.tensor import map, reduce, reduce_axis   # the engine
 | `numeric` | The `FloatLike` trait, plus the branchless helpers (`max_of`, `blend`, `ge_indicator`) every conformer-generic kernel is built from |
 | `plain`, `dual`, `gradient`, `compensated`, `decimal`, `interval`, `complex` | The conformers: ordinary SIMD, forward-mode autodiff, multi-variable gradients, error-compensated arithmetic, exact base-10 fixed point, interval enclosures, complex over any of them |
 | `tensor` | `map`/`reduce`/`reduce_axis`/`reduce_rows`/`broadcast_op_rows` -- one `gpu: Bool` parameter picks CPU or GPU, comptime and runtime shapes under one name, plus `map_strided`/`reduce_strided` for a transposed or sliced view |
-| `rowwise` | `sum_axis`/`max_axis` -- the same axis reductions delegated to MAX's `algorithm.rowwise` scaffolder and `reduce_op` monoids, one body for both targets, threaded on CPU and tiered on GPU. `tensor`'s `reduce_axis` remains for a fold outside MAX's monoid set |
+| `rowwise` | `reduce_all`/`argmax_all`/`argmin_all` over a whole tensor and `sum_axis`/`prod_axis`/`max_axis`/`min_axis` along one -- reductions delegated to MAX's `algorithm.rowwise` scaffolder and `reduce_op` monoids, one body for both targets, threaded on CPU and tiered on GPU. The monoid is a `StaticString` parameter dispatched by `comptime if`; `tensor`'s `reduce`/`reduce_axis` remain for a fold outside MAX's monoid set |
 | `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Static[DType.bool]`, and sort/search/mask |
 | `_drive` | Private: the one launch policy behind `ops`, `elementwise` and `logic` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements |
@@ -28,6 +28,9 @@ as its last compile-time parameter. The operators on `Tensor` forward at that
 default, so `a + b` on a device tensor runs the host walk and says so;
 `add[gpu=True]` is the device spelling. `logic`'s `all`/`any` return a `Bool`
 and stay host reads, and so does the fold half of `allclose`/`array_equal`.
+`numax.stats`' `sum`/`prod`/`min`/`max`/`argmax`/`argmin` take the same
+`gpu: Bool` and route through `rowwise` rather than `_drive`, since a
+reduction is a monoid MAX already ships rather than a body numax supplies.
 `sorting` is still host-side.
 """
 
@@ -204,7 +207,15 @@ from .dtypes import (
     u32,
     u64,
 )
-from .rowwise import max_axis, sum_axis
+from .rowwise import (
+    argmax_all,
+    argmin_all,
+    max_axis,
+    min_axis,
+    prod_axis,
+    reduce_all,
+    sum_axis,
+)
 from .tensor import (
     add_combine,
     broadcast_op_axis,

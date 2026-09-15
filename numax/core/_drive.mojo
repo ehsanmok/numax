@@ -1,11 +1,16 @@
 """One launch policy for the NumPy-named surface over `Tensor`.
 
-The surface modules -- `numax.core.elementwise`, and in later commits
-`numax.core.ops` and `numax.core.logic` -- name the operations. This module
-owns the single question they all have to answer: given a tensor, a
-per-element `op` and a `gpu: Bool`, where does the work run and how is it
-driven. It is private because nothing outside `numax.core` should have to
-know the answer.
+The surface modules -- `numax.core.elementwise`, `numax.core.ops` and
+`numax.core.logic` -- name the operations. This module owns the single
+question they all have to answer: given a tensor, a per-element `op` and a
+`gpu: Bool`, where does the work run and how is it driven. It is private
+because no *caller* of numax should have to know the answer.
+
+Four of its pieces are shared past `numax.core`, and deliberately:
+`numax.stats.statistics` takes `_check_device`, `_notice`, `_flat` and
+`_dense` so that its monoid reductions answer a host/device mismatch the
+same way the elementwise surface does -- one policy, written once, rather
+than a second one that drifts. What does not leave is the drivers.
 
 The drivers are `unary`, `unary_to`, `binary`, `binary_to`,
 `binary_scalar`, `broadcast_binary` and `broadcast_binary_to`. Each builds
@@ -30,7 +35,8 @@ their own buffer pointers, and hands one capturing body to `_launch`.
 `.cursor/rules/findings.mdc` records: a kernel carrying a layout `where`
 clause cannot be named inside `enqueue_function` from generic code.
 
-**The device gate.** A driver asked for a target the tensor's memory does
+**The device gate.** A driver -- or any routine that borrows
+`_check_device`/`_notice` -- asked for a target the tensor's memory does
 not live on runs the old host walk -- `to_host`, a scalar loop, rebuild --
 and prints one line to `stderr` naming the spelling that would not have.
 That is a deliberate fallback rather than a raise: `exp(a)` on a GPU tensor
@@ -125,6 +131,27 @@ def _flat_out[
 ](mut a: Tensor[dtype, LayoutType]) raises -> _FlatOut[dtype]:
     """`_flat` for a destination, which the driver owns and may write."""
     var v: _FlatOut[dtype] = TileTensor(a.buffer, row_major(Coord(a.size())))
+    return v
+
+
+comptime _DenseIn[dtype: DType, LayoutType: TensorLayout] = TileTensor[
+    dtype, LayoutType, ImmutAnyOrigin, Storage=PointerStorage[element_width=1]
+]
+"""A read-only view at the tensor's own rank and layout."""
+
+
+def _dense[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> _DenseIn[dtype, LayoutType]:
+    """`a`'s own layout as a read-only view, without borrowing `a` mutably.
+
+    `Tensor.view()` takes `mut self`, so a routine that only reads cannot
+    call it without making its own argument `mut` and turning away every
+    caller passing a temporary. This is the same construction over the
+    buffer, at the tensor's rank rather than `_flat`'s rank 1 -- what the
+    axis reductions want, since they need the extents.
+    """
+    var v: _DenseIn[dtype, LayoutType] = TileTensor(a.buffer, a.layout)
     return v
 
 

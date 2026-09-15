@@ -8,12 +8,13 @@ is `isnan`, a `select` against a fill tensor, and one of the existing
 reductions -- `nansum` is `sum(select(isnan(x), 0, x))`, `nanmin` is `min`
 with the NaNs replaced by `+inf`, `nanmean` divides `nansum` by the count
 of non-NaN elements from `count_nonzero(isnan(x))`. They therefore run
-exactly where those primitives run, which today is the host over a
-CPU-resident tensor -- the whole-tensor `sum`/`min`/`max`, `isnan` and
-`select` all walk host memory, as `numax.stats`' package docstring says of
-the reductions -- at the cost of one mask and one fill pass per call, the
-same NumPy pays. When the primitives gain a `gpu` parameter, these follow
-without a change of their own.
+exactly where those primitives run, at the cost of one mask and one fill
+pass per call, the same NumPy pays. The reduction underneath is now a MAX
+monoid on either target (`numax.stats.statistics`' `sum`/`min`/`max` take a
+`gpu` parameter), but `numax.core.sorting.select` still walks host memory,
+so the composition as a whole is host-side and none of these forwards a
+`gpu` parameter yet; they call the reductions at their default. `nansum`
+and `nanprod` inherit the reassociation the monoid brings with it.
 
 NumPy's edge cases are kept where they are well defined -- a tensor of only
 NaNs has `nansum == 0` and `nanprod == 1` -- and raised where NumPy warns
