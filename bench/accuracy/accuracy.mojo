@@ -386,6 +386,13 @@ def main():
         s.observe(xs[i], hyp2f1(p(0.5), p(1.5), p(2.5), p(xs[i])).v[0], refs[i])
     s.report("hyp2f1(0.5, 1.5, 2.5, x) (series | Pfaff), [-5,0.9]")
 
+    s = Stats()
+    xs = materialize[HYP2F1_NEAR1_X]()
+    refs = materialize[HYP2F1_NEAR1_REF]()
+    for i in range(HYP2F1_NEAR1_N):
+        s.observe(xs[i], hyp2f1(p(0.5), p(1.5), p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("hyp2f1(0.5, 1.5, 2.5, x) (A&S 15.3.6), [0.9,0.999]")
+
     # --- Bessel of real order, Airy, Struve, Owen ---------------------
     section("Bessel of real order, Airy, Struve, Owen")
     s = Stats()

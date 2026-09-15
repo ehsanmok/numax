@@ -160,7 +160,8 @@ Temme's `d = -ln(x/2)`.
 | `zeta` (Euler-Maclaurin, N=10, M=8), [1.1, 30] | 1.78e-15 | 5.99e-16 | 3 |
 | `zeta` (Euler-Maclaurin, N=10, M=8), [-2.5, 0.9] | 4.25e-13 | 8.26e-11 | 467,677 |
 | `hyp1f1(1.5, 2.5, x)` (series \| Kummer), [-40, 40] | 1.10e+01 | 2.06e-15 | 11 |
-| `hyp2f1(0.5, 1.5, 2.5, x)` (series \| Pfaff), [-5, 0.9] | 1.78e-15 | 1.26e-15 | 8 |
+| `hyp2f1(0.5, 1.5, 2.5, x)` (series \| Pfaff), [-5, 0.9] | 4.00e-15 | 2.40e-15 | 18 |
+| `hyp2f1(0.5, 1.5, 2.5, x)` (A&S 15.3.6), [0.9, 0.999] | 5.77e-15 | 3.16e-15 | 24 |
 
 The two `zeta` rows are one formula measured on two sides of a
 cancellation. Above the pole the answer is the sum's size and the error is
@@ -169,6 +170,16 @@ rounding. Below it, `zeta(-2.5) = 0.0085` is a difference of terms near
 ten such terms give the `8e-11`; the formula itself is at `1e-18` in
 mpmath. The `hyp1f1` row's 11.0 absolute is `2e-15` relative on an answer
 of `7e+11` at `x = 40`.
+
+The two `hyp2f1` rows meet at `x = 0.9`, which the `>=` side of the
+switch puts in the second one -- so the first row's worst point, its own
+right endpoint, is now 15.3.6's answer rather than the series', which is
+why it reads `2.4e-15` where it used to read `1.3e-15`. Both are rounding
+through `lgamma` and a pair of `exp`s, and `[0.9, 0.999]` staying at
+`3e-15` is the point: the series it replaced was at `4e-5` by `x =
+0.975`. `d = c - a - b` is `0.5` in both rows. An integer `d` keeps the
+series and its tail instead, by design; `numax/special/hyper.mojo` says
+why and `tests/special/test_hyper.mojo` pins it at `1e-9`.
 
 ### Gamma family
 

@@ -139,6 +139,17 @@ def build() -> list[Case]:
             lambda x: mp.hyp2f1(mp.mpf("0.5"), mp.mpf("1.5"), mp.mpf("2.5"), x),
         )
     )
+    # The `1 - x` transformation's own domain. `d = c - a - b` is `0.5`
+    # here, half an integer away from the `Gamma` poles the arm is built
+    # around, so this measures the transformation rather than the guard.
+    cases.append(
+        Case(
+            "hyp2f1_near1",
+            "hyp2f1(0.5, 1.5, 2.5, x), [0.9, 0.999]",
+            clustered(0.9, 0.999),
+            lambda x: mp.hyp2f1(mp.mpf("0.5"), mp.mpf("1.5"), mp.mpf("2.5"), x),
+        )
+    )
     cases.append(
         Case("expi_pos", "expi, [0.05, 60]", logarithmic(0.05, 60.0), mp.ei)
     )

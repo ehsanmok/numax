@@ -89,9 +89,9 @@ def test_hyp1f1_matches_mpmath_on_both_sides_of_zero() raises:
 
 
 def test_hyp2f1_matches_mpmath_on_both_sides_of_zero() raises:
-    """Direct series for `0 <= x <= 0.9`, Pfaff's transformation for
+    """Direct series for `0 <= x < 0.9`, Pfaff's transformation for
     `x < 0`, and the closed forms `2F1(1, 1; 2; x) = -ln(1 - x) / x` and
-    `2F1(a, b; b; x) = (1 - x)^{-a}`."""
+    `2F1(a, b; b; x) = (1 - x)^{-a}`. The arm past `0.9` is next."""
     assert_almost_equal(
         s(hyp2f1(pv(1.0), pv(1.0), pv(2.0), pv(0.5))),
         1.3862943611198906,
@@ -132,6 +132,76 @@ def test_hyp2f1_matches_mpmath_on_both_sides_of_zero() raises:
         s(hyp2f1(pv(1.0), pv(1.0), pv(2.0), pv(-9.0))),
         2.302585092994046 / 9.0,
         rtol=1e-8,
+    )
+
+
+def test_hyp2f1_past_nine_tenths_matches_mpmath() raises:
+    """A&S 15.3.6's arm, where the direct series' `x^400` tail is no
+    longer small. `d = c - a - b` is well off the integers in every row,
+    which is the condition the transformation needs."""
+    # a = 0.5, b = 1.5, c = 2.2, so d = 0.2.
+    assert_almost_equal(
+        s(hyp2f1(pv(0.5), pv(1.5), pv(2.2), pv(0.9))),
+        1.8758604186551053,
+        rtol=1e-13,
+    )
+    assert_almost_equal(
+        s(hyp2f1(pv(0.5), pv(1.5), pv(2.2), pv(0.95))),
+        2.1405322866253493,
+        rtol=1e-13,
+    )
+    assert_almost_equal(
+        s(hyp2f1(pv(0.5), pv(1.5), pv(2.2), pv(0.99))),
+        2.6873810435856782,
+        rtol=1e-13,
+    )
+    assert_almost_equal(
+        s(hyp2f1(pv(0.5), pv(1.5), pv(2.2), pv(0.999))),
+        3.2659353449681273,
+        rtol=1e-13,
+    )
+    # a = 0.3, b = 0.7, c = 1.4, so d = 0.4.
+    assert_almost_equal(
+        s(hyp2f1(pv(0.3), pv(0.7), pv(1.4), pv(0.95))),
+        1.3586314969329184,
+        rtol=1e-13,
+    )
+    assert_almost_equal(
+        s(hyp2f1(pv(0.3), pv(0.7), pv(1.4), pv(0.999))),
+        1.5405749200999717,
+        rtol=1e-13,
+    )
+    # d = 0.5, and one negative `a`.
+    assert_almost_equal(
+        s(hyp2f1(pv(1.0), pv(2.0), pv(3.5), pv(0.999))),
+        4.6465600041326848,
+        rtol=1e-13,
+    )
+    assert_almost_equal(
+        s(hyp2f1(pv(-1.5), pv(2.5), pv(1.25), pv(0.95))),
+        -0.18366931204826378,
+        rtol=1e-13,
+    )
+
+
+def test_hyp2f1_at_an_integer_d_falls_back_to_the_series() raises:
+    """`Gamma(c-a-b)` and `Gamma(a+b-c)` pole together at an integer `d`,
+    so within `1e-6` of one the direct series stays selected past `x =
+    0.9` and its `x^400` tail is the accuracy -- `1e-9` at `x = 0.95`,
+    not the `1e-15` the transformation reaches beside it. That is the
+    module's documented ceiling, pinned here so it cannot drift
+    silently."""
+    # d = -1 exactly.
+    assert_almost_equal(
+        s(hyp2f1(pv(2.0), pv(3.0), pv(4.0), pv(0.95))),
+        48.841646139292622,
+        rtol=1e-8,
+    )
+    # d = 0 exactly; 2F1(1, 1; 2; x) = -ln(1 - x) / x.
+    assert_almost_equal(
+        s(hyp2f1(pv(1.0), pv(1.0), pv(2.0), pv(0.95))),
+        3.1534023932147266,
+        rtol=1e-9,
     )
 
 
