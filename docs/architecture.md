@@ -246,7 +246,12 @@ survey of what MAX does ship.
   pointer plus a layout, `Tensor.from_view` copies, and no constructor takes
   a `TileTensor` at all, because a view owns nothing to adopt.
   `to_array`/`to_tensor` are the seam to the `Array[T, n]` half of the
-  library.
+  library. Lifting is generic over the conformer; lowering names it, because
+  `FloatLike` builds a value from a `Float64` and offers no way back out.
+  Three lowerings ship -- `Plain` to one tensor, `Dual` to a
+  `(value, derivative)` pair, `Gradient[.., n_vars]` to a value plus its
+  partials rank-1 in `(variable, element)` order -- which is the set whose
+  components are each themselves a tensor.
 - **`numax.core.ops`, `numax.core.elementwise`, `numax.core.logic`** — arithmetic and
   operators on `Tensor`, the elementwise math surface, and comparisons
   returning `Static[DType.bool]`. `Plain`-only, tier 2.

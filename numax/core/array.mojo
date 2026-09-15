@@ -143,6 +143,8 @@ from nn.pad import (
 from nn.pad_gpu import pad_constant as _max_pad_constant_gpu
 from std.utils import IndexList
 
+from .dual import Dual
+from .gradient import Gradient
 from .numeric import FloatLike
 from .plain import Plain
 from .ops import (
@@ -2688,9 +2690,19 @@ def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
 # conformer -- which is what makes `cholesky` differentiable at `Dual` and
 # launchable inside a GPU thread.
 #
-# Both are right for their half of the library, and the pair below is how a
-# program crosses between them: load a matrix with `numax.io.numpy.load`,
-# `to_array` it, factor it, `to_tensor` the result, save it.
+# Both are right for their half of the library, and the functions below are
+# how a program crosses between them: load a matrix with
+# `numax.io.numpy.load`, `to_array` it, factor it, `to_tensor` the result,
+# save it.
+#
+# Lifting works at any conformer, since `FloatLike` builds a value from a
+# `Float64`. Lowering has to name the conformer, because the trait offers no
+# way back out and there is no one right answer for what an arbitrary
+# conformer is as a tensor element. Three lowerings ship -- `Plain`, `Dual`
+# and `Gradient` -- which is the set whose components are each themselves a
+# tensor: a value, a directional derivative, a gradient. `Interval`,
+# `Complex`, `Compensated` and `Decimal` lower by taking the component the
+# caller wants (`.lo`/`.hi`, `.re`/`.im`, `.hi`) at `Plain` first.
 
 
 def to_array[
@@ -2732,11 +2744,13 @@ def to_tensor[
 ) raises -> Static[dtype, *dims]:
     """A `Tensor` of the named shape holding `a`'s elements, row-major.
 
-    The way back down from the conformer layer, and `Plain`-only on
-    purpose: `FloatLike` can build any conformer from a `Float64`
-    (`T.constant`) but offers no way to read one back out, and there is no
-    single right answer for what a `Dual` or an `Interval` would even mean
-    as a tensor element. Take `.value` or `.lo`/`.hi` first, then lower.
+    The way back down from the conformer layer. `FloatLike` can build any
+    conformer from a `Float64` (`T.constant`) but offers no way to read one
+    back out, so lowering is written per conformer rather than generically;
+    the `Dual` and `Gradient` overloads below are the other two. A conformer
+    with no overload here (`Interval`, `Complex`, `Compensated`, `Decimal`)
+    lowers by taking the component the caller means -- `.lo`/`.hi`,
+    `.re`/`.im`, `.hi` -- at `Plain` first.
 
     The shape is named rather than inferred because an `Array` is flat: an
     `Array[Plain[dtype], 4]` is as good a 2x2 as it is a rank-1 of four, and
@@ -2747,3 +2761,83 @@ def to_tensor[
     for i in range(n):
         values.append(a[i].v)
     return Static[dtype, *dims](_context(ctx), values^)
+
+
+def to_tensor[
+    dtype: DType, *dims: Int
+](
+    a: Array[Dual[Plain[dtype]], _LayoutOf[*dims].static_product],
+    ctx: Optional[DeviceContext] = None,
+) raises -> Tuple[
+    Static[dtype, *dims], Static[dtype, *dims]
+] where dtype.is_floating_point():
+    """`a`'s values and its derivatives, as two tensors of the named shape.
+
+    A forward-mode pass over the `Array` tier produces both halves at once
+    and there is no reason to throw one away, so the pair is the return
+    value rather than two calls: factor a seeded matrix with
+    `numax.linalg.array.cholesky` at `Dual[Plain[dtype]]` and this lowers
+    the factor and `d(factor)/dt` in the seeded direction together.
+
+    One value rather than two `mut` destinations, the shape
+    `numax.fft`'s `Spectrum` already uses: `var got = to_tensor[...](a)`
+    and then `got[0]`, `got[1]`. `Static` is not copyable and a tuple
+    element does not move out (`expression does not designate a value with
+    an origin`), so the halves are read through the tuple -- `got[0][i]`,
+    `got[1].to_host()` -- rather than unpacked.
+    """
+    comptime n = _LayoutOf[*dims].static_product
+    var values = List[Scalar[dtype]](capacity=n)
+    var derivs = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(a[i].value.v)
+        derivs.append(a[i].deriv.v)
+    var context = _context(ctx)
+    return (
+        Static[dtype, *dims](context, values^),
+        Static[dtype, *dims](context, derivs^),
+    )
+
+
+def to_tensor[
+    dtype: DType, n_vars: Int, *dims: Int
+](
+    a: Array[Gradient[Plain[dtype], n_vars], _LayoutOf[*dims].static_product],
+    ctx: Optional[DeviceContext] = None,
+) raises -> Tuple[
+    Static[dtype, *dims],
+    Static[dtype, n_vars * _LayoutOf[*dims].static_product],
+] where dtype.is_floating_point():
+    """`a`'s values at the named shape, and its partials flat.
+
+    The partials are **rank 1**, `n_vars * product(dims)` elements in
+    `(variable, element)` row-major order: partial `j` of element `i` is at
+    `j * product(dims) + i`, so the whole gradient with respect to variable
+    `j` is the contiguous run starting at `j * product(dims)`. A
+    `Static[dtype, n_vars, *dims]` would say the same thing in the type and
+    does not compile -- a parameter ahead of a variadic unpack is `invalid
+    unpack in non-variadic parameter binding` at Mojo 1.0 -- so the order is
+    documented here instead. `reshape` it once the rank matters.
+
+    `n_vars` comes ahead of the shape for the same reason: it has to be
+    named before the variadic, so a 2x2 of two-variable gradients lowers as
+    `to_tensor[dtype, 2, 2, 2](g)`.
+
+    The pair is read through the tuple rather than unpacked, as the `Dual`
+    overload above documents.
+    """
+    comptime n = _LayoutOf[*dims].static_product
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(a[i].value.v)
+
+    var partials = List[Scalar[dtype]](capacity=n_vars * n)
+    for j in range(n_vars):
+        for i in range(n):
+            partials.append(a[i].grad[j].v)
+
+    var context = _context(ctx)
+    return (
+        Static[dtype, *dims](context, values^),
+        Static[dtype, n_vars * n](context, partials^),
+    )

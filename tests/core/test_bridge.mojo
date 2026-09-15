@@ -25,7 +25,7 @@ from linalg.matmul import matmul as max_matmul
 from nn.reshape import reshape as nn_reshape
 from std.utils import IndexList
 
-from numax import Dual, Plain
+from numax import Dual, Gradient, Plain
 from numax.core.array import (
     Dynamic,
     Static,
@@ -106,6 +106,77 @@ def test_lifting_at_dual_still_differentiates() raises:
     var lifted = to_array[Dual[P]](a)
     lifted[0] = Dual[P](P.constant(4.0), P.one())
     assert_almost_equal(det[Dual[P], 2](lifted).deriv.v, Scalar[dtype](3.0))
+
+
+def _cholesky_at[eps: Float64]() raises -> Array[P, 4]:
+    """The Cholesky factor of `[[4 + eps, 2], [2, 3]]` at `Plain` -- the
+    finite-difference reference for the `Dual` lowering below."""
+    var perturbed = to_array[P](_matrix())
+    perturbed[0] = P.constant(4.0 + eps)
+    return cholesky[P, 2](perturbed)
+
+
+def test_lowering_a_dual_cholesky_matches_a_finite_difference() raises:
+    # The composition the Dual overload exists for: one factorization
+    # carries the factor and its derivative, and both come back as tensors.
+    var ctx = DeviceContext(api="cpu")
+    var seeded = to_array[Dual[P]](_matrix())
+    seeded[0] = Dual[P](P.constant(4.0), P.one())
+
+    var lowered = to_tensor[dtype, 2, 2](cholesky[Dual[P], 2](seeded), ctx)
+    var value = lowered[0].to_host()
+    var deriv = lowered[1].to_host()
+
+    comptime h = 1e-6
+    var plain = _cholesky_at[0.0]()
+    var up = _cholesky_at[h]()
+    var down = _cholesky_at[-h]()
+    for i in range(4):
+        assert_almost_equal(value[i], plain[i].v)
+        var central = (up[i].v - down[i].v) / Scalar[dtype](2.0 * h)
+        assert_almost_equal(deriv[i], central, atol=1e-8)
+
+
+def test_lowering_a_gradient_pins_the_partial_order() raises:
+    # The partials are rank 1 in (variable, element) row-major order, so
+    # variable j's whole gradient is the contiguous run at j * n.
+    var ctx = DeviceContext(api="cpu")
+    var lifted = to_array[Gradient[P, 2]](_matrix())
+    lifted[0] = Gradient[P, 2].variable(4.0, 0)
+    lifted[3] = Gradient[P, 2].variable(3.0, 1)
+
+    var lowered = to_tensor[dtype, 2, 2, 2](lifted, ctx)
+    var value = lowered[0].to_host()
+    var partials = lowered[1].to_host()
+
+    assert_equal(len(partials), 8)
+    for i in range(4):
+        assert_almost_equal(value[i], _matrix()[i])
+
+    # d/dA[0,0] and d/dA[1,1] of the element itself: one at its own seat,
+    # zero everywhere else, which is what pins the (variable, element) order
+    # rather than an (element, variable) one.
+    assert_almost_equal(partials[0], Scalar[dtype](1.0))
+    assert_almost_equal(partials[3], Scalar[dtype](0.0))
+    assert_almost_equal(partials[4], Scalar[dtype](0.0))
+    assert_almost_equal(partials[7], Scalar[dtype](1.0))
+
+
+def test_lowering_a_gradient_det_carries_both_cofactors() raises:
+    # det([[a, 2], [2, b]]) = a b - 4, so the gradient is (b, a) = (3, 4).
+    var ctx = DeviceContext(api="cpu")
+    var lifted = to_array[Gradient[P, 2]](_matrix())
+    lifted[0] = Gradient[P, 2].variable(4.0, 0)
+    lifted[3] = Gradient[P, 2].variable(3.0, 1)
+
+    var one = Array[Gradient[P, 2], 1](fill=det[Gradient[P, 2], 2](lifted))
+    var lowered = to_tensor[dtype, 2, 1](one, ctx)
+    var value = lowered[0].to_host()
+    var partials = lowered[1].to_host()
+
+    assert_almost_equal(value[0], Scalar[dtype](8.0))
+    assert_almost_equal(partials[0], Scalar[dtype](3.0))
+    assert_almost_equal(partials[1], Scalar[dtype](4.0))
 
 
 def test_lifted_values_match_the_source_elements() raises:
