@@ -10,7 +10,7 @@ Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
 
 | Import | Holds | Good for |
 | --- | --- | --- |
-| `numax.signal` | `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `full`/`same`/`valid` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt` (host recurrences at `dtype`, in place over the tensor's own host mapping), `medfilt`, `detrend`, `savgol_filter`, `resample` and the multiband `firwin`; the spectral estimators `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, and the IIR design `butter` with `freqz` |
+| `numax.signal` | `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `full`/`same`/`valid` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt` (host recurrences at `dtype`, in place over the tensor's own host mapping), `medfilt`, `detrend`, `savgol_filter`, `resample` and the multiband `firwin`; the spectral estimators `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, and the IIR design family -- `butter`/`cheby1`/`cheby2`/`ellip` in all four band shapes behind one `iirfilter` front door -- with `freqz` |
 | `numax.signal.array` | `Array[T, n]` and `FloatLike`, tier 1 | a frame inside a kernel: the direct `convolve`/`correlate`, `lfilter`, the lowpass `firwin`, and the cosine windows as compile-time tables, all differentiating at `Dual` |
 
 This surface is the `Tensor` one. `apply_window` has no `Tensor` spelling
@@ -55,4 +55,13 @@ from .spectral import (
     welch,
 )
 from .peaks import find_peaks
-from .design import FrequencyResponse, TransferFunction, butter, freqz
+from .design import (
+    FrequencyResponse,
+    TransferFunction,
+    butter,
+    cheby1,
+    cheby2,
+    ellip,
+    freqz,
+    iirfilter,
+)

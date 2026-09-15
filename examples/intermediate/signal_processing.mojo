@@ -22,9 +22,11 @@ is the thing worth taking away:
   a property of the algorithm, not a gap in the port.
 
 IIR design used to be out of scope here -- it needs complex poles, and a
-`Tensor` is monomorphic in a `DType`. `butter` exists because the design
-math is a few dozen host `Float64` pairs and the answer is real, which
-`docs/parity.md` records as a reversal rather than a quiet addition.
+`Tensor` is monomorphic in a `DType`. `butter`, `cheby1`, `cheby2` and
+`ellip` all exist because the design math is a few dozen host `Float64`
+pairs and the answer is real, which `docs/parity.md` records as a reversal
+rather than a quiet addition. The band forms take a `(low, high)` tuple
+and come back at twice the order.
 
 Run: `pixi run example-signal-processing`
 """
