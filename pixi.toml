@@ -126,6 +126,10 @@ bench-scipy-signal = { cmd = "python3 signal_processing.py", cwd = "bench/scipy"
 bench-scipy-fft = { cmd = "python3 fft_transforms.py", cwd = "bench/scipy" }
 bench-scipy-interpolate = { cmd = "python3 interpolate.py", cwd = "bench/scipy" }
 bench-scipy-stats = { cmd = "python3 stats.py", cwd = "bench/scipy" }
+# The core-surface baseline, against `bench_core_surface.mojo`. Two
+# comparison rows, because numax has no tensor-scalar comparison and the
+# file says what that costs.
+bench-numpy-core-surface = { cmd = "python3 core_surface.py", cwd = "bench/numpy" }
 accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
 
 [feature.bench-rust]
@@ -493,6 +497,14 @@ bench-signal = "mojo -I . bench/bench_signal.mojo"
 bench-fft = "mojo -I . bench/bench_fft.mojo"
 bench-interpolate = "mojo -I . bench/bench_interpolate.mojo"
 bench-stats = "mojo -I . bench/bench_stats.mojo"
+# The NumPy-named surface over `Tensor`: exp, add, tensor-scalar multiply,
+# comparison and sum at five sizes either side of `_drive`'s threading
+# threshold, plus the abstraction cost of the named call over `map`.
+# CPU-only; `bench-core-surface-gpu` is the same rows on a device.
+bench-core-surface = "mojo -I . bench/bench_core_surface.mojo"
+# Needs a real device, and `float32` only: naming `gpu=True` compiles the
+# device kernels whether or not they run.
+bench-core-surface-gpu = "mojo -I . bench/bench_core_surface_gpu.mojo"
 # The fusion sweep runs a GPU half, so it needs real Metal hardware too.
 bench-fusion = "mojo -I . bench/bench_fusion.mojo"
 # Needs real Metal hardware, like the GPU examples -- a local-only check.

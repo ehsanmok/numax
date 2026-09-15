@@ -760,8 +760,10 @@ pixi run bench-signal   # CPU: convolve vs. fftconvolve crossover, filters, welc
 pixi run bench-fft      # CPU: fft/rfft/irfft/fft2, us per call and the launch count
 pixi run bench-interpolate # CPU: interp and CubicSpline, evaluation and construction
 pixi run bench-stats    # CPU: norm.cdf, histogram, quantile, cov/corrcoef
+pixi run bench-core-surface # CPU: exp, a + b, a * 2, comparison, sum, and map vs. the named call
 pixi run bench-linalg-gpu # the factorizations on a device (CUDA/Metal)
 pixi run bench-blas1-gpu # BLAS-1 on a device; separate, see the Metal note above
+pixi run bench-core-surface-gpu # the same core surface on a device, both sync shapes
 pixi run bench-numpy    # cross-language: NumPy, CPU
 pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
 pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
@@ -771,6 +773,7 @@ pixi run -e bench-python bench-scipy-signal # signal baseline: scipy.signal, CPU
 pixi run -e bench-python bench-scipy-fft    # transform baseline: scipy.fft (pocketfft), CPU
 pixi run -e bench-python bench-scipy-interpolate # interpolation baseline: numpy.interp, scipy CubicSpline
 pixi run -e bench-python bench-scipy-stats  # statistics baseline: scipy.stats.norm, numpy histogram/quantile/cov
+pixi run -e bench-python bench-numpy-core-surface # core-surface baseline: numpy exp/add/scale/compare/sum
 pixi run -e bench-python bench-torch-linalg # linalg baseline: cuSOLVER on CUDA, MPS on Metal
 pixi run -e bench-python bench-cupy-linalg  # linalg baseline: cuSOLVER, CUDA
 pixi run bench-thermite # cross-language: Rust thermite, CPU (NEON/AVX2)

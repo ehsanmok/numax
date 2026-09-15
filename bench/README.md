@@ -123,13 +123,16 @@ pixi run bench-signal    # numax signal, CPU -- convolve vs. fftconvolve, filter
 pixi run bench-fft       # numax fft, CPU -- fft/rfft/irfft/fft2, us per call and launches
 pixi run bench-interpolate # numax interpolate, CPU -- interp, CubicSpline
 pixi run bench-stats     # numax stats, CPU -- norm.cdf, histogram, quantile, cov
+pixi run bench-core-surface # numax core surface, CPU -- exp, add, scale, compare, sum, and map vs. the named call
 pixi run bench-linalg-gpu # numax factorizations, CUDA/Metal (needs a GPU)
 pixi run bench-blas1-gpu # numax BLAS-1, CUDA/Metal -- separate, see the Metal note
+pixi run bench-core-surface-gpu # numax core surface, CUDA/Metal -- both sync shapes (needs a GPU)
 pixi run -e bench-python bench-scipy-linalg # LAPACK, CPU (OpenBLAS or Accelerate)
 pixi run -e bench-python bench-scipy-signal # scipy.signal, CPU
 pixi run -e bench-python bench-scipy-fft    # scipy.fft (pocketfft), CPU
 pixi run -e bench-python bench-scipy-interpolate # numpy.interp and scipy CubicSpline, CPU
 pixi run -e bench-python bench-scipy-stats  # scipy.stats.norm, numpy histogram/quantile/cov, CPU
+pixi run -e bench-python bench-numpy-core-surface # numpy exp/add/scale/compare/sum, CPU
 pixi run -e bench-python bench-torch-linalg # PyTorch: cuSOLVER on CUDA, MPS on Metal
 pixi run -e bench-python bench-cupy-linalg  # cuSOLVER via CuPy, CUDA
 ```
