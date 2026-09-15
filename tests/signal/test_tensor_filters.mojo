@@ -8,6 +8,16 @@ sections of a Butterworth design, `medfilt` at two window sizes, both
 orders, `resample` up, down, to an odd length and from an odd length, and
 `firwin` as lowpass, highpass, bandpass, bandstop, multiband, even-length
 and under a different window.
+
+The recursive filters compute at the input `dtype` from 0.2 on, which is
+where SciPy computes too. Every pin above is `float64`, so their values do
+not move; the `float32` test below is what states the new tolerance, and
+`1e-6` is where SciPy's own `float32` pass sits (`4.3e-8` from its
+`float64` one for `lfilter` on this signal, `1.4e-7` for `filtfilt`), not
+a number chosen to make a test pass. The in-place passes get their own
+test: `filtfilt` filters its extension buffer twice in place and `sosfilt`
+chains its sections through one buffer, so the thing to pin is that
+neither writes on its *input*.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_true
@@ -304,6 +314,87 @@ def test_sosfilt_matches_scipy() raises:
             0.6240911235618303,
         ],
     )
+
+
+def test_the_recurrence_runs_at_the_input_dtype() raises:
+    """`float32` in, `float32` arithmetic, within the `float32` floor of
+    the `float64` pins above.
+
+    The recurrence used to widen to `Float64` whatever it was handed. It
+    no longer does, which is SciPy's own behaviour, and the cost is the
+    last bits: `scipy.signal.lfilter` on this signal differs between
+    `float32` and `float64` by `4.3e-8`, and `filtfilt` by `1.4e-7`.
+    """
+    comptime f32 = DType.float32
+    var raw = _x()
+    var xs = List[Scalar[f32]](capacity=16)
+    for i in range(16):
+        xs.append(Scalar[f32](raw[i]))
+    var x = Static[f32, 16](_cpu(), xs^)
+    var b = Static[f32, 3](
+        _cpu(),
+        [Scalar[f32](0.25), Scalar[f32](0.5), Scalar[f32](0.25)],
+    )
+    var a = Static[f32, 2](_cpu(), [Scalar[f32](1.0), Scalar[f32](-0.3)])
+    var y = lfilter(b, a, x).to_host()
+    var want: List[Float64] = [
+        0.25,
+        0.575,
+        0.1725,
+        0.05175000000000002,
+        0.890525,
+        1.7671575,
+        1.6551472500000002,
+        0.49654417500000003,
+        0.3364632525,
+        0.60093897575,
+        0.492781692725,
+        1.3978345078175,
+        1.79435035234525,
+        0.6633051057035749,
+        0.19899153171107248,
+        -0.19030254048667827,
+    ]
+    for i in range(16):
+        assert_almost_equal(Float64(y[i]), want[i], atol=1e-6)
+    var zi = lfilter_zi(b, a).to_host()
+    assert_almost_equal(Float64(zi[0]), 1.1785714285714286, atol=1e-6)
+    assert_almost_equal(Float64(zi[1]), 0.25, atol=1e-6)
+    var f = filtfilt(b, a, x).to_host()
+    assert_almost_equal(Float64(f[0]), 2.0408532396127095, atol=1e-6)
+    assert_almost_equal(Float64(f[8]), 0.8895545002825684, atol=1e-6)
+    assert_almost_equal(Float64(f[15]), -6.122446327864241, atol=1e-5)
+
+
+def test_the_in_place_passes_leave_their_input_alone() raises:
+    """`filtfilt` filters one extension buffer twice in place and `sosfilt`
+    chains its sections through one; `lfilter` writes a separate
+    destination. None of the three may write on `x` itself, which is the
+    one thing an in-place recurrence could get wrong and no value pin would
+    notice."""
+    var b = _from[3]([0.25, 0.5, 0.25])
+    var a = _from[2]([1.0, -0.3])
+    var x = _from[16](_x())
+    var before = x.to_host()
+    _ = lfilter(b, a, x)
+    _ = filtfilt(b, a, x)
+    var sos = _matrix[1, 6](
+        [
+            0.13110643991662593,
+            0.26221287983325187,
+            0.13110643991662593,
+            1.0,
+            -0.7477891782585034,
+            0.27221493792500717,
+        ]
+    )
+    _ = sosfilt(sos, x)
+    var after = x.to_host()
+    for i in range(16):
+        assert_almost_equal(Float64(after[i]), Float64(before[i]), atol=0.0)
+    # And the filter coefficients survive their own normalization.
+    var coefficients = b.to_host()
+    assert_almost_equal(Float64(coefficients[1]), 0.5, atol=0.0)
 
 
 def test_medfilt_matches_scipy() raises:
