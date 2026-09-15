@@ -11,13 +11,67 @@ The imports come from `numax` and `numax.core` rather than from
 nowhere fails here instead of being reachable only by its module path.
 `tanh` is the exception: the root `tanh` is `numax.special.activations`'
 scalar one, so the tensor form comes from `numax.core`.
+
+The routing tests at the bottom make the other claim: that driving a name
+through `numax.core._drive` returns exactly what the scalar loop it replaced
+returned, bit for bit, across negatives, both zeros, both infinities and
+NaN; that a run-time-shaped `Dynamic` gives the same answer as the `Static`
+of the same extents; and that the threaded path above `_THREADED_FROM`
+agrees with the serial one below it. Those are checked against `std.math`
+re-applied on purpose -- the question is whether the driver preserves the
+scalar answer, not which scalar function was wired up.
 """
 
-from std.testing import TestSuite, assert_almost_equal, assert_equal
+from std.math import (
+    acos as _std_acos,
+    acosh as _std_acosh,
+    asin as _std_asin,
+    asinh as _std_asinh,
+    atan as _std_atan,
+    atan2 as _std_atan2,
+    atanh as _std_atanh,
+    cbrt as _std_cbrt,
+    ceil as _std_ceil,
+    copysign as _std_copysign,
+    cos as _std_cos,
+    cosh as _std_cosh,
+    exp2 as _std_exp2,
+    expm1 as _std_expm1,
+    floor as _std_floor,
+    hypot as _std_hypot,
+    isnan,
+    log10 as _std_log10,
+    log1p as _std_log1p,
+    log2 as _std_log2,
+    remainder as _std_remainder,
+    round as _std_round,
+    rsqrt as _std_rsqrt,
+    sin as _std_sin,
+    sinh as _std_sinh,
+    sqrt as _std_sqrt,
+    tan as _std_tan,
+    tanh as _std_tanh,
+    trunc as _std_trunc,
+)
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_true,
+)
 
 from max.gpu.host import DeviceContext
 
-from numax.core import Static, Tensor, tanh
+from numax.core import Dynamic, Static, Tensor, tanh, zeros_dyn
+from numax.core.libm import exp as _std_exp
+from numax.core.libm import log as _std_log
+from numax.core._drive import (
+    _THREADED_FROM,
+    binary_scalar,
+    binary_to,
+    broadcast_binary_to,
+    unary_to,
+)
 from numax import (
     abs,
     arccos,
@@ -46,6 +100,7 @@ from numax import (
     log2,
     maximum,
     minimum,
+    remainder,
     round,
     rsqrt,
     sin,
@@ -273,6 +328,277 @@ def test_broadcast_minimum_agrees_with_the_same_shape_overload() raises:
     var direct = minimum(a, wide).to_host()
     for i in range(6):
         assert_equal(broadcast[i], direct[i])
+
+
+# The routing tests.
+
+
+def _edge() -> List[Float64]:
+    """Negatives, both signed zeros, both infinities and a NaN -- every class
+    a per-element launch has to carry through unchanged."""
+    var inf = Float64.MAX * 2.0
+    return [-3.5, -1.0, -0.0, 0.0, 0.5, 1.0, 2.5, inf, -inf, inf - inf]
+
+
+def _same(got: Scalar[dtype], want: Scalar[dtype]) raises:
+    """Bit-for-bit agreement, with NaN compared by class rather than value."""
+    if isnan(want):
+        assert_true(isnan(got), "expected NaN")
+    else:
+        assert_equal(got, want)
+
+
+def test_unary_routing_is_bit_exact_over_the_edge_cases() raises:
+    """Every routed unary name, against the scalar call it wraps.
+
+    The driver's job is to reproduce the scalar answer exactly, including
+    on the inputs where that answer is a NaN or an infinity; the
+    hand-computed tests above are what check the right scalar call was
+    wired to the right numax name.
+    """
+    var a = _t[10](_edge())
+    var x = a.to_host()
+
+    var got_exp = exp(a).to_host()
+    var got_exp2 = exp2(a).to_host()
+    var got_expm1 = expm1(a).to_host()
+    var got_log = log(a).to_host()
+    var got_log2 = log2(a).to_host()
+    var got_log10 = log10(a).to_host()
+    var got_log1p = log1p(a).to_host()
+    var got_sqrt = sqrt(a).to_host()
+    var got_rsqrt = rsqrt(a).to_host()
+    var got_cbrt = cbrt(a).to_host()
+    var got_sin = sin(a).to_host()
+    var got_cos = cos(a).to_host()
+    var got_tan = tan(a).to_host()
+    var got_arcsin = arcsin(a).to_host()
+    var got_arccos = arccos(a).to_host()
+    var got_arctan = arctan(a).to_host()
+    var got_sinh = sinh(a).to_host()
+    var got_cosh = cosh(a).to_host()
+    var got_tanh = tanh(a).to_host()
+    var got_arcsinh = arcsinh(a).to_host()
+    var got_arccosh = arccosh(a).to_host()
+    var got_arctanh = arctanh(a).to_host()
+    var got_floor = floor(a).to_host()
+    var got_ceil = ceil(a).to_host()
+    var got_trunc = trunc(a).to_host()
+    var got_round = round(a).to_host()
+    var got_abs = abs(a).to_host()
+
+    for i in range(10):
+        _same(got_exp[i], _std_exp(x[i]))
+        _same(got_exp2[i], _std_exp2(x[i]))
+        _same(got_expm1[i], _std_expm1(x[i]))
+        _same(got_log[i], _std_log(x[i]))
+        _same(got_log2[i], _std_log2(x[i]))
+        _same(got_log10[i], _std_log10(x[i]))
+        _same(got_log1p[i], _std_log1p(x[i]))
+        _same(got_sqrt[i], _std_sqrt(x[i]))
+        _same(got_rsqrt[i], _std_rsqrt(x[i]))
+        _same(got_cbrt[i], _std_cbrt(x[i]))
+        _same(got_sin[i], _std_sin(x[i]))
+        _same(got_cos[i], _std_cos(x[i]))
+        _same(got_tan[i], _std_tan(x[i]))
+        _same(got_arcsin[i], _std_asin(x[i]))
+        _same(got_arccos[i], _std_acos(x[i]))
+        _same(got_arctan[i], _std_atan(x[i]))
+        _same(got_sinh[i], _std_sinh(x[i]))
+        _same(got_cosh[i], _std_cosh(x[i]))
+        _same(got_tanh[i], _std_tanh(x[i]))
+        _same(got_arcsinh[i], _std_asinh(x[i]))
+        _same(got_arccosh[i], _std_acosh(x[i]))
+        _same(got_arctanh[i], _std_atanh(x[i]))
+        _same(got_floor[i], _std_floor(x[i]))
+        _same(got_ceil[i], _std_ceil(x[i]))
+        _same(got_trunc[i], _std_trunc(x[i]))
+        _same(got_round[i], _std_round(x[i]))
+        _same(got_abs[i], x[i].__abs__())
+
+
+def test_binary_routing_is_bit_exact_over_the_edge_cases() raises:
+    """Every routed binary name, at one shape, against the scalar call."""
+    var a = _t[10](_edge())
+    var b = _t[10]([1.0, -2.0, 0.5, -0.0, 3.0, -1.5, 0.0, 2.0, -4.0, 1.0])
+    var x = a.to_host()
+    var y = b.to_host()
+
+    var got_atan2 = arctan2(a, b).to_host()
+    var got_hypot = hypot(a, b).to_host()
+    var got_copysign = copysign(a, b).to_host()
+    var got_remainder = remainder(a, b).to_host()
+    var got_max = maximum(a, b).to_host()
+    var got_min = minimum(a, b).to_host()
+
+    for i in range(10):
+        _same(got_atan2[i], _std_atan2(x[i], y[i]))
+        _same(got_hypot[i], _std_hypot(x[i], y[i]))
+        _same(got_copysign[i], _std_copysign(x[i], y[i]))
+        _same(got_remainder[i], _std_remainder(x[i], y[i]))
+        _same(got_max[i], max(x[i], y[i]))
+        _same(got_min[i], min(x[i], y[i]))
+
+
+def test_clip_diff_and_gradient_match_their_scalar_walks() raises:
+    """The three routines with a body of their own rather than a driver."""
+    var a = _t[8]([-5.0, -0.5, -0.0, 0.0, 0.25, 1.0, 4.0, 9.0])
+    var x = a.to_host()
+
+    var clipped = clip(a, -1.0, 2.0).to_host()
+    for i in range(8):
+        _same(clipped[i], min(max(x[i], -1.0), 2.0))
+
+    var differences = diff(a).to_host()
+    for i in range(7):
+        _same(differences[i], x[i + 1] - x[i])
+
+    var slopes = gradient(a, 0.25).to_host()
+    _same(slopes[0], (x[1] - x[0]) / 0.25)
+    _same(slopes[7], (x[7] - x[6]) / 0.25)
+    for i in range(1, 7):
+        _same(slopes[i], (x[i + 1] - x[i - 1]) / (0.25 + 0.25))
+
+
+def test_a_dynamic_input_matches_the_static_result() raises:
+    var ctx = DeviceContext(api="cpu")
+    var values = List[Scalar[dtype]](capacity=6)
+    for i in range(6):
+        values.append(Scalar[dtype](i) * 0.75 - 2.0)
+
+    var fixed = Static[dtype, 2, 3](ctx, values.copy())
+    var runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
+    runtime.copy_from_host(values)
+
+    var from_static = exp(fixed).to_host()
+    var from_dynamic = exp(runtime).to_host()
+    assert_equal(len(from_dynamic), 6)
+    for i in range(6):
+        assert_equal(from_dynamic[i], from_static[i])
+
+
+def test_the_threaded_path_agrees_with_the_serial_one() raises:
+    """`_THREADED_FROM` is a performance switch, not a numerical one.
+
+    The values stay well away from the denormal range: `elementwise`'s CPU
+    backend runs its workers with flush-to-zero set, which the serial loop
+    below the threshold does not, so a denormal result is the one thing the
+    two paths may disagree about.
+    """
+    comptime n = 100003
+    assert_true(n > _THREADED_FROM, "n must cross the threading threshold")
+    var ctx = DeviceContext(api="cpu")
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(Scalar[dtype](i % 977) * 0.01 - 4.0)
+
+    var big = Static[dtype, n](ctx, values.copy())
+    var got = exp(big).to_host()
+    for i in range(n):
+        _same(got[i], _std_exp(values[i]))
+
+
+def test_asking_for_a_target_the_tensor_is_not_on_still_answers() raises:
+    """`gpu=True` against a host tensor falls back to the host walk.
+
+    The mismatch prints one line on `stderr` naming the spelling that would
+    have run on the device; the values are the ones the matching path gives.
+    This is the half of the fallback a CPU-only run can exercise. At
+    `float32`, because `gpu=True` compiles a device kernel whether or not
+    the branch is reached at run time and Metal has no `double`.
+    """
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[DType.float32, 4](ctx, [0.0, 1.0, 2.0, 3.0])
+    var matched = exp(a).to_host()
+    var fell_back = exp[gpu=True](a).to_host()
+    for i in range(4):
+        assert_equal(fell_back[i], matched[i])
+
+
+# The drivers `elementwise.mojo` does not itself use. Pinned here so the
+# whole of `_drive` is instantiated by the suite rather than only the part
+# this module reaches.
+
+
+def _truncate_op[w: Int](x: SIMD[dtype, w]) -> SIMD[DType.int32, w]:
+    return x.cast[DType.int32]()
+
+
+def _greater_op[
+    w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[DType.bool, w]:
+    return a.gt(b)
+
+
+def _plus_op[w: Int](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return a + b
+
+
+def test_unary_to_changes_dtype() raises:
+    var a = _t[4]([-1.7, 0.0, 2.9, 5.5])
+    var got = unary_to[
+        dtype,
+        DType.int32,
+        type_of(a).LayoutType,
+        op=_truncate_op,
+        gpu=False,
+        name="truncate",
+    ](a).to_host()
+    assert_equal(got[0], -1)
+    assert_equal(got[1], 0)
+    assert_equal(got[2], 2)
+    assert_equal(got[3], 5)
+
+
+def test_binary_to_writes_a_bool_result_everywhere() raises:
+    var a = _t[4]([1.0, 2.0, 3.0, 4.0])
+    var b = _t[4]([5.0, 6.0, 7.0, 8.0])
+    var got = binary_to[
+        dtype,
+        DType.bool,
+        type_of(a).LayoutType,
+        op=_greater_op,
+        gpu=False,
+        name="greater",
+    ](a, b).to_host()
+    # All false: an uninitialized destination that the launch missed would
+    # show here rather than in a result with true entries in it.
+    for i in range(4):
+        assert_equal(got[i], False)
+
+
+def test_binary_scalar_captures_its_operand() raises:
+    var a = _t[3]([1.0, 2.0, 3.0])
+    var got = binary_scalar[
+        dtype,
+        type_of(a).LayoutType,
+        op=_plus_op,
+        gpu=False,
+        name="add",
+    ](a, 10.0).to_host()
+    assert_equal(got[0], 11.0)
+    assert_equal(got[1], 12.0)
+    assert_equal(got[2], 13.0)
+
+
+def test_broadcast_binary_to_stretches_a_row() raises:
+    var a = _m2[2, 3]([1.0, 5.0, 3.0, 7.0, 2.0, 9.0])
+    var row = _t[3]([4.0, 4.0, 4.0])
+    var got = broadcast_binary_to[
+        dtype,
+        DType.bool,
+        type_of(a).LayoutType,
+        type_of(row).LayoutType,
+        op=_greater_op,
+        gpu=False,
+        name="greater",
+    ](a, row)
+    assert_equal(got.dim_at(0), 2)
+    assert_equal(got.dim_at(1), 3)
+    var out = got.to_host()
+    var expected = [False, True, False, True, False, True]
+    for i in range(6):
+        assert_equal(out[i], expected[i])
 
 
 def main() raises:

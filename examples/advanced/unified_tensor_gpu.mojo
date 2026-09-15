@@ -7,6 +7,12 @@ and by nothing else. `DeviceContext(api="cpu")` puts it in host memory,
 parameters, the factory names, and `.view()`'s `TileTensor` type are
 identical either way.
 
+It then runs one of the NumPy-named routines, `numax.exp`, on the same
+device tensor. Those took a host copy of the elements and walked them one
+at a time until 0.2; `exp[gpu=True]` now launches over the tensor where it
+already lives, and `exp(a)` on a device tensor still answers -- on the host,
+with a line on `stderr` naming the spelling that would not have.
+
 This example runs one `FloatLike` kernel over the same tensor type on both
 devices and checks the results agree elementwise to within one float32 ulp
 (they are not bit-identical: `exp` is one of the functions whose host and
@@ -24,7 +30,7 @@ so this is a local/manual example rather than a CI one -- the same reason
 
 from max.gpu.host import DeviceContext
 
-from numax import Plain, gaussian
+from numax import Plain, exp, gaussian
 from numax.core.array import Static, Tensor, linspace
 from numax.core.tensor import map
 
@@ -92,3 +98,15 @@ def main() raises:
     comptime one_ulp_near_one = Scalar[dtype](1.2e-7)
     print("max |cpu - gpu| =", max_diff)
     print("within one float32 ulp:", max_diff <= one_ulp_near_one)
+
+    # ---- the NumPy-named surface, launched where the tensor lives ----
+    var device_exp = exp[gpu=True](gpu_xs).to_host()
+    var host_exp = exp(cpu_xs).to_host()
+    var max_exp_diff = Scalar[dtype](0)
+    for i in range(n):
+        var diff = host_exp[i] - device_exp[i]
+        if diff < 0:
+            diff = -diff
+        if diff > max_exp_diff:
+            max_exp_diff = diff
+    print("max |exp cpu - exp gpu| =", max_exp_diff)

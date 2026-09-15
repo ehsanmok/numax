@@ -16,11 +16,15 @@ from numax.core.tensor import map, reduce, reduce_axis   # the engine
 | `rowwise` | `sum_axis`/`max_axis` -- the same axis reductions delegated to MAX's `algorithm.rowwise` scaffolder and `reduce_op` monoids, one body for both targets, threaded on CPU and tiered on GPU. `tensor`'s `reduce_axis` remains for a fold outside MAX's monoid set |
 | `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Static[DType.bool]`, and sort/search/mask |
+| `_drive` | Private: the one launch policy behind `elementwise` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements |
 | `constants` | `pi` and `e` at any conformer |
 
 The conformers and `tensor` are tier 1: fixed iteration counts, no
 per-lane branching, launchable inside a GPU thread. `ops`, `elementwise`,
-`logic` and `sorting` are tier 2: `Plain`-only and host-side.
+`logic` and `sorting` are tier 2: `Plain`-only. `elementwise` is tier 2 in
+shape only -- like `rowwise`, one body serves both targets, and every
+routine there takes `gpu: Bool = False` as its last compile-time parameter.
+`ops`, `logic` and `sorting` are still host-side.
 """
 
 from .array import (
