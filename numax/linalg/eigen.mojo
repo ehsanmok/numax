@@ -50,12 +50,16 @@ from .panel import (
     gebd2_col,
     gebd2_row,
     _View,
+    labrd_column,
+    labrd_row,
+    labrd_x,
+    labrd_y,
     latrd_column,
     latrd_w,
     pack_block,
     sytd2_column,
 )
-from .qr import _apply_block_reflector, _ReflectorWork
+from .qr import _apply_block_reflector, _MIN_GEMM_COLS, _ReflectorWork
 
 
 struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
@@ -346,7 +350,16 @@ def sytrd[
             _ = p^
 
         _subtract_panel[gpu=gpu](
-            wv, lv, rv, pv, k0 + nb, n - k0 - nb, 2 * width, ctx
+            wv,
+            lv,
+            rv,
+            pv,
+            k0 + nb,
+            k0 + nb,
+            n - k0 - nb,
+            n - k0 - nb,
+            2 * width,
+            ctx,
         )
         k0 += nb
 
@@ -386,61 +399,103 @@ def _subtract_panel[
     dtype: DType,
     ALayout: TensorLayout,
     LLayout: TensorLayout,
+    RLayout: TensorLayout,
     PLayout: TensorLayout,
     gpu: Bool = False,
 ](
     target: _View[dtype, ALayout],
     left: _View[dtype, LLayout],
-    right: _View[dtype, LLayout],
+    right: _View[dtype, RLayout],
     product: _View[dtype, PLayout],
-    base: Int,
+    row_base: Int,
+    col_base: Int,
     rows: Int,
+    cols: Int,
     width: Int,
     ctx: DeviceContext,
 ) raises where (
     dtype.is_floating_point()
     and _View[dtype, ALayout].flat_rank == 2
     and _View[dtype, LLayout].flat_rank == 2
+    and _View[dtype, RLayout].flat_rank == 2
     and _View[dtype, PLayout].flat_rank == 2
 ):
-    """`target[base:, base:] -= left[base:, :] @ right[base:, :]^T`, in one
-    GEMM with the subtraction fused into the epilogue.
+    """`target[row_base:, col_base:] -= left[row_base:, :] @
+    right[col_base:, :]^T`, in one GEMM with the subtraction fused into
+    the epilogue.
 
-    With `left = [V | W]` and `right = [W | V]` this is the symmetric
-    rank-`width` update `sum_c (v_c w_c^T + w_c v_c^T)`, which is the whole
-    trailing update of one `latrd` panel.
+    With `left = [V | W]` and `right = [W | V]` over one square matrix
+    this is the symmetric rank-`width` update `sum_c (v_c w_c^T + w_c
+    v_c^T)`, which is the whole trailing update of a `latrd` panel. With
+    the two bases apart and the operands rectangular it is half of a
+    `labrd` panel's `A -= V Y^T + X U`, called once per half.
 
-    Both operands are **row ranges** of dense `n x width` buffers, which
-    are themselves dense, so `matmul` -- which ignores the row stride of
-    its arguments -- reads them correctly. `target`'s trailing block is
-    not dense, which is why the offset lives in the epilogue's store
-    rather than in a view.
+    Both operands are **row ranges** of dense buffers, which are
+    themselves dense, so `matmul` -- which ignores the row stride of its
+    arguments -- reads them correctly. `target`'s trailing block is not
+    dense, which is why the offsets live in the epilogue's store rather
+    than in a view.
     """
-    if rows <= 0:
+    if rows <= 0 or cols <= 0:
+        return
+
+    # See `_MIN_GEMM_COLS`: a one-column product takes MAX's GEMV path,
+    # which stores whole SIMD vectors down the rows with no masked tail and
+    # so hands the epilogue coordinates past the block. A `labrd` panel
+    # ending one column short of `n` produces exactly that shape -- a
+    # `latrd` panel cannot, which is why `sytrd` never met it -- and the
+    # update is `O(rows * width)` there, small enough to write directly.
+    if cols < _MIN_GEMM_COLS:
+
+        @always_inline
+        def narrow[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var target,
+            var left,
+            var right,
+            var row_base,
+            var col_base,
+            var width,
+        }:
+            var at = coord_to_index_list(coord)
+            var to = Coord(row_base + at[0], col_base + at[1])
+            var total = target[to]
+            for t in range(width):
+                total -= (
+                    left[Coord(row_base + at[0], t)]
+                    * right[Coord(col_base + at[1], t)]
+                )
+            target.store[1](to, total)
+
+        elementwise[simd_width=1, target=_target[gpu]()](
+            narrow, Coord(rows, cols), ctx
+        )
+        ctx.synchronize()
         return
 
     @parameter
     @always_inline
-    @__copy_capture(target, base)
+    @__copy_capture(target, row_base, col_base)
     def subtract[
         _dtype: DType,
         lanes: SIMDLength,
         *,
         alignment: Int = align_of[SIMD[_dtype, lanes]](),
     ](idx: IndexList[2], value: SIMD[_dtype, lanes]) capturing -> None:
-        var at = Coord(base + idx[0], base + idx[1])
+        var at = Coord(row_base + idx[0], col_base + idx[1])
         target.store[lanes](
             at, target.load[lanes](at) - rebind[SIMD[dtype, lanes]](value)
         )
 
     var la: _Dense[dtype] = TileTensor(
-        left.ptr_at_offset(Coord(base, 0)), row_major(Coord(rows, width))
+        left.ptr_at_offset(Coord(row_base, 0)), row_major(Coord(rows, width))
     )
     var ra: _Dense[dtype] = TileTensor(
-        right.ptr_at_offset(Coord(base, 0)), row_major(Coord(rows, width))
+        right.ptr_at_offset(Coord(col_base, 0)), row_major(Coord(cols, width))
     )
     var out: _Dense[dtype] = TileTensor(
-        product.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, rows))
+        product.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, cols))
     )
 
     _max_matmul[
@@ -2046,8 +2101,8 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
     var taus_right: Static[Self.dtype, Self.n]
 
     var block: Int
-    """The panel width `.q()` and `.p()` form their factors in, carried
-    from `gebrd`."""
+    """The `labrd` panel width the reduction ran at, which is also the
+    width `.q()` and `.p()` form their factors in. Carried from `gebrd`."""
 
     def __init__(
         out self,
@@ -2157,24 +2212,52 @@ def gebrd[
 ] where (dtype.is_floating_point() and m >= n and n >= 1 and block >= 1):
     """**Tier 2.** Reduce an `m x n` matrix, `m >= n`, to upper bidiagonal
     form by alternating left and right Householder reflections,
-    device-resident. LAPACK's `gebrd`, unblocked.
+    device-resident and blocked. LAPACK's `gebrd` over `labrd` panels.
 
     Column `k` takes a left reflector from `a[k.., k]` and row `k` a right
-    one from `a[k, k+1..]`; each is applied to the rest of the matrix as a
-    matrix-vector product and a rank-one update through `linalg.matmul`,
-    with the product's entry for the row or column just finished cleared
-    first so the update never touches it. That is the whole of the
-    arithmetic, `O(4 m n^2)` at matrix-vector shapes.
+    one from `a[k, k+1..]`. What blocking changes is when the rest of the
+    matrix hears about them: a panel of `block` columns is reduced without
+    touching the trailing block, and the whole panel then goes out as two
+    GEMMs,
 
-    `block` is the panel width `.q()` and `.p()` form `Q` and `P` in. The
-    reduction itself does not read it yet; it is carried on the result, and
-    `labrd` will take the same number.
+        A[k0+nb:, k0+nb:] -= V Y^T + X U
 
-    `ponytail:` unblocked, like the first `sytrd`, and with the same
-    ceiling: matrix-vector shapes are bandwidth-bound where LAPACK's
-    blocked `labrd` accumulates a panel and applies it as GEMMs. The
-    upgrade is that panel; nothing above changes when it lands.
+    with the subtraction fused into each one's epilogue. `V` is the
+    panel's left reflectors as columns and `U` its right reflectors as
+    rows -- the two the factorization keeps anyway -- while `Y` and `X`
+    are the corrections the panel accumulates, `Y[:, j] = tauq (A^T v)`
+    and `X[:, j] = taup (A u)` each brought up to date with the panel's
+    own pairs. `labrd_column` and `labrd_row` apply those pairs to the one
+    column and the one row the next reflector is taken from, `labrd_y` and
+    `labrd_x` build the corrections, and every `O((m + n) j)` term among
+    them is threaded the way `latrd_w`'s is.
+
+    **That halves the whole-matrix traffic.** The unblocked reduction made
+    four passes over the matrix per column -- `v^T A`, a rank-one
+    subtract, `A u`, another rank-one subtract -- and this makes two, the
+    two products, with the subtracts deferred into one rank-`block` GEMM
+    per panel per side. `block == 1` is the unblocked algorithm (one
+    column per panel, the update restricted to exactly the rows and
+    columns the masked rank-one updates reached) and `block == n` is one
+    panel whose trailing GEMMs never run; a test pins every width against
+    `block == n`.
+
+    The trailing update is **restricted to rows and columns `k0 + nb`
+    onward**. Everything the panel finished -- the band entries, the zeros
+    `gebd2_col` and `gebd2_row` wrote, and the rows and columns they wrote
+    them in -- is outside it, which is what the masks on `Y` and `X`
+    already say and what makes the restriction free rather than load-
+    bearing here.
+
+    `block` is also the panel width `.q()` and `.p()` form `Q` and `P` in.
+
+    `ponytail:` the two matrix-vector products stay, for the reason
+    `sytrd` gives about `p = A v` -- they are taken over the whole matrix
+    because a strided sub-block cannot be handed to `matmul` without
+    staging it dense, and LAPACK's `dgebrd` is half BLAS-2 for the same
+    reason. Closing that needs a two-stage reduction, not a wider panel.
     """
+    comptime width = min(block, n)
     var ctx = a.context()
     var work = zeros[dtype, m, n](ctx)
     var left = zeros[dtype, m, n](ctx)
@@ -2182,6 +2265,13 @@ def gebrd[
     var taus_left = zeros[dtype, n](ctx)
     var taus_right = zeros[dtype, n](ctx)
     var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
+    # The panel's two corrections, the two operands the trailing GEMMs
+    # read them against, and the reductions `labrd_y`/`labrd_x` share.
+    var yy = zeros[dtype, n, width](ctx)
+    var xx = zeros[dtype, m, width](ctx)
+    var vp = zeros[dtype, m, width](ctx)
+    var ut = zeros[dtype, n, width](ctx)
+    var red = zeros[dtype, 2 * width + 2](ctx)
     var product = zeros[dtype, m, n](ctx)
 
     var wv = work.view()
@@ -2190,88 +2280,174 @@ def gebrd[
     var tlv = taus_left.view()
     var trv = taus_right.view()
     var sv = scratch.view()
+    var yv = yy.view()
+    var xv = xx.view()
+    var vpv = vp.view()
+    var utv = ut.view()
+    var redv = red.view()
+    var pv = product.view()
+
     pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, m, n, ctx)
 
-    for k in range(n):
-        # Left reflector on column k.
-        comptime if gpu:
-            ctx.enqueue_function[
-                gebd2_col[
-                    dtype,
-                    ALayout=type_of(wv).LayoutType,
-                    VLayout=type_of(lv).LayoutType,
-                    TauLayout=type_of(tlv).LayoutType,
-                    SLayout=type_of(sv).LayoutType,
-                    gpu=True,
-                ]
-            ](
-                wv,
-                lv,
-                tlv,
-                sv,
-                Int32(k),
-                Int32(m),
-                grid_dim=1,
-                block_dim=_PANEL_THREADS,
+    var k0 = 0
+    while k0 < n:
+        var nb = min(width, n - k0)
+
+        # A ragged panel writes only `nb` of the `width` columns the
+        # trailing GEMMs read. Clearing the two corrections is enough --
+        # each GEMM has one of them as an operand, so a zero column there
+        # kills the stale column beside it -- and only the last panel can
+        # be narrow, so this runs at most once.
+        if nb < width:
+
+            @always_inline
+            def clear_y[w: Int, alignment: Int = 1](coord: Coord) {var yv}:
+                yv.store[1](coord, Scalar[dtype](0))
+
+            @always_inline
+            def clear_x[w: Int, alignment: Int = 1](coord: Coord) {var xv}:
+                xv.store[1](coord, Scalar[dtype](0))
+
+            elementwise[simd_width=1, target=_target[gpu]()](
+                clear_y, Coord(n, width), ctx
             )
-            ctx.synchronize()
-        else:
-            gebd2_col(wv, lv, tlv, sv, Int32(k), Int32(m))
+            elementwise[simd_width=1, target=_target[gpu]()](
+                clear_x, Coord(m, width), ctx
+            )
 
-        var tau_l = taus_left.to_host()[k]
-        if tau_l != 0:
-            var v = _column_of[gpu=gpu](left, k)
-            var w = _left_products[gpu=gpu](work, v)
-            _zero_prefix[gpu=gpu](w, k + 1, ctx)
-            _rank_one_subtract_rect[gpu=gpu](work, v, w, tau_l, product, ctx)
+        for j in range(nb):
+            var i = k0 + j
 
-        # Right reflector on row k, when there is a superdiagonal to reduce.
-        if k + 1 < n:
+            labrd_column[target=_target[gpu]()](
+                wv, lv, xv, yv, rv, k0, j, m, ctx
+            )
+
             comptime if gpu:
                 ctx.enqueue_function[
-                    gebd2_row[
+                    gebd2_col[
                         dtype,
                         ALayout=type_of(wv).LayoutType,
-                        ULayout=type_of(rv).LayoutType,
-                        TauLayout=type_of(trv).LayoutType,
+                        VLayout=type_of(lv).LayoutType,
+                        TauLayout=type_of(tlv).LayoutType,
                         SLayout=type_of(sv).LayoutType,
                         gpu=True,
                     ]
                 ](
                     wv,
-                    rv,
-                    trv,
+                    lv,
+                    tlv,
                     sv,
-                    Int32(k),
-                    Int32(n),
+                    Int32(i),
+                    Int32(m),
                     grid_dim=1,
                     block_dim=_PANEL_THREADS,
                 )
                 ctx.synchronize()
             else:
-                gebd2_row(wv, rv, trv, sv, Int32(k), Int32(n))
+                gebd2_col(wv, lv, tlv, sv, Int32(i), Int32(m))
 
-            var tau_r = taus_right.to_host()[k]
-            if tau_r != 0:
-                var u = _row_of[gpu=gpu](right, k)
-                var pcol = matvec[gpu=gpu](work, u)
-                _zero_prefix[gpu=gpu](pcol, k + 1, ctx)
-                _rank_one_subtract_rect[gpu=gpu](
-                    work, pcol, u, tau_r, product, ctx
+            # `v^T A` over the whole matrix. The panel's own columns hold
+            # only the band entries and zeros `gebd2_col` wrote, and `v`
+            # vanishes above row `i`, so nothing needs staging; the
+            # panel's deferred pairs reach the product inside `labrd_y`.
+            var v = _column_of[gpu=gpu](left, i)
+            var t1 = _left_products[gpu=gpu](work, v)
+            labrd_y[target=_target[gpu]()](
+                t1.view(), lv, xv, yv, rv, redv, tlv, k0, j, m, n, ctx
+            )
+            # `v` and `t1` are last mentioned through a view, and a view
+            # erases the origin; see `findings.mdc` on the queued free.
+            _ = v^
+            _ = t1^
+
+            if i + 1 < n:
+                labrd_row[target=_target[gpu]()](
+                    wv, lv, xv, yv, rv, k0, j, n, ctx
                 )
 
-    _ = scratch^  # as in `sytrd`: pin the workspace past its last launch
-    var reduced = work.to_host()
+                comptime if gpu:
+                    ctx.enqueue_function[
+                        gebd2_row[
+                            dtype,
+                            ALayout=type_of(wv).LayoutType,
+                            ULayout=type_of(rv).LayoutType,
+                            TauLayout=type_of(trv).LayoutType,
+                            SLayout=type_of(sv).LayoutType,
+                            gpu=True,
+                        ]
+                    ](
+                        wv,
+                        rv,
+                        trv,
+                        sv,
+                        Int32(i),
+                        Int32(n),
+                        grid_dim=1,
+                        block_dim=_PANEL_THREADS,
+                    )
+                    ctx.synchronize()
+                else:
+                    gebd2_row(wv, rv, trv, sv, Int32(i), Int32(n))
+
+                var u = _row_of[gpu=gpu](right, i)
+                var t2 = matvec[gpu=gpu](work, u)
+                labrd_x[target=_target[gpu]()](
+                    t2.view(), lv, xv, yv, rv, redv, trv, k0, j, m, n, ctx
+                )
+                _ = u^
+                _ = t2^
+
+        # `V` is a column range of `left` and `U^T` a transposed row range
+        # of `right`, neither dense, so both are packed before the GEMMs
+        # -- once per panel, not once per column.
+        pack_block[target=_target[gpu]()](lv, vpv, 0, k0, m, nb, ctx)
+        pack_block[trans=True, target=_target[gpu]()](
+            rv, utv, 0, k0, n, nb, ctx
+        )
+
+        var base = k0 + nb
+        _subtract_panel[gpu=gpu](
+            wv, vpv, yv, pv, base, base, m - base, n - base, width, ctx
+        )
+        _subtract_panel[gpu=gpu](
+            wv, xv, utv, pv, base, base, m - base, n - base, width, ctx
+        )
+        k0 += nb
+
+    # Read by the launches above through origin-erased views whose owners
+    # are named nowhere else; see `findings.mdc` on the queued free.
+    _ = scratch^
+    _ = yy^
+    _ = xx^
+    _ = vp^
+    _ = ut^
+    _ = red^
+    _ = product^
+
     var d = zeros[dtype, n](ctx)
     var e = zeros[dtype, n](ctx)
-    var d_host = d.to_host()
-    var e_host = e.to_host()
-    for i in range(n):
-        d_host[i] = reduced[i * n + i]
-        if i + 1 < n:
-            e_host[i] = reduced[i * n + i + 1]
-    d.copy_from_host(d_host)
-    e.copy_from_host(e_host)
+    var dv = d.view()
+    var ev = e.view()
+
+    # The band, on the device: `work`'s diagonal and first superdiagonal.
+    # `e[n-1]` is the documented unused entry and is written zero.
+    @always_inline
+    def band[w: Int, alignment: Int = 1](coord: Coord) {var wv, var dv, var ev}:
+        var at = coord_to_index_list(coord)[0]
+        dv.store[1](coord, wv[Coord(at, at)])
+        var above = Scalar[dtype](0)
+        if at + 1 < n:
+            above = wv[Coord(at, at + 1)]
+        ev.store[1](coord, above)
+
+    elementwise[simd_width=1, target=_target[gpu]()](band, Coord(n), ctx)
+    ctx.synchronize()
+    # `work` is not returned, and after the panel loop it is read only
+    # through `wv`, which erases the origin -- so without this Mojo frees
+    # it before `band` runs and the band comes back as heap garbage. See
+    # `findings.mdc` on the `.view()` lifetime bug that `print` hides.
+    _ = work^
+
     return TensorBidiagonal[dtype, m, n, gpu](
         d^, e^, left^, right^, taus_left^, taus_right^, block
     )

@@ -876,6 +876,175 @@ def test_bidiagonal_q_and_p_match_the_unblocked_walk() raises:
     _gebrd_qp_at[tall, narrow, 2](c2, cq, cp)
 
 
+def _gebrd_band_at[
+    m: Int, n: Int, block: Int
+](
+    want_d: List[Scalar[dtype]],
+    want_e: List[Scalar[dtype]],
+    want_q: List[Scalar[dtype]],
+    want_p: List[Scalar[dtype]],
+) raises where (m >= n and n >= 1 and block >= 1):
+    """Reduce `_rect[m, n]` at this panel width and pin the band and both
+    factors entry by entry to the reference answer."""
+    var a = _rect[m, n]()
+    var reduced = gebrd[dtype, m, n, False, block](a)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    for i in range(n):
+        assert_almost_equal(d[i], want_d[i], atol=1e-12)
+        assert_almost_equal(e[i], want_e[i], atol=1e-12)
+    var q = reduced.q().to_host()
+    var p = reduced.p().to_host()
+    for i in range(m * n):
+        assert_almost_equal(q[i], want_q[i], atol=1e-12)
+    for i in range(n * n):
+        assert_almost_equal(p[i], want_p[i], atol=1e-12)
+
+
+def test_gebrd_blocking_does_not_change_the_answer() raises:
+    # `block` is the `labrd` panel width, not only the width `.q()` and
+    # `.p()` walk in: it decides how many columns are reduced against the
+    # panel's own `V`, `Y`, `X` and `U` before the trailing block sees a
+    # GEMM. It changes the order the same arithmetic happens in and
+    # nothing else, so the band and both factors come out the same at
+    # every width. `block == 1` is the unblocked reduction -- no
+    # pre-update, the masked rank-one updates restricted to exactly what
+    # they used to reach -- and `block == n` is one panel whose trailing
+    # GEMMs never run.
+    comptime n = 6
+    var square = _rect[n, n]()
+    var whole = gebrd[dtype, n, n, False, n](square)
+    var wd = whole.d.to_host()
+    var we = whole.e.to_host()
+    var wq = whole.q().to_host()
+    var wp = whole.p().to_host()
+    _gebrd_band_at[n, n, 1](wd, we, wq, wp)
+    _gebrd_band_at[n, n, 2](wd, we, wq, wp)
+    _gebrd_band_at[n, n, 3](wd, we, wq, wp)
+    _gebrd_band_at[n, n, n](wd, we, wq, wp)
+
+    comptime tm = 5
+    comptime tn = 3
+    var rect = _rect[tm, tn]()
+    var reference = gebrd[dtype, tm, tn, False, tn](rect)
+    var rd = reference.d.to_host()
+    var rev = reference.e.to_host()
+    var rq = reference.q().to_host()
+    var rp = reference.p().to_host()
+    _gebrd_band_at[tm, tn, 1](rd, rev, rq, rp)
+    _gebrd_band_at[tm, tn, 2](rd, rev, rq, rp)
+    _gebrd_band_at[tm, tn, tn](rd, rev, rq, rp)
+
+
+def _rect_hash[m: Int, n: Int]() raises -> Static[dtype, m, n]:
+    """A well-conditioned `m x n` with no structure: `_rect` carries a
+    Hilbert term, and a matrix whose singular values span ten orders of
+    magnitude cannot pin a reflector entry across two orderings of the
+    same arithmetic.
+
+    Two hashes of coprime period rather than one, so no row repeats within
+    the sizes used here. With a single period-17 hash rows `i` and `i + 17`
+    differ only in the diagonal term, the trailing columns reduce to a
+    single entry, and `gebd2_col`'s already-reduced branch leaves a sign
+    the two panel widths do not have to agree on."""
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, m, n](ctx)
+    var host = a.to_host()
+    for i in range(m):
+        for j in range(n):
+            var value = Scalar[dtype](
+                Float64((i * 37 + j * 11) % 17) * 0.125
+                + Float64((i * 13 + j * 29) % 11) * 0.0625
+                - 1.0
+            )
+            if i == j:
+                value += Scalar[dtype](Float64(n))
+            host[i * n + j] = value
+    a.copy_from_host(host)
+    return a^
+
+
+def _gebrd_reduction_agrees[
+    m: Int, n: Int, block: Int
+]() raises where m >= n and n >= 1 and block >= 1:
+    """Reduce `_rect_hash[m, n]` at this panel width: `Q^T A P` is bidiagonal
+    and is the band reported, `Q` and `P` are orthonormal, `Q B P^T` is
+    the matrix it came from, and everything agrees with the unblocked
+    reduction entrywise."""
+    var a = _rect_hash[m, n]()
+    var original = _copy_rect(a)
+    var reduced = gebrd[dtype, m, n, False, block](a)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    var q = reduced.q()
+    var p = reduced.p()
+
+    var qt = transpose(q)
+    var gram = matmul[dtype, n, m, n](qt, q).to_host()
+    var pt = transpose(p)
+    var pgram = matmul[dtype, n, n, n](pt, p).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(gram[i * n + j], want, atol=1e-10)
+            assert_almost_equal(pgram[i * n + j], want, atol=1e-10)
+
+    # `Q^T A P` is the band, off-band entries zero.
+    var half = matmul[dtype, n, m, n](qt, original)
+    var band = matmul[dtype, n, n, n](half, p).to_host()
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                assert_almost_equal(band[i * n + j], d[i], atol=1e-10)
+            elif j == i + 1:
+                assert_almost_equal(band[i * n + j], e[i], atol=1e-10)
+            else:
+                assert_almost_equal(
+                    band[i * n + j], Scalar[dtype](0.0), atol=1e-10
+                )
+
+    # `Q B P^T` reconstructs `A`.
+    var ctx = a.context()
+    var b = zeros[dtype, n, n](ctx)
+    var b_host = b.to_host()
+    for i in range(n):
+        b_host[i * n + i] = d[i]
+        if i + 1 < n:
+            b_host[i * n + i + 1] = e[i]
+    b.copy_from_host(b_host)
+    var qb = matmul[dtype, m, n, n](q, b)
+    var pt2 = transpose(p)
+    var back = matmul[dtype, m, n, n](qb, pt2).to_host()
+    var source = original.to_host()
+    for i in range(m * n):
+        assert_almost_equal(back[i], source[i], atol=1e-10)
+
+    var plain = _rect_hash[m, n]()
+    var unblocked = gebrd[dtype, m, n, False, 1](plain)
+    var want_d = unblocked.d.to_host()
+    var want_e = unblocked.e.to_host()
+    var want_q = unblocked.q().to_host()
+    var want_p = unblocked.p().to_host()
+    var qh = q.to_host()
+    var ph = p.to_host()
+    for i in range(n):
+        assert_almost_equal(d[i], want_d[i], atol=1e-11)
+        assert_almost_equal(e[i], want_e[i], atol=1e-11)
+    for i in range(m * n):
+        assert_almost_equal(qh[i], want_q[i], atol=1e-11)
+    for i in range(n * n):
+        assert_almost_equal(ph[i], want_p[i], atol=1e-11)
+
+
+def test_gebrd_at_a_ragged_panel() raises:
+    # `n = 5` at `block = 3` leaves a two-wide last panel; `n = 24` at
+    # `block = 8` is three full panels on a tall matrix, which is where a
+    # stale correction column from the previous panel would show up in the
+    # trailing GEMMs.
+    _gebrd_reduction_agrees[7, 5, 3]()
+    _gebrd_reduction_agrees[40, 24, 8]()
+
+
 def test_svdvals_matches_scipy_on_a_tall_matrix() raises:
     # scipy.linalg.svdvals of the 5x3 above, descending.
     var a = _tall()

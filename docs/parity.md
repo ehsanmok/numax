@@ -217,8 +217,8 @@ has each algorithm and its ceiling.
   `elementwise` gathering the sorted rows and splitting their even and odd
   entries, and `U = Q U_B`, `V = P V_B` come back through `inner` under
   `transpose_b=True` because that gather emits both factors transposed.
-  `gebrd` takes the same `block` and `.q()`/`.p()` run the same panel walk,
-  `.p()` reaching it through one transposing pack since the right
+  `gebrd` takes the same `block` for both its own reduction and that walk,
+  `.p()` reaching the walk through one transposing pack since the right
   reflectors are held as rows. The `2n` doubling itself stays until
   `bdsqr`. `schur` shares the same batch at **reach two**,
   since a Francis reflector spans three columns where a Givens rotation
@@ -226,9 +226,20 @@ has each algorithm and its ceiling.
   order (the chase ascends and the window slides two columns down per
   sweep), `block // 2` sweeps ride in one batch, and the `2 x 2` real split
   rotation is pushed as a sweep of its own. `svd` and `svdvals` take the
-  same two phases over a bidiagonal form: `gebrd` reduces device-resident
-  with alternating left and right reflectors, each a matrix-vector product
-  and a rank-one update through `matmul`, and the singular values are the
+  same two phases over a bidiagonal form, and that reduction is **blocked**
+  too: `gebrd` runs `labrd` panels of `block` columns, each column brought
+  up to date with the panel's own `V`, `Y`, `X` and `U` rather than with
+  the matrix (`labrd_column` for the column the left reflector comes from,
+  `labrd_row` for the row the right one comes from), the two corrections
+  built by `labrd_y` and `labrd_x` with their `O((m + n) j)` terms threaded
+  the way `latrd_w`'s are, and the whole panel then applied as the two
+  products `V Y^T` and `X U` under `transpose_b=True`. That takes the
+  whole-matrix traffic from four passes per column to two, since the two
+  rank-one updates are what the panel defers; the two matrix-vector
+  products stay, for the reason `sytrd`'s `A v` does. `block == 1` is the
+  unblocked reduction and `block == n` one panel, both pinned by tests, and
+  the per-column `taus.to_host()` synchronizations are gone -- the panel
+  kernels read the scales on the device. The singular values are the
   eigenvalues of the Golub-Kahan tridiagonal -- the `2n x 2n` symmetric
   tridiagonal with zero diagonal and off-diagonal `d_1, e_1, d_2, ...` --
   which the very same sweep diagonalizes, its eigenvectors interleaving

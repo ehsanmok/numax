@@ -879,6 +879,373 @@ def latrd_w[
         elementwise[simd_width=1, target=target](build, Coord(n), ctx)
 
 
+def labrd_column[
+    dtype: DType,
+    ALayout: TensorLayout,
+    LLayout: TensorLayout,
+    XLayout: TensorLayout,
+    YLayout: TensorLayout,
+    RLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    left: _View[dtype, LLayout],
+    x: _View[dtype, XLayout],
+    y: _View[dtype, YLayout],
+    right: _View[dtype, RLayout],
+    k0: Int,
+    j: Int,
+    m: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Bring column `k0 + j` up to date with the panel's own reflectors.
+    The first of LAPACK's `labrd` four steps.
+
+    A blocked bidiagonal reduction defers the trailing update to the end
+    of the panel, so when column `i = k0 + j` is reached the matrix still
+    lacks the `j` rank-one pairs before it. This applies exactly those,
+    and only to the one column the left reflector is about to be formed
+    from:
+
+        A[i:, i] -= V[i:, :j] Y[i, :j]^T + X[i:, :j] U[i, :j]^T
+
+    `V` is the left reflectors as columns of `left` and `U` the right
+    reflectors as rows of `right`, both in the layout `TensorBidiagonal`
+    documents; `Y` and `X` are the corrections `labrd_y` and `labrd_x`
+    accumulate. Nothing happens at `j == 0`, where the pair
+    (`labrd_column`, `gebd2_col`) degenerates to `gebd2_col` alone, which
+    is the unblocked step.
+
+    Independent per row, so it is `gemv_sub`'s shape: `parallelize` above
+    `_PARALLEL_MIN_WORK` on the host, one `elementwise` on the
+    accelerator.
+    """
+    if j <= 0:
+        return
+    var i = k0 + j
+    var rows = m - i
+    if rows <= 0:
+        return
+
+    @always_inline
+    @parameter
+    def update_row(index: Int):
+        var row = i + index
+        var total = a[Coord(row, i)]
+        for c in range(j):
+            total -= left[Coord(row, k0 + c)] * y[Coord(i, c)]
+            total -= x[Coord(row, c)] * right[Coord(k0 + c, i)]
+        a.store[1](Coord(row, i), total)
+
+    comptime if target == "cpu":
+        if rows * j * 4 >= _PARALLEL_MIN_WORK:
+            parallelize[update_row](rows)
+        else:
+            for index in range(rows):
+                update_row(index)
+    else:
+
+        @always_inline
+        def update[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var a, var left, var x, var y, var right, var i, var j, var k0
+        }:
+            update_row(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
+
+
+def labrd_row[
+    dtype: DType,
+    ALayout: TensorLayout,
+    LLayout: TensorLayout,
+    XLayout: TensorLayout,
+    YLayout: TensorLayout,
+    RLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    left: _View[dtype, LLayout],
+    x: _View[dtype, XLayout],
+    y: _View[dtype, YLayout],
+    right: _View[dtype, RLayout],
+    k0: Int,
+    j: Int,
+    n: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Bring row `k0 + j` up to date with the panel's reflectors, the
+    left one of this very column included. The third of `labrd`'s steps.
+
+        A[i, i+1:] -= V[i, :j+1] Y[i+1:, :j+1]^T + X[i, :j] U[i+1:, :j]^T
+
+    The `j + 1` rather than `j` is the point: the left reflector formed a
+    moment ago is deferred like every other, so the row the right
+    reflector is taken from has to carry it. `V[i, j]` is the reflector's
+    own unit entry, so the term is `Y[:, j]` unscaled -- which is why this
+    step runs at `j == 0` where `labrd_column` does not.
+
+    Independent per column, `gemv_sub`'s shape again.
+    """
+    var i = k0 + j
+    var cols = n - i - 1
+    if cols <= 0:
+        return
+
+    @always_inline
+    @parameter
+    def update_col(index: Int):
+        var col = i + 1 + index
+        var total = a[Coord(i, col)]
+        for c in range(j + 1):
+            total -= left[Coord(i, k0 + c)] * y[Coord(col, c)]
+        for c in range(j):
+            total -= x[Coord(i, c)] * right[Coord(k0 + c, col)]
+        a.store[1](Coord(i, col), total)
+
+    comptime if target == "cpu":
+        if cols * (j + 1) * 4 >= _PARALLEL_MIN_WORK:
+            parallelize[update_col](cols)
+        else:
+            for index in range(cols):
+                update_col(index)
+    else:
+
+        @always_inline
+        def update[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var a, var left, var x, var y, var right, var i, var j, var k0
+        }:
+            update_col(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](update, Coord(cols), ctx)
+
+
+def labrd_y[
+    dtype: DType,
+    PLayout: TensorLayout,
+    LLayout: TensorLayout,
+    XLayout: TensorLayout,
+    YLayout: TensorLayout,
+    RLayout: TensorLayout,
+    RedLayout: TensorLayout,
+    TauLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    t1: _View[dtype, PLayout],
+    left: _View[dtype, LLayout],
+    x: _View[dtype, XLayout],
+    y: _View[dtype, YLayout],
+    right: _View[dtype, RLayout],
+    red: _View[dtype, RedLayout],
+    tau: _View[dtype, TauLayout],
+    k0: Int,
+    j: Int,
+    m: Int,
+    n: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Build column `j` of a `labrd` panel's `Y`, the right-hand
+    correction the left reflector leaves behind. `labrd`'s second step.
+
+    `t1` is the *raw* product `v^T A` over the matrix as stored, still
+    missing the panel's own deferred pairs. Those are applied here instead
+    of to the matrix, out of the `j` vectors already in the panel:
+
+        Y[:, j] = tauq * (t1 - Y (V^T v) - U^T (X^T v))
+
+    masked to zero at and below row `i = k0 + j`, which is what confines
+    the deferred update to the trailing block -- the unblocked reduction
+    spells the same thing as `_zero_prefix` on `v^T A`.
+
+    Two launches, for the reason `latrd_w` gives: the `2j` reductions are
+    independent of each other and the build is independent per row, but
+    the build needs every reduction. `red` is the `2 * width + 2` scratch
+    they share, `V^T v` in `0 .. j-1` and `X^T v` in `j .. 2j-1`.
+
+    `tauq` is read from the device at `tau[i]`, so the per-column
+    `taus_left.to_host()[k]` of the unblocked reduction is gone. A zero
+    `tauq` needs no branch: it scales the whole column to zero and the
+    panel's update then adds nothing.
+    """
+    var i = k0 + j
+
+    @always_inline
+    @parameter
+    def reduce_one(r: Int):
+        var total = Scalar[dtype](0)
+        if r < j:
+            for row in range(i, m):
+                total += left[Coord(row, k0 + r)] * left[Coord(row, i)]
+        else:
+            for row in range(i, m):
+                total += x[Coord(row, r - j)] * left[Coord(row, i)]
+        red.store[1](Coord(r), total)
+
+    if j > 0:
+        comptime if target == "cpu":
+            if (m - i) * 2 * j * 3 >= _LATRD_MIN_WORK:
+                parallelize[reduce_one](2 * j)
+            else:
+                for r in range(2 * j):
+                    reduce_one(r)
+        else:
+
+            @always_inline
+            def reduce_all[
+                w: Int, alignment: Int = 1
+            ](coord: Coord) {
+                var left, var x, var red, var i, var j, var k0, var m
+            }:
+                reduce_one(coord_to_index_list(coord)[0])
+
+            elementwise[simd_width=1, target=target](
+                reduce_all, Coord(2 * j), ctx
+            )
+
+    @always_inline
+    @parameter
+    def build_col(col: Int):
+        var value = Scalar[dtype](0)
+        if col > i:
+            var acc = t1[Coord(col)]
+            for c in range(j):
+                acc -= y[Coord(col, c)] * red[Coord(c)]
+                acc -= right[Coord(k0 + c, col)] * red[Coord(j + c)]
+            value = tau[Coord(i)] * acc
+        y.store[1](Coord(col, j), value)
+
+    comptime if target == "cpu":
+        if n * (4 * j + 4) >= _LATRD_MIN_WORK:
+            parallelize[build_col](n)
+        else:
+            for col in range(n):
+                build_col(col)
+    else:
+
+        @always_inline
+        def build[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var t1, var y, var right, var red, var tau, var i, var j, var k0
+        }:
+            build_col(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](build, Coord(n), ctx)
+
+
+def labrd_x[
+    dtype: DType,
+    PLayout: TensorLayout,
+    LLayout: TensorLayout,
+    XLayout: TensorLayout,
+    YLayout: TensorLayout,
+    RLayout: TensorLayout,
+    RedLayout: TensorLayout,
+    TauLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    t2: _View[dtype, PLayout],
+    left: _View[dtype, LLayout],
+    x: _View[dtype, XLayout],
+    y: _View[dtype, YLayout],
+    right: _View[dtype, RLayout],
+    red: _View[dtype, RedLayout],
+    tau: _View[dtype, TauLayout],
+    k0: Int,
+    j: Int,
+    m: Int,
+    n: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Build column `j` of a `labrd` panel's `X`, the left-hand correction
+    the right reflector leaves behind. `labrd`'s fourth step.
+
+    `t2` is the raw product `A u` over the matrix as stored; the panel's
+    deferred pairs, this column's left reflector included, are applied
+    here:
+
+        X[:, j] = taup * (t2 - V (Y^T u) - X (U u))
+
+    masked to zero at and above row `i = k0 + j`, the mirror of `labrd_y`'s
+    mask and of the unblocked reduction's `_zero_prefix` on `A u`. The
+    `Y^T u` reduction runs over `j + 1` columns rather than `j` for the
+    reason `labrd_row` gives: the left reflector of this very column is
+    deferred too.
+
+    Two launches and a shared `red`, `Y^T u` in `0 .. j` and `U u` in
+    `j+1 .. 2j`. `taup` is read from the device at `tau[i]`.
+    """
+    var i = k0 + j
+
+    @always_inline
+    @parameter
+    def reduce_one(r: Int):
+        var total = Scalar[dtype](0)
+        if r <= j:
+            for col in range(i + 1, n):
+                total += y[Coord(col, r)] * right[Coord(i, col)]
+        else:
+            for col in range(i + 1, n):
+                total += (
+                    right[Coord(k0 + r - j - 1, col)] * right[Coord(i, col)]
+                )
+        red.store[1](Coord(r), total)
+
+    comptime if target == "cpu":
+        if (n - i) * (2 * j + 1) * 3 >= _LATRD_MIN_WORK:
+            parallelize[reduce_one](2 * j + 1)
+        else:
+            for r in range(2 * j + 1):
+                reduce_one(r)
+    else:
+
+        @always_inline
+        def reduce_all[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var y, var right, var red, var i, var j, var k0, var n
+        }:
+            reduce_one(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](
+            reduce_all, Coord(2 * j + 1), ctx
+        )
+
+    @always_inline
+    @parameter
+    def build_row(row: Int):
+        var value = Scalar[dtype](0)
+        if row > i:
+            var acc = t2[Coord(row)]
+            for c in range(j + 1):
+                acc -= left[Coord(row, k0 + c)] * red[Coord(c)]
+            for c in range(j):
+                acc -= x[Coord(row, c)] * red[Coord(j + 1 + c)]
+            value = tau[Coord(i)] * acc
+        x.store[1](Coord(row, j), value)
+
+    comptime if target == "cpu":
+        if m * (4 * j + 6) >= _LATRD_MIN_WORK:
+            parallelize[build_row](m)
+        else:
+            for row in range(m):
+                build_row(row)
+    else:
+
+        @always_inline
+        def build[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var t2, var left, var x, var red, var tau, var i, var j, var k0
+        }:
+            build_row(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](build, Coord(m), ctx)
+
+
 def gebd2_col[
     dtype: DType,
     ALayout: TensorLayout,

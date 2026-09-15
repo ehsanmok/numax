@@ -455,11 +455,13 @@ def bench_eigh[n: Int](ctx: DeviceContext) raises:
     _row("eigh", n, ns, 9.0 * Float64(n) ** 3, worst)
 
 
-def bench_svdvals[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
+def bench_svdvals[
+    n: Int, block: Int = 32
+](ctx: DeviceContext) raises where n >= n and n >= 1 and block >= 1:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var s = svdvals[dtype, n, n](a)
+        var s = svdvals[dtype, n, n, False, block](a)
         keep(s.buffer.unsafe_ptr())
 
     var ns = (
@@ -470,7 +472,7 @@ def bench_svdvals[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
     )
     # Singular values admit no trace check; `sum(s^2) == ||A||_F^2` is the
     # identity that plays the same part.
-    var s = svdvals[dtype, n, n](a)
+    var s = svdvals[dtype, n, n, False, block](a)
     var host = s.to_host()
     var total = Float64(0)
     for i in range(n):
@@ -736,3 +738,6 @@ def main() raises:
     bench_eigvalsh[1024, 16](ctx)
     bench_eigvalsh[1024, 32](ctx)
     bench_eigvalsh[1024, 64](ctx)
+    bench_svdvals[1024, 16](ctx)
+    bench_svdvals[1024, 32](ctx)
+    bench_svdvals[1024, 64](ctx)

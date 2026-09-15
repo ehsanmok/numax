@@ -125,8 +125,15 @@ reflectors in reverse order and three GEMMs each, reading the reduction's
 packed form through a view shifted one row down.
 
 `svd` and `svdvals` take the same two phases over a bidiagonal form:
-`gebrd` reduces device-resident with every reflector through `matmul`,
-and the singular values are the eigenvalues of the Golub-Kahan
+`gebrd` reduces device-resident and **blocked**, a `labrd` panel of
+`block` columns reduced against the panel's own `V`, `Y`, `X` and `U`
+without touching the trailing block, which then takes the whole panel as
+the two GEMMs `A -= V Y^T + X U` -- half the whole-matrix traffic of the
+unblocked reduction, which made four passes per column where this makes
+two. `block == 1` is that unblocked reduction. What blocking does not move
+is the pair of matrix-vector products per column, for the reason `sytrd`
+gives about `A v`.
+The singular values are the eigenvalues of the Golub-Kahan
 tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
 no new numerics, only the doubling that route costs at `vectors=True`.
 It shares the blocked accumulation above, and the vectors never touch the

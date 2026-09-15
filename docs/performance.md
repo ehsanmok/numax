@@ -587,8 +587,9 @@ puts sizes on it:
   `n = 1024`, on the same not-quiet machine and with the same caveat.
   What is left is no longer the sweep: `gebrd` alone measures 1,992 ms of
   that 2,286, the values-only `2n` band iteration 44 ms, and everything
-  the vectors cost 250 ms. So `svd` and `svdvals` are both waiting on the
-  unblocked `labrd` now, not on `bdsqr`, and the `2n` doubling the
+  the vectors cost 250 ms. So `svd` and `svdvals` were both waiting on the
+  unblocked reduction at that point, not on `bdsqr` -- the `labrd` panel
+  further down is what answered it -- and the `2n` doubling the
   Golub-Kahan route costs stays until `bdsqr` itself takes the band.
 
   And `schur`'s Schur vectors go through the same batch at reach two, so
@@ -644,15 +645,42 @@ puts sizes on it:
   on the serial path and they run exactly as they did. The threshold is an
   absolute work count, so the same code threads a narrower panel as `n`
   grows.
+  And `gebrd` is blocked now as well -- a `labrd` panel of `block`
+  columns, the two rank-one updates per column deferred into two GEMMs per
+  panel -- so the `svd` and `svdvals` rows above are stale a second time.
+  Measured back to back against the commit before it, same machine,
+  `n = 1024`, `float32`, twice and taking the smaller, the machine not
+  otherwise quiet:
+
+  | `block` | `gebrd` before | after | `svdvals` before | after | `svd` before | after |
+  |---|---|---|---|---|---|---|
+  | 16 | 2,361 | 1,650 | 2,348 | 1,693 | 2,913 | 2,227 |
+  | 32 | 2,355 | 1,740 | 2,392 | 1,733 | 2,654 | 2,059 |
+  | 64 | 2,419 | 1,769 | 2,371 | 1,783 | 2,646 | 2,002 |
+
+  About 27% off `gebrd` and `svdvals` and 23% off `svd`, and the reason is
+  traffic rather than flops: the unblocked reduction made four passes over
+  the matrix per column -- `v^T A`, a rank-one subtract, `A u`, another
+  rank-one subtract -- and the panel defers both subtracts, leaving two.
+  What is left is those two products, which are `sytrd`'s `A v` ceiling
+  again. Unlike `sytrd` the sweep is nearly flat in `block`, because
+  `gebrd`'s panel corrections are `O((m + n) j)` against two whole-matrix
+  passes rather than one; 32 stays the default, between `gebrd`'s own best
+  at 16 and `svd`'s at 64, where the same number is also the rotation
+  window and the `q()`/`p()` panel.
+
+  `hessenberg` is **not** blocked: `lahr2` is the matching panel for it and
+  is not in this commit, so `eigvals` and `schur` keep the numbers above.
+
 - **The reductions are BLAS-2, not BLAS-3.** *(Superseded for `sytrd` by
   the `latrd` panel above, whose per-column arithmetic is threaded now
-  too; still true of `gebrd` and `gehrd`.)* `eigvalsh` is `sytrd` plus an
+  too, and for `gebrd` by the `labrd` panel; still true of `gehrd`.)* `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
   at matvec shapes), the B1a form whose B1b upgrade is `latrd` plus one
   rank-`2k` GEMM per panel -- which is the paragraph above, so this row
-  is the *before*. `svdvals` at 1.3 GFLOP/s is `gebrd` in the same shape
-  and is still waiting on `labrd`.
+  is the *before*. `svdvals` at 1.3 GFLOP/s was `gebrd` in the same shape,
+  and the `labrd` paragraph above is its *before* likewise.
 - **`float32` residuals are LAPACK's too.** numax's trace gap on
   `eigvalsh` at `n = 1024` is 0.033 against Accelerate's 0.37, and its
   `eigh` residual `2.7e-4` against `8.0e-4` -- at the same precision, not
