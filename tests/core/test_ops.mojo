@@ -4,6 +4,13 @@ Each function is checked against hand-computed values, the tensor-scalar
 overloads alongside the tensor-tensor ones, and every operator is checked
 to agree with the function it forwards to -- the point of the operators is
 that `a + b` and `add(a, b)` are one call.
+
+The routing tests at the bottom make the claims the `numax.core._drive`
+move added: a run-time-shaped `Dynamic` operand gives the same answer as
+the `Static` of the same extents, `astype` truncates toward zero on the
+way to an integer and reads every nonzero element as true on the way to
+`DType.bool`, and asking for a target the tensor is not on still answers
+with the values the matching path gives.
 """
 
 from std.testing import (
@@ -15,12 +22,21 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor, full, ones, zeros, zeros_dyn
+from numax.core.array import (
+    Dynamic,
+    Static,
+    Tensor,
+    full,
+    ones,
+    zeros,
+    zeros_dyn,
+)
 from numax.core.ops import (
     add,
     astype,
     divide,
     floor_divide,
+    invert,
     mod,
     multiply,
     negative,
@@ -240,6 +256,116 @@ def test_same_shape_overload_still_keeps_its_layout_type() raises:
     var b = _t[3]([10.0, 20.0, 30.0])
     var got: Static[dtype, 3] = add(a, b)
     assert_equal(got.to_host()[2], 33.0)
+
+
+def test_invert_flips_every_bit() raises:
+    # numpy: ~np.array([0, 1, -1, 5], dtype=np.int32)
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[DType.int32, 4](ctx, [0, 1, -1, 5])
+    var got = invert(a).to_host()
+    assert_equal(Int(got[0]), -1)
+    assert_equal(Int(got[1]), -2)
+    assert_equal(Int(got[2]), 0)
+    assert_equal(Int(got[3]), -6)
+
+
+def test_astype_to_bool_is_nonzero() raises:
+    # numpy: np.array([0., -0., 1.5, -2.], np.float32).astype(bool)
+    # -- the cast is "is this element nonzero", not a rounding, and the
+    # destination comes from `_uninitialized`, so an all-false answer being
+    # all false is the garbage check as much as the value check.
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[DType.float32, 4](ctx, [0.0, -0.0, 1.5, -2.0])
+    var got = astype[DType.bool](a).to_host()
+    assert_equal(got[0], False)
+    assert_equal(got[1], False)
+    assert_equal(got[2], True)
+    assert_equal(got[3], True)
+
+    var zeroed = zeros[DType.float32, 5](ctx)
+    var none = astype[DType.bool](zeroed).to_host()
+    for i in range(5):
+        assert_equal(none[i], False)
+
+
+def test_a_dynamic_operand_gives_the_static_answer() raises:
+    """A run-time shape takes the same driver, so it must give the same
+    values as the `Static` of the same extents -- there is one signature per
+    name and the flattening is a layout, not a `coalesce()`."""
+    var ctx = DeviceContext(api="cpu")
+    var left = List[Scalar[dtype]](capacity=6)
+    var right = List[Scalar[dtype]](capacity=6)
+    for i in range(6):
+        left.append(Scalar[dtype](i) * 0.5 - 1.0)
+        right.append(Scalar[dtype](i) * 0.25 + 2.0)
+
+    var a_fixed = Static[dtype, 2, 3](ctx, left.copy())
+    var b_fixed = Static[dtype, 2, 3](ctx, right.copy())
+    var a_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
+    var b_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
+    a_runtime.copy_from_host(left)
+    b_runtime.copy_from_host(right)
+
+    var from_static = multiply(a_fixed, b_fixed).to_host()
+    var from_dynamic = multiply(a_runtime, b_runtime).to_host()
+    assert_equal(len(from_dynamic), 6)
+    for i in range(6):
+        assert_equal(from_dynamic[i], from_static[i])
+
+    var neg_static = negative(a_fixed).to_host()
+    var neg_dynamic = negative(a_runtime).to_host()
+    for i in range(6):
+        assert_equal(neg_dynamic[i], neg_static[i])
+
+    var scaled_static = multiply(a_fixed, 3.0).to_host()
+    var scaled_dynamic = multiply(a_runtime, 3.0).to_host()
+    for i in range(6):
+        assert_equal(scaled_dynamic[i], scaled_static[i])
+
+
+def test_asking_for_a_target_the_tensor_is_not_on_still_answers() raises:
+    """`gpu=True` against a host tensor falls back to the host walk.
+
+    The mismatch prints one line on `stderr` naming the spelling that would
+    have run on the device; the values are the ones the matching path gives.
+    This is the half of the fallback a CPU-only run can exercise -- the
+    other half needs a GPU context. At `float32`, because `gpu=True`
+    compiles a device kernel whether or not the branch is reached at run
+    time and Metal has no `double`.
+    """
+    comptime f32 = DType.float32
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[f32, 4](ctx, [1.0, 2.0, 3.0, 4.0])
+    var b = Static[f32, 4](ctx, [5.0, 6.0, 7.0, 8.0])
+    var row = Static[f32, 1, 4](ctx, [5.0, 6.0, 7.0, 8.0])
+    var matrix = Static[f32, 2, 4](
+        ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    )
+
+    var matched = add(a, b).to_host()
+    var fell_back = add[gpu=True](a, b).to_host()
+    for i in range(4):
+        assert_equal(fell_back[i], matched[i])
+
+    var scaled = multiply(a, Scalar[f32](2.0)).to_host()
+    var scaled_gpu = multiply[gpu=True](a, Scalar[f32](2.0)).to_host()
+    for i in range(4):
+        assert_equal(scaled_gpu[i], scaled[i])
+
+    var negated = negative(a).to_host()
+    var negated_gpu = negative[gpu=True](a).to_host()
+    for i in range(4):
+        assert_equal(negated_gpu[i], negated[i])
+
+    var broadcast = subtract(matrix, row).to_host()
+    var broadcast_gpu = subtract[gpu=True](matrix, row).to_host()
+    for i in range(8):
+        assert_equal(broadcast_gpu[i], broadcast[i])
+
+    var cast = astype[DType.int32](a).to_host()
+    var cast_gpu = astype[DType.int32, gpu=True](a).to_host()
+    for i in range(4):
+        assert_equal(cast_gpu[i], cast[i])
 
 
 def main() raises:

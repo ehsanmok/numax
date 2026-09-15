@@ -636,40 +636,68 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
         except e:
             writer.write("<unreadable: ", String(e), ">")
 
+    # The operators forward to `numax.core.ops` at its default `gpu=False`.
+    # An operator has no parameter list a caller can write `[gpu=True]` in,
+    # so `a + b` on a tensor that lives on a GPU context runs the host walk
+    # `_drive` retains and prints one line on `stderr` naming `add[gpu=True]`
+    # -- the function is the device spelling, and the operator says so
+    # rather than silently costing a round trip.
+
     def __add__(self, other: Self) raises -> Self:
-        """`a + b`, elementwise. Forwards to `numax.core.ops.add`."""
+        """`a + b`, elementwise. Forwards to `numax.core.ops.add`.
+
+        On a GPU-context tensor this runs on the host and says so on
+        `stderr`; `numax.core.ops.add[gpu=True](a, b)` is the device
+        spelling.
+        """
         return _add(self, other)
 
     def __add__(self, other: Scalar[Self.dtype]) raises -> Self:
-        """`a + b` with a scalar `b`."""
+        """`a + b` with a scalar `b`. Host-side; see `__add__` above."""
         return _add(self, other)
 
     def __sub__(self, other: Self) raises -> Self:
-        """`a - b`, elementwise. Forwards to `numax.core.ops.subtract`."""
+        """`a - b`, elementwise. Forwards to `numax.core.ops.subtract`.
+
+        Host-side on a GPU-context tensor, with the notice `__add__`
+        describes; `subtract[gpu=True]` is the device spelling.
+        """
         return _subtract(self, other)
 
     def __sub__(self, other: Scalar[Self.dtype]) raises -> Self:
-        """`a - b` with a scalar `b`."""
+        """`a - b` with a scalar `b`. Host-side; see `__add__` above."""
         return _subtract(self, other)
 
     def __mul__(self, other: Self) raises -> Self:
-        """`a * b`, elementwise. Forwards to `numax.core.ops.multiply`."""
+        """`a * b`, elementwise. Forwards to `numax.core.ops.multiply`.
+
+        Host-side on a GPU-context tensor, with the notice `__add__`
+        describes; `multiply[gpu=True]` is the device spelling.
+        """
         return _multiply(self, other)
 
     def __mul__(self, other: Scalar[Self.dtype]) raises -> Self:
-        """`a * b` with a scalar `b`."""
+        """`a * b` with a scalar `b`. Host-side; see `__add__` above."""
         return _multiply(self, other)
 
     def __truediv__(self, other: Self) raises -> Self:
-        """`a / b`, elementwise. Forwards to `numax.core.ops.divide`."""
+        """`a / b`, elementwise. Forwards to `numax.core.ops.divide`.
+
+        Host-side on a GPU-context tensor, with the notice `__add__`
+        describes; `divide[gpu=True]` is the device spelling.
+        """
         return _divide(self, other)
 
     def __truediv__(self, other: Scalar[Self.dtype]) raises -> Self:
-        """`a / b` with a scalar `b`."""
+        """`a / b` with a scalar `b`. Host-side; see `__add__` above."""
         return _divide(self, other)
 
     def __neg__(self) raises -> Self:
-        """`-a`, elementwise. Forwards to `numax.core.ops.negative`."""
+        """`-a`, elementwise. Forwards to `numax.core.ops.negative`.
+
+        Host-side on a GPU-context tensor, with the notice `__add__`
+        describes; `negative[gpu=True]` is the device spelling.
+        """
         return _negative(self)
 
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
