@@ -4,13 +4,24 @@ Every comparison and predicate is checked elementwise against a
 hand-computed expected mask; the reductions are checked on inputs that
 force both the short-circuit and the full walk. NaN and both infinities are
 exercised directly, since those are the cases the predicates exist for.
+
+The routing tests at the bottom make the claims the `numax.core._drive`
+move added. A comparison now runs at the launch width rather than one lane
+at a time, so one test pins per-lane answers across a tensor wider than the
+SIMD width -- `a == b` on a SIMD vector returns a single `Bool`, which
+would splat one lane's answer across all of them. A mask with no true
+element is pinned all false, because the destination comes from
+`Tensor._uninitialized` and nothing but the launch writes it. A run-time
+shaped `Dynamic` operand gives the `Static` answer, a tensor above the
+threading threshold gives the serial path's answer, and asking for a target
+the tensor is not on still answers with the values the matching path gives.
 """
 
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor
+from numax.core.array import Dynamic, Static, Tensor, zeros_dyn
 from numax.core.logic import (
     all,
     allclose,
@@ -217,6 +228,223 @@ def test_broadcast_comparison_agrees_with_the_same_shape_overload() raises:
     var direct = less_equal(a, wide).to_host()
     for i in range(4):
         assert_equal(broadcast[i], direct[i])
+
+
+def test_comparison_answers_every_lane_across_the_launch_width() raises:
+    """Per-lane truth, on a tensor wider than the native SIMD width.
+
+    The drivers call the comparison at the launch width. `a == b` on a SIMD
+    vector returns one `Bool` rather than a mask, so a width-generic step
+    written with the operator would splat the first lane's answer across
+    every lane; the method spellings (`a.eq(b)`, `a.lt(b)`) are what make
+    this alternating pattern come out alternating.
+    """
+    comptime n = 12
+    var left = List[Float64](capacity=n)
+    var right = List[Float64](capacity=n)
+    for i in range(n):
+        left.append(Float64(i))
+        right.append(Float64(i) if i % 2 == 0 else Float64(i) + 1.0)
+
+    var a = _tensor[n](left)
+    var b = _tensor[n](right)
+    var eq = equal(a, b).to_host()
+    var ne = not_equal(a, b).to_host()
+    var lt = less(a, b).to_host()
+    var ge = greater_equal(a, b).to_host()
+    for i in range(n):
+        var same = i % 2 == 0
+        assert_equal(eq[i], same)
+        assert_equal(ne[i], not same)
+        assert_equal(lt[i], not same)
+        assert_equal(ge[i], same)
+
+
+def test_a_mask_with_no_true_element_is_all_false() raises:
+    """Garbage detection for `_uninitialized` at `DType.bool`.
+
+    The destination is allocated without being zeroed, so a launch that
+    failed to write a lane would leave whatever was in the buffer. Every
+    one of these masks is false everywhere, across more lanes than one
+    launch width.
+    """
+    comptime n = 20
+    var values = List[Float64](capacity=n)
+    for i in range(n):
+        values.append(Float64(i) + 1.0)
+    var a = _tensor[n](values)
+    var b = _tensor[n](values)
+
+    var never_less = less(a, b).to_host()
+    var never_nan = isnan(a).to_host()
+    var never_inf = isinf(a).to_host()
+    var never_posinf = isposinf(a).to_host()
+    var never_neginf = isneginf(a).to_host()
+    for i in range(n):
+        assert_false(never_less[i])
+        assert_false(never_nan[i])
+        assert_false(never_inf[i])
+        assert_false(never_posinf[i])
+        assert_false(never_neginf[i])
+
+    var all_true = _bools[n](List[Bool](length=n, fill=True))
+    var none = logical_not(all_true).to_host()
+    var neither = logical_xor(all_true, all_true).to_host()
+    for i in range(n):
+        assert_false(none[i])
+        assert_false(neither[i])
+
+
+def test_nan_compares_false_except_through_not_equal() raises:
+    """IEEE's rule, per lane: NaN is unordered against everything.
+
+    `NaN == NaN` is false, `NaN != x` is true for every `x` including
+    itself, and all four orderings are false -- which is why `isnan` exists
+    at all.
+    """
+    var inf = Float64(1.0) / Float64(0.0)
+    var nan = inf - inf
+    var a = _tensor[6]([nan, nan, nan, 1.0, nan, nan])
+    var b = _tensor[6]([nan, 1.0, -1.0, nan, 0.0, inf])
+
+    var eq = equal(a, b).to_host()
+    var ne = not_equal(a, b).to_host()
+    var lt = less(a, b).to_host()
+    var le = less_equal(a, b).to_host()
+    var gt = greater(a, b).to_host()
+    var ge = greater_equal(a, b).to_host()
+    for i in range(6):
+        assert_false(eq[i])
+        assert_true(ne[i])
+        assert_false(lt[i])
+        assert_false(le[i])
+        assert_false(gt[i])
+        assert_false(ge[i])
+
+    var nans = isnan(a).to_host()
+    assert_true(nans[0] and nans[1] and nans[2] and not nans[3])
+
+
+def test_isclose_honors_tolerances_given_explicitly() raises:
+    """Both tolerances, each on its own: `atol` decides near zero and
+    `rtol` scales with `abs(b)`, exactly `numpy.isclose`'s formula."""
+    var a = _tensor[4]([0.0, 0.0, 100.0, 100.0])
+    var b = _tensor[4]([0.5, 2.0, 100.5, 110.0])
+
+    # atol alone, rtol off: 0.5 is inside a 1.0 absolute window, 2.0 is not.
+    var absolute = isclose(a, b, rtol=0.0, atol=1.0).to_host()
+    assert_true(absolute[0])
+    assert_false(absolute[1])
+
+    # rtol alone, atol off: 0.5 out of 100.5 is inside 1%, 10 out of 110 is not.
+    var relative = isclose(a, b, rtol=0.01, atol=0.0).to_host()
+    assert_true(relative[2])
+    assert_false(relative[3])
+
+
+def test_a_dynamic_operand_gives_the_static_answer() raises:
+    """Run-time extents take the same driver, so the mask is the same."""
+    var ctx = DeviceContext(api="cpu")
+    var left = List[Scalar[dtype]](capacity=6)
+    var right = List[Scalar[dtype]](capacity=6)
+    for i in range(6):
+        left.append(Scalar[dtype](i) - 2.0)
+        right.append(Scalar[dtype](1.0))
+
+    var a_fixed = Static[dtype, 2, 3](ctx, left.copy())
+    var b_fixed = Static[dtype, 2, 3](ctx, right.copy())
+    var a_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
+    var b_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
+    a_runtime.copy_from_host(left)
+    b_runtime.copy_from_host(right)
+
+    var from_static = greater(a_fixed, b_fixed).to_host()
+    var from_dynamic = greater(a_runtime, b_runtime).to_host()
+    assert_equal(len(from_dynamic), 6)
+    for i in range(6):
+        assert_equal(from_dynamic[i], from_static[i])
+
+    var finite_static = isfinite(a_fixed).to_host()
+    var finite_dynamic = isfinite(a_runtime).to_host()
+    for i in range(6):
+        assert_equal(finite_dynamic[i], finite_static[i])
+
+    var close_static = isclose(a_fixed, b_fixed).to_host()
+    var close_dynamic = isclose(a_runtime, b_runtime).to_host()
+    for i in range(6):
+        assert_equal(close_dynamic[i], close_static[i])
+
+
+def test_above_the_threading_threshold_the_mask_is_the_same() raises:
+    """100003 elements is past `_drive`'s `1 << 16`, so this runs through
+    `elementwise[target="cpu"]` rather than the serial loop; a comparison
+    stores `SIMD[DType.bool, w]` on that path too."""
+    comptime n = 100003
+    var ctx = DeviceContext(api="cpu")
+    var left = List[Scalar[dtype]](capacity=n)
+    var right = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        left.append(Scalar[dtype](i % 7))
+        right.append(Scalar[dtype](3))
+
+    var a = Static[dtype, n](ctx, left.copy())
+    var b = Static[dtype, n](ctx, right.copy())
+    var mask = greater(a, b).to_host()
+    for i in range(n):
+        assert_equal(mask[i], left[i] > right[i])
+
+
+def test_asking_for_a_target_the_tensor_is_not_on_still_answers() raises:
+    """`gpu=True` against a host tensor falls back to the host walk.
+
+    The mismatch prints one line on `stderr` naming the spelling that would
+    have run on the device; the values are the ones the matching path
+    gives. This is the half of the fallback a CPU-only run can exercise --
+    the other half needs a GPU context, and
+    `examples/advanced/unified_tensor_gpu.mojo` is where it runs. At
+    `float32`, because `gpu=True` compiles a device kernel whether or not
+    the branch is reached at run time and Metal has no `double`.
+    """
+    comptime f32 = DType.float32
+    var ctx = DeviceContext(api="cpu")
+    var a = Static[f32, 4](ctx, [1.0, 2.0, 3.0, 4.0])
+    var b = Static[f32, 4](ctx, [4.0, 3.0, 2.0, 1.0])
+    var row = Static[f32, 1, 4](ctx, [4.0, 3.0, 2.0, 1.0])
+    var matrix = Static[f32, 2, 4](
+        ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    )
+    var mask = Static[DType.bool, 4](ctx, [True, False, True, False])
+
+    var matched = greater(a, b).to_host()
+    var fell_back = greater[gpu=True](a, b).to_host()
+    for i in range(4):
+        assert_equal(fell_back[i], matched[i])
+
+    var finite = isfinite(a).to_host()
+    var finite_gpu = isfinite[gpu=True](a).to_host()
+    for i in range(4):
+        assert_equal(finite_gpu[i], finite[i])
+
+    var inverted = logical_not(mask).to_host()
+    var inverted_gpu = logical_not[gpu=True](mask).to_host()
+    var conjunction = logical_and(mask, mask).to_host()
+    var conjunction_gpu = logical_and[gpu=True](mask, mask).to_host()
+    for i in range(4):
+        assert_equal(inverted_gpu[i], inverted[i])
+        assert_equal(conjunction_gpu[i], conjunction[i])
+
+    var close = isclose(a, b).to_host()
+    var close_gpu = isclose[gpu=True](a, b).to_host()
+    for i in range(4):
+        assert_equal(close_gpu[i], close[i])
+
+    var broadcast = less_equal(matrix, row).to_host()
+    var broadcast_gpu = less_equal[gpu=True](matrix, row).to_host()
+    for i in range(8):
+        assert_equal(broadcast_gpu[i], broadcast[i])
+
+    assert_equal(array_equal[gpu=True](a, b), array_equal(a, b))
+    assert_equal(allclose[gpu=True](a, b), allclose(a, b))
 
 
 def main() raises:

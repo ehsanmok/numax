@@ -7,11 +7,13 @@ and by nothing else. `DeviceContext(api="cpu")` puts it in host memory,
 parameters, the factory names, and `.view()`'s `TileTensor` type are
 identical either way.
 
-It then runs one of the NumPy-named routines, `numax.exp`, on the same
-device tensor. Those took a host copy of the elements and walked them one
-at a time until 0.2; `exp[gpu=True]` now launches over the tensor where it
-already lives, and `exp(a)` on a device tensor still answers -- on the host,
-with a line on `stderr` naming the spelling that would not have.
+It then runs two of the NumPy-named routines on the same device tensor:
+`numax.exp`, and the comparison `numax.greater`, whose result is a
+`DType.bool` tensor written by the launch itself. Those took a host copy of
+the elements and walked them one at a time until 0.2; `exp[gpu=True]` and
+`greater[gpu=True]` now launch over the tensor where it already lives, and
+`exp(a)` on a device tensor still answers -- on the host, with a line on
+`stderr` naming the spelling that would not have.
 
 This example runs one `FloatLike` kernel over the same tensor type on both
 devices and checks the results agree elementwise to within one float32 ulp
@@ -30,8 +32,8 @@ so this is a local/manual example rather than a CI one -- the same reason
 
 from max.gpu.host import DeviceContext
 
-from numax import Plain, exp, gaussian
-from numax.core.array import Static, Tensor, linspace
+from numax import Plain, exp, gaussian, greater
+from numax.core.array import Static, Tensor, linspace, zeros
 from numax.core.tensor import map
 
 comptime dtype = DType.float32
@@ -110,3 +112,20 @@ def main() raises:
         if diff > max_exp_diff:
             max_exp_diff = diff
     print("max |exp cpu - exp gpu| =", max_exp_diff)
+
+    # ---- a comparison, whose destination is a bool tensor the launch
+    # writes on the device: the mask has to come back identical, since a
+    # comparison has no last-place freedom the way `exp` does ----
+    var gpu_zero = zeros[dtype, n](gpu)
+    var cpu_zero = zeros[dtype, n](cpu)
+    var device_mask = greater[gpu=True](gpu_xs, gpu_zero).to_host()
+    var host_mask = greater(cpu_xs, cpu_zero).to_host()
+    var mask_agrees = True
+    var positives = 0
+    for i in range(n):
+        if device_mask[i] != host_mask[i]:
+            mask_agrees = False
+        if device_mask[i]:
+            positives += 1
+    print("greater mask positives =", positives, "of", n)
+    print("greater mask identical on both devices:", mask_agrees)

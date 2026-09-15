@@ -16,17 +16,19 @@ from numax.core.tensor import map, reduce, reduce_axis   # the engine
 | `rowwise` | `sum_axis`/`max_axis` -- the same axis reductions delegated to MAX's `algorithm.rowwise` scaffolder and `reduce_op` monoids, one body for both targets, threaded on CPU and tiered on GPU. `tensor`'s `reduce_axis` remains for a fold outside MAX's monoid set |
 | `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators on `Tensor`, the elementwise math surface, comparisons returning `Static[DType.bool]`, and sort/search/mask |
-| `_drive` | Private: the one launch policy behind `ops` and `elementwise` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements |
+| `_drive` | Private: the one launch policy behind `ops`, `elementwise` and `logic` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements |
 | `constants` | `pi` and `e` at any conformer |
 
 The conformers and `tensor` are tier 1: fixed iteration counts, no
 per-lane branching, launchable inside a GPU thread. `ops`, `elementwise`,
-`logic` and `sorting` are tier 2: `Plain`-only. `ops` and `elementwise` are
-tier 2 in shape only -- like `rowwise`, one body serves both targets through
-`_drive`, and every routine in them takes `gpu: Bool = False` as its last
-compile-time parameter. The operators on `Tensor` forward at that default,
-so `a + b` on a device tensor runs the host walk and says so; `add[gpu=True]`
-is the device spelling. `logic` and `sorting` are still host-side.
+`logic` and `sorting` are tier 2: `Plain`-only. `ops`, `elementwise` and
+`logic` are tier 2 in shape only -- like `rowwise`, one body serves both
+targets through `_drive`, and every routine in them takes `gpu: Bool = False`
+as its last compile-time parameter. The operators on `Tensor` forward at that
+default, so `a + b` on a device tensor runs the host walk and says so;
+`add[gpu=True]` is the device spelling. `logic`'s `all`/`any` return a `Bool`
+and stay host reads, and so does the fold half of `allclose`/`array_equal`.
+`sorting` is still host-side.
 """
 
 from .array import (
