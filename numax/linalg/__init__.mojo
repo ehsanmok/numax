@@ -114,7 +114,10 @@ rotations in a batch are reordered into windows of mutually commuting ones
 (Lang 1998), and each window goes out as one `matmul` of a `w x w`
 rotation product against a `w x n` stripe of `Z^T`. `block == 1` recovers
 the unblocked algorithm exactly. The vectors come back as `inner(q, zt)`
-under `transpose_b=True`.
+under `transpose_b=True`, and that `q` -- LAPACK's `orgtr` -- is formed by
+the same block-reflector walk `qr_factor`'s `.q()` uses, panels of `block`
+reflectors in reverse order and three GEMMs each, reading the reduction's
+packed form through a view shifted one row down.
 
 `svd` and `svdvals` take the same two phases over a bidiagonal form:
 `gebrd` reduces device-resident with every reflector through `matmul`,
@@ -132,8 +135,9 @@ double-shift QR iteration (EISPACK's `hqr2`) runs on the host --
 `eigvals` reads the eigenvalues off its deflations as a `(re, im)` pair,
 and `schur` keeps the quasi-triangular `T`, accumulates the reflectors
 into the Schur vectors and brings them back through the reduction's `Q`
-in one `matmul`. That accumulation is the same `O(n^3)` host ceiling
-`eigh` names, with multishift QR as the upgrade.
+in one `matmul`. That `Q` -- `orghr` -- is the blocked walk `orgtr` uses;
+the rotation accumulation beside it is still the `O(n^3)` host ceiling
+`eigh` named, with multishift QR as the upgrade.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of

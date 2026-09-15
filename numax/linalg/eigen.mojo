@@ -30,8 +30,7 @@ cannot be. This tier is for the sizes that one cannot reach.
 """
 
 from layout import Coord, TileTensor, coord_to_index_list
-from layout.tile_layout import TensorLayout, row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_layout import row_major
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
@@ -51,6 +50,7 @@ from .panel import (
     sytd2_column,
     sytd2_rank_two,
 )
+from .qr import _apply_block_reflector, _ReflectorWork
 
 
 struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
@@ -83,68 +83,44 @@ struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
     """One Householder scale per column; `taus[k] == 0` where the column
     was already reduced and the reflection is the identity."""
 
+    var block: Int
+    """The panel width `.q()` forms `Q` in, carried from `sytrd`."""
+
     def __init__(
         out self,
         var d: Static[Self.dtype, Self.n],
         var e: Static[Self.dtype, Self.n],
         var reflectors: Static[Self.dtype, Self.n, Self.n],
         var taus: Static[Self.dtype, Self.n],
+        block: Int,
     ):
         self.d = d^
         self.e = e^
         self.reflectors = reflectors^
         self.taus = taus^
+        self.block = block
 
-    def q(mut self) raises -> Static[Self.dtype, Self.n, Self.n]:
+    def q(
+        mut self,
+    ) raises -> Static[
+        Self.dtype, Self.n, Self.n
+    ] where Self.dtype.is_floating_point():
         """Materialize `Q`, the orthogonal matrix of the reduction.
         LAPACK's `orgtr`.
 
-        `Q = H_0 H_1 ... H_{n-3}`, accumulated in reverse so each
-        reflection meets a matrix that is already the product of the ones
-        after it. Each step is `Q -= tau v (v^T Q)`, which is a
-        matrix-vector product and a rank-one update, both `linalg.matmul`.
+        `Q = H_0 H_1 ... H_{n-3}` applied to the identity, panels of
+        `block` reflectors in reverse order, each panel one block
+        reflector -- `larft` then `C := (I - V T V^T) C` as three matrix
+        products. That is `_accumulate_reflectors`, and it is `TensorQR`'s
+        `orgqr` walk over the same kernels.
 
-        `O(n^3)` and one allocation per step -- the same shape as `sytrd`
-        itself, and the same `ponytail:` ceiling applies. A caller who only
-        wants eigenvalues should not call this; `eigvalsh` does not.
+        Still `O(n^3)`, but the cubic term is `linalg.matmul`'s rather
+        than `n` matrix-vector launches. A caller who only wants
+        eigenvalues should not call this; `eigvalsh` does not.
         """
         return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
-            self.reflectors, self.taus, Self.n - 2
+            self.reflectors, self.taus, Self.n - 2, self.block
         )
-
-
-def _write_vpad[
-    dtype: DType,
-    ALayout: TensorLayout,
-    VLayout: TensorLayout,
-    gpu: Bool = False,
-](
-    packed: TileTensor[
-        dtype, ALayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ],
-    vpad: TileTensor[
-        dtype, VLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ],
-    k: Int,
-    n: Int,
-    ctx: DeviceContext,
-) raises:
-    """Unpack column `k`'s reflector into a full-length vector: zero at and
-    above `k`, `1` at `k + 1`, `v` below."""
-
-    @always_inline
-    def fill[
-        w: Int, alignment: Int = 1
-    ](coord: Coord) {var packed, var vpad, var k}:
-        var i = coord_to_index_list(coord)[0]
-        var value = Scalar[dtype](0)
-        if i == k + 1:
-            value = Scalar[dtype](1)
-        elif i > k + 1:
-            value = packed[Coord(i, k)]
-        vpad.store[1](coord, value)
-
-    elementwise[simd_width=1, target=_target[gpu]()](fill, Coord(n), ctx)
 
 
 def _row_combination[
@@ -209,10 +185,10 @@ def _rank_one_subtract[
 
 
 def sytrd[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> TensorTridiagonal[
-    dtype, n, gpu
-] where dtype.is_floating_point():
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
+](mut a: Static[dtype, n, n]) raises -> TensorTridiagonal[dtype, n, gpu] where (
+    dtype.is_floating_point() and block >= 1
+):
     """**Tier 2.** Reduce a symmetric `a` to tridiagonal form by
     Householder reflections, device-resident. LAPACK's `sytrd`.
 
@@ -243,6 +219,10 @@ def sytrd[
     the same single-GEMM identity this already uses at `block == 1`. The
     `dot` per column is also a device-to-host synchronization; a blocked
     panel amortizes those too.
+
+    `block` is that panel width. The reduction itself does not read it
+    yet; it is carried on the result so `.q()` forms `Q` in panels of
+    `block` reflectors, and `latrd` will take the same number.
 
     `numax.linalg.array.eigh` is the small-matrix route and needs none of
     this: cyclic Jacobi at a fixed sweep count, differentiable, and
@@ -345,7 +325,7 @@ def sytrd[
     d.copy_from_host(d_host)
     e.copy_from_host(e_host)
 
-    return TensorTridiagonal[dtype, n, gpu](d^, e^, work^, taus^)
+    return TensorTridiagonal[dtype, n, gpu](d^, e^, work^, taus^, block)
 
 
 def _subtract_rank_two[
@@ -909,41 +889,70 @@ def eigh[
 def _accumulate_reflectors[
     dtype: DType, n: Int, gpu: Bool = False
 ](
-    mut reflectors: Static[dtype, n, n], mut taus: Static[dtype, n], count: Int
-) raises -> Static[dtype, n, n]:
+    mut reflectors: Static[dtype, n, n],
+    mut taus: Static[dtype, n],
+    count: Int,
+    block: Int,
+) raises -> Static[dtype, n, n] where dtype.is_floating_point():
     """`Q = H_0 H_1 ... H_{count-1}` from `count` reflectors held in LAPACK's
     packed form -- column `k` carries `v` below row `k + 1` with its leading
-    `1` implicit -- accumulated in reverse so each reflection meets a
-    matrix that is already the product of the ones after it. LAPACK's
-    `orgtr` and `orghr` are both this.
+    `1` implicit -- applied to the identity in panels of `block`, last panel
+    first. LAPACK's `orgtr` and `orghr` are both this.
 
-    Each step is `Q -= tau v (v^T Q)`, a matrix-vector product and a
-    rank-one update, both `linalg.matmul`: `O(n^3)` with one allocation per
-    step, the same shape and the same `ponytail:` ceiling as the reductions
-    that produced the reflectors. A caller who only wants eigenvalues never
-    calls this.
+    The panel walk is `TensorQR.q()`'s and so are the kernels:
+    `larft_panel` builds the panel's `T`, `pack_reflectors` materializes
+    `V` and `V^T`, and `_apply_block_reflector` applies `I - V T V^T` as
+    `W = V^T C`, `Y = T W`, `C -= V Y`. Three GEMMs and two small launches
+    per panel, against the `3 * count` launches and `2 * count` device
+    synchronizations the per-reflector walk needed.
+
+    **The one adapter.** A reduction to tridiagonal or Hessenberg form
+    puts the implicit unit at row `k + 1`, one below the row a QR puts it
+    on, so `reflectors` is handed to those kernels through a view shifted
+    one row down -- `n - 1` rows over the same memory, no copy. `taus`
+    indexes unshifted, which is what both kernels already do. In the
+    shifted frame the panel at `k` is exactly QR's, and the block it
+    updates is the `(n - 1 - k)` square of `Q` at `(k + 1, k + 1)`: the
+    columns to its left are untouched because `V^T e_j` is zero there.
+
+    A caller who only wants eigenvalues never calls this.
     """
     var ctx = reflectors.context()
-    var result = zeros[dtype, n, n](ctx)
-    var host = result.to_host()
-    for i in range(n):
-        host[i * n + i] = Scalar[dtype](1)
-    result.copy_from_host(host)
+    var result = Static[dtype, n, n]._uninitialized(ctx)
+    var out: _Dense[dtype] = TileTensor(
+        result.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    )
+    _device_identity[dtype, gpu](out, n, n, ctx)
     if count <= 0:
+        ctx.synchronize()
         return result^
 
-    var packed = reflectors.view()
-    var vpad = zeros[dtype, n](ctx)
-    var product = zeros[dtype, n, n](ctx)
-    var tau_host = taus.to_host()
-    var k = count - 1
-    while k >= 0:
-        var this_tau = tau_host[k]
-        if this_tau != 0:
-            _write_vpad[gpu=gpu](packed, vpad.view(), k, n, ctx)
-            var y = _row_combination[gpu=gpu](result, vpad)
-            _rank_one_subtract[gpu=gpu](result, vpad, y, this_tau, product, ctx)
-        k -= 1
+    var shifted: _Dense[dtype] = TileTensor(
+        reflectors.view().ptr_at_offset(Coord(1, 0)),
+        row_major(Coord(n - 1, n)),
+    )
+    var tv = taus.view()
+    var work = _ReflectorWork[dtype](n - 1, n, block, ctx)
+    var steps = (count + block - 1) // block
+    for step in range(steps):
+        var k = (steps - 1 - step) * block
+        var nb = min(block, count - k)
+        _apply_block_reflector[transposed=False, gpu=gpu](
+            shifted,
+            tv,
+            out,
+            k,
+            nb,
+            n - 1,
+            n - 1 - k,
+            n - 1 - k,
+            k + 1,
+            k + 1,
+            work,
+            ctx,
+        )
+
+    ctx.synchronize()
     return result^
 
 
@@ -1007,29 +1016,46 @@ struct TensorHessenberg[dtype: DType, n: Int, gpu: Bool = False](
     """One Householder scale per column; zero where the column was already
     in Hessenberg form."""
 
+    var block: Int
+    """The panel width `.q()` forms `Q` in, carried from `hessenberg`."""
+
     def __init__(
         out self,
         var h: Static[Self.dtype, Self.n, Self.n],
         var reflectors: Static[Self.dtype, Self.n, Self.n],
         var taus: Static[Self.dtype, Self.n],
+        block: Int,
     ):
         self.h = h^
         self.reflectors = reflectors^
         self.taus = taus^
+        self.block = block
 
-    def q(mut self) raises -> Static[Self.dtype, Self.n, Self.n]:
-        """Materialize `Q`, LAPACK's `orghr`; see `_accumulate_reflectors`
-        for the cost."""
+    def q(
+        mut self,
+    ) raises -> Static[
+        Self.dtype, Self.n, Self.n
+    ] where Self.dtype.is_floating_point():
+        """Materialize `Q`, LAPACK's `orghr`: the reflectors applied to
+        the identity in panels of `block`, three GEMMs each. See
+        `_accumulate_reflectors`.
+
+        A column whose reflection was the identity carries an unwritten
+        `v` of zeros here rather than the packed form the reduction left
+        in `sytrd`'s work matrix; both read the same, because `larft`
+        gives a zero `tau` a zero column of `T` and the panel never sees
+        that reflector again.
+        """
         return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
-            self.reflectors, self.taus, Self.n - 2
+            self.reflectors, self.taus, Self.n - 2, self.block
         )
 
 
 def hessenberg[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> TensorHessenberg[
-    dtype, n, gpu
-] where dtype.is_floating_point():
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
+](mut a: Static[dtype, n, n]) raises -> TensorHessenberg[dtype, n, gpu] where (
+    dtype.is_floating_point() and block >= 1
+):
     """**Tier 2.** Reduce a general square `a` to upper Hessenberg form by
     Householder reflections, device-resident. LAPACK's `gehrd`,
     `scipy.linalg.hessenberg`.
@@ -1049,6 +1075,9 @@ def hessenberg[
     `10n^3/3`) and matrix-vector shaped products. The upgrade is the blocked
     `gehrd` with `lahr2`, which accumulates a panel's reflectors and applies
     them as GEMMs.
+
+    `block` is that panel width, carried on the result and read by `.q()`
+    alone until `lahr2` lands.
 
     `numax.linalg.array.hessenberg` is the `FloatLike`-generic sibling for
     matrices small enough to live in registers.
@@ -1111,7 +1140,7 @@ def hessenberg[
         _rank_one_subtract[gpu=gpu](work, u, vpad, this_tau, product, ctx)
 
     _ = scratch^
-    return TensorHessenberg[dtype, n, gpu](work^, reflectors^, taus^)
+    return TensorHessenberg[dtype, n, gpu](work^, reflectors^, taus^, block)
 
 
 comptime _MAX_QR_SWEEPS_PER_N = 30

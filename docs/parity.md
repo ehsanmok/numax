@@ -192,7 +192,13 @@ has each algorithm and its ceiling.
   the eigenvectors of `A` come back as `inner(q, zt)` under
   `transpose_b=True`, never transposing it. The host keeps
   `O(block * n^2)` of contiguous-row work building the products, and
-  `block == 1` recovers the unblocked algorithm exactly. `svd` shares the
+  `block == 1` recovers the unblocked algorithm exactly. Forming the
+  reduction's own `Q` -- LAPACK's `orgtr` and `orghr` -- is blocked too,
+  and by reuse rather than by a second implementation: `sytrd` and
+  `hessenberg` take the same `block`, and `.q()` runs `qr_factor`'s
+  reverse panel walk over the packed reflectors through a view shifted one
+  row down, since a tridiagonal reduction puts the implicit unit one row
+  below a QR's. `svd` shares the
   same sweep and so the same accumulation, but at `2n` and with a host
   de-interleave of `U` and `V` after it; `schur`'s Francis sweep still
   rotates one column pair at a time on the host. `svd` and `svdvals` take the

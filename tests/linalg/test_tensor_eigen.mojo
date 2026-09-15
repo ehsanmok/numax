@@ -145,6 +145,78 @@ def test_sytrd_q_is_orthogonal() raises:
             assert_almost_equal(identity[i * n + j], want, atol=1e-12)
 
 
+def _sytrd_q_at[
+    n: Int, block: Int
+](want: List[Scalar[dtype]]) raises where block >= 1:
+    """Form `Q` from a Hilbert `n` reduction at this panel width and pin it
+    entry by entry to the reference answer."""
+    var a = _hilbert[n]()
+    var reduced = sytrd[dtype, n, False, block](a)
+    var q = reduced.q().to_host()
+    for i in range(n * n):
+        assert_almost_equal(q[i], want[i], atol=1e-12)
+
+
+def test_sytrd_q_matches_the_unblocked_accumulation() raises:
+    # `block` decides only how many reflectors ride in one block reflector,
+    # so `Q` has to come out the same at every width. `block == 1` is the
+    # sharp end -- one reflector per panel, which is the per-reflector walk
+    # this replaced -- and `block == n` is the other, a single panel whose
+    # `T` is the whole triangular factor.
+    comptime six = 6
+    var a6 = _hilbert[six]()
+    var ref6 = sytrd[dtype, six, False, six](a6)
+    var want6 = ref6.q().to_host()
+    _sytrd_q_at[six, 1](want6)
+    _sytrd_q_at[six, 2](want6)
+    _sytrd_q_at[six, 3](want6)
+    _sytrd_q_at[six, six](want6)
+
+    comptime five = 5
+    var a5 = _hilbert[five]()
+    var ref5 = sytrd[dtype, five, False, five](a5)
+    var want5 = ref5.q().to_host()
+    _sytrd_q_at[five, 1](want5)
+    _sytrd_q_at[five, 2](want5)
+
+
+def test_sytrd_q_at_a_ragged_panel_width() raises:
+    # `n = 7` leaves five reflectors, so `block = 3` runs a full panel and
+    # a two-wide one -- and the ragged panel is applied *first*, which is
+    # where a scratch viewed at two widths would show up.
+    comptime n = 7
+    comptime block = 3
+    var a = _hilbert[n]()
+    var original = _copy_of(a)
+    var reduced = sytrd[dtype, n, False, block](a)
+    var q = reduced.q()
+    var qt = transpose(q)
+
+    var identity = matmul(qt, q).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(identity[i * n + j], want, atol=1e-12)
+
+    var ctx = a.context()
+    var t = zeros[dtype, n, n](ctx)
+    var band = t.to_host()
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    for i in range(n):
+        band[i * n + i] = d[i]
+    for i in range(n - 1):
+        band[(i + 1) * n + i] = e[i]
+        band[i * n + (i + 1)] = e[i]
+    t.copy_from_host(band)
+
+    var half = matmul(q, t)
+    var back = matmul(half, qt).to_host()
+    var source = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
+
+
 def test_sytrd_preserves_the_trace() raises:
     """The cheapest similarity invariant, and the one that fails loudly if
     a reflector is scaled wrongly."""
@@ -910,6 +982,52 @@ def test_hessenberg_is_zero_below_the_subdiagonal_and_a_similarity() raises:
     var source = original.to_host()
     for i in range(n * n):
         assert_almost_equal(back[i], source[i], atol=1e-12)
+
+
+def _hessenberg_q_at[
+    block: Int
+](mut a: Static[dtype, 4, 4]) raises where block >= 1:
+    """`Q^T Q = I` and `Q H Q^T = A` for a 4x4 reduction at this panel
+    width -- the two claims that say the panels were applied in the right
+    order and on the right rows."""
+    comptime n = 4
+    var original = _copy_of(a)
+    var reduced = hessenberg[dtype, n, False, block](a)
+    var q = reduced.q()
+    var qt = transpose(q)
+
+    var identity = matmul(qt, q).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(identity[i * n + j], want, atol=1e-12)
+
+    var half = matmul(q, reduced.h)
+    var back = matmul(half, qt).to_host()
+    var source = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
+
+
+def test_hessenberg_q_is_orthogonal_at_every_block() raises:
+    # `orghr` reads the same packed form `orgtr` does, except that a column
+    # whose reflection was the identity is left as written zeros rather
+    # than the reduced matrix's own entries. Both fixtures, both ends of
+    # the `block` range.
+    comptime n = 4
+    var a1 = _matrix_a()
+    _hessenberg_q_at[1](a1)
+    var a2 = _matrix_a()
+    _hessenberg_q_at[2](a2)
+    var a3 = _matrix_a()
+    _hessenberg_q_at[n](a3)
+
+    var b1 = _matrix_b()
+    _hessenberg_q_at[1](b1)
+    var b2 = _matrix_b()
+    _hessenberg_q_at[2](b2)
+    var b3 = _matrix_b()
+    _hessenberg_q_at[n](b3)
 
 
 def test_hessenberg_of_a_two_by_two_is_itself() raises:

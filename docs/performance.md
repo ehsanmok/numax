@@ -574,6 +574,11 @@ puts sizes on it:
   matvec launches. `svd` gets the same accumulation through the same
   sweep but keeps its `2n` width and its host de-interleave of `U` and
   `V`, and `schur` is untouched.
+
+  That `q()` is blocked now too -- `orgtr` and `orghr` run `qr_factor`'s
+  panel walk, three GEMMs per `block` reflectors instead of `3n` launches
+  and `2n` synchronizations -- so the `eigh` row is stale a second time
+  and the same sweep replaces it.
 - **The reductions are BLAS-2, not BLAS-3.** `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
