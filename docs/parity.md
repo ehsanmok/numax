@@ -207,8 +207,12 @@ has each algorithm and its ceiling.
   `gebrd` takes the same `block` and `.q()`/`.p()` run the same panel walk,
   `.p()` reaching it through one transposing pack since the right
   reflectors are held as rows. The `2n` doubling itself stays until
-  `bdsqr`. `schur`'s Francis sweep still
-  rotates one column pair at a time on the host. `svd` and `svdvals` take the
+  `bdsqr`. `schur` shares the same batch at **reach two**,
+  since a Francis reflector spans three columns where a Givens rotation
+  spans two: the tag becomes `(k + 2 s) // block` applied in *increasing*
+  order (the chase ascends and the window slides two columns down per
+  sweep), `block // 2` sweeps ride in one batch, and the `2 x 2` real split
+  rotation is pushed as a sweep of its own. `svd` and `svdvals` take the
   same two phases over a bidiagonal form: `gebrd` reduces device-resident
   with alternating left and right reflectors, each a matrix-vector product
   and a rank-one update through `matmul`, and the singular values are the
@@ -223,10 +227,18 @@ has each algorithm and its ceiling.
   `matmul`-shaped launches per column, then the Francis double-shift QR
   iteration -- EISPACK's `hqr2`, LAPACK's `dlahqr` -- runs on the host,
   `eigvals` reading the eigenvalues off its deflations and `schur` keeping
-  the quasi-triangular `T` and accumulating the reflectors into the Schur
-  vectors, brought back through the reduction's `Q` in one `matmul`. Same
-  host ceiling as `eigh`, same upgrade (multishift QR with aggressive early
-  deflation, `dhseqr`). `numax/linalg/__init__.mojo` carries the reasoning.
+  the quasi-triangular `T` and accumulating the chase's transformations
+  into `Z^T` device-resident, brought back through the reduction's `Q`
+  under `transpose_b=True`. What is left on `schur`'s host side is `T`
+  itself: the far-from-diagonal row and column updates can be deferred only
+  one sweep at a time, because the next chase reads rows a deferred update
+  would already have written, so batching them across sweeps needs many
+  shifts per sweep. **Multishift QR with aggressive early deflation
+  (`dhseqr` driving `dlaqr5`) is therefore filed for 0.3**, as a different
+  algorithm rather than a different schedule; the interim is that `T`'s row
+  update runs down three contiguous rows as one SIMD walk while its column
+  update strides by `n` and stays scalar. `schur`'s own docstring carries
+  the measured split, and `numax/linalg/__init__.mojo` the reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere, and
   nothing at all on Metal or AMD, so `numax.fft` over `Tensor` is an

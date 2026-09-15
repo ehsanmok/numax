@@ -8,14 +8,16 @@ GEMM to hand anything to -- that is a property of the algorithm, not of
 this implementation -- so it runs on the host over `O(n)` numbers and each
 function says so where it happens.
 
-The *rotations* that sweep produces are a different matter, and for `eigh`
-and `svd` they are no longer host work: `_RotationBatch` holds a
-`block`-sweep batch of them, reorders it into windows of mutually
-commuting rotations and applies each window as one `matmul`. `svd` shares
-that machinery through the same sweep, runs it at `2n` -- the Golub-Kahan
-doubling, which stays until `bdsqr` -- and de-interleaves `U` and `V` out
-of the result in one `elementwise` on the device. `schur`'s Francis sweep
-still accumulates its rotations one at a time on the host.
+The *transformations* that sweep produces are a different matter, and they
+are no longer host work: `_RotationBatch` holds a batch of sweeps' worth,
+reorders it into windows of mutually commuting entries and applies each
+window as one `matmul`. `svd` shares that machinery through the same
+sweep, runs it at `2n` -- the Golub-Kahan doubling, which stays until
+`bdsqr` -- and de-interleaves `U` and `V` out of the result in one
+`elementwise` on the device. `schur` shares it too, with the batch at
+reach 2 for the Francis chase's order-three reflectors; what is left on
+its host side is the quasi-triangular `T`, which only multishift QR
+moves, and `schur`'s docstring carries the numbers.
 
 MAX ships nothing to delegate to here. There is no eigensolver, no SVD, no
 `sytrd`, no Jacobi or Givens helper anywhere in `linalg`, `nn`,
@@ -388,26 +390,54 @@ NaN or an infinity, and the raise says so rather than looping forever.
 """
 
 
-struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
-    Movable where dtype.is_floating_point() and N >= 1
-):
-    """The Givens rotations of up to `block` consecutive QL sweeps, held
-    until enough of them have accumulated to go out as GEMMs.
+struct _RotationBatch[
+    dtype: DType,
+    N: Int,
+    gpu: Bool,
+    vectors: Bool,
+    reach: Int = 1,
+    ascending: Bool = False,
+](Movable where dtype.is_floating_point() and N >= 1 and reach >= 1):
+    """The plane transformations of up to one batch of consecutive sweeps,
+    held until enough of them have accumulated to go out as GEMMs.
 
     **Lang's windowing (1998), which is what makes this a GEMM at all.**
-    Two rotations on adjacent index pairs `(i, i+1)` and `(j, j+1)`
-    commute when `|i - j| >= 2`. So within a batch of `K = block`
-    consecutive sweeps, tag rotation `(sweep s, index i)` with
-    `group(s, i) = (i - s + block) // block` and apply the groups in
-    *decreasing* order, each group's rotations in stream order. The only
-    pairs that reordering swaps are ones whose indices are at least two
-    apart: within a sweep `i` descends so the tag never rises, and across
-    sweeps `group(s1, i1) < group(s2, i2)` with `s1 < s2` forces
-    `i2 - i1 >= 1 + (s2 - s1) >= 2`. A group's indices then span at most
-    `block + K = 2 * block` columns, which is the window.
+    Two transformations commute when the column ranges they touch do not
+    meet. `reach` is how far past its own index one entry reaches: `1` for
+    a Givens rotation on the adjacent pair `(i, i+1)`, `2` for a Francis
+    order-three reflector on `i .. i+2`. So entries at `i` and `j` commute
+    when `|i - j| > reach`.
+
+    The two chases this serves run in opposite directions, and each gets
+    the tag whose order is safe to apply in.
+
+    **Descending, reach 1** -- `_tql`'s QL chase, where `i` falls within a
+    sweep. Tag `group(s, i) = (i - s + B) // B` with `B = block` and
+    `K = B` sweeps per batch; apply the groups in *decreasing* order, each
+    group's entries in stream order. The only pairs that reordering swaps
+    are at least two apart: within a sweep `i` descends so the tag never
+    rises, and across sweeps `group(s1, i1) < group(s2, i2)` with `s1 < s2`
+    forces `i2 - i1 >= 1 + (s2 - s1) >= 2`. The `+ B` shifts every tag by
+    exactly one, so it is the same partition in the same order and the
+    numerator never goes negative.
+
+    **Ascending, reach 2** -- `_hqr`'s Francis bulge chase, where `k` rises
+    within a sweep and a later sweep may reach at most two columns further
+    back than the one before it, which is what the `+ 2 s` pays for. Tag
+    `group(s, k) = (k + 2 s) // B` with `K = B // 2` sweeps per batch;
+    apply the groups in *increasing* order. Every dependency edge points at
+    a tag no smaller than its source, which is what makes the reordering
+    exact: within a sweep `k` rises so the tag never falls, and for
+    `s1 < s2` a *non*-commuting pair has `k2 - k1 >= -2` by definition, so
+    `(k2 + 2 s2) - (k1 + 2 s1) >= -2 + 2 (s2 - s1) >= 0`. A tie lands in
+    the same group, where the bucketing is stable and stream order
+    survives. `k + 2 s` is never negative, so no shift is needed here.
+
+    A group's entries then span at most `B + reach * K` columns either way
+    -- `2 * block` -- and that is the window.
 
     So one group is a `w x w` orthogonal factor `U` -- the product of its
-    rotations -- applied to a `w`-column stripe of `Z`. `Z` is held
+    transformations -- applied to a `w`-column stripe of `Z`. `Z` is held
     **transposed** as `zt`, because a column stripe of `Z` is a contiguous
     *row* block of `Z^T`, and a row block is what `matmul` will read
     without a stride: `zt[c_lo:c_lo+w, :] <- U^T @ staged`, where `staged`
@@ -416,14 +446,16 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
 
     `U^T` is built on the host, packed into the first `w*w` entries of
     `ut_host` so the claimed row stride and the memory agree, by the same
-    four lines the unblocked sweep ran on `Z`'s columns -- on `U^T`'s rows
-    instead. That is `O(w)` per rotation against `O(N)`, so the host term
-    falls from `O(N^3)` to `O(block * N^2)` and the `O(N^3)` lands in
-    `linalg.matmul`.
+    lines the unblocked sweep ran on `Z`'s columns -- on `U^T`'s rows
+    instead. Column `j` of `Z` and row `j - c_lo` of `U^T` take identical
+    coefficients, since a factor acting on `Z`'s columns as `Z <- Z G`
+    acts on `U^T`'s rows as `U^T <- G^T U^T`. That is `O(w)` per entry
+    against `O(N)`, so the host term falls from `O(N^3)` to
+    `O(block * N^2)` and the `O(N^3)` lands in `linalg.matmul`.
 
     At `vectors=False` nothing is ever pushed, so every buffer here is a
-    one-element allocation and `eigvalsh` and `svdvals` share the sweep
-    body without paying for it.
+    one-element allocation and `eigvalsh`, `svdvals` and `eigvals` share
+    the sweep bodies without paying for it.
     """
 
     var zt: Dynamic[Self.dtype, 2]
@@ -439,33 +471,63 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
     """Where `U^T` is built before it is uploaded."""
 
     var rot_index: List[Int]
-    """`i` of each logged rotation, an absolute column index."""
+    """`i` of each logged entry, an absolute column index."""
 
     var rot_sweep: List[Int]
-    """Which sweep of the batch each logged rotation came from."""
+    """Which sweep of the batch each logged entry came from."""
+
+    var rot_kind: List[Int]
+    """`0` a rotation on `(i, i+1)`, `2` an order-three reflector on
+    `i .. i+2`, `1` its order-two form. Left empty at `reach == 1`, where
+    every entry is a rotation by construction."""
 
     var rot_cos: List[Scalar[Self.dtype]]
+    """`c` of a rotation, `x` of a reflector."""
+
     var rot_sin: List[Scalar[Self.dtype]]
+    """`s` of a rotation, `y` of a reflector."""
+
+    var rot_z: List[Scalar[Self.dtype]]
+    """`zz` of a reflector, zero for a rotation. Empty at `reach == 1`."""
+
+    var rot_q: List[Scalar[Self.dtype]]
+    """`q` of a reflector. Empty at `reach == 1`."""
+
+    var rot_r: List[Scalar[Self.dtype]]
+    """`r` of a reflector. Empty at `reach == 1`."""
 
     var sweep: Int
-    """Sweeps closed since the last flush; the batch goes out at `block`."""
+    """Sweeps closed since the last flush; the batch goes out at `sweeps`."""
 
     var block: Int
-    """`B` and `K` both: the window is `2 * block` columns wide."""
+    """`B`, the group stride."""
+
+    var sweeps: Int
+    """`K`, sweeps per batch: `B` at reach 1, `B // 2` at reach 2."""
+
+    var window: Int
+    """`B + reach * K`, the widest group the tag admits -- and the row
+    count `staged`, `u_dev` and `ut_host` were sized for."""
 
     def __init__(out self, block: Int, ctx: DeviceContext) raises:
         self.block = max(block, 1)
+        self.sweeps = max(self.block // Self.reach, 1)
         self.sweep = 0
         var side = Self.N if Self.vectors else 1
-        var wide = min(2 * self.block, side)
+        self.window = min(self.block + Self.reach * self.sweeps, side)
+        var wide = self.window
         self.zt = zeros_dyn[Self.dtype, 2](side, side, ctx=ctx)
         self.staged = zeros_dyn[Self.dtype, 2](wide, side, ctx=ctx)
         self.u_dev = zeros_dyn[Self.dtype, 2](wide, wide, ctx=ctx)
         self.ut_host = List[Scalar[Self.dtype]](length=wide * wide, fill=0)
         self.rot_index = List[Int]()
         self.rot_sweep = List[Int]()
+        self.rot_kind = List[Int]()
         self.rot_cos = List[Scalar[Self.dtype]]()
         self.rot_sin = List[Scalar[Self.dtype]]()
+        self.rot_z = List[Scalar[Self.dtype]]()
+        self.rot_q = List[Scalar[Self.dtype]]()
+        self.rot_r = List[Scalar[Self.dtype]]()
         comptime if Self.vectors:
             var seed: _Dense[Self.dtype] = TileTensor(
                 self.zt.view().ptr_at_offset(Coord(0, 0)),
@@ -477,20 +539,53 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
     def push_rotation(
         mut self, i: Int, c: Scalar[Self.dtype], s: Scalar[Self.dtype]
     ):
-        """Log the rotation the sweep just applied to `(d, e)` at index `i`.
+        """Log a rotation on columns `(i, i+1)`.
 
-        `Z <- Z G` with `G = [[c, s], [-s, c]]` on rows `i, i+1`, which is
-        the rotation the unblocked body wrote out by hand.
+        `Z <- Z G` with `G = [[c, s], [-s, c]]`: the new column `i` is
+        `c z_i - s z_{i+1}` and the new column `i+1` is `s z_i + c z_{i+1}`,
+        which is what the unblocked bodies wrote out by hand. `_hqr`'s
+        `2 x 2` split rotation is this one at `c = q`, `s = -p`.
         """
         self.rot_index.append(i)
         self.rot_sweep.append(self.sweep)
         self.rot_cos.append(c)
         self.rot_sin.append(s)
+        comptime if Self.reach > 1:
+            self.rot_kind.append(0)
+            self.rot_z.append(Scalar[Self.dtype](0))
+            self.rot_q.append(Scalar[Self.dtype](0))
+            self.rot_r.append(Scalar[Self.dtype](0))
+
+    def push_reflector(
+        mut self,
+        k: Int,
+        x: Scalar[Self.dtype],
+        y: Scalar[Self.dtype],
+        zz: Scalar[Self.dtype],
+        q: Scalar[Self.dtype],
+        r: Scalar[Self.dtype],
+        notlast: Bool,
+    ):
+        """Log a Francis reflector on columns `k .. k+2`, or on `k, k+1`
+        when `notlast` is false and the bulge has run off the end.
+
+        The column update is `_hqr`'s own, with `p = x z_k + y z_{k+1}
+        (+ zz z_{k+2})` then `z_k -= p`, `z_{k+1} -= q p`,
+        `z_{k+2} -= r p`. Only a `reach >= 2` batch is ever handed one.
+        """
+        self.rot_index.append(k)
+        self.rot_sweep.append(self.sweep)
+        self.rot_kind.append(2 if notlast else 1)
+        self.rot_cos.append(x)
+        self.rot_sin.append(y)
+        self.rot_z.append(zz)
+        self.rot_q.append(q)
+        self.rot_r.append(r)
 
     def end_sweep(mut self, ctx: DeviceContext) raises:
-        """Close a sweep, and flush once `block` of them have closed."""
+        """Close a sweep, and flush once `sweeps` of them have closed."""
         self.sweep += 1
-        if self.sweep >= self.block:
+        if self.sweep >= self.sweeps:
             self._flush(ctx)
 
     def finish(mut self, ctx: DeviceContext) raises:
@@ -498,56 +593,84 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
         self._flush(ctx)
         ctx.synchronize()
 
+    @always_inline
+    def _group(self, k: Int) -> Int:
+        """The window tag of logged entry `k`; see the struct docstring for
+        why each direction's tag is the one that reorders exactly."""
+        comptime if Self.ascending:
+            return (self.rot_index[k] + Self.reach * self.rot_sweep[k]) // (
+                self.block
+            )
+        else:
+            return (
+                self.rot_index[k] - self.rot_sweep[k] + self.block
+            ) // self.block
+
+    @always_inline
+    def _span(self, k: Int) -> Int:
+        """How far past its index entry `k` reaches: `1` for a rotation or
+        an order-two reflector, `2` for an order-three one."""
+        comptime if Self.reach == 1:
+            return 1
+        else:
+            return 2 if self.rot_kind[k] == 2 else 1
+
     def _flush(mut self, ctx: DeviceContext) raises:
         self.sweep = 0
         var count = len(self.rot_index)
         if count == 0:
             return
-        var b = self.block
         var cols = Self.N
 
-        # Bucket the batch by group, stably, so each group's rotations
-        # keep the order the sweeps emitted them in. A linear rescan per
-        # group would cost `O(count * N / block)`, which is the term this
-        # whole commit is removing.
-        var lowest = (self.rot_index[0] - self.rot_sweep[0] + b) // b
+        # Bucket the batch by group, stably, so each group's entries keep
+        # the order the sweeps emitted them in. A linear rescan per group
+        # would cost `O(count * N / block)`, which is the term this whole
+        # machinery is removing.
+        var lowest = self._group(0)
         var highest = lowest
         for k in range(1, count):
-            var g = (self.rot_index[k] - self.rot_sweep[k] + b) // b
+            var g = self._group(k)
             lowest = min(lowest, g)
             highest = max(highest, g)
         var groups = highest - lowest + 1
         var start = List[Int](length=groups + 1, fill=0)
         for k in range(count):
-            var g = (self.rot_index[k] - self.rot_sweep[k] + b) // b - lowest
-            start[g + 1] += 1
+            start[self._group(k) - lowest + 1] += 1
         for g in range(groups):
             start[g + 1] += start[g]
         var cursor = start.copy()
         var ordered = List[Int](length=count, fill=0)
         for k in range(count):
-            var g = (self.rot_index[k] - self.rot_sweep[k] + b) // b - lowest
+            var g = self._group(k) - lowest
             ordered[cursor[g]] = k
             cursor[g] += 1
 
         var zv = self.zt.view()
         for step in range(groups):
-            var g = groups - 1 - step
+            var g = step if Self.ascending else groups - 1 - step
             var first = start[g]
             var last = start[g + 1]
             if first == last:
                 continue
 
             # The exact span the group touches, rather than the formula's
-            # bound: tight, never wider than `2 * block`, and never 1,
-            # since a rotation owns two columns.
+            # bound: tight, never wider than `window`, and never 1, since
+            # the narrowest entry still owns two columns.
             var c_lo = self.rot_index[ordered[first]]
-            var c_hi = c_lo + 1
+            var c_hi = c_lo + self._span(ordered[first])
             for p in range(first + 1, last):
-                var i = self.rot_index[ordered[p]]
-                c_lo = min(c_lo, i)
-                c_hi = max(c_hi, i + 1)
+                var e = ordered[p]
+                c_lo = min(c_lo, self.rot_index[e])
+                c_hi = max(c_hi, self.rot_index[e] + self._span(e))
             var w = c_hi - c_lo + 1
+            if w > self.window:
+                raise Error(
+                    "_RotationBatch: a window of ",
+                    w,
+                    " columns overran the ",
+                    self.window,
+                    " the tag admits",
+                )
 
             self._build_ut(w, c_lo, ordered, first, last)
             self.u_dev.copy_from_host(self.ut_host)
@@ -571,8 +694,12 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
 
         self.rot_index.clear()
         self.rot_sweep.clear()
+        self.rot_kind.clear()
         self.rot_cos.clear()
         self.rot_sin.clear()
+        self.rot_z.clear()
+        self.rot_q.clear()
+        self.rot_r.clear()
 
     def _build_ut(
         mut self,
@@ -586,8 +713,8 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
 
         `U = G_1 G_2 ... G_p` in stream order, so `U^T = G_p^T ... G_1^T`
         is built by left-multiplying by each `G_k^T` in turn -- which is
-        the unblocked body's four lines run on rows `a, a+1` of `U^T`
-        instead of on columns `i, i+1` of `Z`, with `a = i - c_lo`.
+        the unblocked body's lines run on rows `a ..` of `U^T` instead of
+        on columns `i ..` of `Z`, with `a = i - c_lo`.
         """
         comptime lanes = simd_width_of[Self.dtype]()
         for k in range(w * w):
@@ -598,10 +725,44 @@ struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
         var p = self.ut_host.unsafe_ptr()
         for entry in range(first, last):
             var k = ordered[entry]
-            var c = self.rot_cos[k]
-            var s = self.rot_sin[k]
             var ra = (self.rot_index[k] - c_lo) * w
             var rb = ra + w
+            comptime if Self.reach > 1:
+                if self.rot_kind[k] != 0:
+                    var order3 = self.rot_kind[k] == 2
+                    var x = self.rot_cos[k]
+                    var y = self.rot_sin[k]
+                    var zz = self.rot_z[k]
+                    var q = self.rot_q[k]
+                    var r = self.rot_r[k]
+                    var rc = rb + w
+                    var col = 0
+                    while col + lanes <= w:
+                        var ua = p.unsafe_load[width=lanes](ra + col)
+                        var ub = p.unsafe_load[width=lanes](rb + col)
+                        var pr = ua + q * ub
+                        if order3:
+                            var uc = p.unsafe_load[width=lanes](rc + col)
+                            pr = ua + q * ub + r * uc
+                            p.unsafe_store(rc + col, uc - pr * zz)
+                        p.unsafe_store(rb + col, ub - pr * y)
+                        p.unsafe_store(ra + col, ua - pr * x)
+                        col += lanes
+                    while col < w:
+                        var ua = p[unsafe_offset=ra + col]
+                        var ub = p[unsafe_offset=rb + col]
+                        var pr = ua + q * ub
+                        if order3:
+                            var uc = p[unsafe_offset=rc + col]
+                            pr = ua + q * ub + r * uc
+                            p[unsafe_offset=rc + col] = uc - pr * zz
+                        p[unsafe_offset=rb + col] = ub - pr * y
+                        p[unsafe_offset=ra + col] = ua - pr * x
+                        col += 1
+                    continue
+
+            var c = self.rot_cos[k]
+            var s = self.rot_sin[k]
             var col = 0
             while col + lanes <= w:
                 var ua = p.unsafe_load[width=lanes](ra + col)
@@ -1150,10 +1311,73 @@ LAPACK's `30 n`. Reaching it means the Hessenberg matrix carries a NaN or
 an infinity, and the raise says so rather than looping forever."""
 
 
-def _hqr[
-    dtype: DType, wantt: Bool, wantz: Bool
+@always_inline
+def _chase_rows[
+    dtype: DType, order3: Bool
 ](
-    mut h: List[Scalar[dtype]], mut z: List[Scalar[dtype]], n: Int
+    mut h: List[Scalar[dtype]],
+    k: Int,
+    n: Int,
+    j0: Int,
+    j1: Int,
+    x: Scalar[dtype],
+    y: Scalar[dtype],
+    zz: Scalar[dtype],
+    q: Scalar[dtype],
+    r: Scalar[dtype],
+):
+    """`_hqr`'s row update for one bulge reflector, over columns
+    `j0 .. j1`.
+
+    The three rows the reflector touches are contiguous runs of `h`, so
+    the scalar loop this replaces is one SIMD walk down them -- the only
+    part of the `wantt` work that vectorizes, since the matching column
+    update strides by `n`. The arithmetic is the scalar body's, term for
+    term and in the same association.
+    """
+    comptime lanes = simd_width_of[dtype]()
+    var p = h.unsafe_ptr()
+    var a0 = k * n
+    var a1 = a0 + n
+    var a2 = a1 + n
+    var j = j0
+    while j + lanes <= j1:
+        var va = p.unsafe_load[width=lanes](a0 + j)
+        var vb = p.unsafe_load[width=lanes](a1 + j)
+        comptime if order3:
+            var vc = p.unsafe_load[width=lanes](a2 + j)
+            var pv = va + q * vb + r * vc
+            p.unsafe_store(a2 + j, vc - pv * zz)
+            p.unsafe_store(a1 + j, vb - pv * y)
+            p.unsafe_store(a0 + j, va - pv * x)
+        else:
+            var pv = va + q * vb
+            p.unsafe_store(a1 + j, vb - pv * y)
+            p.unsafe_store(a0 + j, va - pv * x)
+        j += lanes
+    while j < j1:
+        var va = p[unsafe_offset=a0 + j]
+        var vb = p[unsafe_offset=a1 + j]
+        comptime if order3:
+            var vc = p[unsafe_offset=a2 + j]
+            var pv = va + q * vb + r * vc
+            p[unsafe_offset=a2 + j] = vc - pv * zz
+            p[unsafe_offset=a1 + j] = vb - pv * y
+            p[unsafe_offset=a0 + j] = va - pv * x
+        else:
+            var pv = va + q * vb
+            p[unsafe_offset=a1 + j] = vb - pv * y
+            p[unsafe_offset=a0 + j] = va - pv * x
+        j += 1
+
+
+def _hqr[
+    dtype: DType, wantt: Bool, wantz: Bool, N: Int, gpu: Bool
+](
+    mut h: List[Scalar[dtype]],
+    mut acc: _RotationBatch[dtype, N, gpu, wantz, 2, True],
+    n: Int,
+    ctx: DeviceContext,
 ) raises -> Tuple[
     List[Scalar[dtype]], List[Scalar[dtype]]
 ] where dtype.is_floating_point():
@@ -1173,12 +1397,26 @@ def _hqr[
     reflector annihilates in the column to its left, mathematically zero)
     is cleared at the end, so `T` is the Schur form and not the Schur form
     plus stale bulge entries. Without it only the active block is updated,
-    which is all the eigenvalues need. With `wantz` the same reflectors are
-    accumulated into `z`, which the caller passes as the identity.
+    which is all the eigenvalues need.
 
-    A converged `2 x 2` block with real eigenvalues is split by one
+    **With `wantz` the transformations go into `acc`, not into a host
+    matrix.** Every reflector the chase forms and every rotation the
+    `2 x 2` real split forms is pushed there; `_RotationBatch` reorders a
+    batch of sweeps into windows of commuting entries and applies each
+    window to `Z^T` as one `matmul`. The chase ascends in `k` and a
+    reflector reaches two columns past its index, so the batch is the
+    `reach = 2`, `ascending` one -- its docstring carries the argument for
+    why the reorder is exact. The split rotation is pushed as a sweep of
+    its own, closed on both sides, so it needs no dependency special case.
+
+    A converged `2 x 2` block with real eigenvalues is split by that one
     rotation, so every surviving `2 x 2` block on `T`'s diagonal has a
     complex conjugate pair -- the standard real Schur form.
+
+    `block == 1` recovers the unblocked accumulation exactly: one entry
+    per window, applied in stream order. Larger `block` only changes how
+    many commuting entries ride in one product, which is why the blocking
+    tests pin every size against every other.
     """
     var wr = List[Scalar[dtype]](length=n, fill=0)
     var wi = List[Scalar[dtype]](length=n, fill=0)
@@ -1263,10 +1501,14 @@ def _hqr[
                         h[i * n + (en - 1)] = q * left + p * h[i * n + en]
                         h[i * n + en] = q * h[i * n + en] - p * left
                     comptime if wantz:
-                        for i in range(n):
-                            var left = z[i * n + (en - 1)]
-                            z[i * n + (en - 1)] = q * left + p * z[i * n + en]
-                            z[i * n + en] = q * z[i * n + en] - p * left
+                        # `Z <- Z G` with the new column `en - 1` equal to
+                        # `q z_{en-1} + p z_en`, which is `push_rotation`'s
+                        # `(c, s)` convention at `c = q`, `s = -p`. A sweep
+                        # of its own on both sides, so the window tag needs
+                        # no case for a rotation between two chases.
+                        acc.end_sweep(ctx)
+                        acc.push_rotation(en - 1, q, -p)
+                        acc.end_sweep(ctx)
                     # The rotation annihilates this entry; write the zero it
                     # is, as `dlanv2` does, so the block partition downstream
                     # reads two real eigenvalues and not a complex block.
@@ -1352,13 +1594,13 @@ def _hqr[
                 zz = r / s
                 q = q / p
                 r = r / p
-                for j in range(k, n if wantt else en + 1):
-                    p = h[k * n + j] + q * h[(k + 1) * n + j]
-                    if notlast:
-                        p = p + r * h[(k + 2) * n + j]
-                        h[(k + 2) * n + j] = h[(k + 2) * n + j] - p * zz
-                    h[(k + 1) * n + j] = h[(k + 1) * n + j] - p * y
-                    h[k * n + j] = h[k * n + j] - p * x
+                var j_last = n if wantt else en + 1
+                if notlast:
+                    _chase_rows[dtype, True](h, k, n, k, j_last, x, y, zz, q, r)
+                else:
+                    _chase_rows[dtype, False](
+                        h, k, n, k, j_last, x, y, zz, q, r
+                    )
                 var i_last = en if en < k + 3 else k + 3
                 for i in range(0 if wantt else l, i_last + 1):
                     p = x * h[i * n + k] + y * h[i * n + (k + 1)]
@@ -1368,13 +1610,9 @@ def _hqr[
                     h[i * n + (k + 1)] = h[i * n + (k + 1)] - p * q
                     h[i * n + k] = h[i * n + k] - p
                 comptime if wantz:
-                    for i in range(n):
-                        p = x * z[i * n + k] + y * z[i * n + (k + 1)]
-                        if notlast:
-                            p = p + zz * z[i * n + (k + 2)]
-                            z[i * n + (k + 2)] = z[i * n + (k + 2)] - p * r
-                        z[i * n + (k + 1)] = z[i * n + (k + 1)] - p * q
-                        z[i * n + k] = z[i * n + k] - p
+                    acc.push_reflector(k, x, y, zz, q, r, notlast)
+            comptime if wantz:
+                acc.end_sweep(ctx)
 
     comptime if wantt:
         for i in range(n):
@@ -1435,8 +1673,11 @@ def eigvals[
     var ctx = a.context()
     var reduced = hessenberg[gpu=gpu](a)
     var h = reduced.h.to_host()
-    var z = List[Scalar[dtype]]()
-    var values = _hqr[dtype, False, False](h, z, n)
+    # `wantz=False` makes the batch's `vectors` false, which shrinks every
+    # buffer in it to one element; the values-only route pushes nothing and
+    # allocates nothing for vectors it never forms.
+    var acc = _RotationBatch[dtype, n, gpu, False, 2, True](1, ctx)
+    var values = _hqr[dtype, False, False, n, gpu](h, acc, n, ctx)
     var re = Static[dtype, n](ctx, values[0].copy())
     var im = Static[dtype, n](ctx, values[1].copy())
     return Eigenvalues[dtype, n](re^, im^)
@@ -1467,41 +1708,94 @@ struct TensorSchur[dtype: DType, n: Int](
         self.z = z^
 
 
-def schur[
+def _q_times_zt[
     dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> TensorSchur[
-    dtype, n
-] where dtype.is_floating_point():
+](mut q: Static[dtype, n, n], mut zt: Dynamic[dtype, 2]) raises -> Static[
+    dtype, n, n
+]:
+    """`Q Z`, where `zt` holds `Z^T` in a rotation batch's own buffer.
+
+    `inner`'s body -- `matmul` under `transpose_b=True`, so `Z` is never
+    transposed back -- spelled over a run-time view, because a batch's
+    `zt` is `Dynamic` and copying it into a `Static` just to reach `inner`
+    would be an `n x n` pass for nothing.
+    """
+    var ctx = q.context()
+    var result = Static[dtype, n, n](ctx)
+    var out: _Dense[dtype] = TileTensor(
+        result.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    )
+    var left: _Dense[dtype] = TileTensor(
+        q.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    )
+    var right: _Dense[dtype] = TileTensor(
+        zt.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    )
+    _max_matmul[transpose_b=True, target=_target[gpu]()](out, left, right, ctx)
+    ctx.synchronize()
+    return result^
+
+
+def schur[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
+](mut a: Static[dtype, n, n]) raises -> TensorSchur[dtype, n] where (
+    dtype.is_floating_point() and block >= 1
+):
     """**Tier 2.** The real Schur decomposition `a = Z T Z^T`.
     `scipy.linalg.schur(a, output="real")`.
 
-    Three steps, two of them GEMM-shaped: `hessenberg` reduces `a`
-    device-resident, the Francis iteration triangularizes the Hessenberg
-    matrix on the host while accumulating its reflectors into `Z_h`, and
-    the Schur vectors of `a` are `Q Z_h` with `Q` the reduction's factor
-    -- one `matmul`.
+    Three steps, and the Schur vectors never touch the host in any of
+    them. `hessenberg` reduces `a` device-resident. The Francis iteration
+    triangularizes the Hessenberg matrix on the host, its order-three
+    reflectors and its `2 x 2` split rotations pushed into a
+    `_RotationBatch` that reorders each batch of sweeps into windows of
+    commuting entries and applies every window to `Z^T` as one `matmul`.
+    And the Schur vectors of `a` are `Q Z_h` with `Q` the reduction's
+    factor, which is `inner`'s `transpose_b=True` product against that
+    same `Z^T`, so `Z` is never transposed back.
 
-    `ponytail:` the middle step is the ceiling, and the same one `eigh`
-    names: applying each order-three reflector to every column of `T` and
-    every column of `Z_h` is `O(n^3)` of scalar host work at a small
-    constant, the one term with no MAX in it. The upgrade is LAPACK's
-    multishift QR with aggressive early deflation (`dhseqr`), whose
-    reflector products are GEMM-shaped.
+    `block` names two knobs, as `eigh`'s and `svd`'s do. `hessenberg`
+    takes it as the **panel width** `.q()` forms `Q` in. The Francis sweep
+    takes it as the **rotation window**: `block // 2` consecutive sweeps
+    batch together and a window spans at most `2 * block` columns of
+    `Z^T`, the halving because a Francis reflector reaches two columns
+    past its index where a Givens rotation reaches one. `block == 1`
+    recovers both unblocked algorithms exactly, and a test pins every
+    width against every other.
+
+    **`ponytail:` `T` is still built on the host, and that is now the
+    whole of the band iteration's cost.** At `n = 1024`, `float32`, on an
+    M3 Pro, with the machine not otherwise quiet: the vector accumulation
+    fell from 3,156 ms of scalar host work to 37 ms of windowed GEMMs, and
+    `schur` as a whole from 5,567 ms to 2,147 ms. What is left is the
+    unblocked `hessenberg` at 1,259 ms and the Francis iteration at 828,
+    of which 723 is the eigenvalues alone and 105 the extra work of
+    carrying the full `T`.
+
+    That `T` term stays because the far-from-diagonal `wantt` row and
+    column updates can be deferred only one sweep at a time -- the next
+    chase reads rows a deferred update would already have written -- so
+    batching them across sweeps needs many *shifts* per sweep, which is
+    multishift QR with aggressive early deflation (`dhseqr` driving
+    `dlaqr5`): a different algorithm, not a different schedule for this
+    one. Filed for 0.3. The cheap interim is here and took that 153 ms to
+    105: the row update runs down three contiguous rows, so it is one SIMD
+    walk (`_chase_rows`), while the column update strides by `n` and stays
+    scalar.
 
     This is the form every matrix function in `numax.linalg.matfuncs`
     beyond `expm` is built on.
     """
     var ctx = a.context()
-    var reduced = hessenberg[gpu=gpu](a)
+    var reduced = hessenberg[dtype, n, gpu, block](a)
     var h = reduced.h.to_host()
-    var z = List[Scalar[dtype]](length=n * n, fill=0)
-    for i in range(n):
-        z[i * n + i] = Scalar[dtype](1)
-    _ = _hqr[dtype, True, True](h, z, n)
+    var acc = _RotationBatch[dtype, n, gpu, True, 2, True](block, ctx)
+    _ = _hqr[dtype, True, True, n, gpu](h, acc, n, ctx)
+    acc.finish(ctx)
     var t = Static[dtype, n, n](ctx, h^)
-    var z_h = Static[dtype, n, n](ctx, z^)
     var q = reduced.q()
-    var vectors = matmul[gpu=gpu](q, z_h)
+    var vectors = _q_times_zt[dtype, n, gpu](q, acc.zt)
+    _ = acc^
     return TensorSchur[dtype, n](t^, vectors^)
 
 

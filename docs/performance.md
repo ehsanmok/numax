@@ -590,6 +590,15 @@ puts sizes on it:
   the vectors cost 250 ms. So `svd` and `svdvals` are both waiting on the
   unblocked `labrd` now, not on `bdsqr`, and the `2n` doubling the
   Golub-Kahan route costs stays until `bdsqr` itself takes the band.
+
+  And `schur`'s Schur vectors go through the same batch at reach two, so
+  the `schur` row is stale as well: 5,567 ms before, 2,147 ms after at
+  `n = 1024` on the same not-quiet machine, the vector accumulation
+  falling from 3,156 ms of scalar host rotations to 37 ms of windowed
+  GEMMs. The remaining `T` update -- the far-from-diagonal `wantt` rows
+  and columns, which only multishift QR batches -- is 105 ms of it, down
+  from 153 with the row walk vectorized, against 723 ms for the
+  values-only Francis iteration and 1,259 for the unblocked `hessenberg`.
 - **The reductions are BLAS-2, not BLAS-3.** `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches

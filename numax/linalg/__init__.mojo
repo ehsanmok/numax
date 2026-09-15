@@ -141,11 +141,21 @@ The general spectrum takes the same two phases over a Hessenberg form:
 and four `matmul`-shaped launches per column, then the Francis
 double-shift QR iteration (EISPACK's `hqr2`) runs on the host --
 `eigvals` reads the eigenvalues off its deflations as a `(re, im)` pair,
-and `schur` keeps the quasi-triangular `T`, accumulates the reflectors
-into the Schur vectors and brings them back through the reduction's `Q`
-in one `matmul`. That `Q` -- `orghr` -- is the blocked walk `orgtr` uses;
-the rotation accumulation beside it is still the `O(n^3)` host ceiling
-`eigh` named, with multishift QR as the upgrade.
+and `schur` keeps the quasi-triangular `T` and accumulates the chase's
+transformations into the Schur vectors. Those go into the same batch
+`eigh`'s rotations do, at reach two, because a Francis reflector spans
+three columns where a Givens rotation spans two; the `2 x 2` real split
+rotation rides along as a sweep of its own. `Z^T` stays device-resident
+and comes back through the reduction's `Q` -- `orghr`, the blocked walk
+`orgtr` uses -- as one `transpose_b=True` product, so `Z` is never
+transposed. `schur` takes a `block` naming both knobs, as `eigh`'s does:
+the panel width and the rotation window.
+
+What stays on the host there is `T` itself. The far-from-diagonal row and
+column updates can be deferred only one sweep at a time, so batching them
+means multishift QR with aggressive early deflation (`dhseqr`) -- a
+different algorithm, filed for 0.3, with the measured split in `schur`'s
+own docstring.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of

@@ -1426,3 +1426,173 @@ def test_schur_of_a_real_spectrum_is_triangular_with_the_eigenvalues_on_the_diag
     var source = original.to_host()
     for k in range(n * n):
         assert_almost_equal(back[k], source[k], atol=1e-12)
+
+
+def _general_hash[n: Int]() raises -> Static[dtype, n, n]:
+    """A deterministic nonsymmetric matrix of any size, with a spectrum
+    spread enough that the Francis chase runs its full length rather than
+    deflating after a step or two."""
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, n, n](ctx)
+    var host = a.to_host()
+    for i in range(n):
+        for j in range(n):
+            host[i * n + j] = Scalar[dtype](
+                Float64((i * 37 + j * 11) % 17) * 0.125 - 1.0
+            )
+        host[i * n + i] = Scalar[dtype](Float64(i) * 0.5 + 1.0)
+    a.copy_from_host(host)
+    return a^
+
+
+def _assert_quasi_triangular[
+    n: Int
+](t: List[Scalar[dtype]]) raises where n >= 1:
+    """Exact zeros below the first subdiagonal, and every surviving `2 x 2`
+    diagonal block carrying a complex pair -- the real Schur form."""
+    for i in range(n):
+        for j in range(n):
+            if i > j + 1:
+                assert_equal(t[i * n + j], Scalar[dtype](0))
+    var i = 0
+    while i < n - 1:
+        if t[(i + 1) * n + i] != 0:
+            var gap = Float64(t[i * n + i] - t[(i + 1) * n + (i + 1)])
+            var disc = gap * gap + 4.0 * Float64(
+                t[i * n + (i + 1)] * t[(i + 1) * n + i]
+            )
+            assert_equal(disc < 0, True)
+            i += 2
+        else:
+            i += 1
+
+
+def _schur_agrees[
+    n: Int, block: Int
+](
+    mut a: Static[dtype, n, n],
+    want_t: List[Scalar[dtype]],
+    want_z: List[Scalar[dtype]],
+) raises where (block >= 1 and n >= 1):
+    """Run `schur` at this `block` and pin both factors to a reference."""
+    var got = schur[dtype, n, False, block](a)
+    var t = got.t.to_host()
+    var z = got.z.to_host()
+    for i in range(n * n):
+        assert_almost_equal(t[i], want_t[i], atol=1e-12)
+        assert_almost_equal(z[i], want_z[i], atol=1e-12)
+
+
+def test_schur_blocking_does_not_change_the_answer() raises:
+    # `block` decides only how many commuting reflectors ride in one GEMM,
+    # so every width has to produce the same `T` and the same `Z` -- signs
+    # included, since the transformations themselves are unchanged and only
+    # their schedule moves. `block == 1` is the sharp end: one entry per
+    # window, so the windows have to come out in exactly the order the
+    # chase emitted them, and a tag that ran the other way would reverse
+    # every sweep.
+    comptime n = 4
+
+    var ref_a = _matrix_a()
+    var wide_a = schur[dtype, n, False, n](ref_a)
+    var ta = wide_a.t.to_host()
+    var za = wide_a.z.to_host()
+    var a1 = _matrix_a()
+    _schur_agrees[n, 1](a1, ta, za)
+    var a2 = _matrix_a()
+    _schur_agrees[n, 2](a2, ta, za)
+    var a3 = _matrix_a()
+    _schur_agrees[n, n](a3, ta, za)
+
+    # The second fixture has two complex pairs, so its chase never takes
+    # the real `2 x 2` split and the first one never takes anything else.
+    var ref_b = _matrix_b()
+    var wide_b = schur[dtype, n, False, n](ref_b)
+    var tb = wide_b.t.to_host()
+    var zb = wide_b.z.to_host()
+    var b1 = _matrix_b()
+    _schur_agrees[n, 1](b1, tb, zb)
+    var b2 = _matrix_b()
+    _schur_agrees[n, 2](b2, tb, zb)
+    var b3 = _matrix_b()
+    _schur_agrees[n, n](b3, tb, zb)
+
+
+def test_schur_at_n_one_and_two() raises:
+    # The sizes where the chase never runs (`n == 1`), where it deflates
+    # straight into the real `2 x 2` split, and where the block is a
+    # complex pair that survives to the end.
+    var ctx = DeviceContext(api="cpu")
+    var a1 = zeros[dtype, 1, 1](ctx)
+    a1.copy_from_host([Scalar[dtype](3.5)])
+    var r1 = schur(a1)
+    assert_almost_equal(r1.t.to_host()[0], Scalar[dtype](3.5), atol=1e-14)
+    assert_almost_equal(abs(r1.z.to_host()[0]), Scalar[dtype](1.0), atol=1e-14)
+
+    var real_pair = _general[2]([1.0, 2.0, 3.0, 4.0])
+    var original = _copy_of(real_pair)
+    var r2 = schur[dtype, 2, False, 1](real_pair)
+    var t2 = r2.t.to_host()
+    assert_almost_equal(t2[2], Scalar[dtype](0), atol=1e-14)
+    var zt2 = transpose(r2.z)
+    var half2 = matmul(r2.z, r2.t)
+    var back2 = matmul(half2, zt2).to_host()
+    var src2 = original.to_host()
+    for i in range(4):
+        assert_almost_equal(back2[i], src2[i], atol=1e-13)
+
+    var wide_pair = _general[2]([1.0, 2.0, 3.0, 4.0])
+    var r2w = schur[dtype, 2, False, 32](wide_pair)
+    var t2w = r2w.t.to_host()
+    var z2w = r2w.z.to_host()
+    var z2 = r2.z.to_host()
+    for i in range(4):
+        assert_almost_equal(t2w[i], t2[i], atol=1e-12)
+        assert_almost_equal(z2w[i], z2[i], atol=1e-12)
+
+    var turn = _general[2]([0.0, -1.0, 1.0, 0.0])
+    var turn_source = _copy_of(turn)
+    var r3 = schur[dtype, 2, False, 1](turn)
+    _assert_quasi_triangular[2](r3.t.to_host())
+    var zt3 = transpose(r3.z)
+    var half3 = matmul(r3.z, r3.t)
+    var back3 = matmul(half3, zt3).to_host()
+    var src3 = turn_source.to_host()
+    for i in range(4):
+        assert_almost_equal(back3[i], src3[i], atol=1e-14)
+
+
+def test_schur_ragged_window_sizes() raises:
+    # `n = 40` at `block = 8` is the shape the edge cases live in: several
+    # windows per batch, several batches per run, windows narrower than the
+    # `2 * block` the tag allows, and split rotations landing between
+    # chases as sweeps of their own.
+    comptime n = 40
+    var a = _general_hash[n]()
+    var original = _copy_of(a)
+    var decomposed = schur[dtype, n, False, 8](a)
+    _assert_quasi_triangular[n](decomposed.t.to_host())
+
+    var zt = transpose(decomposed.z)
+    var gram = matmul(zt, decomposed.z).to_host()
+    var drift = Float64(0)
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            drift = max(drift, abs(Float64(gram[i * n + j] - want)))
+    assert_equal(drift < 1e-10, True)
+
+    var half = matmul(decomposed.z, decomposed.t)
+    var back = matmul(half, zt).to_host()
+    var source = original.to_host()
+    var residual = Float64(0)
+    for i in range(n * n):
+        residual = max(residual, abs(Float64(back[i] - source[i])))
+    assert_equal(residual < 1e-9, True)
+
+    # And at this size the windowing is doing real reordering, so the
+    # unblocked schedule has to land on the same decomposition.
+    var unblocked = _general_hash[n]()
+    _schur_agrees[n, 1](
+        unblocked, decomposed.t.to_host(), decomposed.z.to_host()
+    )
