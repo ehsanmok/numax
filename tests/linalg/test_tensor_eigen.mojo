@@ -217,6 +217,149 @@ def test_sytrd_q_at_a_ragged_panel_width() raises:
         assert_almost_equal(back[i], source[i], atol=1e-12)
 
 
+def _symmetric_hash[n: Int]() raises -> Static[dtype, n, n]:
+    """A deterministic symmetric matrix of any size, well enough spread
+    that every column of the reduction has a reflector to form -- the
+    Hilbert matrices above are too small for a multi-panel run."""
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, n, n](ctx)
+    var host = a.to_host()
+    for i in range(n):
+        for j in range(i, n):
+            var value = Scalar[dtype](
+                Float64((i * 37 + j * 11) % 17) * 0.125 - 1.0
+            )
+            host[i * n + j] = value
+            host[j * n + i] = value
+        host[i * n + i] = Scalar[dtype](Float64(i) * 0.5 + 1.0)
+    a.copy_from_host(host)
+    return a^
+
+
+def _sytrd_reduction_at[
+    n: Int, block: Int
+](
+    want_d: List[Scalar[dtype]],
+    want_e: List[Scalar[dtype]],
+    want_q: List[Scalar[dtype]],
+) raises where (block >= 1):
+    """Reduce Hilbert `n` at this panel width and pin the band and `Q`
+    entry by entry to the reference answer, then check that the
+    transformation really is a tridiagonalization of the matrix it came
+    from."""
+    var a = _hilbert[n]()
+    var original = _copy_of(a)
+    var reduced = sytrd[dtype, n, False, block](a)
+
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    for i in range(n):
+        assert_almost_equal(d[i], want_d[i], atol=1e-12)
+        assert_almost_equal(e[i], want_e[i], atol=1e-12)
+
+    var q = reduced.q()
+    var qh = q.to_host()
+    for i in range(n * n):
+        assert_almost_equal(qh[i], want_q[i], atol=1e-12)
+
+    var qt = transpose(q)
+    var half = matmul(qt, original)
+    var t = matmul(half, q).to_host()
+    for i in range(n):
+        for j in range(n):
+            if j > i + 1 or j + 1 < i:
+                assert_almost_equal(
+                    t[i * n + j], Scalar[dtype](0.0), atol=1e-12
+                )
+
+
+def test_sytrd_blocking_does_not_change_the_answer() raises:
+    # `block` is the `latrd` panel width: how many columns are reduced
+    # against the panel's own `V` and `W` before the trailing block sees a
+    # single GEMM. It changes the order the same arithmetic happens in and
+    # nothing else, so the band and `Q` come out the same at every width.
+    # `block == 1` is the unblocked reduction -- no pre-update, one rank-2
+    # GEMM per column -- and `block == n` is one panel whose trailing
+    # update never runs. The reflectors are deterministic, so this pins
+    # entries rather than invariants.
+    comptime n = 6
+    var reference = _hilbert[n]()
+    var whole = sytrd[dtype, n, False, n](reference)
+    var want_d = whole.d.to_host()
+    var want_e = whole.e.to_host()
+    var want_q = whole.q().to_host()
+
+    _sytrd_reduction_at[n, 1](want_d, want_e, want_q)
+    _sytrd_reduction_at[n, 2](want_d, want_e, want_q)
+    _sytrd_reduction_at[n, 3](want_d, want_e, want_q)
+    _sytrd_reduction_at[n, 4](want_d, want_e, want_q)
+    _sytrd_reduction_at[n, n](want_d, want_e, want_q)
+
+
+def _sytrd_reduction_agrees[
+    n: Int, block: Int
+]() raises where block >= 1 and n >= 1:
+    """Reduce the symmetric hash matrix at this panel width: `Q` is
+    orthogonal, `Q T Q^T` is the matrix it came from, and both agree
+    entrywise with the unblocked reduction."""
+    var a = _symmetric_hash[n]()
+    var original = _copy_of(a)
+    var reduced = sytrd[dtype, n, False, block](a)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    var q = reduced.q()
+
+    var qt = transpose(q)
+    var gram = matmul(qt, q).to_host()
+    var drift = Float64(0)
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            drift = max(drift, abs(Float64(gram[i * n + j] - want)))
+    assert_equal(drift < 1e-10, True)
+
+    var ctx = a.context()
+    var band = zeros[dtype, n, n](ctx)
+    var band_host = band.to_host()
+    for i in range(n):
+        band_host[i * n + i] = d[i]
+    for i in range(n - 1):
+        band_host[(i + 1) * n + i] = e[i]
+        band_host[i * n + (i + 1)] = e[i]
+    band.copy_from_host(band_host)
+
+    var qt2 = transpose(q)
+    var half = matmul(q, band)
+    var back = matmul(half, qt2).to_host()
+    var source = original.to_host()
+    var residual = Float64(0)
+    for i in range(n * n):
+        residual = max(residual, abs(Float64(back[i] - source[i])))
+    assert_equal(residual < 1e-10, True)
+
+    var plain = _symmetric_hash[n]()
+    var unblocked = sytrd[dtype, n, False, 1](plain)
+    var want_d = unblocked.d.to_host()
+    var want_e = unblocked.e.to_host()
+    var want_q = unblocked.q().to_host()
+    var qh = q.to_host()
+    for i in range(n):
+        assert_almost_equal(d[i], want_d[i], atol=1e-11)
+        assert_almost_equal(e[i], want_e[i], atol=1e-11)
+    for i in range(n * n):
+        assert_almost_equal(qh[i], want_q[i], atol=1e-11)
+
+
+def test_sytrd_at_a_ragged_reduction_panel() raises:
+    # `n = 7` at `block = 3` leaves five reflector columns, so the last
+    # panel is two wide; `n = 40` at `block = 8` leaves 38, so the last is
+    # six wide with four full panels before it. A ragged panel writes only
+    # part of the `2 * block` columns the trailing GEMM reads, which is
+    # where a stale operand column from the previous panel would show up.
+    _sytrd_reduction_agrees[7, 3]()
+    _sytrd_reduction_agrees[40, 8]()
+
+
 def test_sytrd_preserves_the_trace() raises:
     """The cheapest similarity invariant, and the one that fails loudly if
     a reflector is scaled wrongly."""

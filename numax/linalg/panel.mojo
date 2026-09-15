@@ -587,64 +587,209 @@ def sytd2_column[
     _sync[gpu]()
 
 
-def sytd2_rank_two[
+def latrd_column[
+    dtype: DType,
+    ALayout: TensorLayout,
+    LLayout: TensorLayout,
+    target: StaticString = "cpu",
+](
+    a: _View[dtype, ALayout],
+    left: _View[dtype, LLayout],
+    k0: Int,
+    j: Int,
+    half: Int,
+    n: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """Bring column `k0 + j` up to date with the panel's own reflectors.
+    The first half of LAPACK's `latrd` inner step.
+
+    A blocked tridiagonal reduction defers the trailing update to the end
+    of the panel, so when column `i = k0 + j` is reached the matrix still
+    lacks the rank-two updates of the `j` columns before it. This applies
+    exactly those, and only to the one column the reflector is about to be
+    formed from:
+
+        A[i:, i] -= V[i:, :j] @ W[i, :j]^T + W[i:, :j] @ V[i, :j]^T
+
+    `left` is the panel's `[V | W]`, `V` in columns `0 .. half-1` and `W`
+    in columns `half .. 2*half-1`, which is the operand
+    `_subtract_panel` later hands to the GEMM -- so the panel is
+    accumulated once and read twice, here per column and there per panel.
+
+    Nothing happens at `j == 0`: the first column of a panel is already
+    current, and the pair (`latrd_column`, `sytd2_column`) degenerates to
+    `sytd2_column` alone, which is the unblocked step.
+
+    Independent per row, so it is one `max.algorithm.elementwise` on the
+    accelerator and `parallelize` above `_PARALLEL_MIN_WORK` on the host
+    -- the shape `gemv_sub` uses, and for the same reason: one element per
+    row is below `elementwise`'s count threshold however much work each
+    row carries.
+
+    The reflector itself is `sytd2_column`, called immediately after this
+    on the updated column.
+    """
+    if j <= 0:
+        return
+    var i = k0 + j
+    var rows = n - i
+    if rows <= 0:
+        return
+
+    @always_inline
+    @parameter
+    def update_row(index: Int):
+        var row = i + index
+        var total = a[Coord(row, i)]
+        for c in range(j):
+            total = total - left[Coord(row, c)] * left[Coord(i, half + c)]
+            total = total - left[Coord(row, half + c)] * left[Coord(i, c)]
+        a.store[1](Coord(row, i), total)
+
+    comptime if target == "cpu":
+        if rows * j * 4 >= _PARALLEL_MIN_WORK:
+            parallelize[update_row](rows)
+        else:
+            for index in range(rows):
+                update_row(index)
+    else:
+
+        @always_inline
+        def update[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var a, var left, var i, var j, var half}:
+            update_row(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
+
+
+def latrd_w[
     dtype: DType,
     VLayout: TensorLayout,
     PLayout: TensorLayout,
     LLayout: TensorLayout,
+    TauLayout: TensorLayout,
+    SLayout: TensorLayout,
     gpu: Bool = False,
 ](
     vpad: _View[dtype, VLayout],
     p: _View[dtype, PLayout],
     left: _View[dtype, LLayout],
     right: _View[dtype, LLayout],
-    this_tau: Scalar[dtype],
-    kappa: Scalar[dtype],
-    k: Int32,
+    tau: _View[dtype, TauLayout],
+    scratch: _View[dtype, SLayout],
+    k0: Int32,
+    j: Int32,
+    half: Int32,
     n: Int32,
 ) where dtype.is_floating_point():
-    """Build the two `n x 2` operands whose product is the symmetric
-    rank-2 update `v w^T + w v^T`.
+    """Build column `j` of a `latrd` panel's `W`, and park `v` and `w` in
+    the two GEMM operands. The second half of LAPACK's `latrd` inner step.
 
-    `w = tau * p - (tau^2 * kappa / 2) * v`, where `p` is the unscaled
-    `A v` and `kappa` is `p . v` -- Golub and Van Loan's `w` with the
-    scaling deferred so the caller's matrix-vector product carries no
-    factor.
+    `p` is the *raw* product `A v`, where `A` is the matrix as stored --
+    still missing the panel's own rank-two updates, exactly as
+    `latrd_column`'s column was. Those updates are applied here instead of
+    to the matrix, out of the `j` vectors already in the panel:
 
-    Packing them as `left = [v | w]` and `right = [w | v]` makes
-    `left @ right^T` exactly `v w^T + w v^T`, so MAX's GEMM does the
-    update in **one** call with `transpose_b=True` rather than two rank-one
-    passes. That identity is what lets numax skip the `syrk`/`syr2k` MAX
-    does not ship, and it is the same one a blocked `latrd` would use with
-    `2 * block` columns instead of two.
+        p_current = p - V (W^T v) - W (V^T v)
+        w         = tau * p_current - (tau^2 / 2) (p_current . v) v
 
-    **`w` is forced to zero at and above `k`, and that is load-bearing.**
-    `v` already vanishes there, but `p` does not -- it is `A v` over the
-    whole matrix, so its leading entries are the rows the reflector does
-    not touch. Leaving them in `w` would make the update write column `k`,
-    which is where `sytd2_column` just packed the reflector, and the
-    factorization would lose the very vectors it needs to form `Q`. With
-    both vectors zeroed there the update is confined to the trailing block
-    exactly as LAPACK's is, and the caller still multiplies the whole
-    matrix and stages nothing.
+    and `p_current . v = p . v - 2 sum_c (V^T v)_c (W^T v)_c` falls out of
+    the same three reductions, so the whole step needs `2j + 1` dot
+    products and no second pass. At `j == 0` it is
+    `w = tau * p - (tau^2 / 2) (p . v) v`, the unblocked formula, with `p .
+    v` computed here rather than by a separate `dot` -- which is what takes
+    the per-column device-to-host synchronization out of the reduction.
+
+    `tau` is read from the device, at `tau[k0 + j]`, for the same reason:
+    a host read of the scale would be a synchronization per column. A zero
+    `tau` -- a column that was already reduced -- needs no branch, because
+    it scales `w` to zero and the panel's update then adds nothing.
+
+    **`w` is forced to zero at and above row `i = k0 + j`, and that is
+    load-bearing.** `v` already vanishes there, but `p` does not: it is `A
+    v` over the whole matrix, so its leading entries are the rows the
+    reflector does not touch. Leaving them in `w` would make the panel's
+    update write the columns where the reflectors are packed, and the
+    factorization would lose the vectors it needs to form `Q`.
+
+    The two operands are `left = [V | W]` and `right = [W | V]`, each `n x
+    2*half` with `V`/`W` in the leading half -- so `left @ right^T` is
+    `sum_c (v_c w_c^T + w_c v_c^T)`, the panel's whole symmetric rank-`2j`
+    update in one GEMM with `transpose_b=True`. That identity is what lets
+    numax skip the `syr2k` MAX does not ship.
+
+    `scratch` is `(_PANEL_THREADS + 1) * (2 * half + 1)` entries: one row
+    of partial sums per thread and one row of totals.
+
+    Launch on the accelerator with `grid_dim=1`,
+    `block_dim=_PANEL_THREADS`; the host path runs it single-threaded.
     """
     var t = _lane[gpu]()
     var nt = _lanes[gpu]()
     var rows = Int(n)
-    var shift = this_tau * this_tau * kappa / Scalar[dtype](2)
+    var done = Int(j)
+    var hw = Int(half)
+    var i = Int(k0) + done
+    var first = i + 1
+    var cols = 2 * done + 1
+    var this_tau = tau[Coord(i)]
 
-    var first = Int(k) + 1
-    var i = t
-    while i < rows:
-        var v = vpad[Coord(i)]
+    # `p . v`, then `V^T v` and `W^T v` column by column. One register
+    # accumulator per reduction and one scratch store per (thread,
+    # reduction), so the traffic is one pass over the panel rather than
+    # `cols` passes over scratch.
+    for r in range(cols):
+        var total = Scalar[dtype](0)
+        var row = first + t
+        while row < rows:
+            var value = Scalar[dtype](0)
+            if r == 0:
+                value = p[Coord(row)]
+            elif r <= done:
+                value = left[Coord(row, r - 1)]
+            else:
+                value = left[Coord(row, hw + r - 1 - done)]
+            total += value * vpad[Coord(row)]
+            row += nt
+        scratch.store[1](Coord(t * cols + r), total)
+    _sync[gpu]()
+
+    var base = nt * cols
+    var which = t
+    while which < cols:
+        var total = Scalar[dtype](0)
+        for c in range(nt):
+            total += scratch[Coord(c * cols + which)]
+        scratch.store[1](Coord(base + which), total)
+        which += nt
+    _sync[gpu]()
+
+    var pv = scratch[Coord(base)]
+    for c in range(done):
+        pv -= (
+            Scalar[dtype](2)
+            * scratch[Coord(base + 1 + c)]
+            * scratch[Coord(base + 1 + done + c)]
+        )
+    var alpha = -this_tau * this_tau * pv / Scalar[dtype](2)
+
+    var row = t
+    while row < rows:
+        var v = vpad[Coord(row)]
         var w = Scalar[dtype](0)
-        if i >= first:
-            w = this_tau * p[Coord(i)] - shift * v
-        left.store[1](Coord(i, 0), v)
-        left.store[1](Coord(i, 1), w)
-        right.store[1](Coord(i, 0), w)
-        right.store[1](Coord(i, 1), v)
-        i += nt
+        if row >= first:
+            var acc = p[Coord(row)]
+            for c in range(done):
+                acc -= left[Coord(row, c)] * scratch[Coord(base + 1 + done + c)]
+                acc -= left[Coord(row, hw + c)] * scratch[Coord(base + 1 + c)]
+            w = this_tau * acc + alpha * v
+        left.store[1](Coord(row, done), v)
+        left.store[1](Coord(row, hw + done), w)
+        right.store[1](Coord(row, done), w)
+        right.store[1](Coord(row, hw + done), v)
+        row += nt
     _sync[gpu]()
 
 

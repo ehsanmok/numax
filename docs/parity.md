@@ -175,10 +175,22 @@ has each algorithm and its ceiling.
   solve, inverse, determinant, matrix norm, or BLAS-1, and no cuSOLVER bridge.
   numax's `cholesky`, `lu_factor`, `qr_factor` and `solve` over `Tensor` fill
   the gap blocked, sending the `O(n^3)` term back through `linalg.matmul`.
-  The spectral reduction is now there too: `sytrd` reduces a symmetric
-  matrix to tridiagonal form device-resident, with the symmetric rank-two
-  update issued as the single product `[V | W] @ [W | V]^T` under
-  `transpose_b=True` -- the identity that stands in for the `syr2k` above.
+  The spectral reduction is now there too, and it is **blocked**: `sytrd`
+  reduces a symmetric matrix to tridiagonal form device-resident over
+  `latrd` panels of `block` columns. Each column of a panel is brought up
+  to date with the panel's own `V` and `W` rather than with the matrix,
+  its `w` built from `2j + 1` reductions that also supply the scalar a
+  separate `dot` used to synchronize for, and the panel's whole trailing
+  update then goes out as the single product `[V | W] @ [W | V]^T` under
+  `transpose_b=True` at `K = 2 * block` -- the identity that stands in for
+  the `syr2k` above, at rank 64 instead of rank 2. The update is
+  restricted to the rows and columns past the panel, because the rows
+  inside it hold the packed reflectors. `block == 1` is the unblocked
+  reduction exactly and `block == n` is one panel, both pinned by tests.
+  What is left is the matrix-vector product `p = A v`, one per column:
+  `2n^3` bandwidth-bound flops that blocking does not touch (half of
+  LAPACK's `dsytrd` is BLAS-2 for the same reason), and the upgrade is a
+  two-stage dense-to-banded reduction, not more blocking.
   `eigvalsh` and `eigh` sit on top of it: an implicit-QL sweep over the two
   diagonals, host-side and tier 2 by numax's definition, `O(n^2)` for values
   alone. The eigenvector accumulation that used to sit beside it as
@@ -195,7 +207,8 @@ has each algorithm and its ceiling.
   `block == 1` recovers the unblocked algorithm exactly. Forming the
   reduction's own `Q` -- LAPACK's `orgtr` and `orghr` -- is blocked too,
   and by reuse rather than by a second implementation: `sytrd` and
-  `hessenberg` take the same `block`, and `.q()` runs `qr_factor`'s
+  `hessenberg` take the same `block` -- on `sytrd` it is the reduction
+  panel as well -- and `.q()` runs `qr_factor`'s
   reverse panel walk over the packed reflectors through a view shifted one
   row down, since a tridiagonal reduction puts the implicit unit one row
   below a QR's. `svd` shares the same sweep and so the same accumulation,

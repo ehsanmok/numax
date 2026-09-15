@@ -41,7 +41,12 @@ Three tables, because three different things limit them:
    both: `cholesky` and `lu_factor` hold their defaults (32 and 16) at
    n = 512 and n = 1024, while `qr_factor`'s best block *shrinks* with n,
    so its default of 16 is right at n = 512 and leaves about 2x on the
-   table at n = 1024. Pass `block` explicitly for a large QR.
+   table at n = 1024. Pass `block` explicitly for a large QR. `eigvalsh`
+   is here for the same reason and it wants the *opposite* of `eigh`: its
+   `block` is `sytrd`'s `latrd` panel, whose per-column arithmetic runs on
+   one thread block, so a narrow panel wins for a values-only run while
+   `eigh` -- which pays for the rotation window and `q()` out of the same
+   number -- wants 32.
 
 Each row carries a residual so a fast wrong answer cannot hide: `L L^T`
 against `A` for Cholesky, `A x - b` for the solves, `Q R` against `A` for
@@ -395,11 +400,13 @@ def _trace_gap[
     return abs(total - trace)
 
 
-def bench_eigvalsh[n: Int](ctx: DeviceContext) raises:
+def bench_eigvalsh[
+    n: Int, block: Int = 32
+](ctx: DeviceContext) raises where block >= 1:
     var a = _spd[n](ctx)
 
     def work() raises {mut a}:
-        var w = eigvalsh[dtype, n](a)
+        var w = eigvalsh[dtype, n, False, block](a)
         keep(w.buffer.unsafe_ptr())
 
     var ns = (
@@ -408,7 +415,7 @@ def bench_eigvalsh[n: Int](ctx: DeviceContext) raises:
         ).mean()
         * 1e9
     )
-    var w = eigvalsh[dtype, n](a)
+    var w = eigvalsh[dtype, n, False, block](a)
     _row(
         "eigvalsh",
         n,
@@ -723,3 +730,6 @@ def main() raises:
     bench_qr[512, 512, 16](ctx)
     bench_qr[1024, 1024, 4](ctx)
     bench_qr[1024, 1024, 16](ctx)
+    bench_eigvalsh[1024, 16](ctx)
+    bench_eigvalsh[1024, 32](ctx)
+    bench_eigvalsh[1024, 64](ctx)

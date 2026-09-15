@@ -101,10 +101,15 @@ and has nothing to hand a GEMM.
 **The symmetric eigenproblem is here**, and its shape is the shape every
 spectral factorization will take. `sytrd` reduces a symmetric matrix to
 tridiagonal form device-resident, which is over half the arithmetic of an
-`eigh` and the half with a GEMM in it: each column is four launches, and
-the symmetric rank-two update goes out as `[v | w] @ [w | v]^T` with
-`transpose_b=True`, the identity that lets numax skip the `syr2k` MAX does
-not ship. Then implicit QL sweeps the two diagonals on the host -- looping
+`eigh` and the half with a GEMM in it -- and **the reduction is blocked**:
+a `latrd` panel of `block` columns is reduced against the panel's own `V`
+and `W` without touching the trailing block, and then the whole panel
+goes out as one symmetric rank-`2 * block` update `[V | W] @ [W | V]^T`
+with `transpose_b=True`, the identity that lets numax skip the `syr2k`
+MAX does not ship. `block == 1` is the unblocked reduction, one rank-2
+GEMM per column. What blocking does not move is the matrix-vector product
+that forms `A v` once per column, which is bandwidth-bound and is half of
+LAPACK's `dsytrd` too. Then implicit QL sweeps the two diagonals on the host -- looping
 to a tolerance, deflating on a test of the data, tier 2 by numax's own
 definition and declared so in `eigen.mojo` where it happens. `eigvalsh`
 stops there at `O(n^2)`, negligible beside the reduction. `eigh` also

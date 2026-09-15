@@ -599,12 +599,28 @@ puts sizes on it:
   and columns, which only multishift QR batches -- is 105 ms of it, down
   from 153 with the row walk vectorized, against 723 ms for the
   values-only Francis iteration and 1,259 for the unblocked `hessenberg`.
-- **The reductions are BLAS-2, not BLAS-3.** `eigvalsh` is `sytrd` plus an
+
+  And `sytrd` is blocked now -- a `latrd` panel of `block` columns, one
+  rank-`2 * block` GEMM per panel instead of a rank-2 GEMM per column --
+  so the `eigvalsh` and `eigh` rows are stale too. Measured back to back
+  against the commit before it, same machine, `n = 1024`, `float32`:
+  `sytrd` 197.5 ms to 80.5, `eigvalsh` 206.9 to 97.7, `eigh` 270.2 to
+  154.6. The block sweep after the change reads 53 / 66 / 80 / 109 ms for
+  `sytrd` at `block` 8 / 16 / 32 / 64 and 242 / 173 / 155 / 183 for `eigh`
+  at the same widths: the reduction alone wants a *narrow* panel because
+  its per-column arithmetic still runs on the one thread block the panel
+  kernels launch with, while `eigh` wants a wide one because the same
+  number is the rotation window and the `q()` panel. 32 stays the default
+  on `eigh`'s number; a values-only caller who wants the other end passes
+  `eigvalsh[..., block=8]` and gets 68 ms.
+- **The reductions are BLAS-2, not BLAS-3.** *(Superseded for `sytrd` by
+  the `latrd` panel above; still true of `gebrd` and `gehrd`.)* `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
   at matvec shapes), the B1a form whose B1b upgrade is `latrd` plus one
-  rank-`2k` GEMM per panel. `svdvals` at 1.3 GFLOP/s is `gebrd` in the
-  same shape. Both are the next item after the accumulation.
+  rank-`2k` GEMM per panel -- which is the paragraph above, so this row
+  is the *before*. `svdvals` at 1.3 GFLOP/s is `gebrd` in the same shape
+  and is still waiting on `labrd`.
 - **`float32` residuals are LAPACK's too.** numax's trace gap on
   `eigvalsh` at `n = 1024` is 0.033 against Accelerate's 0.37, and its
   `eigh` residual `2.7e-4` against `8.0e-4` -- at the same precision, not
