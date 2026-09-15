@@ -34,6 +34,11 @@ from numax.linalg import (
     svdvals,
     sytrd,
 )
+from numax.linalg.eigen import (
+    _RotationBatch,
+    _golub_kahan,
+    _top_n_descending,
+)
 from numax.linalg.array import eigvalsh as array_eigvalsh
 from numax.linalg.array import svdvals as array_svdvals
 
@@ -1293,6 +1298,71 @@ def _rank_two() raises -> Static[dtype, 4, 3]:
     return Static[dtype, 4, 3](
         ctx, [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0]
     )
+
+
+def _bdsqr_agrees_with_the_oracle[
+    m: Int, n: Int
+](mut a: Static[dtype, m, n], atol: Scalar[dtype]) raises where (
+    m >= n and n >= 1
+):
+    """`svdvals` against the Golub-Kahan route it replaced: `gebrd`, then
+    the `2n x 2n` tridiagonal whose eigenvalues are `+-sigma`, run through
+    the same implicit-QL sweep `eigh` uses."""
+    var copy = _copy_rect(a)
+    var got = svdvals[dtype, m, n](a).to_host()
+
+    var ctx = copy.context()
+    var reduced = gebrd[dtype, m, n](copy)
+    var acc = _RotationBatch[dtype, 2 * n, False, False](32, ctx)
+    var doubled = _golub_kahan[dtype, n, False, False](
+        reduced.d.to_host(), reduced.e.to_host(), acc, ctx
+    )
+    var top = _top_n_descending[dtype, n](doubled)
+    for i in range(n):
+        assert_almost_equal(got[i], abs(doubled[top[i]]), atol=atol)
+
+
+def test_bdsqr_matches_the_golub_kahan_oracle() raises:
+    # The doubling is gone from `svd`; `_golub_kahan` stays private as the
+    # oracle this pins against, because the two routes share no arithmetic
+    # -- one diagonalizes a `2n x 2n` symmetric tridiagonal by implicit QL,
+    # the other chases a bulge down the `n`-long bidiagonal.
+    var tall = _tall()
+    _bdsqr_agrees_with_the_oracle[5, 3](tall, 1e-12)
+    var hilbert = _hilbert[4]()
+    _bdsqr_agrees_with_the_oracle[4, 4](hilbert, 1e-12)
+    var square = _rect_hash[6, 6]()
+    _bdsqr_agrees_with_the_oracle[6, 6](square, 1e-12)
+    var wide_panel = _rect_hash[40, 24]()
+    _bdsqr_agrees_with_the_oracle[40, 24](wide_panel, 1e-10)
+
+
+def test_svd_of_a_rank_deficient_matrix_reconstructs_it() raises:
+    # An exact zero singular value: `_bdsqr` has to deflate a zero
+    # diagonal entry, which the zero-shift sweep does by rotating it out
+    # rather than by dividing by it.
+    comptime m = 4
+    comptime n = 3
+    var a = _rank_two()
+    var original = _copy_rect(a)
+    var got = svd[dtype, m, n](a)
+    var s = got.s.to_host()
+    assert_almost_equal(s[2], Scalar[dtype](0.0), atol=1e-12)
+    assert_equal(s[0] >= s[1], True)
+    assert_equal(s[1] >= s[2], True)
+
+    var ctx = original.context()
+    var sigma = zeros[dtype, n, n](ctx)
+    var sh = sigma.to_host()
+    for i in range(n):
+        sh[i * n + i] = s[i]
+    sigma.copy_from_host(sh)
+    var us = matmul[dtype, m, n, n](got.u, sigma)
+    var vt = transpose(got.v)
+    var back = matmul[dtype, m, n, n](us, vt).to_host()
+    var source = original.to_host()
+    for i in range(m * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
 
 
 def test_pinv_inverts_a_full_rank_tall_matrix_from_the_left() raises:

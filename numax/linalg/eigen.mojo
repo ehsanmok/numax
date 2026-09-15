@@ -11,10 +11,12 @@ function says so where it happens.
 The *transformations* that sweep produces are a different matter, and they
 are no longer host work: `_RotationBatch` holds a batch of sweeps' worth,
 reorders it into windows of mutually commuting entries and applies each
-window as one `matmul`. `svd` shares that machinery through the same
-sweep, runs it at `2n` -- the Golub-Kahan doubling, which stays until
-`bdsqr` -- and de-interleaves `U` and `V` out of the result in one
-`elementwise` on the device. `schur` shares it too, with the batch at
+window as one `matmul`. `svd` shares that machinery through two batches
+rather than one: `_bdsqr` chases the bidiagonal itself and pushes a right
+rotation into one and a left rotation into the other, so `U_B^T` and
+`V_B^T` are built device-resident at width `n`. The `2n` Golub-Kahan
+doubling that route replaced is gone, and `_golub_kahan` is kept only as
+its test oracle. `schur` shares it too, with the batch at
 reach 2 for the Francis chase's order-three reflectors; what is left on
 its host side is the quasi-triangular `T`, which only multishift QR
 moves, and `schur`'s docstring carries the numbers.
@@ -2519,28 +2521,27 @@ def _golub_kahan[
     is left in `acc.zt`, **transposed** and device-resident, so row `j` is
     eigenvector `j`.
 
-    The accumulator is the caller's, the way `_tql`'s is, because `acc.zt`
-    is the `2n x 2n` device tensor `svd` then de-interleaves `U` and `V`
-    out of -- it has to outlive this call, and `block` is the window it was
-    built with rather than a second parameter here.
+    **Nothing in the library calls this. It is `_bdsqr`'s test oracle**,
+    kept because the two routes share no arithmetic: this one diagonalizes
+    a `2n x 2n` symmetric tridiagonal by implicit QL, and `_bdsqr` chases
+    a bulge down the `n`-long bidiagonal, so agreement between them is
+    evidence rather than a tautology.
+    `test_bdsqr_matches_the_golub_kahan_oracle` is the pin.
 
     The Golub-Kahan matrix is the `2n x 2n` symmetric tridiagonal with zero
     diagonal and off-diagonal `d_1, e_1, d_2, e_2, ..., d_n`. Its
     eigenvalues are `+-sigma_i`, and the eigenvector for `+sigma_i`
     interleaves the singular vectors: even entries are `v_i / sqrt(2)`, odd
-    entries `u_i / sqrt(2)`. So the sweep `eigh` already runs gives the SVD
-    of `B` with no new numerics -- LAPACK's `dbdsvdx` takes the same route.
+    entries `u_i / sqrt(2)`. So the sweep `eigh` runs gives the SVD of `B`
+    with no new numerics -- LAPACK's `dbdsvdx` takes this route, and `svd`
+    did until `_bdsqr` landed.
 
-    `ponytail:` at `vectors=True` this runs the sweep at `2n`, so it issues
-    about eight times `eigh`'s rotations on the same `n`. They are
-    accumulated in blocks and `Z^T` never leaves the device, but **the
-    doubling itself stays** until a Golub-Kahan implicit QR sweep on the
-    bidiagonal (`bdsqr`) replaces it -- that sweep rotates `U` and `V`
-    directly at width `n`, about half the rotations and none of the
-    interleaving. Singular vectors for an *exactly* zero singular value are
-    not guaranteed orthonormal, since the two zero eigenvalues' vectors may
-    mix; the values are exact, and `pinv`/`matrix_rank` never use those
-    vectors.
+    The accumulator is the caller's, the way `_tql`'s is: `acc.zt` is the
+    `2n x 2n` device tensor the eigenvectors are left in, and `block` is
+    the window it was built with rather than a second parameter here.
+    Singular vectors for an *exactly* zero singular value are not
+    guaranteed orthonormal on this route, since the two zero eigenvalues'
+    vectors may mix; the values are exact.
     """
     comptime size = 2 * n
     var gd = List[Scalar[dtype]](length=size, fill=0)
@@ -2554,11 +2555,328 @@ def _golub_kahan[
     return gd^
 
 
+@always_inline
+def _tiny[dtype: DType]() -> Scalar[dtype]:
+    """The smallest normal of `dtype` -- `dbdsqr`'s `UNFL`, the floor under
+    the deflation threshold so an all-but-zero band still terminates."""
+    comptime if dtype == DType.float32:
+        return Scalar[dtype](1.1754944e-38)
+    else:
+        return Scalar[dtype](2.2250738585072014e-308)
+
+
+@always_inline
+def _bdsqr_tol[dtype: DType]() -> Scalar[dtype]:
+    """`dbdsqr`'s relative tolerance, `max(10, min(100, eps^(-1/8))) * eps`,
+    evaluated per `dtype` the way `_eps` is rather than through a `pow`.
+
+    `float32`: `eps^(-1/8)` is 7.34, so the `10` wins and the tolerance is
+    `10 eps`. `float64`: it is 90.5, so that wins and the tolerance is
+    `90.5 eps = 2.01e-14`. Asking for relative rather than absolute
+    accuracy is what makes the zero-shift branch worth having.
+    """
+    comptime if dtype == DType.float32:
+        return Scalar[dtype](1.1920929e-06)
+    else:
+        return Scalar[dtype](2.0097183471152322e-14)
+
+
+@always_inline
+def _lartg[
+    dtype: DType
+](f: Scalar[dtype], g: Scalar[dtype]) -> Tuple[
+    Scalar[dtype], Scalar[dtype], Scalar[dtype]
+] where dtype.is_floating_point():
+    """LAPACK's `lartg`: `(c, s, r)` with `c f + s g = r` and
+    `-s f + c g = 0`, normalized so `c > 0` whenever `|f| > |g|` -- which
+    is what makes the factor unique and two runs of the same sweep agree
+    sign for sign."""
+    if g == 0:
+        return (Scalar[dtype](1), Scalar[dtype](0), f)
+    if f == 0:
+        return (Scalar[dtype](0), Scalar[dtype](1), g)
+    var r = _hypot(f, g)
+    var c = f / r
+    var s = g / r
+    if abs(f) > abs(g) and c < 0:
+        return (-c, -s, -r)
+    return (c, s, r)
+
+
+@always_inline
+def _las2[
+    dtype: DType
+](f: Scalar[dtype], g: Scalar[dtype], h: Scalar[dtype]) -> Tuple[
+    Scalar[dtype], Scalar[dtype]
+] where dtype.is_floating_point():
+    """The singular values `(smin, smax)` of the upper triangular `2 x 2`
+    `[[f, g], [0, h]]`. LAPACK's `las2`, transcribed for its scaling: the
+    obvious `sqrt` of the eigenvalues of the `2 x 2` normal equations
+    loses half the digits of a small singular value."""
+    var fa = abs(f)
+    var ga = abs(g)
+    var ha = abs(h)
+    var fhmn = min(fa, ha)
+    var fhmx = max(fa, ha)
+    var one = Scalar[dtype](1)
+    var two = Scalar[dtype](2)
+    if fhmn == 0:
+        if fhmx == 0:
+            return (Scalar[dtype](0), ga)
+        var big = max(fhmx, ga)
+        var small = min(fhmx, ga)
+        var ratio = small / big
+        return (Scalar[dtype](0), big * _sqrt(one + ratio * ratio))
+    if ga < fhmx:
+        var a_s = one + fhmn / fhmx
+        var at = (fhmx - fhmn) / fhmx
+        var au = (ga / fhmx) * (ga / fhmx)
+        var c = two / (_sqrt(a_s * a_s + au) + _sqrt(at * at + au))
+        return (fhmn * c, fhmx / c)
+    var au = fhmx / ga
+    if au == 0:
+        return ((fhmn * fhmx) / ga, ga)
+    var a_s = one + fhmn / fhmx
+    var at = (fhmx - fhmn) / fhmx
+    var c = one / (
+        _sqrt(one + (a_s * au) * (a_s * au))
+        + _sqrt(one + (at * au) * (at * au))
+    )
+    var smin = (fhmn * c) * au
+    return (smin + smin, ga / (c + c))
+
+
+comptime _MAX_BDSQR_ITER_PER_N = 6
+"""Bulge-chase steps allowed in total, per `n^2` -- LAPACK's `MAXITR` in
+`dbdsqr`, where the budget is `6 n^2` and each step spends the length of
+the block it chased. Reaching it means the bidiagonal carries a NaN or an
+infinity, and the raise says so rather than looping forever."""
+
+
+def _bdsqr[
+    dtype: DType, n: Int, gpu: Bool, vectors: Bool
+](
+    mut d: List[Scalar[dtype]],
+    mut e: List[Scalar[dtype]],
+    mut uacc: _RotationBatch[dtype, n, gpu, vectors, 1, True],
+    mut vacc: _RotationBatch[dtype, n, gpu, vectors, 1, True],
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """The implicit-shift QR iteration on the upper bidiagonal `(d, e)`,
+    in place: on return `d` holds the singular values -- unsorted and of
+    either sign -- and `e` is zero. LAPACK's `dbdsqr`, Demmel and Kahan
+    1990.
+
+    At `vectors=True` the two rotation streams are pushed into `uacc` and
+    `vacc`, so `uacc.zt` is `U_B^T` and `vacc.zt` is `V_B^T` for
+    `B = U_B diag(d) V_B^T`. The accumulators are the caller's, the way
+    `_tql`'s is: `svd` reads them after this returns.
+
+    **This is what replaces the Golub-Kahan doubling.** `_golub_kahan`
+    embeds `B` in the `2n x 2n` symmetric tridiagonal whose eigenvalues
+    are `+-sigma` and runs `_tql` there, which is about `4n^2` rotations
+    at width `2n` and then a de-interleave. The sweep here rotates `U` and
+    `V` directly at width `n` -- about `2n^2` rotations against stripes a
+    quarter the area -- and the singular values come out of the band
+    itself rather than as half of a symmetric spectrum. `_golub_kahan`
+    stays as the test oracle and nothing in the library calls it.
+
+    **Tier 2, host-side**, for `_tql`'s reason: the chase is sequential,
+    the deflation test branches on the data, and there is no GEMM to hand
+    `O(n^2)` of band arithmetic to. The *transformations* are the cubic
+    term and they go out as GEMMs through the batches.
+
+    **One direction.** `dbdsqr` chases top-down or bottom-up per block,
+    choosing by `|d[ll]| >= |d[m]|` so the criterion that preserves
+    relative accuracy runs along the grading. This chases **top-down**
+    only, and the reason is the window tag: a top-down chase has its index
+    *rising* within a sweep, which is the `ascending` batch (`reach = 1`,
+    tag `(k + s) // block` applied in increasing order), while a bottom-up
+    one has it falling and needs the descending tag `_tql` uses. One
+    accumulator cannot be both, and two would double every buffer. The
+    cost is that a matrix graded the wrong way takes more sweeps; the
+    absolute threshold still terminates it. A `dbdsqr` that picks the
+    direction per block is the upgrade, and it needs a batch whose tag is
+    chosen per flush.
+
+    The rest is `dbdsqr`'s: split the band at a negligible `e`, deflate
+    from the bottom, take the zero shift when a nonzero one would cost
+    relative accuracy (`n tol (sminl / smax) <= max(eps, tol/100)`, plus
+    the `(shift/sll)^2 < eps` test), otherwise the shift is the smallest
+    singular value of the trailing `2 x 2` from `_las2`, and chase the
+    bulge with one rotation on the right and one on the left per column.
+
+    Both streams push `(i, cos, -sin)`: `lartg`'s pair applies as
+    `[[c, -s], [s, c]]` on the column pair where `push_rotation` applies
+    `[[c, s], [-s, c]]`, and `B <- G_L^T B` on the left means
+    `U_B <- U_B G_L`, so the left stream takes the same negation as the
+    right one.
+    """
+    var count = len(d)
+    if count <= 1:
+        return
+    e[count - 1] = Scalar[dtype](0)
+
+    var eps = _eps[dtype]()
+    var tol = _bdsqr_tol[dtype]()
+    var zero = Scalar[dtype](0)
+    var one = Scalar[dtype](1)
+
+    # A lower bound on the smallest singular value, `dbdsqr`'s `sminoa`,
+    # and the absolute floor it puts under the deflation test.
+    var sminoa = abs(d[0])
+    if sminoa != 0:
+        var mu = sminoa
+        for i in range(1, count):
+            mu = abs(d[i]) * (mu / (mu + abs(e[i - 1])))
+            sminoa = min(sminoa, mu)
+            if sminoa == 0:
+                break
+    sminoa = sminoa / _sqrt(Scalar[dtype](count))
+    var thresh = max(
+        tol * sminoa,
+        Scalar[dtype](_MAX_BDSQR_ITER_PER_N * count * count) * _tiny[dtype](),
+    )
+
+    var m = count - 1
+    var spent = 0
+    var budget = _MAX_BDSQR_ITER_PER_N * count * count
+
+    while m > 0:
+        if spent > budget:
+            raise Error(
+                "svd: the bidiagonal QR iteration did not converge in ",
+                budget,
+                " steps; the matrix likely holds a NaN or an infinity",
+            )
+
+        # The active block `ll .. m`: scan up from `m` to the first
+        # negligible off-diagonal, collecting the block's scale on the way.
+        var smax = abs(d[m])
+        var ll = 0
+        var split = False
+        var probe = m - 1
+        while probe >= 0:
+            var abse = abs(e[probe])
+            if abse <= thresh:
+                e[probe] = zero
+                ll = probe
+                split = True
+                break
+            smax = max(smax, max(abs(d[probe]), abse))
+            probe -= 1
+        if split:
+            if ll == m - 1:
+                # The bottom singular value has converged.
+                m -= 1
+                continue
+            ll += 1
+
+        # Convergence at the bottom of the block, absolute and relative.
+        if abs(e[m - 1]) <= tol * abs(d[m]):
+            e[m - 1] = zero
+            continue
+        var mu = abs(d[ll])
+        var sminl = mu
+        var deflated = False
+        for i in range(ll, m):
+            if abs(e[i]) <= tol * mu:
+                e[i] = zero
+                deflated = True
+                break
+            mu = abs(d[i + 1]) * (mu / (mu + abs(e[i])))
+            sminl = min(sminl, mu)
+        if deflated:
+            continue
+
+        # The shift, and the two tests that say to drop it. `d[ll] == 0`
+        # is covered by `sminl`, which starts there, but the shifted chase
+        # divides by `d[ll]` so the guard is written out rather than
+        # inferred.
+        var shift = zero
+        if (
+            Scalar[dtype](count) * tol * (sminl / smax)
+            > max(eps, Scalar[dtype](0.01) * tol)
+            and d[ll] != 0
+        ):
+            var pair = _las2(d[m - 1], e[m - 1], d[m])
+            shift = pair[0]
+            var sll = abs(d[ll])
+            if sll > 0:
+                var ratio = shift / sll
+                if ratio * ratio < eps:
+                    shift = zero
+        spent += m - ll
+
+        if shift == 0:
+            # Demmel and Kahan's zero-shift sweep, which computes the
+            # small singular values to high relative accuracy because no
+            # subtraction of nearly equal quantities happens in it.
+            var cs = one
+            var oldcs = one
+            var oldsn = zero
+            for i in range(ll, m):
+                var right = _lartg(d[i] * cs, e[i])
+                cs = right[0]
+                var sn = right[1]
+                var r = right[2]
+                if i > ll:
+                    e[i - 1] = oldsn * r
+                var left = _lartg(oldcs * r, d[i + 1] * sn)
+                oldcs = left[0]
+                oldsn = left[1]
+                d[i] = left[2]
+                comptime if vectors:
+                    vacc.push_rotation(i, cs, -sn)
+                    uacc.push_rotation(i, oldcs, -oldsn)
+            var h = d[m] * cs
+            d[m] = h * oldcs
+            e[m - 1] = h * oldsn
+        else:
+            # The shifted sweep. `f` is the first entry of the first
+            # column of `B^T B - shift^2 I`, written so the difference of
+            # squares never forms.
+            var f = (abs(d[ll]) - shift) * (
+                _copysign(one, d[ll]) + shift / d[ll]
+            )
+            var g = e[ll]
+            for i in range(ll, m):
+                var right = _lartg(f, g)
+                var cosr = right[0]
+                var sinr = right[1]
+                if i > ll:
+                    e[i - 1] = right[2]
+                f = cosr * d[i] + sinr * e[i]
+                e[i] = cosr * e[i] - sinr * d[i]
+                g = sinr * d[i + 1]
+                d[i + 1] = cosr * d[i + 1]
+                var left = _lartg(f, g)
+                var cosl = left[0]
+                var sinl = left[1]
+                d[i] = left[2]
+                f = cosl * e[i] + sinl * d[i + 1]
+                d[i + 1] = cosl * d[i + 1] - sinl * e[i]
+                if i < m - 1:
+                    g = sinl * e[i + 1]
+                    e[i + 1] = cosl * e[i + 1]
+                comptime if vectors:
+                    vacc.push_rotation(i, cosr, -sinr)
+                    uacc.push_rotation(i, cosl, -sinl)
+            e[m - 1] = f
+
+        uacc.end_sweep(ctx)
+        vacc.end_sweep(ctx)
+
+
 def _top_n_descending[
     dtype: DType, n: Int
 ](values: List[Scalar[dtype]]) -> List[Int]:
-    """Indices of the `n` largest of `2n` eigenvalues, descending -- the
-    positive half of the Golub-Kahan spectrum."""
+    """Indices of the `n` largest entries of `values`, descending.
+
+    `svd` and `svdvals` hand it the `n` magnitudes `_bdsqr` left, so for
+    them it is a descending sort. The oracle test hands it `_golub_kahan`'s
+    `2n` eigenvalues, where taking the largest `n` is taking the positive
+    half of a symmetric spectrum -- the case the name was written for."""
     var order = List[Int](capacity=len(values))
     for i in range(len(values)):
         order.append(i)
@@ -2583,29 +2901,36 @@ def svdvals[
     """**Tier 2.** The singular values of an `m x n` matrix, `m >= n`,
     descending. `scipy.linalg.svdvals`.
 
-    `gebrd` device-resident, then the Golub-Kahan tridiagonal's
-    eigenvalues by the `O(n^2)` implicit-QL sweep, the positive half taken.
-    Descending, as SciPy returns them; the `Array` tier's `svdvals` is
-    one-sided Jacobi and comes back unsorted, and a test pins the two as
-    multisets.
+    `gebrd` reduces `a` to bidiagonal form device-resident and blocked,
+    then `_bdsqr` runs the implicit-shift QR iteration on the two
+    diagonals -- `O(n^2)` on the host, no vectors pushed, so the two
+    rotation batches it is handed are one-element allocations. Descending,
+    as SciPy returns them; the `Array` tier's `svdvals` is one-sided
+    Jacobi and comes back unsorted, and a test pins the two as multisets.
 
-    `block` is `gebrd`'s panel width, carried so `svdvals` and `svd` take
-    the same knob. Nothing here reads it today: the reduction is still
-    unblocked, and the rotation window it also names decides nothing
-    without vectors, since a values-only sweep pushes no rotations.
+    `block` is `gebrd`'s `labrd` panel width, which is the whole of what
+    it decides here: the rotation window it also names costs nothing when
+    no rotation is ever logged.
     """
     var ctx = a.context()
     var reduced = gebrd[dtype, m, n, gpu, block](a)
-    var acc = _RotationBatch[dtype, 2 * n, gpu, False](block, ctx)
-    var values = _golub_kahan[dtype, n, gpu, False](
-        reduced.d.to_host(), reduced.e.to_host(), acc, ctx
-    )
-    var top = _top_n_descending[dtype, n](values)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    var uacc = _RotationBatch[dtype, n, gpu, False, 1, True](block, ctx)
+    var vacc = _RotationBatch[dtype, n, gpu, False, 1, True](block, ctx)
+    _bdsqr[dtype, n, gpu, False](d, e, uacc, vacc, ctx)
+    uacc.finish(ctx)
+    vacc.finish(ctx)
+
+    # `_bdsqr` leaves the values unsorted and of either sign; a singular
+    # value is the magnitude.
+    var mags = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        mags.append(abs(d[i]))
+    var order = _top_n_descending[dtype, n](mags)
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
-        # `|.|`: an exactly singular matrix's zero pair can land with its
-        # nominally positive member a rounding error below zero.
-        out.append(abs(values[top[i]]))
+        out.append(mags[order[i]])
     return Static[dtype, n](ctx, out^)
 
 
@@ -2651,86 +2976,106 @@ def svd[
     `scipy.linalg.svd(a, full_matrices=False)`.
 
     Three steps, and the vectors never touch the host in any of them.
-    `gebrd` reduces `A` to bidiagonal `B = Q^T A P` device-resident. The
-    Golub-Kahan tridiagonal of `B` is diagonalized by the same implicit-QL
-    sweep `eigh` uses -- the band iteration on the host, its rotations
-    accumulated into `Z^T` device-resident in windows that each go out as
-    one `matmul`. Its eigenvectors interleave `B`'s singular vectors, and
-    the de-interleave is one `elementwise` over `(n, n)`: row `top[j]` of
-    `Z^T` scattered into `V_B^T` at its even entries and `U_B^T` at its odd
-    ones, both scaled by `sqrt(2)`, so the two come out already transposed
-    and `U = Q U_B`, `V = P V_B` are `inner(q, ub_t)` and `inner(p, vb_t)`
-    under `transpose_b=True`. Only the `2n` eigenvalues and the order they
-    sort into cross to the host.
+    `gebrd` reduces `A` to bidiagonal `B = Q^T A P` device-resident.
+    `_bdsqr` diagonalizes `B` by the implicit-shift QR iteration --
+    `O(n^2)` of band arithmetic on the host, its two rotation streams
+    pushed into two batches that hold `U_B^T` and `V_B^T` device-resident
+    and send each window of commuting rotations out as one `matmul`. Then
+    the descending order and the sign of each value are applied as one
+    `elementwise` gather over `(n, n)`, and `U = Q U_B`, `V = P V_B` come
+    back through `inner` under `transpose_b=True` because the batches hold
+    both factors transposed. Only the `n` values and the order they sort
+    into cross to the host.
 
     Two knobs share the name `block` and they mean different things, as
-    `eigh`'s do. `gebrd` takes it as the **panel width** `.q()` and `.p()`
-    form `Q` and `P` in -- `block` reflectors per block reflector, three
-    GEMMs each. The sweep takes it as the **rotation window**: `block`
-    consecutive sweeps batch together and a window spans `2 * block`
-    columns of `Z^T`. `block == 1` recovers both unblocked algorithms
-    exactly, and a test pins every width against every other.
+    `eigh`'s do. `gebrd` takes it as the **panel width** -- its own
+    `labrd` panel, and the one `.q()` and `.p()` form `Q` and `P` in. The
+    sweep takes it as the **rotation window**: `block` consecutive sweeps
+    batch together and a window spans at most `2 * block` columns.
+    `block == 1` recovers both unblocked algorithms exactly, and a test
+    pins every width against every other.
 
-    `ponytail:` the middle step is the ceiling, and it is larger than
-    `eigh`'s by the factor the doubling costs -- the sweep runs at `2n`, so
-    about eight times the rotations of an `eigh` on the same `n`. The
-    upgrade is a bidiagonal QR sweep (`bdsqr`) rotating `U` and `V`
-    directly at width `n`, or divide and conquer; nothing above or below
-    changes when it lands. `svdvals` skips the vectors and is `O(n^2)` past
-    the reduction.
+    `m >= n` is a constraint, not a convention: there is no transposing
+    route here, so a wide matrix is transposed by the caller and the
+    factors swapped.
+
+    `ponytail:` the band sweep is no longer the ceiling -- the reduction
+    is. At `n = 1024`, `float32`, on an M3 Pro, `svd` is 1,768 ms at the
+    default `block` and `svdvals` 1,648, so everything the vectors cost is
+    around a tenth of the call and `gebrd` is the rest. Dropping the
+    doubling took `svd` from 1,949 ms; it did not move `svdvals`, which
+    pushes no rotation either way. What is left of the sweep is the
+    sequential `O(n^2)` chase, which divide and conquer (`dbdsdc`)
+    replaces rather than reschedules, and what is left of the reduction is
+    the pair of matrix-vector products `gebrd`'s docstring names.
 
     Rectangular, unlike the `Array` tier's square-only one-sided Jacobi,
     and descending where that one is unsorted; both docstrings say so.
     """
     var ctx = a.context()
     var reduced = gebrd[dtype, m, n, gpu, block](a)
-    comptime size = 2 * n
-    var acc = _RotationBatch[dtype, size, gpu, True](block, ctx)
-    var values = _golub_kahan[dtype, n, gpu, True](
-        reduced.d.to_host(), reduced.e.to_host(), acc, ctx
-    )
-    var order = _top_n_descending[dtype, n](values)
+    var d = reduced.d.to_host()
+    var e = reduced.e.to_host()
+    var uacc = _RotationBatch[dtype, n, gpu, True, 1, True](block, ctx)
+    var vacc = _RotationBatch[dtype, n, gpu, True, 1, True](block, ctx)
+    _bdsqr[dtype, n, gpu, True](d, e, uacc, vacc, ctx)
+    uacc.finish(ctx)
+    vacc.finish(ctx)
+
+    var mags = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        mags.append(abs(d[i]))
+    var order = _top_n_descending[dtype, n](mags)
 
     var s_host = List[Scalar[dtype]](capacity=n)
-    var top_host = List[Scalar[DType.int64]](capacity=n)
+    var row_host = List[Scalar[DType.int64]](capacity=n)
+    var sign_host = List[Scalar[dtype]](capacity=n)
     for j in range(n):
-        s_host.append(abs(values[order[j]]))
-        top_host.append(Scalar[DType.int64](order[j]))
-    var top = Static[DType.int64, n](ctx, top_host^)
+        var at = order[j]
+        s_host.append(mags[at])
+        row_host.append(Scalar[DType.int64](at))
+        # A negative value is made positive by flipping its right singular
+        # vector, which is `dbdsqr`'s own sign fix.
+        sign_host.append(Scalar[dtype](-1) if d[at] < 0 else Scalar[dtype](1))
+    var rows = Static[DType.int64, n](ctx, row_host^)
+    var signs = Static[dtype, n](ctx, sign_host^)
 
-    # `Z^T` is `2n x 2n` and the destinations are `n x n`, so the gather
-    # reads a source of different extents -- the pattern `findings.mdc`
-    # records as unreliable for *run-time* layouts. Here the source is
-    # viewed at a compile-time `size x size` layout over the same pointer
-    # and indexed by a freshly built `Coord`, which is the case that holds;
-    # `n` in {1, 2, 3} is pinned by its own test.
+    # The gather is `eigh`'s: source and destination are both `(n, n)` and
+    # only the index tensors are rank 1, which is the cross-shape case
+    # `findings.mdc` records as sound. The batches' `zt` is a run-time
+    # `Dynamic`, so it is read through a compile-time `row_major[n, n]`
+    # view over the same dense buffer.
     var ub_t = Static[dtype, n, n]._uninitialized(ctx)
     var vb_t = Static[dtype, n, n]._uninitialized(ctx)
-    var zt = TileTensor(
-        acc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[size, size]()
+    var ut = TileTensor(
+        uacc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
+    )
+    var vt = TileTensor(
+        vacc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
     )
     var ub = ub_t.view()
     var vb = vb_t.view()
-    var tv = top.view()
-    var root_two = Scalar[dtype](1.4142135623730951)
+    var rv = rows.view()
+    var sv = signs.view()
 
     @always_inline
-    def split[
+    def gather[
         w: Int, alignment: Int = 1
-    ](coord: Coord) {var zt, var ub, var vb, var tv, var root_two}:
+    ](coord: Coord) {var ut, var vt, var ub, var vb, var rv, var sv}:
         var at = coord_to_index_list(coord)
-        var row = Int(tv[Coord(at[0])])
-        var col = 2 * at[1]
-        vb.store[1](coord, zt[Coord(row, col)] * root_two)
-        ub.store[1](coord, zt[Coord(row, col + 1)] * root_two)
+        var row = Int(rv[Coord(at[0])])
+        ub.store[1](coord, ut[Coord(row, at[1])])
+        vb.store[1](coord, vt[Coord(row, at[1])] * sv[Coord(at[0])])
 
-    elementwise[simd_width=1, target=_target[gpu]()](split, Coord(n, n), ctx)
+    elementwise[simd_width=1, target=_target[gpu]()](gather, Coord(n, n), ctx)
     ctx.synchronize()
-    # `acc` and `top` are named nowhere past the `.view()` a view erases
-    # the origin of, so without these Mojo frees them while `split` still
-    # reads through `zt` and `tv`; see `eigh` and `findings.mdc`.
-    _ = acc^
-    _ = top^
+    # The batches and the two index tensors are named nowhere past the
+    # `.view()` a view erases the origin of; see `findings.mdc` on the
+    # queued free.
+    _ = uacc^
+    _ = vacc^
+    _ = rows^
+    _ = signs^
 
     var q = reduced.q()
     var p = reduced.p()

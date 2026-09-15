@@ -588,9 +588,9 @@ puts sizes on it:
   What is left is no longer the sweep: `gebrd` alone measures 1,992 ms of
   that 2,286, the values-only `2n` band iteration 44 ms, and everything
   the vectors cost 250 ms. So `svd` and `svdvals` were both waiting on the
-  unblocked reduction at that point, not on `bdsqr` -- the `labrd` panel
-  further down is what answered it -- and the `2n` doubling the
-  Golub-Kahan route costs stays until `bdsqr` itself takes the band.
+  unblocked reduction at that point, not on the band sweep -- the `labrd`
+  panel further down is what answered it -- and the `2n` doubling the
+  Golub-Kahan route costs is taken out by the `bdsqr` paragraph below.
 
   And `schur`'s Schur vectors go through the same batch at reach two, so
   the `schur` row is stale as well: 5,567 ms before, 2,147 ms after at
@@ -706,6 +706,29 @@ puts sizes on it:
   the only term blocking saves is the trailing GEMM. 32 stays the default,
   because `eigvals` is nearly flat across it (924 against 915 and 999) and
   because the same number is `.q()`'s panel width, which `schur` does form.
+
+  And the `2n x 2n` Golub-Kahan doubling is gone: `_bdsqr` chases the
+  bidiagonal itself and pushes a rotation into each of two batches, so
+  `U_B^T` and `V_B^T` are accumulated at width `n` instead of the
+  eigenvectors of a `2n` tridiagonal being de-interleaved afterwards.
+  Measured on `bench_linalg`'s `_general` fixture back to back against the
+  commit before it, alternating binaries, three rounds each and taking the
+  minimum, `n = 1024`, `float32`, load average 3.8 to 9.5:
+
+  | `block` | `svdvals` before | after | `svd` before | after |
+  |---|---|---|---|---|
+  | 16 | 1,621 | 1,615 | 2,034 | 1,686 |
+  | 32 | 1,644 | 1,648 | 1,949 | 1,768 |
+  | 64 | 1,704 | 1,691 | 1,949 | 1,752 |
+
+  Nine to seventeen per cent off `svd` and nothing off `svdvals`, and both
+  numbers are the honest ones: a values-only sweep pushes no rotation, so
+  the doubling only ever cost it tens of milliseconds of band arithmetic,
+  while the vectors were paying for stripes four times the area. What both
+  rows are waiting on now is `gebrd` -- about 1,650 of every figure in the
+  table -- which is where the `labrd` paragraph above left it. Anyone
+  reading "four times fewer rotations" as a factor on the call should read
+  the `svdvals` row first.
 
 - **The reductions are BLAS-2, not BLAS-3.** *(Superseded: `sytrd` by the
   `latrd` panel above, whose per-column arithmetic is threaded now too,

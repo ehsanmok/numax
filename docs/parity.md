@@ -211,16 +211,15 @@ has each algorithm and its ceiling.
   panel as well -- and `.q()` runs `qr_factor`'s
   reverse panel walk over the packed reflectors through a view shifted one
   row down, since a tridiagonal reduction puts the implicit unit one row
-  below a QR's. `svd` shares the same sweep and so the same accumulation,
-  at `2n`, and its singular vectors never touch the host either: the
-  de-interleave of `U` and `V` out of the `2n x 2n` `Z^T` is one
-  `elementwise` gathering the sorted rows and splitting their even and odd
-  entries, and `U = Q U_B`, `V = P V_B` come back through `inner` under
-  `transpose_b=True` because that gather emits both factors transposed.
+  below a QR's. `svd` shares the same accumulation through **two**
+  batches, one per side, and its singular vectors never touch the host
+  either: `_bdsqr` leaves `U_B^T` and `V_B^T` device-resident, one
+  `elementwise` gathers the rows into descending order and applies the
+  sign fix, and `U = Q U_B`, `V = P V_B` come back through `inner` under
+  `transpose_b=True` because the batches hold both factors transposed.
   `gebrd` takes the same `block` for both its own reduction and that walk,
   `.p()` reaching the walk through one transposing pack since the right
-  reflectors are held as rows. The `2n` doubling itself stays until
-  `bdsqr`. `schur` shares the same batch at **reach two**,
+  reflectors are held as rows. `schur` shares the same batch at **reach two**,
   since a Francis reflector spans three columns where a Givens rotation
   spans two: the tag becomes `(k + 2 s) // block` applied in *increasing*
   order (the chase ascends and the window slides two columns down per
@@ -239,11 +238,26 @@ has each algorithm and its ceiling.
   products stay, for the reason `sytrd`'s `A v` does. `block == 1` is the
   unblocked reduction and `block == n` one panel, both pinned by tests, and
   the per-column `taus.to_host()` synchronizations are gone -- the panel
-  kernels read the scales on the device. The singular values are the
-  eigenvalues of the Golub-Kahan tridiagonal -- the `2n x 2n` symmetric
-  tridiagonal with zero diagonal and off-diagonal `d_1, e_1, d_2, ...` --
-  which the very same sweep diagonalizes, its eigenvectors interleaving
-  `B`'s singular vectors. LAPACK's `dbdsvdx` takes that route too. `pinv`,
+  kernels read the scales on the device. The band iteration is
+  `dbdsqr`'s: an implicit-shift QR on the bidiagonal itself, splitting at
+  a negligible off-diagonal, taking Demmel and Kahan's zero shift wherever
+  a nonzero one would cost relative accuracy and otherwise the smallest
+  singular value of the trailing `2 x 2` (`las2`), and chasing the bulge
+  with one rotation on the right and one on the left per column. The two
+  streams go into two `_RotationBatch`es at `reach = 1` and **ascending**
+  -- the chase runs top-down, so its index rises within a sweep where
+  `_tql`'s falls -- which hold `U_B^T` and `V_B^T` device-resident; the
+  descending order and `dbdsqr`'s sign fix are then one `elementwise`
+  gather. The chase is top-down only, since one accumulator cannot carry
+  both tag directions; `dbdsqr` picks per block and a matrix graded the
+  other way costs sweeps here. **The `2n x 2n` Golub-Kahan doubling is
+  gone**: `svd` used to embed `B` in the symmetric tridiagonal with zero
+  diagonal and off-diagonal `d_1, e_1, d_2, ...`, whose eigenvalues are
+  `+-sigma` and whose eigenvectors interleave the singular vectors, and
+  run `_tql` there -- about `4n^2` rotations at width `2n` against `2n^2`
+  at width `n` now. `_golub_kahan` stays private as the test oracle the
+  new sweep is pinned against, and LAPACK's `dbdsvdx` is the route it
+  took. `pinv`,
   `cond`, `matrix_rank` and `lstsq`'s `"svd"` method are its dependents --
   each one SVD and a few lines, delegating underneath. The general
   spectrum takes the same two phases over a Hessenberg form, and that

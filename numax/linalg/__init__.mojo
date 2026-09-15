@@ -133,19 +133,21 @@ unblocked reduction, which made four passes per column where this makes
 two. `block == 1` is that unblocked reduction. What blocking does not move
 is the pair of matrix-vector products per column, for the reason `sytrd`
 gives about `A v`.
-The singular values are the eigenvalues of the Golub-Kahan
-tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
-no new numerics, only the doubling that route costs at `vectors=True`.
-It shares the blocked accumulation above, and the vectors never touch the
-host: the de-interleave of `U` and `V` out of the `2n x 2n` `Z^T` is one
-`elementwise` that gathers the rows the values sorted to and splits their
-even and odd entries, so the two come out already transposed and `U` and
-`V` are `inner(q, ub_t)` and `inner(p, vb_t)`. That `q` and that `p` --
-LAPACK's `orgbr` -- are the same panel walk `orgtr` runs, `p` reaching it
-through one transposing pack because the right reflectors are held as
-rows. `svd` and `svdvals` take a `block` that names both knobs, as `eigh`'s
-does: `gebrd`'s panel width and the sweep's rotation window. The `2n`
-doubling itself stays until `bdsqr`.
+The band iteration is `dbdsqr`: an implicit-shift QR on the
+bidiagonal itself, Demmel and Kahan's zero shift where a nonzero one would
+cost relative accuracy and the trailing `2 x 2`'s smallest singular value
+otherwise, chasing the bulge with one rotation on the right and one on the
+left per column. Those two streams go into two of the same rotation
+batches `eigh` uses, so the vectors never touch the host: the batches hold
+`U_B^T` and `V_B^T` device-resident, the descending order and the sign fix
+are one `elementwise` gather, and `U = Q U_B`, `V = P V_B` come back as
+`inner(q, ub_t)` and `inner(p, vb_t)`. That `q` and that `p` -- LAPACK's
+`orgbr` -- are the same panel walk `orgtr` runs, `p` reaching it through
+one transposing pack because the right reflectors are held as rows. `svd`
+and `svdvals` take a `block` that names both knobs, as `eigh`'s does:
+`gebrd`'s panel width and the sweep's rotation window. The `2n x 2n`
+Golub-Kahan doubling the earlier route ran on is gone, and with it three
+quarters of the rotation work.
 `pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it.
 
 The general spectrum takes the same two phases over a Hessenberg form:
