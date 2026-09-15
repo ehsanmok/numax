@@ -41,18 +41,37 @@ reshaped or copied to get there.
 
 ## The algorithm, and the launch count
 
-Bit-reversal permutation, then `log2(n)` radix-2 Cooley-Tukey stages, each
-one `elementwise` launch of `batch * n/2` butterflies. `log2(n) + 1`
-launches, and the data never touches the host in between -- the same
+Cooley-Tukey, decimation in time, in three kinds of launch:
+
+1. One **fused** launch does the bit-reversal gather and the first
+   `min(log2(n), 6)` stages together, in registers. A thread owns the 64
+   consecutive destination indices `[t*64, (t+1)*64)`, and after bit
+   reversal every butterfly whose span is at most 64 has both of its
+   indices inside that block, so those six stages never leave the thread.
+2. Every remaining **pair** of stages is one **radix-4** launch of
+   `batch * n/4` butterflies -- two radix-2 stages composed into one
+   four-point butterfly on `i, i+h, i+2h, i+3h`.
+3. An odd remaining stage ends with a plain radix-2 launch of
+   `batch * n/2`.
+
+So `1 + ceil((log2(n) - 6) / 2)` launches: **7** at `n = 2^17`, where one
+stage per launch plus a permutation took 18, and **1** at every `n <= 64`.
+The inverse `1/n` rides on the last launch's stores rather than costing a
+pass of its own, and the data never touches the host in between -- the same
 device-residency rule the blocked factorizations follow.
 
-The stages run **in place**, which is safe rather than lucky: butterfly `t`
-of a stage touches exactly the pair `(i, i + half)` of its own lane, and
-those pairs are disjoint across `t`, so no two threads of a launch address
-the same element. That is what makes the permutation the only extra pass.
-Stockham autosort would fold the permutation into the stages and save that
-one launch of the `log2(n) + 1`; it is not written, because the permutation
-is a pure gather and the stages are where the arithmetic is.
+The stages run **in place** over `dst`, which is safe rather than lucky:
+butterfly `t` of a stage touches exactly the pair `(i, i + half)` of its
+own lane -- the quartet `(i, i+h, i+2h, i+3h)` for radix-4 -- and those are
+disjoint across `t`, so no two threads of a launch address the same
+element. The fused launch is the one exception and needs no argument: it
+reads `src` and writes `dst`.
+
+The fused block is what Stockham autosort would have been for: it removes
+the standalone permutation pass, and it does it by keeping the gather where
+the arithmetic already is rather than by carrying a second buffer. The
+per-thread cost is `2 * 64` scalars in registers, which is what caps the
+block at six stages.
 
 Twiddles come from a table of `n/2` entries built once per transform,
 `W[q] = exp(-2*pi*i*q/n)`, which every stage indexes with a stride: a stage
@@ -101,11 +120,24 @@ from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
+from std.collections import Array
 
 from ..core.array import Static, Tensor, zeros
 
 comptime _TWO_PI = 6.283185307179586
 comptime _PI = 3.141592653589793
+
+comptime _FUSED_STAGES = 6
+"""How many radix-2 stages the first launch runs in registers.
+
+A thread owns `2^_FUSED_STAGES` consecutive destination indices of one
+lane. After the bit-reversal gather, a stage whose span is at most that
+block addresses only indices inside it, so the gather and those stages fuse
+into a single launch. The price is `2 * 2^_FUSED_STAGES` scalars live per
+thread -- 128 at six, which is what caps it: eight stages would be 512 and
+spill on any device. Below that the block is `n` itself, so every
+`n <= 64` transform is one launch in total.
+"""
 
 comptime Spectrum[dtype: DType, *dims: Int] = Tuple[
     Static[dtype, *dims], Static[dtype, *dims]
@@ -220,14 +252,17 @@ def _radix2[
     ctx: DeviceContext,
 ) raises:
     """The engine: `batch` transforms of length `n`, lane `b` of `src` into
-    lane `b` of `dst`. Permute, then `log2(n)` in-place butterfly stages
-    over `dst`.
+    lane `b` of `dst`.
 
-    `inverse` flips the sign of every twiddle angle and divides the result
-    by `n`, which is the only difference between the two directions and the
-    reason `ifft` is not a second implementation. `n` must be a power of
-    two; the public entry points' `where` clauses guarantee it, so nothing
-    here checks.
+    One fused launch (bit reversal plus the first `_FUSED_STAGES` stages in
+    registers), then one radix-4 launch per remaining pair of stages, then a
+    radix-2 launch if an odd stage is left -- the module docstring has the
+    accounting. `inverse` flips the sign of every twiddle angle and divides
+    the result by `n`, which is the only difference between the two
+    directions and the reason `ifft` is not a second implementation; the
+    division rides on the last launch's stores. `n` must be a power of two;
+    the public entry points' `where` clauses guarantee it, so nothing here
+    checks.
     """
     comptime bits = _log2_exact(n)
     comptime half_n = n // 2
@@ -235,8 +270,21 @@ def _radix2[
     # has to exist, since a zero-length buffer cannot be allocated.
     comptime table = half_n if half_n > 0 else 1
 
-    # `W[q] = exp(-2*pi*i*q/n)`, in Float64 and rounded once. Stage `span`
-    # reads `W[pos * (n // span)]`, so one table serves every stage.
+    # The fused block: `2^fused` consecutive destination indices per thread,
+    # capped by `n` itself, so a transform smaller than a block is one
+    # thread per lane and one launch in total.
+    comptime fused = bits if bits < _FUSED_STAGES else _FUSED_STAGES
+    comptime blk = 1 << fused
+    comptime blocks = n // blk
+    comptime rest = bits - fused
+    comptime pairs = rest // 2
+    comptime tail = rest % 2
+
+    comptime scale = 1.0 / Float64(n)
+
+    # `W[q] = exp(-2*pi*i*q/n)`, in Float64 and rounded once. A stage of
+    # span `s` reads `W[pos * (n // s)]` and a radix-4 launch reads two
+    # entries of the same table, so one table serves every launch.
     var twiddle_re = List[Scalar[dtype]](capacity=table)
     var twiddle_im = List[Scalar[dtype]](capacity=table)
     for q in range(table):
@@ -250,27 +298,170 @@ def _radix2[
     var sim = src_im
     var dre = dst_re
     var dim = dst_im
+    var fwr = wr_all.view()
+    var fwi = wi_all.view()
 
     @always_inline
-    def permute[
+    def fused_block[
         w: Int, alignment: Int = 1
-    ](coord: Coord) {var sre, var sim, var dre, var dim}:
+    ](coord: Coord) {var sre, var sim, var dre, var dim, var fwr, var fwi}:
         var idx = coord_to_index_list(coord)
         var b = idx[0]
-        var i = idx[1]
-        var j = _reverse_bits(i, bits)
-        dre.store[1](Coord(b, i), sre[Coord(b, j)])
-        dim.store[1](Coord(b, i), sim[Coord(b, j)])
+        var t = idx[1]
+        # `rev(t * blk + l, bits)` splits, because `l` is exactly the low
+        # `fused` bits: `rev_fused(l) * blocks + rev(t, bits - fused)`. One
+        # reversal per thread rather than one per element.
+        var high = _reverse_bits(t, bits - fused)
+        var ar = Array[Scalar[dtype], blk](uninitialized=True)
+        var ai = Array[Scalar[dtype], blk](uninitialized=True)
+        comptime for l in range(blk):
+            comptime low = _reverse_bits(l, fused)
+            var j = low * blocks + high
+            ar[l] = sre[Coord(b, j)]
+            ai[l] = sim[Coord(b, j)]
+
+        comptime for stage in range(fused):
+            comptime half = 1 << stage
+            comptime span = half << 1
+            comptime stride = n // span
+            # `pos` outermost so a twiddle is loaded once per stage per
+            # position rather than once per butterfly.
+            comptime for pos in range(half):
+                comptime q = pos * stride
+                var wr = fwr[Coord(q)]
+                var wi = fwi[Coord(q)]
+                comptime if inverse:
+                    wi = -wi
+                comptime for group in range(blk // span):
+                    comptime i = group * span + pos
+                    comptime j = i + half
+                    var vr = ar[j]
+                    var vi = ai[j]
+                    var tr = vr * wr - vi * wi
+                    var ti = vr * wi + vi * wr
+                    var ur = ar[i]
+                    var ui = ai[i]
+                    ar[i] = ur + tr
+                    ai[i] = ui + ti
+                    ar[j] = ur - tr
+                    ai[j] = ui - ti
+
+        comptime for l in range(blk):
+            var o = Coord(b, t * blk + l)
+            comptime if inverse and rest == 0:
+                dre.store[1](o, ar[l] * Scalar[dtype](scale))
+                dim.store[1](o, ai[l] * Scalar[dtype](scale))
+            else:
+                dre.store[1](o, ar[l])
+                dim.store[1](o, ai[l])
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
-        permute, Coord(batch, n), ctx
+        fused_block, Coord(batch, blocks), ctx
     )
 
-    # One launch per stage, `batch * half_n` butterflies each. In place:
-    # butterfly `t` of lane `b` owns the pair `(i, i + half)` of that lane
-    # and those are disjoint across `t`.
-    comptime for stage in range(bits):
-        comptime half = 1 << stage
+    # Two stages per launch: the quartet `(i, i+h, i+2h, i+3h)` is what the
+    # composition of a span-`2h` stage and a span-`4h` stage touches. The
+    # first stage's twiddle is `W^(2 pos t)`, the second's are `W^(pos t)`
+    # on the `(i, i+2h)` pair and `W^(pos t + n/4)` on `(i+h, i+3h)` --
+    # and `W^(n/4)` is `-i` exactly, so it is a swap and a negation rather
+    # than a third table read.
+    comptime for p in range(pairs):
+        comptime s = fused + 2 * p
+        comptime h = 1 << s
+        comptime quad = h << 2
+        comptime stride4 = n // quad
+        comptime scale_here = inverse and tail == 0 and p == pairs - 1
+        var qre = dst_re
+        var qim = dst_im
+        var qwr = wr_all.view()
+        var qwi = wi_all.view()
+
+        @always_inline
+        def radix4[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var qre, var qim, var qwr, var qwi}:
+            var idx = coord_to_index_list(coord)
+            var b = idx[0]
+            var t = idx[1]
+            var pos = t % h
+            var i0 = (t // h) * quad + pos
+            var i1 = i0 + h
+            var i2 = i1 + h
+            var i3 = i2 + h
+
+            var qb = pos * stride4
+            var br = qwr[Coord(qb)]
+            var bi = qwi[Coord(qb)]
+            var arw = qwr[Coord(qb + qb)]
+            var aiw = qwi[Coord(qb + qb)]
+            comptime if inverse:
+                bi = -bi
+                aiw = -aiw
+
+            var a0r = qre[Coord(b, i0)]
+            var a0i = qim[Coord(b, i0)]
+            var a1r = qre[Coord(b, i1)]
+            var a1i = qim[Coord(b, i1)]
+            var a2r = qre[Coord(b, i2)]
+            var a2i = qim[Coord(b, i2)]
+            var a3r = qre[Coord(b, i3)]
+            var a3i = qim[Coord(b, i3)]
+
+            var z1r = a1r * arw - a1i * aiw
+            var z1i = a1r * aiw + a1i * arw
+            var z3r = a3r * arw - a3i * aiw
+            var z3i = a3r * aiw + a3i * arw
+
+            var b0r = a0r + z1r
+            var b0i = a0i + z1i
+            var b1r = a0r - z1r
+            var b1i = a0i - z1i
+            var b2r = a2r + z3r
+            var b2i = a2i + z3i
+            var b3r = a2r - z3r
+            var b3i = a2i - z3i
+
+            var c2r = b2r * br - b2i * bi
+            var c2i = b2r * bi + b2i * br
+            var e3r = b3r * br - b3i * bi
+            var e3i = b3r * bi + b3i * br
+            # Times `W^(n/4)`: `-i` forward, `+i` inverse.
+            comptime if inverse:
+                var swap = e3r
+                e3r = -e3i
+                e3i = swap
+            else:
+                var swap = e3r
+                e3r = e3i
+                e3i = -swap
+
+            comptime if scale_here:
+                comptime k = Scalar[dtype](scale)
+                qre.store[1](Coord(b, i0), (b0r + c2r) * k)
+                qim.store[1](Coord(b, i0), (b0i + c2i) * k)
+                qre.store[1](Coord(b, i1), (b1r + e3r) * k)
+                qim.store[1](Coord(b, i1), (b1i + e3i) * k)
+                qre.store[1](Coord(b, i2), (b0r - c2r) * k)
+                qim.store[1](Coord(b, i2), (b0i - c2i) * k)
+                qre.store[1](Coord(b, i3), (b1r - e3r) * k)
+                qim.store[1](Coord(b, i3), (b1i - e3i) * k)
+            else:
+                qre.store[1](Coord(b, i0), b0r + c2r)
+                qim.store[1](Coord(b, i0), b0i + c2i)
+                qre.store[1](Coord(b, i1), b1r + e3r)
+                qim.store[1](Coord(b, i1), b1i + e3i)
+                qre.store[1](Coord(b, i2), b0r - c2r)
+                qim.store[1](Coord(b, i2), b0i - c2i)
+                qre.store[1](Coord(b, i3), b1r - e3r)
+                qim.store[1](Coord(b, i3), b1i - e3i)
+
+        elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+            radix4, Coord(batch, n // 4), ctx
+        )
+
+    # An odd remaining stage count leaves the widest stage on its own.
+    comptime if tail == 1:
+        comptime half = 1 << (bits - 1)
         comptime span = half << 1
         comptime stride = n // span
         var bre = dst_re
@@ -285,9 +476,8 @@ def _radix2[
             var idx = coord_to_index_list(coord)
             var b = idx[0]
             var t = idx[1]
-            var block = t // half
             var pos = t % half
-            var i = block * span + pos
+            var i = (t // half) * span + pos
             var j = i + half
 
             var q = pos * stride
@@ -303,37 +493,26 @@ def _radix2[
             var tr = vr * wr - vi * wi
             var ti = vr * wi + vi * wr
 
-            bre.store[1](Coord(b, i), ur + tr)
-            bim.store[1](Coord(b, i), ui + ti)
-            bre.store[1](Coord(b, j), ur - tr)
-            bim.store[1](Coord(b, j), ui - ti)
+            comptime if inverse:
+                comptime k = Scalar[dtype](scale)
+                bre.store[1](Coord(b, i), (ur + tr) * k)
+                bim.store[1](Coord(b, i), (ui + ti) * k)
+                bre.store[1](Coord(b, j), (ur - tr) * k)
+                bim.store[1](Coord(b, j), (ui - ti) * k)
+            else:
+                bre.store[1](Coord(b, i), ur + tr)
+                bim.store[1](Coord(b, i), ui + ti)
+                bre.store[1](Coord(b, j), ur - tr)
+                bim.store[1](Coord(b, j), ui - ti)
 
         elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
             butterfly, Coord(batch, half_n), ctx
         )
 
-    comptime if inverse:
-        var nre = dst_re
-        var nim = dst_im
-        comptime scale = 1.0 / Float64(n)
-
-        @always_inline
-        def normalize[
-            w: Int, alignment: Int = 1
-        ](coord: Coord) {var nre, var nim}:
-            var idx = coord_to_index_list(coord)
-            var c = Coord(idx[0], idx[1])
-            nre.store[1](c, nre[c] * Scalar[dtype](scale))
-            nim.store[1](c, nim[c] * Scalar[dtype](scale))
-
-        elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
-            normalize, Coord(batch, n), ctx
-        )
-
     ctx.synchronize()
 
     # `view()` erases the origin, so the twiddle tables are not kept alive
-    # by the views the stages read through.
+    # by the views the launches read through.
     _ = wr_all^
     _ = wi_all^
 

@@ -41,8 +41,13 @@ documents.
 The direct sum is `O(m k)`; the transform route is `O(n log n)` at `n =
 next_fast_len(m + k - 1)` and costs three transforms plus two padding
 passes. For a short kernel the direct sum wins, for a long one the
-transform does, and the crossover is a measurement rather than a rule;
-`docs/performance.md` is where it belongs once measured. The two agree to
+transform does, and the crossover is a measurement rather than a rule.
+Measured on an M3 Pro at `float32`, it is near `k = 100` at `m = 4096` and
+near `k = 300` at `m = 65536`; `bench/bench_signal.mojo` is the harness
+and `docs/performance.md` carries the table, which is the thing to consult
+rather than these two numbers, since the crossover moves with every change
+to `numax.fft`'s engine -- it halved when the engine went to a fused first
+block and radix-4. The two agree to
 rounding on every input, which the tests check, so a caller can switch
 without changing the answer.
 """

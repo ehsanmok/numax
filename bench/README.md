@@ -120,12 +120,14 @@ pixi run bench-thermite  # Rust thermite, CPU (NEON or AVX2)
 
 pixi run bench-linalg    # numax linalg, CPU -- factorizations, spectral, BLAS-1, block sweep
 pixi run bench-signal    # numax signal, CPU -- convolve vs. fftconvolve, filters, welch
+pixi run bench-fft       # numax fft, CPU -- fft/rfft/irfft/fft2, us per call and launches
 pixi run bench-interpolate # numax interpolate, CPU -- interp, CubicSpline
 pixi run bench-stats     # numax stats, CPU -- norm.cdf, histogram, quantile, cov
 pixi run bench-linalg-gpu # numax factorizations, CUDA/Metal (needs a GPU)
 pixi run bench-blas1-gpu # numax BLAS-1, CUDA/Metal -- separate, see the Metal note
 pixi run -e bench-python bench-scipy-linalg # LAPACK, CPU (OpenBLAS or Accelerate)
 pixi run -e bench-python bench-scipy-signal # scipy.signal, CPU
+pixi run -e bench-python bench-scipy-fft    # scipy.fft (pocketfft), CPU
 pixi run -e bench-python bench-scipy-interpolate # numpy.interp and scipy CubicSpline, CPU
 pixi run -e bench-python bench-scipy-stats  # scipy.stats.norm, numpy histogram/quantile/cov, CPU
 pixi run -e bench-python bench-torch-linalg # PyTorch: cuSOLVER on CUDA, MPS on Metal
@@ -732,7 +734,7 @@ SciPy on time, so above one is numax ahead.
 | area | ahead | behind |
 |---|---|---|
 | spectral, `n = 1024` | -- | `eigvalsh` 0.11, `eigvals` 0.06, `svdvals` 0.02, `schur` 0.02, `eigh` 0.015, `svd` 0.002: the band iterations run on the host, and with vectors that is `O(n^3)` scalar Givens |
-| convolution | direct `convolve` within 1.2-2x of SciPy to 128 taps | `fftconvolve` 14x behind at `2^17` points (radix-2, one launch per stage); the crossover is `k ~ 250` at `m = 4096`, `~550` at `65536` |
+| convolution | direct `convolve` within 1.2-2x of SciPy to 128 taps | `fftconvolve` about 3x behind pocketfft at `2^18` points, down from 14x once the engine fused its first six stages and went radix-4; the crossover is near `k = 100` at `m = 4096` and `k = 300` at `65536`, from `~250` and `~550` |
 | filters | `medfilt` 2.0x, `savgol_filter` 1.9x, `welch` 12.4x | `lfilter` 0.08, `filtfilt` 0.44 -- `Float64` host recurrences over a `List` |
 | interpolation | `interp` 9.4x, `CubicSpline` evaluation 3.9x | `CubicSpline` construction 0.3x (host tridiagonal solve, a quarter of a millisecond) |
 | statistics | `norm.cdf` 5.4x, `histogram` at par | `quantile` 0.05 (host sort), `cov`/`corrcoef` 0.11 (host loop) |

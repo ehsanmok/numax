@@ -426,9 +426,13 @@ not.
 | `next_fast_len` — the next power of two, the length this engine is fast at; a non-power-of-two `n` costs three transforms of `next_fast_len(2n - 1)` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `dct`, `idct`, `dst`, `idst` — types I-IV, `norm` `"backward"`/`"ortho"`/`"forward"`, SciPy's definitions; each is one complex DFT of length `2N` (`2(N∓1)` for type I) between a gather-and-weight pass and a twiddle-and-project pass, so all eight are three host tables over one kernel pair | [`fft/trig.mojo`](../numax/fft/trig.mojo) |
 
-Tier 2: the stage loop is on the host and each of the `log2(n) + 1` stages
-per axis is a device kernel, so the data stays device-resident between
-them but nothing here runs *inside* a kernel body. `gpu=True` is `float32` on Apple
+Tier 2: the stage loop is on the host and every launch it makes is a
+device kernel, so the data stays device-resident between them but nothing
+here runs *inside* a kernel body. Per axis that is
+`1 + ceil((log2(n) - 6) / 2)` launches -- one fused kernel that does the
+bit-reversal gather and the first six stages in registers, then one
+radix-4 kernel per remaining pair of stages, then a radix-2 kernel when an
+odd stage is left. `gpu=True` is `float32` on Apple
 silicon, which is Metal's limit on `double` rather than this module's.
 
 | Surface — over `Array[Complex[T], n]`, from `numax.fft.array` | Where |

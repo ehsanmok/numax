@@ -3,8 +3,8 @@
 The load-bearing check is the last group: the `Tensor` tier is pinned
 against `numax.fft.array`, which is separately tested against NumPy's exact
 outputs. Two tiers computing the same transform by different routes -- a
-register-resident `comptime` butterfly against `log2(n) + 1` device
-launches over a bit-reversed buffer -- agreeing to `1e-12` is a much
+register-resident `comptime` butterfly against a fused device kernel and
+a handful of radix-4 ones -- agreeing to `1e-12` is a much
 stronger statement than either matching a table of constants alone.
 """
 
@@ -31,7 +31,7 @@ from numax.fft import (
     rfft2,
     rfftfreq,
 )
-from numax.fft.fft import _as_matrix, _bluestein
+from numax.fft.fft import _as_matrix, _bluestein, _dft, _log2_exact
 from numax.fft.array import fft as array_fft
 from numax.fft.array import fft2 as array_fft2
 
@@ -220,8 +220,8 @@ def test_rfftfreq_is_non_negative() raises:
 def test_the_two_tiers_agree() raises:
     """The `Tensor` tier against `numax.fft.array`, which is itself pinned
     to NumPy. Different algorithms -- a `comptime` butterfly over a register
-    `Array` against `log2(n) + 1` launches over a bit-reversed device
-    buffer -- so agreement here is a real cross-check rather than a
+    `Array` against one fused device launch that bit-reverses and runs six
+    stages -- so agreement here is a real cross-check rather than a
     tautology."""
     var ctx = _cpu()
 
@@ -757,6 +757,227 @@ def test_next_fast_len_is_the_next_power_of_two() raises:
     assert_equal(next_fast_len(1000), 1024)
     comptime at_compile_time = next_fast_len(1000)
     assert_equal(at_compile_time, 1024)
+
+
+def _wave(i: Int) -> Tuple[Float64, Float64]:
+    """One bounded complex sample. Bounded on purpose: the naive DFT this
+    sweep compares against sums `n` of these, so an input that grew with
+    `i` would put the reference's own rounding above the engine's."""
+    return (
+        _cos(0.7 * Float64(i)) + 0.3 * _sin(0.11 * Float64(i)),
+        _sin(1.3 * Float64(i)) - 0.2 * _cos(0.05 * Float64(i)),
+    )
+
+
+def _check_power_of_two[n: Int]() raises where n > 0:
+    """One length of the power-of-two sweep: `fft` against a reference, and
+    `ifft(fft(x))` back to `x`.
+
+    Up to `n = 64` the reference is `numax.fft.array`, which is pinned to
+    NumPy -- the whole transform in one register `Array` against one fused
+    device launch. Past that the `Array` tier's register footprint stops,
+    and the reference is the naive `O(n^2)` DFT on a stride of bins.
+    """
+    comptime bits = _log2_exact(n)
+    var ctx = _cpu()
+    var re_values = List[Float64]()
+    var im_values = List[Float64]()
+    for i in range(n):
+        var s = _wave(i)
+        re_values.append(s[0])
+        im_values.append(s[1])
+
+    var out = fft((_from[n](re_values), _from[n](im_values)))
+    var re = out[0].to_host()
+    var im = out[1].to_host()
+
+    comptime if bits <= 6:
+        var packed = Array[Complex[P], 1 << bits](uninitialized=True)
+        for i in range(n):
+            packed[i] = Complex[P](P(re_values[i]), P(im_values[i]))
+        var reference = array_fft[P, bits](packed)
+        for k in range(n):
+            assert_almost_equal(
+                Float64(re[k]), Float64(reference[k].re.v), atol=1e-9
+            )
+            assert_almost_equal(
+                Float64(im[k]), Float64(reference[k].im.v), atol=1e-9
+            )
+    else:
+        var stride = n // 32
+        for k in range(0, n, stride):
+            var expected = _dft_bin(re_values, im_values, k)
+            assert_almost_equal(Float64(re[k]), expected[0], atol=1e-9)
+            assert_almost_equal(Float64(im[k]), expected[1], atol=1e-9)
+
+    var back = ifft(fft((_from[n](re_values), _from[n](im_values))))
+    var bre = back[0].to_host()
+    var bim = back[1].to_host()
+    for i in range(n):
+        assert_almost_equal(Float64(bre[i]), re_values[i], atol=1e-10)
+        assert_almost_equal(Float64(bim[i]), im_values[i], atol=1e-10)
+
+
+def test_fft_sweeps_every_power_of_two_to_4096() raises:
+    """Every power of two from `1` to `4096`, forward and back.
+
+    The engine's shape changes with `log2(n)` and the sweep is what pins
+    each shape: `n <= 64` is the fused block alone and nothing else runs;
+    `128` leaves one stage, so a lone radix-2 launch finishes; `256` leaves
+    two, which is one radix-4 launch and no tail; and every size above
+    alternates between those two endings. `1` and `2` are the degenerate
+    ones -- no stages at all, and one butterfly.
+    """
+    # Spelled out rather than a `comptime for`: the `where n > 0` on the
+    # helper needs evidence the prover cannot extract from a loop variable.
+    _check_power_of_two[1]()
+    _check_power_of_two[2]()
+    _check_power_of_two[4]()
+    _check_power_of_two[8]()
+    _check_power_of_two[16]()
+    _check_power_of_two[32]()
+    _check_power_of_two[64]()
+    _check_power_of_two[128]()
+    _check_power_of_two[256]()
+    _check_power_of_two[512]()
+    _check_power_of_two[1024]()
+    _check_power_of_two[2048]()
+    _check_power_of_two[4096]()
+
+
+def _check_lanes[batch: Int, n: Int]() raises where batch > 0 and n > 0:
+    """`_dft` over `batch` lanes at once, each lane against a separate 1-D
+    `fft` of the same data."""
+    var ctx = _cpu()
+    var values = List[Scalar[dtype]](capacity=batch * n)
+    for b in range(batch):
+        for i in range(n):
+            values.append(Scalar[dtype](_wave(i + 7 * b)[0] + Float64(b)))
+    var src_re = Static[dtype, batch, n](ctx, values.copy())
+    var src_im = zeros[dtype, batch, n](ctx)
+    var out_re = Static[dtype, batch, n]._uninitialized(ctx)
+    var out_im = Static[dtype, batch, n]._uninitialized(ctx)
+    _dft[dtype, batch, n, False, False](
+        _as_matrix[dtype, batch, n](src_re),
+        _as_matrix[dtype, batch, n](src_im),
+        _as_matrix[dtype, batch, n](out_re),
+        _as_matrix[dtype, batch, n](out_im),
+        ctx,
+    )
+    var got_re = out_re.to_host()
+    var got_im = out_im.to_host()
+    _ = src_re^
+    _ = src_im^
+    _ = out_re^
+    _ = out_im^
+
+    for b in range(batch):
+        var lane = List[Scalar[dtype]](capacity=n)
+        for i in range(n):
+            lane.append(values[b * n + i])
+        var one = fft(
+            (
+                Static[dtype, n](ctx, lane^),
+                zeros[dtype, n](ctx),
+            )
+        )
+        var lre = one[0].to_host()
+        var lim = one[1].to_host()
+        for k in range(n):
+            assert_almost_equal(
+                Float64(got_re[b * n + k]), Float64(lre[k]), atol=1e-10
+            )
+            assert_almost_equal(
+                Float64(got_im[b * n + k]), Float64(lim[k]), atol=1e-10
+            )
+
+
+def test_the_engine_runs_several_lanes_through_the_fused_block() raises:
+    """Three lanes at `n = 128` and at `n = 8`: a transform that spans two
+    fused blocks and the radix-2 tail, and one that is smaller than a fused
+    block so the launch is one thread per lane. A lane reading its
+    neighbour's block would show up here and nowhere in the 1-D tests."""
+    _check_lanes[3, 128]()
+    _check_lanes[3, 8]()
+
+
+def _check_real_round_trip[n: Int]() raises where n > 0:
+    """`rfft` against the first `n/2 + 1` bins of `fft`, and `irfft` back."""
+    var ctx = _cpu()
+    var values = List[Float64]()
+    for i in range(n):
+        values.append(_wave(i)[0])
+
+    var half = rfft(_from[n](values))
+    var hre = half[0].to_host()
+    var him = half[1].to_host()
+
+    var full = fft((_from[n](values), zeros[dtype, n](ctx)))
+    var fre = full[0].to_host()
+    var fim = full[1].to_host()
+    for k in range(n // 2 + 1):
+        assert_almost_equal(Float64(hre[k]), Float64(fre[k]), atol=1e-10)
+        assert_almost_equal(Float64(him[k]), Float64(fim[k]), atol=1e-10)
+
+    var back = irfft[dtype, n // 2 + 1, False, n](rfft(_from[n](values)))
+    var got = back.to_host()
+    for i in range(n):
+        assert_almost_equal(Float64(got[i]), values[i], atol=1e-10)
+
+
+def test_rfft_and_irfft_round_trip_across_the_fused_block() raises:
+    """`n = 64`, `128` and `256`: the block exactly, the block plus a
+    radix-2 tail, and the block plus one radix-4 launch. `irfft` is where
+    the inverse scaling rides on the last launch's stores, so each of the
+    three endings has to carry the `1/n` correctly."""
+    _check_real_round_trip[64]()
+    _check_real_round_trip[128]()
+    _check_real_round_trip[256]()
+
+
+def test_fft2_on_a_rectangle_of_powers_of_two() raises:
+    """`8 x 128`: one axis entirely inside the fused block, the other with
+    a radix-2 tail, so the rectangular `fft2` exercises both endings in one
+    call. Checked against the naive 2-D DFT on a spread of bins, and by
+    `ifft2` returning the image."""
+    var ctx = _cpu()
+    comptime rows = 8
+    comptime cols = 128
+    var values = List[Float64]()
+    for i in range(rows * cols):
+        values.append(_wave(i)[0])
+
+    var out = fft2((_matrix[rows, cols](values), zeros[dtype, rows, cols](ctx)))
+    var re = out[0].to_host()
+    var im = out[1].to_host()
+
+    for r in range(rows):
+        for c in range(0, cols, 16):
+            var expected_re = 0.0
+            var expected_im = 0.0
+            for y in range(rows):
+                for x in range(cols):
+                    var angle = -6.283185307179586 * (
+                        Float64(r * y) / Float64(rows)
+                        + Float64(c * x) / Float64(cols)
+                    )
+                    expected_re += values[y * cols + x] * _cos(angle)
+                    expected_im += values[y * cols + x] * _sin(angle)
+            assert_almost_equal(
+                Float64(re[r * cols + c]), expected_re, atol=1e-9
+            )
+            assert_almost_equal(
+                Float64(im[r * cols + c]), expected_im, atol=1e-9
+            )
+
+    var back = ifft2(
+        fft2((_matrix[rows, cols](values), zeros[dtype, rows, cols](ctx)))
+    )
+    var bre = back[0].to_host()
+    var bim = back[1].to_host()
+    for i in range(rows * cols):
+        assert_almost_equal(Float64(bre[i]), values[i], atol=1e-10)
+        assert_almost_equal(Float64(bim[i]), 0.0, atol=1e-10)
 
 
 def main() raises:

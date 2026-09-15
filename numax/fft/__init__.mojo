@@ -4,17 +4,20 @@
 from numax.fft import fft, ifft, rfft, irfft, fft2, rfft2, fftfreq, fftshift
 ```
 
-Radix-2 Cooley-Tukey at a power of two, Bluestein's chirp-z at every other
-length over `Tensor`. MAX ships **no forward transform at all** -- its only one is `nn.irfft`, inverse-only,
+Radix-2 and radix-4 Cooley-Tukey at a power of two, Bluestein's chirp-z at
+every other length over `Tensor`. MAX ships **no forward transform at all** -- its only one is `nn.irfft`, inverse-only,
 last-axis-only and NVIDIA-only over the private `_cufft` -- so this is an
 **extend** rather than a delegation, written in MAX's idiom with `gpu: Bool`
-selecting the target and the data device-resident between stages.
+selecting the target and the data device-resident between launches. The
+first six stages and the bit-reversal gather run together in registers, and
+every pair of stages after them is one radix-4 launch, so a `2^17`-point
+transform is 7 kernels rather than 18.
 
 Two tiers, one import each, the same split `numax.linalg` makes:
 
 | Import | Holds | Good for |
 | --- | --- | --- |
-| `numax.fft` | `Tensor`, `Plain`-only, tier 2 | the large transform: `log2(n) + 1` device launches, no host round trip; also the only tier with `dct`/`dst` |
+| `numax.fft` | `Tensor`, `Plain`-only, tier 2 | the large transform: `1 + ceil((log2(n) - 6) / 2)` device launches, no host round trip; also the only tier with `dct`/`dst` |
 | `numax.fft.array` | `Array[Complex[T], n]`, `FloatLike`-generic, tier 1 | the small one: register-resident, differentiates at `Dual`, runs per SIMD lane inside a kernel body |
 
 This surface is the `Tensor` one, and it carries `fft`/`ifft`,

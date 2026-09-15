@@ -121,6 +121,9 @@ bench-torch-linalg = { cmd = "python3 linalg.py", cwd = "bench/torch" }
 # The signal, interpolation and statistics baselines, against
 # `bench_signal.mojo`, `bench_interpolate.mojo` and `bench_stats.mojo`.
 bench-scipy-signal = { cmd = "python3 signal_processing.py", cwd = "bench/scipy" }
+# The transform baseline, against `bench_fft.mojo`. Not `fft.py`: a module
+# in a task's `cwd` that shadows one SciPy imports breaks the directory.
+bench-scipy-fft = { cmd = "python3 fft_transforms.py", cwd = "bench/scipy" }
 bench-scipy-interpolate = { cmd = "python3 interpolate.py", cwd = "bench/scipy" }
 bench-scipy-stats = { cmd = "python3 stats.py", cwd = "bench/scipy" }
 accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
@@ -485,6 +488,9 @@ bench-linalg = "mojo -I . bench/bench_linalg.mojo"
 # The `Tensor` tiers of numax.signal, numax.interpolate and numax.stats,
 # each against the `bench-scipy-*` baseline of the same name. CPU-only.
 bench-signal = "mojo -I . bench/bench_signal.mojo"
+# The transform engine on its own: us per call and the launch count beside
+# it, against `bench-scipy-fft`'s pocketfft. CPU-only.
+bench-fft = "mojo -I . bench/bench_fft.mojo"
 bench-interpolate = "mojo -I . bench/bench_interpolate.mojo"
 bench-stats = "mojo -I . bench/bench_stats.mojo"
 # The fusion sweep runs a GPU half, so it needs real Metal hardware too.

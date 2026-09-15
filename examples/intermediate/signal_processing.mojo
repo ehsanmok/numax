@@ -12,7 +12,7 @@ is the thing worth taking away:
   they are the parts that go to a device unchanged.
 - `fftconvolve`, `welch` and the spectral estimators are `numax.fft`
   underneath: a batch of transforms, device-resident across
-  `log2(n) + 1` stages. Whether the transform beats the direct sum
+  `1 + ceil((log2(n) - 6) / 2)` launches. Whether the transform beats the direct sum
   depends on the kernel length, and `docs/performance.md` measures the
   crossover on this machine rather than guessing at it.
 - `lfilter` and `filtfilt` are recurrences. Sample `k` needs sample

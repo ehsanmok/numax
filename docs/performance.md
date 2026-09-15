@@ -591,20 +591,51 @@ do SciPy's):
 | 65,536 | 512 | 9,954 | 10,856 | 1,941 | 780 |
 | 65,536 | 2,048 | 43,866 | 10,929 | 11,262 | 485 |
 
-The crossover the convolution module said it would not guess: **about
-`k = 250` at `m = 4096` and `k = 550` at `m = 65536`** on this machine,
-against SciPy's `k ~ 128` and `~150`. The direct form is within 1.2-2x
-of SciPy's up to 128 taps -- one `elementwise` launch of `m + k - 1` dot
-products -- and falls to 4x behind at 2048 taps, where SciPy's direct
-kernel pulls ahead. The transform route is the
-weak one: 10.9 ms for a `131072`-point round trip is 14x SciPy's
-`pocketfft`, because `numax.fft` is `log2(n) + 1` `elementwise` launches
-per transform (radix-2, one stage per launch, `docs`'d in
-`numax/fft/fft.mojo`), three transforms plus two padding passes per
-convolution, and on a CPU each launch is a thread-pool dispatch over
-`n/2` butterflies of trivial work. A radix-4 or fused multi-stage kernel
-would move both the crossover and the `welch` row below; until then the
-rule for a caller is the table, not SciPy's.
+The table above is the one-stage-per-launch engine, kept as the "before"
+column. The direct form is within 1.2-2x of SciPy's up to 128 taps -- one
+`elementwise` launch of `m + k - 1` dot products -- and falls to 4x behind
+at 2048 taps, where SciPy's direct kernel pulls ahead. The transform route
+was the weak one: 10.9 ms for a `131072`-point round trip was 14x SciPy's
+`pocketfft`, because `numax.fft` was `log2(n) + 1` `elementwise` launches
+per transform, three transforms plus two padding passes per convolution,
+and on a CPU each launch is a thread-pool dispatch over `n/2` butterflies
+of trivial work.
+
+**The engine is now fused and radix-4**, and the launch count is the whole
+of the change: `1 + ceil((log2(n) - 6) / 2)` rather than `log2(n) + 1`, so
+7 launches at `n = 2^17` where there were 18, and 1 at every `n <= 64`.
+One kernel does the bit-reversal gather and the first six stages in 128
+registers, each pair of stages after it is one radix-4 kernel over `n/4`
+butterflies, and the inverse `1/n` rides on the last kernel's stores
+instead of a pass of its own. Measured beside the change on an M3 Pro at
+`float32` -- **not on a quiet machine**, another lane was running gates, so
+read the direction and not the third digit; the final table is the M2
+sweep:
+
+| | before | after |
+|---|---|---|
+| `fft`, `n = 2^10` (engine only) | 20.2 | 15.6 |
+| `fft`, `n = 2^14` | 322 | 221 |
+| `fft`, `n = 2^16` | 1,481 | 979 |
+| `fft`, `n = 2^18` | 7,527 | 5,100 |
+| `fft`, `n = 2^20` | 37,036 | 26,922 |
+| `fftconvolve`, `m = 4096`, `k = 128` | 509 | 312 |
+| `fftconvolve`, `m = 4096`, `k = 2048` | 498 | 390 |
+| `fftconvolve`, `m = 65536`, `k = 512` | 12,552 | 7,560 |
+| `fftconvolve`, `m = 65536`, `k = 2048` | 14,326 | 7,463 |
+| `welch`, `nperseg = 256`, `n = 2^20` | 19,094 | 13,219 |
+
+About 1.4-1.5x on the transform itself and the same on everything built on
+it, and the crossover the convolution module said it would not guess moves
+with it: **about `k = 100` at `m = 4096` and `k = 300` at `m = 65536`**,
+from `~180` and `~570` on the same runs, against SciPy's `k ~ 128` and
+`~150`. Against `pocketfft` the gap is now about **3x** (`bench-fft`
+against `bench-scipy-fft` in one session: `n = 2^18`, 5.1 ms against 1.7;
+`n = 2^20`, 26.9 against 9.5), down from 14x. What is left is that one
+radix-4 launch still writes its result to memory and reads it back, where
+pocketfft keeps a whole cache-sized block in registers across every stage;
+a six-stage fused block at the *top* of the transform as well as the
+bottom is the shape that closes it, and it is not written.
 
 **Filters and spectra, `n = 2^20`** (µs per call):
 
@@ -617,7 +648,11 @@ rule for a caller is the table, not SciPy's.
 | `welch`, `nperseg = 256` | 6,780 | 83,839 | **12.4** |
 
 The two `elementwise` filters beat SciPy's C by 2x and `welch` -- 8,191
-segments through one batched `rfft` -- by 12x. The recurrences lose, as
+segments through one batched `rfft` -- by 12x. The `welch` row predates
+the fused engine; re-measured beside that change it fell about 1.45x
+(19,094 to 13,219 µs on a busy machine, the pair above), so the ratio is
+better than 12.4 and the number to publish is the M2 sweep's, not either
+of those. The recurrences lose, as
 the module docstring says they diverge for: `lfilter` is a `Float64` host
 loop over a `List`, and at 32 taps it is 12x behind `scipy.signal`'s C
 `lfilter`; the IIR `filtfilt` at 4 taps is 2.3x behind. The gap is the
@@ -722,6 +757,7 @@ pixi run bench-fusion   # CPU + GPU: composing inside step vs. chaining maps
 pixi run bench-matmul   # CPU: the Array tier's matmul vs. MAX's linalg.matmul
 pixi run bench-linalg   # CPU: the Tensor tier vs. the linalg.matmul ceiling, spectral included
 pixi run bench-signal   # CPU: convolve vs. fftconvolve crossover, filters, welch
+pixi run bench-fft      # CPU: fft/rfft/irfft/fft2, us per call and the launch count
 pixi run bench-interpolate # CPU: interp and CubicSpline, evaluation and construction
 pixi run bench-stats    # CPU: norm.cdf, histogram, quantile, cov/corrcoef
 pixi run bench-linalg-gpu # the factorizations on a device (CUDA/Metal)
@@ -732,6 +768,7 @@ pixi run bench-torch    # cross-language: PyTorch (eager + compile), CPU + GPU
 pixi run bench-cupy     # cross-language: CuPy, GPU (Linux/CUDA only)
 pixi run -e bench-python bench-scipy-linalg # linalg baseline: LAPACK (OpenBLAS or Accelerate), CPU
 pixi run -e bench-python bench-scipy-signal # signal baseline: scipy.signal, CPU
+pixi run -e bench-python bench-scipy-fft    # transform baseline: scipy.fft (pocketfft), CPU
 pixi run -e bench-python bench-scipy-interpolate # interpolation baseline: numpy.interp, scipy CubicSpline
 pixi run -e bench-python bench-scipy-stats  # statistics baseline: scipy.stats.norm, numpy histogram/quantile/cov
 pixi run -e bench-python bench-torch-linalg # linalg baseline: cuSOLVER on CUDA, MPS on Metal
