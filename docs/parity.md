@@ -198,9 +198,16 @@ has each algorithm and its ceiling.
   `hessenberg` take the same `block`, and `.q()` runs `qr_factor`'s
   reverse panel walk over the packed reflectors through a view shifted one
   row down, since a tridiagonal reduction puts the implicit unit one row
-  below a QR's. `svd` shares the
-  same sweep and so the same accumulation, but at `2n` and with a host
-  de-interleave of `U` and `V` after it; `schur`'s Francis sweep still
+  below a QR's. `svd` shares the same sweep and so the same accumulation,
+  at `2n`, and its singular vectors never touch the host either: the
+  de-interleave of `U` and `V` out of the `2n x 2n` `Z^T` is one
+  `elementwise` gathering the sorted rows and splitting their even and odd
+  entries, and `U = Q U_B`, `V = P V_B` come back through `inner` under
+  `transpose_b=True` because that gather emits both factors transposed.
+  `gebrd` takes the same `block` and `.q()`/`.p()` run the same panel walk,
+  `.p()` reaching it through one transposing pack since the right
+  reflectors are held as rows. The `2n` doubling itself stays until
+  `bdsqr`. `schur`'s Francis sweep still
   rotates one column pair at a time on the host. `svd` and `svdvals` take the
   same two phases over a bidiagonal form: `gebrd` reduces device-resident
   with alternating left and right reflectors, each a matrix-vector product

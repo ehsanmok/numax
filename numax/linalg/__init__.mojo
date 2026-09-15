@@ -123,9 +123,17 @@ packed form through a view shifted one row down.
 `gebrd` reduces device-resident with every reflector through `matmul`,
 and the singular values are the eigenvalues of the Golub-Kahan
 tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
-no new numerics, only the doubling that route costs at `vectors=True`. It
-shares the blocked accumulation above, but its de-interleave of `U` and
-`V` out of the `2n x 2n` result still runs on the host.
+no new numerics, only the doubling that route costs at `vectors=True`.
+It shares the blocked accumulation above, and the vectors never touch the
+host: the de-interleave of `U` and `V` out of the `2n x 2n` `Z^T` is one
+`elementwise` that gathers the rows the values sorted to and splits their
+even and odd entries, so the two come out already transposed and `U` and
+`V` are `inner(q, ub_t)` and `inner(p, vb_t)`. That `q` and that `p` --
+LAPACK's `orgbr` -- are the same panel walk `orgtr` runs, `p` reaching it
+through one transposing pack because the right reflectors are held as
+rows. `svd` and `svdvals` take a `block` that names both knobs, as `eigh`'s
+does: `gebrd`'s panel width and the sweep's rotation window. The `2n`
+doubling itself stays until `bdsqr`.
 `pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it.
 
 The general spectrum takes the same two phases over a Hessenberg form:

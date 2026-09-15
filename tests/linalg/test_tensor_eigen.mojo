@@ -656,6 +656,83 @@ def test_gebrd_q_and_p_are_orthogonal() raises:
             assert_almost_equal(ptp[i * 3 + j], want, atol=1e-12)
 
 
+def _rect[m: Int, n: Int]() raises -> Static[dtype, m, n]:
+    """A deterministic `m x n` with no symmetry, so `Q` and `P` are both
+    non-trivial at every column."""
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, m, n](ctx)
+    var host = a.to_host()
+    for i in range(m):
+        for j in range(n):
+            host[i * n + j] = Scalar[dtype](
+                1.0 / Float64(i + j + 1) + 0.25 * Float64((i * 3 + j) % 5)
+            )
+    a.copy_from_host(host)
+    return a^
+
+
+def _gebrd_qp_at[
+    m: Int, n: Int, block: Int
+](
+    mut a: Static[dtype, m, n],
+    want_q: List[Scalar[dtype]],
+    want_p: List[Scalar[dtype]],
+) raises where (m >= n and n >= 1 and block >= 1):
+    """Form `Q` and `P` from a bidiagonal reduction at this panel width and
+    pin both entry by entry to the reference answer."""
+    var reduced = gebrd[dtype, m, n, False, block](a)
+    var q = reduced.q().to_host()
+    var p = reduced.p().to_host()
+    for i in range(m * n):
+        assert_almost_equal(q[i], want_q[i], atol=1e-12)
+    for i in range(n * n):
+        assert_almost_equal(p[i], want_p[i], atol=1e-12)
+
+
+def test_bidiagonal_q_and_p_match_the_unblocked_walk() raises:
+    # `block` decides only how many reflectors ride in one block reflector.
+    # `block == 1` is the per-reflector walk this replaced; `block == n` is
+    # one panel. `Q` comes straight off `qr_factor`'s walk because `left` is
+    # already in QR's packed form, while `P` goes through a transposing pack
+    # and then the row-shifted view `orgtr` uses -- two different adapters,
+    # so both are pinned here.
+    comptime m = 5
+    comptime n = 3
+    var a = _tall()
+    var reference = gebrd[dtype, m, n, False, n](a)
+    var want_q = reference.q().to_host()
+    var want_p = reference.p().to_host()
+    var a1 = _tall()
+    _gebrd_qp_at[m, n, 1](a1, want_q, want_p)
+    var a2 = _tall()
+    _gebrd_qp_at[m, n, 2](a2, want_q, want_p)
+    var a3 = _tall()
+    _gebrd_qp_at[m, n, n](a3, want_q, want_p)
+
+    # `n = 7` at `block = 3` leaves a one-wide last panel, which the walk
+    # applies *first*: the shape where a scratch viewed at two widths would
+    # show up.
+    comptime wide = 7
+    var b = _rect[wide, wide]()
+    var b_ref = gebrd[dtype, wide, wide, False, wide](b)
+    var bq = b_ref.q().to_host()
+    var bp = b_ref.p().to_host()
+    var b1 = _rect[wide, wide]()
+    _gebrd_qp_at[wide, wide, 1](b1, bq, bp)
+    var b3 = _rect[wide, wide]()
+    _gebrd_qp_at[wide, wide, 3](b3, bq, bp)
+
+    # Ragged on a rectangle too: five right reflectors, panels of two.
+    comptime tall = 9
+    comptime narrow = 5
+    var c = _rect[tall, narrow]()
+    var c_ref = gebrd[dtype, tall, narrow, False, narrow](c)
+    var cq = c_ref.q().to_host()
+    var cp = c_ref.p().to_host()
+    var c2 = _rect[tall, narrow]()
+    _gebrd_qp_at[tall, narrow, 2](c2, cq, cp)
+
+
 def test_svdvals_matches_scipy_on_a_tall_matrix() raises:
     # scipy.linalg.svdvals of the 5x3 above, descending.
     var a = _tall()
@@ -752,6 +829,137 @@ def test_svd_values_equal_svdvals() raises:
     var alone = svdvals(b).to_host()
     for i in range(3):
         assert_almost_equal(with_vectors[i], alone[i], atol=1e-13)
+
+
+def _svd_agrees[
+    m: Int, n: Int, block: Int
+](
+    mut a: Static[dtype, m, n],
+    want_s: List[Scalar[dtype]],
+    want_u: List[Scalar[dtype]],
+    want_v: List[Scalar[dtype]],
+) raises where (m >= n and n >= 1 and block >= 1):
+    """Run `svd` at this `block` and pin it to a reference answer, values
+    and vectors alike.
+
+    `(u_j, v_j)` and `(-u_j, -v_j)` are the same decomposition, so each
+    column's sign is fixed from the reference's largest entry before the
+    entries are compared.
+    """
+    var got = svd[dtype, m, n, False, block](a)
+    var s = got.s.to_host()
+    var u = got.u.to_host()
+    var v = got.v.to_host()
+    for j in range(n):
+        assert_almost_equal(s[j], want_s[j], atol=1e-12)
+        var pivot = 0
+        for i in range(m):
+            if abs(want_u[i * n + j]) > abs(want_u[pivot * n + j]):
+                pivot = i
+        var sign = Scalar[dtype](1.0)
+        if u[pivot * n + j] * want_u[pivot * n + j] < 0:
+            sign = Scalar[dtype](-1.0)
+        for i in range(m):
+            assert_almost_equal(
+                sign * u[i * n + j], want_u[i * n + j], atol=1e-12
+            )
+        for i in range(n):
+            assert_almost_equal(
+                sign * v[i * n + j], want_v[i * n + j], atol=1e-12
+            )
+
+
+def test_svd_blocking_does_not_change_the_answer() raises:
+    # Two knobs share the name: `gebrd`'s panel width, which decides how
+    # `Q` and `P` are formed, and the rotation window of the `2n` sweep.
+    # Neither may move the answer, so every width is pinned against
+    # `block == n`.
+    comptime m = 5
+    comptime n = 3
+    var a = _tall()
+    var reference = svd[dtype, m, n, False, n](a)
+    var want_s = reference.s.to_host()
+    var want_u = reference.u.to_host()
+    var want_v = reference.v.to_host()
+    var a1 = _tall()
+    _svd_agrees[m, n, 1](a1, want_s, want_u, want_v)
+    var a2 = _tall()
+    _svd_agrees[m, n, 2](a2, want_s, want_u, want_v)
+    var a3 = _tall()
+    _svd_agrees[m, n, n](a3, want_s, want_u, want_v)
+
+    comptime six = 6
+    var b = _hilbert[six]()
+    var b_ref = svd[dtype, six, six, False, six](b)
+    var bs = b_ref.s.to_host()
+    var bu = b_ref.u.to_host()
+    var bv = b_ref.v.to_host()
+    var b1 = _hilbert[six]()
+    _svd_agrees[six, six, 1](b1, bs, bu, bv)
+    var b2 = _hilbert[six]()
+    _svd_agrees[six, six, 2](b2, bs, bu, bv)
+    var b3 = _hilbert[six]()
+    _svd_agrees[six, six, six](b3, bs, bu, bv)
+
+
+def _svd_round_trip[
+    m: Int, n: Int
+](mut a: Static[dtype, m, n]) raises where m >= n and n >= 1:
+    """`U diag(s) V^T == A`, both factors orthonormal, `s` descending and
+    equal to `svdvals` -- the whole contract, at whatever size."""
+    var original = _copy_rect(a)
+    var values_only = _copy_rect(a)
+    var result = svd(a)
+    var u = result.u.to_host()
+    var s = result.s.to_host()
+
+    var ctx = original.context()
+    var scaled = zeros[dtype, m, n](ctx)
+    var host = scaled.to_host()
+    for i in range(m):
+        for j in range(n):
+            host[i * n + j] = u[i * n + j] * s[j]
+    scaled.copy_from_host(host)
+    var vt = transpose(result.v)
+    var back = matmul(scaled, vt).to_host()
+    var source = original.to_host()
+    for i in range(m * n):
+        assert_almost_equal(back[i], source[i], atol=1e-12)
+
+    var ut = transpose(result.u)
+    var utu = matmul(ut, result.u).to_host()
+    var vtv = matmul(vt, result.v).to_host()
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            assert_almost_equal(utu[i * n + j], want, atol=1e-12)
+            assert_almost_equal(vtv[i * n + j], want, atol=1e-12)
+
+    var alone = svdvals(values_only).to_host()
+    for j in range(n):
+        assert_almost_equal(s[j], alone[j], atol=1e-13)
+    for j in range(n - 1):
+        assert_equal(s[j] >= s[j + 1], True)
+
+
+def test_svd_at_n_one_two_three() raises:
+    # The de-interleave reads a `2n x 2n` source into an `n x n`
+    # destination, and a cross-shape `elementwise` is exactly where small
+    # extents have misbehaved before -- so the three smallest are pinned.
+    var ctx = DeviceContext(api="cpu")
+    var one = Static[dtype, 3, 1](ctx, [2.0, 1.0, 2.0])
+    _svd_round_trip[3, 1](one)
+    var s1 = svdvals(one).to_host()
+    assert_almost_equal(s1[0], Scalar[dtype](3.0), atol=1e-13)
+
+    var two = Static[dtype, 3, 2](ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
+    _svd_round_trip[3, 2](two)
+
+    var three = _rect[3, 3]()
+    _svd_round_trip[3, 3](three)
+
+    var tall_three = _rect[6, 3]()
+    _svd_round_trip[6, 3](tall_three)
 
 
 def test_svdvals_finds_a_rank_deficient_matrix() raises:

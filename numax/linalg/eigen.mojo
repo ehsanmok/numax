@@ -9,12 +9,13 @@ this implementation -- so it runs on the host over `O(n)` numbers and each
 function says so where it happens.
 
 The *rotations* that sweep produces are a different matter, and for `eigh`
-they are no longer host work: `_RotationBatch` holds a `block`-sweep batch
-of them, reorders it into windows of mutually commuting rotations and
-applies each window as one `matmul`. `svd` shares that machinery through
-the same sweep, but runs it at `2n` and then de-interleaves `U` and `V`
-out of the result on the host; `schur`'s Francis sweep still accumulates
-its rotations one at a time on the host.
+and `svd` they are no longer host work: `_RotationBatch` holds a
+`block`-sweep batch of them, reorders it into windows of mutually
+commuting rotations and applies each window as one `matmul`. `svd` shares
+that machinery through the same sweep, runs it at `2n` -- the Golub-Kahan
+doubling, which stays until `bdsqr` -- and de-interleaves `U` and `V` out
+of the result in one `elementwise` on the device. `schur`'s Francis sweep
+still accumulates its rotations one at a time on the host.
 
 MAX ships nothing to delegate to here. There is no eigensolver, no SVD, no
 `sytrd`, no Jacobi or Givens helper anywhere in `linalg`, `nn`,
@@ -1655,6 +1656,10 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
     var taus_left: Static[Self.dtype, Self.n]
     var taus_right: Static[Self.dtype, Self.n]
 
+    var block: Int
+    """The panel width `.q()` and `.p()` form their factors in, carried
+    from `gebrd`."""
+
     def __init__(
         out self,
         var d: Static[Self.dtype, Self.n],
@@ -1663,6 +1668,7 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         var right: Static[Self.dtype, Self.n, Self.n],
         var taus_left: Static[Self.dtype, Self.n],
         var taus_right: Static[Self.dtype, Self.n],
+        block: Int,
     ):
         self.d = d^
         self.e = e^
@@ -1670,61 +1676,96 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         self.right = right^
         self.taus_left = taus_left^
         self.taus_right = taus_right^
+        self.block = block
 
-    def q(mut self) raises -> Static[Self.dtype, Self.m, Self.n]:
+    def q(
+        mut self,
+    ) raises -> Static[
+        Self.dtype, Self.m, Self.n
+    ] where Self.dtype.is_floating_point():
         """The thin `Q`, `m x n`: `H_0 H_1 ... H_{n-1}` applied to the
-        first `n` columns of the identity, in reverse so each reflection
-        meets a matrix already carrying the ones after it. Each step is a
-        `v^T E` product and a rank-one update, both `linalg.matmul`."""
+        first `n` columns of the identity, panels of `block` reflectors in
+        reverse order. LAPACK's `orgbr` with `vect='Q'`.
+
+        This is `TensorQR.q()`'s walk unchanged, because `left` is already
+        in QR's packed form: `gebd2_col` writes the reflector's unit at row
+        `k` -- the row a QR puts it on -- so no row-shifted view is needed
+        here, unlike `orgtr`'s. `pack_reflectors` forces the diagonal to
+        `1` and reads only the strict lower trapezoid, so the explicit unit
+        and the explicit zeros above it are ignored either way.
+
+        Three matrix products per panel against the `3n` launches and `2n`
+        device synchronizations the per-reflector walk needed. `svdvals`
+        never calls this.
+        """
         var ctx = self.left.context()
-        var result = zeros[Self.dtype, Self.m, Self.n](ctx)
-        var host = result.to_host()
-        for i in range(Self.n):
-            host[i * Self.n + i] = Scalar[Self.dtype](1)
-        result.copy_from_host(host)
-        var product = zeros[Self.dtype, Self.m, Self.n](ctx)
-        var taus = self.taus_left.to_host()
-        var k = Self.n - 1
-        while k >= 0:
-            if taus[k] != 0:
-                var v = _column_of[gpu=Self.gpu](self.left, k)
-                var w = _left_products[gpu=Self.gpu](result, v)
-                _rank_one_subtract_rect[gpu=Self.gpu](
-                    result, v, w, taus[k], product, ctx
-                )
-            k -= 1
+        var result = Static[Self.dtype, Self.m, Self.n]._uninitialized(ctx)
+        var out: _Dense[Self.dtype] = TileTensor(
+            result.view().ptr_at_offset(Coord(0, 0)),
+            row_major(Coord(Self.m, Self.n)),
+        )
+        _device_identity[Self.dtype, Self.gpu](out, Self.m, Self.n, ctx)
+
+        var tv = self.taus_left.view()
+        var work = _ReflectorWork[Self.dtype](Self.m, Self.n, self.block, ctx)
+        var steps = (Self.n + self.block - 1) // self.block
+        for step in range(steps):
+            var k = (steps - 1 - step) * self.block
+            var nb = min(self.block, Self.n - k)
+            _apply_block_reflector[transposed=False, gpu=Self.gpu](
+                self.left.view(),
+                tv,
+                out,
+                k,
+                nb,
+                Self.m,
+                Self.m - k,
+                Self.n - k,
+                k,
+                k,
+                work,
+                ctx,
+            )
+
+        ctx.synchronize()
         return result^
 
-    def p(mut self) raises -> Static[Self.dtype, Self.n, Self.n]:
-        """`P`, `n x n`: `G_0 G_1 ... G_{n-2}` applied to the identity in
-        reverse, the same way `q()` forms `Q`."""
+    def p(
+        mut self,
+    ) raises -> Static[
+        Self.dtype, Self.n, Self.n
+    ] where Self.dtype.is_floating_point():
+        """`P`, `n x n`: `G_0 G_1 ... G_{n-3}` applied to the identity in
+        panels of `block`, the same walk `q()` runs. LAPACK's `orgbr` with
+        `vect='P'`.
+
+        One adapter, and it is a copy rather than a view: the right
+        reflectors are held as *rows* of `right`, so one
+        `pack_block[trans=True]` turns them into columns. That transpose
+        lands them in `sytrd`'s packed form -- the unit at row `k + 1`, one
+        below a QR's -- so `_accumulate_reflectors` takes it from there
+        through the row-shifted view it already uses for `orgtr`.
+
+        `right`'s last two rows carry no reflector (`gebd2_row` at
+        `k = n - 2` sees a one-element vector and returns `tau = 0`), which
+        is why the walk is over `n - 2` of them.
+        """
         var ctx = self.right.context()
-        var result = zeros[Self.dtype, Self.n, Self.n](ctx)
-        var host = result.to_host()
-        for i in range(Self.n):
-            host[i * Self.n + i] = Scalar[Self.dtype](1)
-        result.copy_from_host(host)
-        if Self.n < 2:
-            return result^
-        var product = zeros[Self.dtype, Self.n, Self.n](ctx)
-        var taus = self.taus_right.to_host()
-        var k = Self.n - 2
-        while k >= 0:
-            if taus[k] != 0:
-                var u = _row_of[gpu=Self.gpu](self.right, k)
-                var w = _row_combination[gpu=Self.gpu](result, u)
-                _rank_one_subtract[gpu=Self.gpu](
-                    result, u, w, taus[k], product, ctx
-                )
-            k -= 1
-        return result^
+        var packed = Static[Self.dtype, Self.n, Self.n]._uninitialized(ctx)
+        var pv = packed.view()
+        pack_block[trans=True, target=_target[Self.gpu]()](
+            self.right.view(), pv, 0, 0, Self.n, Self.n, ctx
+        )
+        return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
+            packed, self.taus_right, Self.n - 2, self.block
+        )
 
 
 def gebrd[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
+    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 32
 ](mut a: Static[dtype, m, n]) raises -> TensorBidiagonal[
     dtype, m, n, gpu
-] where (dtype.is_floating_point() and m >= n and n >= 1):
+] where (dtype.is_floating_point() and m >= n and n >= 1 and block >= 1):
     """**Tier 2.** Reduce an `m x n` matrix, `m >= n`, to upper bidiagonal
     form by alternating left and right Householder reflections,
     device-resident. LAPACK's `gebrd`, unblocked.
@@ -1735,6 +1776,10 @@ def gebrd[
     with the product's entry for the row or column just finished cleared
     first so the update never touches it. That is the whole of the
     arithmetic, `O(4 m n^2)` at matrix-vector shapes.
+
+    `block` is the panel width `.q()` and `.p()` form `Q` and `P` in. The
+    reduction itself does not read it yet; it is carried on the result, and
+    `labrd` will take the same number.
 
     `ponytail:` unblocked, like the first `sytrd`, and with the same
     ceiling: matrix-vector shapes are bandwidth-bound where LAPACK's
@@ -1839,7 +1884,7 @@ def gebrd[
     d.copy_from_host(d_host)
     e.copy_from_host(e_host)
     return TensorBidiagonal[dtype, m, n, gpu](
-        d^, e^, left^, right^, taus_left^, taus_right^
+        d^, e^, left^, right^, taus_left^, taus_right^, block
     )
 
 
@@ -1848,16 +1893,21 @@ def _golub_kahan[
     n: Int,
     gpu: Bool = False,
     vectors: Bool = False,
-    block: Int = 32,
 ](
-    d: List[Scalar[dtype]], e: List[Scalar[dtype]], ctx: DeviceContext
-) raises -> Tuple[List[Scalar[dtype]], List[Scalar[dtype]]] where (
-    dtype.is_floating_point() and block >= 1
-):
-    """The singular values of the upper bidiagonal `(d, e)`, descending, and
-    -- at `vectors=True` -- the **transpose** of the `2n x 2n` eigenvector
-    matrix of the Golub-Kahan tridiagonal they came from, row-major, so
-    row `j` is eigenvector `j`.
+    d: List[Scalar[dtype]],
+    e: List[Scalar[dtype]],
+    mut acc: _RotationBatch[dtype, 2 * n, gpu, vectors],
+    ctx: DeviceContext,
+) raises -> List[Scalar[dtype]] where dtype.is_floating_point():
+    """The eigenvalues of the Golub-Kahan tridiagonal of the upper
+    bidiagonal `(d, e)`, unsorted; at `vectors=True` its eigenvector matrix
+    is left in `acc.zt`, **transposed** and device-resident, so row `j` is
+    eigenvector `j`.
+
+    The accumulator is the caller's, the way `_tql`'s is, because `acc.zt`
+    is the `2n x 2n` device tensor `svd` then de-interleaves `U` and `V`
+    out of -- it has to outlive this call, and `block` is the window it was
+    built with rather than a second parameter here.
 
     The Golub-Kahan matrix is the `2n x 2n` symmetric tridiagonal with zero
     diagonal and off-diagonal `d_1, e_1, d_2, e_2, ..., d_n`. Its
@@ -1867,13 +1917,15 @@ def _golub_kahan[
     of `B` with no new numerics -- LAPACK's `dbdsvdx` takes the same route.
 
     `ponytail:` at `vectors=True` this runs the sweep at `2n`, so it issues
-    about eight times `eigh`'s rotations on the same `n` -- they are
-    accumulated in blocks now, but the doubling stays until a Golub-Kahan
-    implicit QR sweep on the bidiagonal itself (`bdsqr`) replaces it, and
-    `svd`'s de-interleave of the result still runs on the host. Singular
-    vectors for an *exactly* zero singular value are not guaranteed
-    orthonormal, since the two zero eigenvalues' vectors may mix; the
-    values are exact, and `pinv`/`matrix_rank` never use those vectors.
+    about eight times `eigh`'s rotations on the same `n`. They are
+    accumulated in blocks and `Z^T` never leaves the device, but **the
+    doubling itself stays** until a Golub-Kahan implicit QR sweep on the
+    bidiagonal (`bdsqr`) replaces it -- that sweep rotates `U` and `V`
+    directly at width `n`, about half the rotations and none of the
+    interleaving. Singular vectors for an *exactly* zero singular value are
+    not guaranteed orthonormal, since the two zero eigenvalues' vectors may
+    mix; the values are exact, and `pinv`/`matrix_rank` never use those
+    vectors.
     """
     comptime size = 2 * n
     var gd = List[Scalar[dtype]](length=size, fill=0)
@@ -1882,13 +1934,9 @@ def _golub_kahan[
         ge[2 * i] = d[i]
         if i + 1 < n:
             ge[2 * i + 1] = e[i]
-    var acc = _RotationBatch[dtype, size, gpu, vectors](block, ctx)
     _tql[dtype, size, gpu, vectors](gd, ge, acc, ctx)
     acc.finish(ctx)
-    var zt = List[Scalar[dtype]]()
-    comptime if vectors:
-        zt = acc.zt.to_host()
-    return (gd^, zt^)
+    return gd^
 
 
 def _top_n_descending[
@@ -1913,9 +1961,9 @@ def _top_n_descending[
 
 
 def svdvals[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
+    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 32
 ](mut a: Static[dtype, m, n]) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and m >= n and n >= 1
+    dtype.is_floating_point() and m >= n and n >= 1 and block >= 1
 ):
     """**Tier 2.** The singular values of an `m x n` matrix, `m >= n`,
     descending. `scipy.linalg.svdvals`.
@@ -1925,18 +1973,24 @@ def svdvals[
     Descending, as SciPy returns them; the `Array` tier's `svdvals` is
     one-sided Jacobi and comes back unsorted, and a test pins the two as
     multisets.
+
+    `block` is `gebrd`'s panel width, carried so `svdvals` and `svd` take
+    the same knob. Nothing here reads it today: the reduction is still
+    unblocked, and the rotation window it also names decides nothing
+    without vectors, since a values-only sweep pushes no rotations.
     """
     var ctx = a.context()
-    var reduced = gebrd[gpu=gpu](a)
-    var gk = _golub_kahan[dtype, n, gpu, vectors=False](
-        reduced.d.to_host(), reduced.e.to_host(), ctx
+    var reduced = gebrd[dtype, m, n, gpu, block](a)
+    var acc = _RotationBatch[dtype, 2 * n, gpu, False](block, ctx)
+    var values = _golub_kahan[dtype, n, gpu, False](
+        reduced.d.to_host(), reduced.e.to_host(), acc, ctx
     )
-    var top = _top_n_descending[dtype, n](gk[0])
+    var top = _top_n_descending[dtype, n](values)
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         # `|.|`: an exactly singular matrix's zero pair can land with its
         # nominally positive member a rounding error below zero.
-        out.append(abs(gk[0][top[i]]))
+        out.append(abs(values[top[i]]))
     return Static[dtype, n](ctx, out^)
 
 
@@ -1973,57 +2027,100 @@ struct TensorSVD[dtype: DType, m: Int, n: Int](
 
 
 def svd[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
+    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 32
 ](mut a: Static[dtype, m, n]) raises -> TensorSVD[dtype, m, n] where (
-    dtype.is_floating_point() and m >= n and n >= 1
+    dtype.is_floating_point() and m >= n and n >= 1 and block >= 1
 ):
     """**Tier 2.** The thin singular value decomposition of an `m x n`
     matrix, `m >= n`: `A = U diag(s) V^T` with `s` descending.
     `scipy.linalg.svd(a, full_matrices=False)`.
 
-    Three steps, two of them GEMM-shaped, the shape `eigh` has. `gebrd`
-    reduces `A` to bidiagonal `B = Q^T A P` device-resident. The
-    Golub-Kahan tridiagonal of `B` is diagonalized on the host by the same
-    implicit-QL sweep `eigh` uses, its eigenvectors interleaving `B`'s
-    singular vectors. And `U = Q U_B`, `V = P V_B` are two `matmul`s.
+    Three steps, and the vectors never touch the host in any of them.
+    `gebrd` reduces `A` to bidiagonal `B = Q^T A P` device-resident. The
+    Golub-Kahan tridiagonal of `B` is diagonalized by the same implicit-QL
+    sweep `eigh` uses -- the band iteration on the host, its rotations
+    accumulated into `Z^T` device-resident in windows that each go out as
+    one `matmul`. Its eigenvectors interleave `B`'s singular vectors, and
+    the de-interleave is one `elementwise` over `(n, n)`: row `top[j]` of
+    `Z^T` scattered into `V_B^T` at its even entries and `U_B^T` at its odd
+    ones, both scaled by `sqrt(2)`, so the two come out already transposed
+    and `U = Q U_B`, `V = P V_B` are `inner(q, ub_t)` and `inner(p, vb_t)`
+    under `transpose_b=True`. Only the `2n` eigenvalues and the order they
+    sort into cross to the host.
+
+    Two knobs share the name `block` and they mean different things, as
+    `eigh`'s do. `gebrd` takes it as the **panel width** `.q()` and `.p()`
+    form `Q` and `P` in -- `block` reflectors per block reflector, three
+    GEMMs each. The sweep takes it as the **rotation window**: `block`
+    consecutive sweeps batch together and a window spans `2 * block`
+    columns of `Z^T`. `block == 1` recovers both unblocked algorithms
+    exactly, and a test pins every width against every other.
 
     `ponytail:` the middle step is the ceiling, and it is larger than
-    `eigh`'s by the factor the doubling costs -- `O((2n)^3)` scalar host
-    rotations. The upgrade is a bidiagonal QR sweep (`bdsqr`) or divide and
-    conquer; nothing above or below changes when it lands. `svdvals` skips
-    the vectors and is `O(n^2)` past the reduction.
+    `eigh`'s by the factor the doubling costs -- the sweep runs at `2n`, so
+    about eight times the rotations of an `eigh` on the same `n`. The
+    upgrade is a bidiagonal QR sweep (`bdsqr`) rotating `U` and `V`
+    directly at width `n`, or divide and conquer; nothing above or below
+    changes when it lands. `svdvals` skips the vectors and is `O(n^2)` past
+    the reduction.
 
     Rectangular, unlike the `Array` tier's square-only one-sided Jacobi,
     and descending where that one is unsorted; both docstrings say so.
     """
     var ctx = a.context()
-    var reduced = gebrd[gpu=gpu](a)
-    var gk = _golub_kahan[dtype, n, gpu, vectors=True](
-        reduced.d.to_host(), reduced.e.to_host(), ctx
-    )
-    var values = gk[0].copy()
-    var zt = gk[1].copy()
+    var reduced = gebrd[dtype, m, n, gpu, block](a)
     comptime size = 2 * n
-    var top = _top_n_descending[dtype, n](values)
+    var acc = _RotationBatch[dtype, size, gpu, True](block, ctx)
+    var values = _golub_kahan[dtype, n, gpu, True](
+        reduced.d.to_host(), reduced.e.to_host(), acc, ctx
+    )
+    var order = _top_n_descending[dtype, n](values)
 
     var s_host = List[Scalar[dtype]](capacity=n)
-    var ub = List[Scalar[dtype]](length=n * n, fill=0)
-    var vb = List[Scalar[dtype]](length=n * n, fill=0)
-    var root_two = Scalar[dtype](1.4142135623730951)
+    var top_host = List[Scalar[DType.int64]](capacity=n)
     for j in range(n):
-        var col = top[j]
-        s_host.append(abs(values[col]))
-        for i in range(n):
-            # `zt` is `Z^T`: eigenvector `col` is its row, not its column.
-            vb[i * n + j] = zt[col * size + 2 * i] * root_two
-            ub[i * n + j] = zt[col * size + 2 * i + 1] * root_two
+        s_host.append(abs(values[order[j]]))
+        top_host.append(Scalar[DType.int64](order[j]))
+    var top = Static[DType.int64, n](ctx, top_host^)
 
-    var u_b = Static[dtype, n, n](ctx, ub^)
-    var v_b = Static[dtype, n, n](ctx, vb^)
+    # `Z^T` is `2n x 2n` and the destinations are `n x n`, so the gather
+    # reads a source of different extents -- the pattern `findings.mdc`
+    # records as unreliable for *run-time* layouts. Here the source is
+    # viewed at a compile-time `size x size` layout over the same pointer
+    # and indexed by a freshly built `Coord`, which is the case that holds;
+    # `n` in {1, 2, 3} is pinned by its own test.
+    var ub_t = Static[dtype, n, n]._uninitialized(ctx)
+    var vb_t = Static[dtype, n, n]._uninitialized(ctx)
+    var zt = TileTensor(
+        acc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[size, size]()
+    )
+    var ub = ub_t.view()
+    var vb = vb_t.view()
+    var tv = top.view()
+    var root_two = Scalar[dtype](1.4142135623730951)
+
+    @always_inline
+    def split[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var zt, var ub, var vb, var tv, var root_two}:
+        var at = coord_to_index_list(coord)
+        var row = Int(tv[Coord(at[0])])
+        var col = 2 * at[1]
+        vb.store[1](coord, zt[Coord(row, col)] * root_two)
+        ub.store[1](coord, zt[Coord(row, col + 1)] * root_two)
+
+    elementwise[simd_width=1, target=_target[gpu]()](split, Coord(n, n), ctx)
+    ctx.synchronize()
+    # `acc` and `top` are named nowhere past the `.view()` a view erases
+    # the origin of, so without these Mojo frees them while `split` still
+    # reads through `zt` and `tv`; see `eigh` and `findings.mdc`.
+    _ = acc^
+    _ = top^
+
     var q = reduced.q()
     var p = reduced.p()
-    var u = matmul[gpu=gpu](q, u_b)
-    var v = matmul[gpu=gpu](p, v_b)
+    var u = inner[gpu=gpu](q, ub_t)
+    var v = inner[gpu=gpu](p, vb_t)
     return TensorSVD[dtype, m, n](u^, Static[dtype, n](ctx, s_host^), v^)
 
 

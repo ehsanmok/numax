@@ -579,6 +579,17 @@ puts sizes on it:
   panel walk, three GEMMs per `block` reflectors instead of `3n` launches
   and `2n` synchronizations -- so the `eigh` row is stale a second time
   and the same sweep replaces it.
+
+  And `svd`'s singular vectors are off the host as well: the de-interleave
+  of `U` and `V` out of the `2n x 2n` `Z^T` is one `elementwise`, and
+  `orgbr` is the same panel walk, which takes the `svd` row from the 6,101
+  above -- 7,020 when re-measured beside the change -- to 2,286 ms at
+  `n = 1024`, on the same not-quiet machine and with the same caveat.
+  What is left is no longer the sweep: `gebrd` alone measures 1,992 ms of
+  that 2,286, the values-only `2n` band iteration 44 ms, and everything
+  the vectors cost 250 ms. So `svd` and `svdvals` are both waiting on the
+  unblocked `labrd` now, not on `bdsqr`, and the `2n` doubling the
+  Golub-Kahan route costs stays until `bdsqr` itself takes the band.
 - **The reductions are BLAS-2, not BLAS-3.** `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
