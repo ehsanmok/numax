@@ -561,9 +561,19 @@ puts sizes on it:
   and the values-only iterations are the small remainder. The upgrade
   path is the one those notes name: accumulate the rotations in blocks
   and apply each block as a GEMM (the `stedc`/`dlasr`-by-blocks shape),
-  so the `O(n^3)` moves from a host loop to `linalg.matmul`. That is the
-  single largest item left in the linalg backlog, and the one whose
-  payoff is a known 50-100x on `eigh` and `svd` at this size.
+  so the `O(n^3)` moves from a host loop to `linalg.matmul`.
+
+  **That landed after these rows were taken, so the `eigh` and `svd` rows
+  above are stale and the next sweep replaces them.** `bench-linalg` on
+  the same machine now reads 2,431 ms for `eigh` at `n = 1024` against the
+  6,101 here, and 6,101 for `svd` against 41,465 -- taken while the
+  machine was not otherwise quiet, so treat them as the direction rather
+  than the number. The accumulation itself is 31 ms of `eigh`: 597,560
+  rotations in 665 windowed GEMMs, so it is no longer the term that
+  matters. 1.8 s of what is left is `TensorTridiagonal.q()`, still `2n`
+  matvec launches. `svd` gets the same accumulation through the same
+  sweep but keeps its `2n` width and its host de-interleave of `U` and
+  `V`, and `schur` is untouched.
 - **The reductions are BLAS-2, not BLAS-3.** `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
@@ -572,8 +582,10 @@ puts sizes on it:
   same shape. Both are the next item after the accumulation.
 - **`float32` residuals are LAPACK's too.** numax's trace gap on
   `eigvalsh` at `n = 1024` is 0.033 against Accelerate's 0.37, and its
-  `eigh` residual `2.7e-4` against `8.0e-4`; the host iterations run in
-  `float64` on the band, which is where that comes from.
+  `eigh` residual `2.7e-4` against `8.0e-4` -- at the same precision, not
+  a wider one. The band iteration runs at the caller's `dtype` throughout
+  (`_tql` is generic over it and `sytrd` hands it `List[Scalar[dtype]]`);
+  there is no `float64` promotion anywhere in these routines.
 
 **Convolution -- where `fftconvolve` overtakes `convolve`** (µs per call,
 `full` mode; the two numax rows at each `(m, k)` agree to `1e-6`, and so

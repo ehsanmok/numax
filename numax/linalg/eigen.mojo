@@ -1,12 +1,20 @@
 """Spectral factorizations over `Tensor`: `scipy.linalg`'s `_decomp`.
 
-**This module is tier 2.** Every routine here is two phases, and only the
-first is device-resident: a reduction to a condensed form, which is
-Householder work whose cubic term goes to `linalg.matmul`, then a sweep on
-the condensed band, which loops to a tolerance and deflates on a test of
-the data. The second phase has no GEMM to hand anything to -- that is a
-property of the algorithm, not of this implementation -- so it runs on the
-host over `O(n)` numbers and each function says so where it happens.
+**This module is tier 2.** Every routine here is two phases: a reduction
+to a condensed form, which is Householder work whose cubic term goes to
+`linalg.matmul`, then a sweep on the condensed band, which loops to a
+tolerance and deflates on a test of the data. The band sweep itself has no
+GEMM to hand anything to -- that is a property of the algorithm, not of
+this implementation -- so it runs on the host over `O(n)` numbers and each
+function says so where it happens.
+
+The *rotations* that sweep produces are a different matter, and for `eigh`
+they are no longer host work: `_RotationBatch` holds a `block`-sweep batch
+of them, reorders it into windows of mutually commuting rotations and
+applies each window as one `matmul`. `svd` shares that machinery through
+the same sweep, but runs it at `2n` and then de-interleaves `U` and `V`
+out of the result on the host; `schur`'s Francis sweep still accumulates
+its rotations one at a time on the host.
 
 MAX ships nothing to delegate to here. There is no eigensolver, no SVD, no
 `sytrd`, no Jacobi or Givens helper anywhere in `linalg`, `nn`,
@@ -29,12 +37,12 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.builtin.sort import sort as _std_sort
 from std.math import copysign as _copysign, hypot as _hypot, sqrt as _sqrt
-from std.sys.info import align_of
+from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
 from ..core.array import Dynamic, Static, zeros, zeros_dyn
-from .blas import _target, dot, matmul, matvec
-from .common import _Dense
+from .blas import _target, dot, inner, matmul, matvec
+from .common import _Dense, _device_identity
 from .panel import (
     _PANEL_THREADS,
     gebd2_col,
@@ -399,34 +407,267 @@ NaN or an infinity, and the raise says so rather than looping forever.
 """
 
 
+struct _RotationBatch[dtype: DType, N: Int, gpu: Bool, vectors: Bool](
+    Movable where dtype.is_floating_point() and N >= 1
+):
+    """The Givens rotations of up to `block` consecutive QL sweeps, held
+    until enough of them have accumulated to go out as GEMMs.
+
+    **Lang's windowing (1998), which is what makes this a GEMM at all.**
+    Two rotations on adjacent index pairs `(i, i+1)` and `(j, j+1)`
+    commute when `|i - j| >= 2`. So within a batch of `K = block`
+    consecutive sweeps, tag rotation `(sweep s, index i)` with
+    `group(s, i) = (i - s + block) // block` and apply the groups in
+    *decreasing* order, each group's rotations in stream order. The only
+    pairs that reordering swaps are ones whose indices are at least two
+    apart: within a sweep `i` descends so the tag never rises, and across
+    sweeps `group(s1, i1) < group(s2, i2)` with `s1 < s2` forces
+    `i2 - i1 >= 1 + (s2 - s1) >= 2`. A group's indices then span at most
+    `block + K = 2 * block` columns, which is the window.
+
+    So one group is a `w x w` orthogonal factor `U` -- the product of its
+    rotations -- applied to a `w`-column stripe of `Z`. `Z` is held
+    **transposed** as `zt`, because a column stripe of `Z` is a contiguous
+    *row* block of `Z^T`, and a row block is what `matmul` will read
+    without a stride: `zt[c_lo:c_lo+w, :] <- U^T @ staged`, where `staged`
+    is a dense copy of that row block (`matmul` will not alias its result
+    with an operand).
+
+    `U^T` is built on the host, packed into the first `w*w` entries of
+    `ut_host` so the claimed row stride and the memory agree, by the same
+    four lines the unblocked sweep ran on `Z`'s columns -- on `U^T`'s rows
+    instead. That is `O(w)` per rotation against `O(N)`, so the host term
+    falls from `O(N^3)` to `O(block * N^2)` and the `O(N^3)` lands in
+    `linalg.matmul`.
+
+    At `vectors=False` nothing is ever pushed, so every buffer here is a
+    one-element allocation and `eigvalsh` and `svdvals` share the sweep
+    body without paying for it.
+    """
+
+    var zt: Dynamic[Self.dtype, 2]
+    """`Z^T`, `N x N` and device-resident. Row `j` is eigenvector `j`."""
+
+    var staged: Dynamic[Self.dtype, 2]
+    """A dense `2*block x N` copy of the row block under update."""
+
+    var u_dev: Dynamic[Self.dtype, 2]
+    """The uploaded `U^T`, `2*block x 2*block` and read packed."""
+
+    var ut_host: List[Scalar[Self.dtype]]
+    """Where `U^T` is built before it is uploaded."""
+
+    var rot_index: List[Int]
+    """`i` of each logged rotation, an absolute column index."""
+
+    var rot_sweep: List[Int]
+    """Which sweep of the batch each logged rotation came from."""
+
+    var rot_cos: List[Scalar[Self.dtype]]
+    var rot_sin: List[Scalar[Self.dtype]]
+
+    var sweep: Int
+    """Sweeps closed since the last flush; the batch goes out at `block`."""
+
+    var block: Int
+    """`B` and `K` both: the window is `2 * block` columns wide."""
+
+    def __init__(out self, block: Int, ctx: DeviceContext) raises:
+        self.block = max(block, 1)
+        self.sweep = 0
+        var side = Self.N if Self.vectors else 1
+        var wide = min(2 * self.block, side)
+        self.zt = zeros_dyn[Self.dtype, 2](side, side, ctx=ctx)
+        self.staged = zeros_dyn[Self.dtype, 2](wide, side, ctx=ctx)
+        self.u_dev = zeros_dyn[Self.dtype, 2](wide, wide, ctx=ctx)
+        self.ut_host = List[Scalar[Self.dtype]](length=wide * wide, fill=0)
+        self.rot_index = List[Int]()
+        self.rot_sweep = List[Int]()
+        self.rot_cos = List[Scalar[Self.dtype]]()
+        self.rot_sin = List[Scalar[Self.dtype]]()
+        comptime if Self.vectors:
+            var seed: _Dense[Self.dtype] = TileTensor(
+                self.zt.view().ptr_at_offset(Coord(0, 0)),
+                row_major(Coord(side, side)),
+            )
+            _device_identity[Self.dtype, Self.gpu](seed, side, side, ctx)
+            ctx.synchronize()
+
+    def push_rotation(
+        mut self, i: Int, c: Scalar[Self.dtype], s: Scalar[Self.dtype]
+    ):
+        """Log the rotation the sweep just applied to `(d, e)` at index `i`.
+
+        `Z <- Z G` with `G = [[c, s], [-s, c]]` on rows `i, i+1`, which is
+        the rotation the unblocked body wrote out by hand.
+        """
+        self.rot_index.append(i)
+        self.rot_sweep.append(self.sweep)
+        self.rot_cos.append(c)
+        self.rot_sin.append(s)
+
+    def end_sweep(mut self, ctx: DeviceContext) raises:
+        """Close a sweep, and flush once `block` of them have closed."""
+        self.sweep += 1
+        if self.sweep >= self.block:
+            self._flush(ctx)
+
+    def finish(mut self, ctx: DeviceContext) raises:
+        """Flush the partial batch the last sweep left and wait for it."""
+        self._flush(ctx)
+        ctx.synchronize()
+
+    def _flush(mut self, ctx: DeviceContext) raises:
+        self.sweep = 0
+        var count = len(self.rot_index)
+        if count == 0:
+            return
+        var b = self.block
+        var cols = Self.N
+
+        # Bucket the batch by group, stably, so each group's rotations
+        # keep the order the sweeps emitted them in. A linear rescan per
+        # group would cost `O(count * N / block)`, which is the term this
+        # whole commit is removing.
+        var lowest = (self.rot_index[0] - self.rot_sweep[0] + b) // b
+        var highest = lowest
+        for k in range(1, count):
+            var g = (self.rot_index[k] - self.rot_sweep[k] + b) // b
+            lowest = min(lowest, g)
+            highest = max(highest, g)
+        var groups = highest - lowest + 1
+        var start = List[Int](length=groups + 1, fill=0)
+        for k in range(count):
+            var g = (self.rot_index[k] - self.rot_sweep[k] + b) // b - lowest
+            start[g + 1] += 1
+        for g in range(groups):
+            start[g + 1] += start[g]
+        var cursor = start.copy()
+        var ordered = List[Int](length=count, fill=0)
+        for k in range(count):
+            var g = (self.rot_index[k] - self.rot_sweep[k] + b) // b - lowest
+            ordered[cursor[g]] = k
+            cursor[g] += 1
+
+        var zv = self.zt.view()
+        for step in range(groups):
+            var g = groups - 1 - step
+            var first = start[g]
+            var last = start[g + 1]
+            if first == last:
+                continue
+
+            # The exact span the group touches, rather than the formula's
+            # bound: tight, never wider than `2 * block`, and never 1,
+            # since a rotation owns two columns.
+            var c_lo = self.rot_index[ordered[first]]
+            var c_hi = c_lo + 1
+            for p in range(first + 1, last):
+                var i = self.rot_index[ordered[p]]
+                c_lo = min(c_lo, i)
+                c_hi = max(c_hi, i + 1)
+            var w = c_hi - c_lo + 1
+
+            self._build_ut(w, c_lo, ordered, first, last)
+            self.u_dev.copy_from_host(self.ut_host)
+
+            var staged: _Dense[Self.dtype] = TileTensor(
+                self.staged.view().ptr_at_offset(Coord(0, 0)),
+                row_major(Coord(w, cols)),
+            )
+            pack_block[target=_target[Self.gpu]()](
+                zv, staged, c_lo, 0, w, cols, ctx
+            )
+            var ut: _Dense[Self.dtype] = TileTensor(
+                self.u_dev.view().ptr_at_offset(Coord(0, 0)),
+                row_major(Coord(w, w)),
+            )
+            var out: _Dense[Self.dtype] = TileTensor(
+                zv.ptr_at_offset(Coord(c_lo, 0)), row_major(Coord(w, cols))
+            )
+            _max_matmul[target=_target[Self.gpu]()](out, ut, staged, ctx)
+            ctx.synchronize()
+
+        self.rot_index.clear()
+        self.rot_sweep.clear()
+        self.rot_cos.clear()
+        self.rot_sin.clear()
+
+    def _build_ut(
+        mut self,
+        w: Int,
+        c_lo: Int,
+        ordered: List[Int],
+        first: Int,
+        last: Int,
+    ):
+        """`U^T` for one group, packed `w x w` into `ut_host`.
+
+        `U = G_1 G_2 ... G_p` in stream order, so `U^T = G_p^T ... G_1^T`
+        is built by left-multiplying by each `G_k^T` in turn -- which is
+        the unblocked body's four lines run on rows `a, a+1` of `U^T`
+        instead of on columns `i, i+1` of `Z`, with `a = i - c_lo`.
+        """
+        comptime lanes = simd_width_of[Self.dtype]()
+        for k in range(w * w):
+            self.ut_host[k] = Scalar[Self.dtype](0)
+        for k in range(w):
+            self.ut_host[k * w + k] = Scalar[Self.dtype](1)
+
+        var p = self.ut_host.unsafe_ptr()
+        for entry in range(first, last):
+            var k = ordered[entry]
+            var c = self.rot_cos[k]
+            var s = self.rot_sin[k]
+            var ra = (self.rot_index[k] - c_lo) * w
+            var rb = ra + w
+            var col = 0
+            while col + lanes <= w:
+                var ua = p.unsafe_load[width=lanes](ra + col)
+                var ub = p.unsafe_load[width=lanes](rb + col)
+                p.unsafe_store(rb + col, s * ua + c * ub)
+                p.unsafe_store(ra + col, c * ua - s * ub)
+                col += lanes
+            while col < w:
+                var ua = p[unsafe_offset=ra + col]
+                var ub = p[unsafe_offset=rb + col]
+                p[unsafe_offset=rb + col] = s * ua + c * ub
+                p[unsafe_offset=ra + col] = c * ua - s * ub
+                col += 1
+
+
 def _tql[
-    dtype: DType, vectors: Bool
+    dtype: DType, N: Int, gpu: Bool, vectors: Bool
 ](
     mut d: List[Scalar[dtype]],
     mut e: List[Scalar[dtype]],
-    mut z: List[Scalar[dtype]],
+    mut acc: _RotationBatch[dtype, N, gpu, vectors],
+    ctx: DeviceContext,
 ) raises where dtype.is_floating_point():
     """Implicit QL with Wilkinson shifts on the symmetric tridiagonal
     `(d, e)`, in place into `d`. LAPACK's `sterf` at `vectors=False` and
-    `steqr` at `vectors=True`, where the rotations are also accumulated
-    into the row-major `n x n` matrix `z`, which the caller passes in as
-    the identity.
+    `steqr` at `vectors=True`, where the rotations are also pushed into
+    `acc`, which accumulates them into `Z^T` device-resident.
 
-    **Tier 2, host-side.** Each sweep is a chain of Givens rotations down
-    the band that touches two entries at a time and stops at the first
-    negligible subdiagonal -- there is no GEMM to hand any of it to, and
-    the deflation test branches on the data. This is the half of an
-    eigendecomposition with no MAX in it.
+    **The band iteration is tier 2, host-side.** Each sweep is a chain of
+    Givens rotations down the band that touches two entries at a time and
+    stops at the first negligible subdiagonal; there is no GEMM to hand
+    *that* to, and the deflation test branches on the data. It is `O(n^2)`
+    and negligible beside the reduction.
 
-    The two settings cost very differently, and that is the reason for the
-    parameter rather than two functions. Values alone are `O(n^2)`,
-    negligible beside the reduction. Accumulating `z` applies every
-    rotation to a full column pair, `O(n)` per rotation and `O(n^3)`
-    overall, at a small constant and in scalar host code -- the one
-    genuinely host-bound term in `eigh`, and the `ponytail:` ceiling it
-    names. The upgrade is `stedc`, divide and conquer, whose merge phase
-    multiplies the sub-problems' eigenvector blocks together and so *is*
-    GEMM-shaped.
+    **The accumulation is not.** Applying every rotation to a full column
+    pair is `O(n)` each and `O(n^3)` overall, and it used to run as scalar
+    host code -- 5.7 of `eigh`'s 6.1 s at `n = 1024`. `_RotationBatch`
+    holds `block` sweeps' worth, reorders them into commuting windows
+    (Lang 1998; see its docstring for why the reorder is exact), and sends
+    each window out as one `linalg.matmul` of a `w x w` factor against a
+    `w x n` stripe. The host keeps `O(block * n^2)` of work building those
+    factors on contiguous rows, and the cubic term is MAX's.
+
+    `block == 1` recovers the unblocked algorithm exactly: one rotation per
+    window, applied in stream order, each a `2 x 2` GEMM. Larger `block`
+    only changes how many commuting rotations ride in one product, which is
+    why the blocking tests pin every size against every other.
 
     `e` is read as the `n` entries `TensorTridiagonal` carries, with
     `e[n-1]` unused and treated as zero. Numerical Recipes' `tqli`, which
@@ -493,18 +734,15 @@ def _tql[
                 d[i + 1] = g + p
                 g = c * r - b
                 comptime if vectors:
-                    # Rotate columns `i` and `i + 1` of `z`.
-                    for row in range(n):
-                        var zi = z[row * n + i]
-                        var zn = z[row * n + i + 1]
-                        z[row * n + i + 1] = s_ * zi + c * zn
-                        z[row * n + i] = c * zi - s_ * zn
+                    acc.push_rotation(i, c, s_)
                 i -= 1
             if underflowed:
+                acc.end_sweep(ctx)
                 continue
             d[l] -= p
             e[l] = g
             e[m] = Scalar[dtype](0)
+            acc.end_sweep(ctx)
 
 
 def eigvalsh[
@@ -530,13 +768,16 @@ def eigvalsh[
 
     `a` is read as symmetric and not checked; see `sytrd`.
     """
+    var ctx = a.context()
     var reduced = sytrd[gpu=gpu](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
-    var unused = List[Scalar[dtype]]()
-    _tql[vectors=False](d, e, unused)
+    # `vectors=False` pushes nothing, so the batch is three one-element
+    # allocations and its `block` never decides anything.
+    var acc = _RotationBatch[dtype, n, gpu, False](1, ctx)
+    _tql[dtype, n, gpu, False](d, e, acc, ctx)
     _std_sort(d)
-    return Static[dtype, n](a.context(), d^)
+    return Static[dtype, n](ctx, d^)
 
 
 struct TensorEigh[dtype: DType, n: Int](
@@ -568,29 +809,34 @@ struct TensorEigh[dtype: DType, n: Int](
 
 
 def eigh[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> TensorEigh[
-    dtype, n
-] where dtype.is_floating_point():
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
+](mut a: Static[dtype, n, n]) raises -> TensorEigh[dtype, n] where (
+    dtype.is_floating_point() and block >= 1
+):
     """**Tier 2.** The eigendecomposition of a symmetric `a`: eigenvalues
     ascending and orthonormal eigenvectors as columns.
     `numpy.linalg.eigh` / `scipy.linalg.eigh`.
 
-    Three steps, two of them GEMM-shaped. `sytrd` reduces `a` to
+    Three steps, all three GEMM-shaped. `sytrd` reduces `a` to
     tridiagonal form device-resident, `O(4n^3/3)` through `linalg.matmul`.
-    Implicit QL then diagonalizes the tridiagonal on the host,
-    accumulating its rotations into `Z`, the tridiagonal's own eigenvector
-    matrix. And the eigenvectors of `a` are `Q Z`, where `Q` is the
-    reduction's orthogonal factor -- LAPACK's `ormtr` -- which is one
-    `matmul`.
+    Implicit QL then diagonalizes the tridiagonal, its rotations
+    accumulated into `Z^T` device-resident in windows of commuting
+    rotations that each go out as one `matmul` -- `_RotationBatch` above
+    carries the argument. And the eigenvectors of `a` are `Q Z`, where `Q`
+    is the reduction's orthogonal factor -- LAPACK's `ormtr` -- which is
+    `inner(q, zt)` under `transpose_b=True`, so `Z` is never transposed
+    back.
 
-    `ponytail:` the middle step is the ceiling, and it is stated rather
-    than hidden. Accumulating `Z` is `O(n^3)` of scalar Givens rotations
-    on the host -- a small constant, but the one term here with no MAX in
-    it, and the reason `eigvalsh` exists as a separate name: values alone
-    make that step `O(n^2)`. The upgrade is `stedc`, divide and conquer,
-    whose merge phase multiplies the sub-problems' eigenvector blocks and
-    so is GEMM-shaped; nothing above or below it changes when it lands.
+    `block` is the window: `block` consecutive sweeps batch together and a
+    window spans `2 * block` columns, so the host builds `w x w` rotation
+    products at `O(block * n^2)` and MAX does the `O(n^3)`. `block == 1`
+    recovers the unblocked algorithm exactly, one rotation per product,
+    and a test pins every size against every other.
+
+    What is left on the host: the `O(n^2)` band sweep itself, which is
+    sequential and deflates on a test of the data, and the `O(n^2)`
+    insertion sort of the eigenvalue order -- the permutation is then
+    applied to `Z^T`'s rows in one launch on the device.
 
     The `Array` tier's `eigh` is cyclic Jacobi at a fixed sweep count,
     unsorted, differentiable and launchable inside a GPU thread. For a
@@ -604,12 +850,12 @@ def eigh[
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
 
-    var z = List[Scalar[dtype]](length=n * n, fill=0)
-    for i in range(n):
-        z[i * n + i] = Scalar[dtype](1)
-    _tql[vectors=True](d, e, z)
+    var acc = _RotationBatch[dtype, n, gpu, True](block, ctx)
+    _tql[dtype, n, gpu, True](d, e, acc, ctx)
+    acc.finish(ctx)
 
-    # Sort ascending, carrying each eigenvalue's column with it.
+    # Sort ascending. `O(n^2)` scalar host work on `n` numbers, beside the
+    # `O(n^3)` above; only the permutation reaches the device.
     var order = List[Int](capacity=n)
     for i in range(n):
         order.append(i)
@@ -622,17 +868,38 @@ def eigh[
             j -= 1
 
     var sorted_values = List[Scalar[dtype]](capacity=n)
-    var sorted_z = List[Scalar[dtype]](length=n * n, fill=0)
+    var perm_host = List[Scalar[DType.int64]](capacity=n)
     for j in range(n):
-        var src = order[j]
-        sorted_values.append(d[src])
-        for row in range(n):
-            sorted_z[row * n + j] = z[row * n + src]
-
+        sorted_values.append(d[order[j]])
+        perm_host.append(Scalar[DType.int64](order[j]))
     var values = Static[dtype, n](ctx, sorted_values^)
-    var z_dev = Static[dtype, n, n](ctx, sorted_z^)
+    var perm = Static[DType.int64, n](ctx, perm_host^)
+
+    # Row `j` of `zt` is eigenvector `j`, so the sort is a row gather --
+    # source and destination are the same shape, which is what keeps a
+    # cross-shape `elementwise` read out of it.
+    var zt_sorted = Static[dtype, n, n]._uninitialized(ctx)
+    var src = acc.zt.view()
+    var dst = zt_sorted.view()
+    var pv = perm.view()
+
+    @always_inline
+    def gather[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var src, var dst, var pv}:
+        var at = coord_to_index_list(coord)
+        dst.store[1](coord, src[Coord(Int(pv[Coord(at[0])]), at[1])])
+
+    elementwise[simd_width=1, target=_target[gpu]()](gather, Coord(n, n), ctx)
+    ctx.synchronize()
+    # Both owners' last mention is `.view()` above, and a view erases the
+    # origin, so without these Mojo frees them while `gather` still reads
+    # through `src` and `pv`.
+    _ = acc^
+    _ = perm^
+
     var q = reduced.q()
-    var vectors = matmul[gpu=gpu](q, z_dev)
+    var vectors = inner[gpu=gpu](q, zt_sorted)
     return TensorEigh[dtype, n](values^, vectors^)
 
 
@@ -1548,13 +1815,20 @@ def gebrd[
 
 
 def _golub_kahan[
-    dtype: DType, n: Int, vectors: Bool
-](d: List[Scalar[dtype]], e: List[Scalar[dtype]]) raises -> Tuple[
-    List[Scalar[dtype]], List[Scalar[dtype]]
-] where dtype.is_floating_point():
+    dtype: DType,
+    n: Int,
+    gpu: Bool = False,
+    vectors: Bool = False,
+    block: Int = 32,
+](
+    d: List[Scalar[dtype]], e: List[Scalar[dtype]], ctx: DeviceContext
+) raises -> Tuple[List[Scalar[dtype]], List[Scalar[dtype]]] where (
+    dtype.is_floating_point() and block >= 1
+):
     """The singular values of the upper bidiagonal `(d, e)`, descending, and
-    -- at `vectors=True` -- the `2n x 2n` eigenvector matrix of the
-    Golub-Kahan tridiagonal they came from, row-major.
+    -- at `vectors=True` -- the **transpose** of the `2n x 2n` eigenvector
+    matrix of the Golub-Kahan tridiagonal they came from, row-major, so
+    row `j` is eigenvector `j`.
 
     The Golub-Kahan matrix is the `2n x 2n` symmetric tridiagonal with zero
     diagonal and off-diagonal `d_1, e_1, d_2, e_2, ..., d_n`. Its
@@ -1563,9 +1837,11 @@ def _golub_kahan[
     entries `u_i / sqrt(2)`. So the sweep `eigh` already runs gives the SVD
     of `B` with no new numerics -- LAPACK's `dbdsvdx` takes the same route.
 
-    `ponytail:` at `vectors=True` this is `O((2n)^3)` of scalar host
-    rotations, eight times `eigh`'s on the same `n`; a Golub-Kahan implicit
-    QR sweep on the bidiagonal itself (`bdsqr`) is the upgrade. Singular
+    `ponytail:` at `vectors=True` this runs the sweep at `2n`, so it issues
+    about eight times `eigh`'s rotations on the same `n` -- they are
+    accumulated in blocks now, but the doubling stays until a Golub-Kahan
+    implicit QR sweep on the bidiagonal itself (`bdsqr`) replaces it, and
+    `svd`'s de-interleave of the result still runs on the host. Singular
     vectors for an *exactly* zero singular value are not guaranteed
     orthonormal, since the two zero eigenvalues' vectors may mix; the
     values are exact, and `pinv`/`matrix_rank` never use those vectors.
@@ -1577,13 +1853,13 @@ def _golub_kahan[
         ge[2 * i] = d[i]
         if i + 1 < n:
             ge[2 * i + 1] = e[i]
-    var z = List[Scalar[dtype]]()
+    var acc = _RotationBatch[dtype, size, gpu, vectors](block, ctx)
+    _tql[dtype, size, gpu, vectors](gd, ge, acc, ctx)
+    acc.finish(ctx)
+    var zt = List[Scalar[dtype]]()
     comptime if vectors:
-        z = List[Scalar[dtype]](length=size * size, fill=0)
-        for i in range(size):
-            z[i * size + i] = Scalar[dtype](1)
-    _tql[vectors=vectors](gd, ge, z)
-    return (gd^, z^)
+        zt = acc.zt.to_host()
+    return (gd^, zt^)
 
 
 def _top_n_descending[
@@ -1621,9 +1897,10 @@ def svdvals[
     one-sided Jacobi and comes back unsorted, and a test pins the two as
     multisets.
     """
+    var ctx = a.context()
     var reduced = gebrd[gpu=gpu](a)
-    var gk = _golub_kahan[dtype, n, vectors=False](
-        reduced.d.to_host(), reduced.e.to_host()
+    var gk = _golub_kahan[dtype, n, gpu, vectors=False](
+        reduced.d.to_host(), reduced.e.to_host(), ctx
     )
     var top = _top_n_descending[dtype, n](gk[0])
     var out = List[Scalar[dtype]](capacity=n)
@@ -1631,7 +1908,7 @@ def svdvals[
         # `|.|`: an exactly singular matrix's zero pair can land with its
         # nominally positive member a rounding error below zero.
         out.append(abs(gk[0][top[i]]))
-    return Static[dtype, n](a.context(), out^)
+    return Static[dtype, n](ctx, out^)
 
 
 struct TensorSVD[dtype: DType, m: Int, n: Int](
@@ -1692,11 +1969,11 @@ def svd[
     """
     var ctx = a.context()
     var reduced = gebrd[gpu=gpu](a)
-    var gk = _golub_kahan[dtype, n, vectors=True](
-        reduced.d.to_host(), reduced.e.to_host()
+    var gk = _golub_kahan[dtype, n, gpu, vectors=True](
+        reduced.d.to_host(), reduced.e.to_host(), ctx
     )
     var values = gk[0].copy()
-    var z = gk[1].copy()
+    var zt = gk[1].copy()
     comptime size = 2 * n
     var top = _top_n_descending[dtype, n](values)
 
@@ -1708,8 +1985,9 @@ def svd[
         var col = top[j]
         s_host.append(abs(values[col]))
         for i in range(n):
-            vb[i * n + j] = z[(2 * i) * size + col] * root_two
-            ub[i * n + j] = z[(2 * i + 1) * size + col] * root_two
+            # `zt` is `Z^T`: eigenvector `col` is its row, not its column.
+            vb[i * n + j] = zt[col * size + 2 * i] * root_two
+            ub[i * n + j] = zt[col * size + 2 * i + 1] * root_two
 
     var u_b = Static[dtype, n, n](ctx, ub^)
     var v_b = Static[dtype, n, n](ctx, vb^)

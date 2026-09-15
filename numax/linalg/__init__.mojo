@@ -108,16 +108,21 @@ not ship. Then implicit QL sweeps the two diagonals on the host -- looping
 to a tolerance, deflating on a test of the data, tier 2 by numax's own
 definition and declared so in `eigen.mojo` where it happens. `eigvalsh`
 stops there at `O(n^2)`, negligible beside the reduction. `eigh` also
-accumulates the rotations into the tridiagonal's eigenvector matrix, which
-is `O(n^3)` of scalar host work at a small constant -- the one named
-ceiling, with `stedc`'s GEMM-shaped merge as the upgrade -- and brings the
-vectors back as `Q Z` through one `matmul`.
+accumulates the rotations into the tridiagonal's eigenvector matrix, and
+that `O(n^3)` is MAX's: `block` consecutive sweeps batch together, the
+rotations in a batch are reordered into windows of mutually commuting ones
+(Lang 1998), and each window goes out as one `matmul` of a `w x w`
+rotation product against a `w x n` stripe of `Z^T`. `block == 1` recovers
+the unblocked algorithm exactly. The vectors come back as `inner(q, zt)`
+under `transpose_b=True`.
 
 `svd` and `svdvals` take the same two phases over a bidiagonal form:
 `gebrd` reduces device-resident with every reflector through `matmul`,
 and the singular values are the eigenvalues of the Golub-Kahan
 tridiagonal, which the same sweep already diagonalizes -- so the SVD adds
-no new numerics, only the doubling that route costs at `vectors=True`.
+no new numerics, only the doubling that route costs at `vectors=True`. It
+shares the blocked accumulation above, but its de-interleave of `U` and
+`V` out of the `2n x 2n` result still runs on the host.
 `pinv`, `cond`, `matrix_rank` and `lstsq`'s `"svd"` method sit on top of it.
 
 The general spectrum takes the same two phases over a Hessenberg form:

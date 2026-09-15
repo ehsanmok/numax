@@ -181,10 +181,21 @@ has each algorithm and its ceiling.
   `transpose_b=True` -- the identity that stands in for the `syr2k` above.
   `eigvalsh` and `eigh` sit on top of it: an implicit-QL sweep over the two
   diagonals, host-side and tier 2 by numax's definition, `O(n^2)` for values
-  alone and `O(n^3)` of scalar rotations when the eigenvectors are
-  accumulated -- the one ceiling in `eigh` with no MAX in it, named in the
-  code with divide-and-conquer as the upgrade. The eigenvectors of `A` then
-  come back as `Q Z` through one `matmul`. `svd` and `svdvals` take the
+  alone. The eigenvector accumulation that used to sit beside it as
+  `O(n^3)` of scalar host rotations is **blocked now**: `eigh` takes a
+  `block` (default 32), and `_RotationBatch` holds `block` sweeps' worth of
+  rotations, reorders them into windows of mutually commuting ones (Lang
+  1998 -- rotations on adjacent pairs `(i, i+1)` and `(j, j+1)` commute
+  when `|i - j| >= 2`) and sends each window out as one `linalg.matmul` of
+  a `w x w` rotation product against a `w x n` stripe. `Z` is held
+  transposed on the device so that stripe is a contiguous row block, and
+  the eigenvectors of `A` come back as `inner(q, zt)` under
+  `transpose_b=True`, never transposing it. The host keeps
+  `O(block * n^2)` of contiguous-row work building the products, and
+  `block == 1` recovers the unblocked algorithm exactly. `svd` shares the
+  same sweep and so the same accumulation, but at `2n` and with a host
+  de-interleave of `U` and `V` after it; `schur`'s Francis sweep still
+  rotates one column pair at a time on the host. `svd` and `svdvals` take the
   same two phases over a bidiagonal form: `gebrd` reduces device-resident
   with alternating left and right reflectors, each a matrix-vector product
   and a rank-one update through `matmul`, and the singular values are the

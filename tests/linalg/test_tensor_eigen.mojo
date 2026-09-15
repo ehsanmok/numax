@@ -400,6 +400,115 @@ def test_eigh_of_a_diagonal_matrix_returns_permuted_identity_vectors() raises:
     assert_almost_equal(abs(v[2 * 3 + 2]), Scalar[dtype](1.0), atol=1e-14)
 
 
+def _eigh_agrees[
+    n: Int, block: Int
+](want_w: List[Scalar[dtype]], want_v: List[Scalar[dtype]]) raises where (
+    block >= 1
+):
+    """Run `eigh` on Hilbert `n` at this `block` and pin it to a reference
+    answer, values and vectors alike."""
+    var a = _hilbert[n]()
+    var got = eigh[dtype, n, False, block](a)
+    var w = got.values.to_host()
+    var v = got.vectors.to_host()
+    for i in range(n):
+        assert_almost_equal(w[i], want_w[i], atol=1e-12)
+    for i in range(n * n):
+        assert_almost_equal(v[i], want_v[i], atol=1e-12)
+
+
+def test_eigh_blocking_does_not_change_the_answer() raises:
+    # `block` decides only how many commuting rotations ride in one GEMM,
+    # so every size has to produce the same decomposition. `block == 1` is
+    # the sharp end: one rotation per window, so the windows have to come
+    # out in exactly the order the sweep emitted them, and a group index
+    # that ran the other way would reverse every sweep.
+    comptime six = 6
+    var a6 = _hilbert[six]()
+    var ref6 = eigh[dtype, six, False, six](a6)
+    var w6 = ref6.values.to_host()
+    var v6 = ref6.vectors.to_host()
+    _eigh_agrees[six, 1](w6, v6)
+    _eigh_agrees[six, 2](w6, v6)
+    _eigh_agrees[six, 3](w6, v6)
+    _eigh_agrees[six, six](w6, v6)
+
+    comptime five = 5
+    var a5 = _hilbert[five]()
+    var ref5 = eigh[dtype, five, False, five](a5)
+    var w5 = ref5.values.to_host()
+    var v5 = ref5.vectors.to_host()
+    _eigh_agrees[five, 1](w5, v5)
+    _eigh_agrees[five, 2](w5, v5)
+
+
+def test_eigh_ragged_window_sizes() raises:
+    # `n = 40` at `block = 8` is the shape the edge cases live in: several
+    # windows per batch, several batches per run, and windows at both ends
+    # of the band narrower than the `2 * block` the formula allows.
+    comptime n = 40
+    var a = _hilbert[n]()
+    var original = _copy_of(a)
+    var result = eigh[dtype, n, False, 8](a)
+
+    var av = matmul(original, result.vectors).to_host()
+    var v = result.vectors.to_host()
+    var w = result.values.to_host()
+    var residual = Float64(0)
+    for j in range(n):
+        for i in range(n):
+            var gap = Float64(av[i * n + j] - w[j] * v[i * n + j])
+            residual = max(residual, abs(gap))
+    assert_equal(residual < 1e-10, True)
+
+    var vt = transpose(result.vectors)
+    var gram = matmul(vt, result.vectors).to_host()
+    var drift = Float64(0)
+    for i in range(n):
+        for j in range(n):
+            var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
+            drift = max(drift, abs(Float64(gram[i * n + j] - want)))
+    assert_equal(drift < 1e-10, True)
+
+
+def test_eigh_at_n_one_and_two() raises:
+    # The sizes where the sweep never rotates (`n == 1`) and where it
+    # rotates on the one index there is (`n == 2`), at both ends of the
+    # `block` range.
+    var ctx = DeviceContext(api="cpu")
+    var a1 = zeros[dtype, 1, 1](ctx)
+    a1.copy_from_host([Scalar[dtype](3.5)])
+    var r1 = eigh(a1)
+    assert_almost_equal(r1.values.to_host()[0], Scalar[dtype](3.5), atol=1e-14)
+    assert_almost_equal(
+        abs(r1.vectors.to_host()[0]), Scalar[dtype](1.0), atol=1e-14
+    )
+
+    var pair: List[Scalar[dtype]] = [
+        Scalar[dtype](2.0),
+        Scalar[dtype](1.0),
+        Scalar[dtype](1.0),
+        Scalar[dtype](2.0),
+    ]
+    var a2 = zeros[dtype, 2, 2](ctx)
+    a2.copy_from_host(pair)
+    var r2 = eigh[dtype, 2, False, 1](a2)
+    var w2 = r2.values.to_host()
+    assert_almost_equal(w2[0], Scalar[dtype](1.0), atol=1e-14)
+    assert_almost_equal(w2[1], Scalar[dtype](3.0), atol=1e-14)
+
+    var b2 = zeros[dtype, 2, 2](ctx)
+    b2.copy_from_host(pair)
+    var wide = eigh[dtype, 2, False, 32](b2)
+    var w3 = wide.values.to_host()
+    var v2 = r2.vectors.to_host()
+    var v3 = wide.vectors.to_host()
+    for i in range(2):
+        assert_almost_equal(w3[i], w2[i], atol=1e-14)
+    for i in range(4):
+        assert_almost_equal(v3[i], v2[i], atol=1e-14)
+
+
 def _tall() raises -> Static[dtype, 5, 3]:
     var ctx = DeviceContext(api="cpu")
     return Static[dtype, 5, 3](
