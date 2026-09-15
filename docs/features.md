@@ -121,6 +121,7 @@ on the device. There is no second tensor type — both are `TileTensor`.
 | `map[step, width, gpu]` — walk one tensor into another at native SIMD width; `gpu=True` is the same source launched per element | [`gaussian.mojo`](../examples/basic/gaussian.mojo), [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo) |
 | `map_to`, `zip_to` — write into a caller-supplied output, and elementwise combine of two inputs | [`test_tensor.mojo`](../tests/core/test_tensor.mojo) |
 | `map_threaded` — the same `step` spread across cores via `max.algorithm.elementwise` | [`bench_elementwise.mojo`](../bench/bench_elementwise.mojo) |
+| `map_blocks[k_in, k_out, batch, step, gpu]` — one *small problem* per lane rather than one scalar: `step` takes a lane's whole block as an `Array` of raw `SIMD` and returns its whole answer, so an `Array`-tier factorization runs inside the thread. Structure-of-arrays `(k, batch)`; an AoS caller `transpose`s once | [`batched_solve.mojo`](../examples/advanced/batched_solve.mojo), [`test_map_blocks.mojo`](../tests/core/test_map_blocks.mojo) |
 | `reduce[combine]`, `reduce_block_gpu` — whole-tensor folds, host and device | [`test_tensor_reduce.mojo`](../tests/core/test_tensor_reduce.mojo) |
 | `reduce_rows`, `reduce_axis` — per-row and per-axis folds | [`softmax.mojo`](../examples/intermediate/softmax.mojo) |
 | `broadcast_op_rows`, `broadcast_op_axis` — broadcast a folded result back along an axis | [`softmax.mojo`](../examples/intermediate/softmax.mojo) |

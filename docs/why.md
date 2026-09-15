@@ -33,6 +33,11 @@ eigensolve, per thread.
 - [`examples/advanced/ode.mojo`](../examples/advanced/ode.mojo): 1024
   trajectories, one `rk4` integration per thread, at `Plain` and again at
   `Dual` for the sensitivity to the initial condition.
+- [`examples/advanced/batched_solve.mojo`](../examples/advanced/batched_solve.mojo):
+  4096 SPD 4x4 systems, one Cholesky factorization and solve per lane
+  through `numax.core.tensor.map_blocks`, and `dx/dA00` for every one of
+  them from the same factorization at `Dual`. `map` hands a lane one
+  scalar; `map_blocks` hands it a whole problem.
 - [`examples/advanced/gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo):
   `Compensated` inside a kernel, recovering the rounding error `float32`
   drops.
@@ -44,8 +49,10 @@ Cyclic Jacobi at a fixed sweep count, RK4 at a fixed step, Newton at a fixed
 iteration count. The tolerance-driven siblings exist beside them as tier 2,
 `Plain`-only and host-side, and tier 1 never calls tier 2.
 
-Who this is for: batched small eigensystems and factorizations, parameter
-sweeps, per-trajectory ODE solves, an optimizer inside an outer simulation,
+Who this is for: batched small eigensystems and factorizations
+(`map_blocks` is the primitive for exactly that, and
+[`batched_solve.mojo`](../examples/advanced/batched_solve.mojo) the worked
+case beside `quantum_well.mojo`), parameter sweeps, per-trajectory ODE solves, an optimizer inside an outer simulation,
 Monte Carlo with real per-sample numerical logic, sensitivities of special
 functions, small estimation and control problems mapped across many threads.
 

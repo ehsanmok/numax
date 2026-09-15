@@ -1,9 +1,9 @@
 """Drive any `FloatLike` kernel across a `TileTensor`, on CPU or GPU.
 
 **This module is the tier boundary itself**, so it declares per function
-rather than once: `map`, `reduce`, `reduce_rows`, `reduce_axis` and
-`broadcast_op_axis` at a compile-time shape carry the tier-1 guarantee and
-take `gpu=True`; their runtime-shape overloads, `map_strided`,
+rather than once: `map`, `map_blocks`, `reduce`, `reduce_rows`,
+`reduce_axis` and `broadcast_op_axis` at a compile-time shape carry the
+tier-1 guarantee and take `gpu=True`; their runtime-shape overloads, `map_strided`,
 `reduce_strided` and `map_threaded` are host-only, since a shape the
 compiler cannot see cannot become a kernel signature. A tier-1 *kernel*
 stays tier 1 whichever of these walks it.
@@ -112,6 +112,19 @@ what makes a `FloatLike` kernel a fused kernel by construction. Two inputs
 is simply the point where the operation cannot be expressed inside a
 single `step` at all, because it needs a second buffer to read from.
 
+`map_blocks` is the one walk here that does not hand a lane a scalar. It
+hands it a *block* -- the `k_in` values at one batch index as an `Array` of
+raw `SIMD`, and takes back the `k_out` values its answer occupies -- so the
+whole of an `Array`-tier algorithm (a 4x4 Cholesky, a 3x3 eigensolve, a
+six-state integration) runs inside the lane and a batch of thousands of
+them is one launch instead of thousands. Storage is structure of arrays,
+`(k, batch)`: row `j` holds element `j` of every problem, which is what
+makes a lane load `w` consecutive addresses and adjacent GPU threads read
+adjacent memory; a caller holding `(batch, k)` transposes once with
+`numax.core.array.transpose`, on either target. `examples/advanced/batched_solve.mojo`
+is the worked case. At `k_in = k_out = 1` this is `map`'s contract exactly,
+so a genuinely elementwise kernel stays on `map`.
+
 `map` has two further overloads taking one and two run-time
 `Scalar[dtype]` arguments, forwarded to `step` alongside each element.
 `step` being a compile-time parameter is what `enqueue_function` needs and
@@ -131,7 +144,11 @@ from that rank down to a walk is what separates the three groups below.
   the only one that vectorizes. Everything
   with a `gpu` parameter is in this group, and a `where` clause
   (`all_dims_known and is_row_major`, exactly `coalesce()`'s own
-  requirement) keeps anything else out at compile time.
+  requirement) keeps anything else out at compile time. `map_blocks` is in
+  this group too and needs no `where` clause: both of its layouts are
+  written out in its signature, and its launch is
+  `max.algorithm.elementwise` rather than `enqueue_function`, so the thread
+  count comes from a `Coord` it builds itself.
 * **Row-major with run-time extents.** `map`, `map_to`, `zip_to`,
   `map_threaded`, `reduce`, `reduce_axis` and `broadcast_op_axis` each have
   a second overload under the *same name*, selected by a `where` clause
@@ -160,15 +177,17 @@ numax gains no second tensor type from any of this. The argument is a
 the distinction lives in the layout -- which is where MAX put it.
 """
 
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
 from layout.tile_tensor import PointerStorage, TensorStorage
 from max.algorithm.functional import elementwise
 from max.gpu import AddressSpace, barrier
 from max.gpu.host import DeviceContext
+from std.collections import Array
 from std.gpu import block_idx, global_idx, thread_idx
 from std.memory import stack_allocation
 
+from ._drive import _target, _width
 from .numeric import FloatLike, max_of
 from .plain import Plain
 
@@ -549,6 +568,88 @@ def map_threaded[
         ys_flat.store[w](coord, step[w](xs_flat.load[w](coord)))
 
     elementwise[simd_width=width, target="cpu"](body, Coord(n), ctx)
+
+
+def map_blocks[
+    dtype: DType,
+    k_in: Int,
+    k_out: Int,
+    batch: Int,
+    step: def[w: Int](Array[SIMD[dtype, w], k_in]) thin -> Array[
+        SIMD[dtype, w], k_out
+    ],
+    gpu: Bool = False,
+](
+    xs: TileTensor[
+        dtype,
+        type_of(row_major[k_in, batch]()),
+        _,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ys: TileTensor[
+        dtype,
+        type_of(row_major[k_out, batch]()),
+        MutAnyOrigin,
+        Storage=PointerStorage[element_width=1],
+    ],
+    ctx: DeviceContext,
+) raises:
+    """One *small problem* per lane: `step` over `batch` blocks of `k_in`
+    values, each producing `k_out`.
+
+    `map` hands a lane one scalar, which is the whole surface an
+    elementwise kernel needs and no surface at all for the audience
+    `numax.linalg.array` is written for -- thousands of independent 4x4
+    solves, 3x3 eigenproblems or 6-state integrations. This is that walk:
+    `step` receives one lane's entire problem as an `Array` of raw `SIMD`
+    and returns its entire answer, so the body is free to wrap the block
+    into `Array[Plain[dtype, w], k_in]`, or `Dual[Plain[dtype, w]]` for the
+    derivative, and call an `Array`-tier algorithm inside the lane.
+    `examples/advanced/batched_solve.mojo` runs 4096 Cholesky solves and
+    their sensitivities this way, on CPU lanes and on the GPU.
+
+    **Structure of arrays, `(k, batch)`.** Row `j` holds element `j` of
+    every problem, so one lane load is `w` consecutive addresses and
+    adjacent GPU threads read adjacent memory. A caller holding the
+    problems the other way round -- `(batch, k)`, one problem per row --
+    transposes once with `numax.core.array.transpose`, which runs on both
+    targets, rather than paying a strided gather per block per launch.
+
+    Raw `SIMD` in and out, the same contract `map`'s `step` has:
+    `numax.core.tensor` never sees a `FloatLike` type, and composing the
+    conformer with the block is the caller's job in one small function.
+    `map_blocks` at `k_in = k_out = 1` is exactly `map`'s contract, so a
+    genuinely elementwise kernel stays on `map` -- `quantum_well.mojo`'s
+    per-lane eigensolve is one scalar in and one out and belongs there.
+
+    The tier-1 rules apply inside `step` unchanged, and for the same
+    reason: a lane's `SIMD` holds `w` different problems, so a branch on a
+    value branches for all of them at once. What `map_blocks` adds is only
+    how much state one lane may carry, and the ceiling on that is
+    registers -- `k_in + k_out` values per lane at `Plain`, twice that at
+    `Dual`, and the whole `Array` the body builds on top.
+
+    `gpu` picks the target the way every other `gpu: Bool` in numax does.
+    There is no layout `where` clause here because there is nothing to
+    constrain: both layouts are written out in the signature. The launch
+    is `max.algorithm.elementwise` over `Coord(batch)`, which handles a
+    `batch` that is not a multiple of the lane count by running the tail at
+    `w = 1` -- the same `step`, instantiated once more.
+    """
+
+    @always_inline
+    def body[width: Int, alignment: Int = 1](coord: Coord) {var xs, var ys}:
+        var b0 = coord_to_index_list(coord)[0]
+        var block = Array[SIMD[dtype, width], k_in](uninitialized=True)
+        comptime for j in range(k_in):
+            block[j] = xs.load[width](Coord(j, b0))
+        var out = step[width](block^)
+        comptime for j in range(k_out):
+            ys.store[width](Coord(j, b0), out[j])
+
+    elementwise[simd_width=_width[dtype, gpu](), target=_target[gpu]()](
+        body, Coord(batch), ctx
+    )
 
 
 def map[

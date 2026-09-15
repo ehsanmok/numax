@@ -55,12 +55,14 @@ which those are.
 | [unified_tensor_gpu.mojo](advanced/unified_tensor_gpu.mojo) | One `numax.core.array.Tensor` type on both devices: the `DeviceContext` handed to the factory decides host or accelerator, `.view()` is the same `TileTensor` either way, and the two results agree to within one float32 ulp. |
 | [spectral.mojo](advanced/spectral.mojo) | Eigenvalues, singular values and matrix functions over `Tensor`: `eigvalsh`/`eigh`, `svdvals`/`svd` with `pinv`/`cond`/`matrix_rank`, `eigvals`/`schur` on a matrix with complex pairs, and `logm`/`sqrtm`/`funm` on the Schur form, each checked against the identity that defines it |
 | [optimize.mojo](advanced/optimize.mojo) | Minimization and root finding with the derivative exact rather than estimated: the objective is evaluated at `Plain`, `Dual` and `Gradient` as the optimizer needs, a root is found two ways, Rosenbrock is minimized with `bfgs` from the classic bad start, and the exact gradient is measured against the best finite difference a sweep of step sizes can produce. |
+| [batched_solve.mojo](advanced/batched_solve.mojo) | 4096 SPD 4x4 systems solved at once through `numax.core.tensor.map_blocks`: one lane gets a whole problem rather than one scalar, so `numax.linalg.array`'s `cholesky` and `cholesky_solve` run inside the thread, and `dx/dA00` for every system comes out of the same factorization at `Dual`. Structure-of-arrays `(k, batch)` packing, CPU lanes and GPU, checked by the residual and against a `float64` central difference on the host. |
 | [quantum_well.mojo](advanced/quantum_well.mojo) | One discretized Schrodinger operator, four answers from one `FloatLike` function: the ground-state energy, `dE0/dw` by Hellmann-Feynman at `Dual`, the frequency that hits a target energy via `newton`, and a 256-well sweep with the whole 24x24 `eigh` inside a single GPU thread -- then the `Dual` and `newton` answers per thread too, all at `float32` so Metal runs it, agreeing with the CPU path to a few ulp. |
 
 ## GPU note
 
 `gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`, `random_ensemble.mojo`,
-`unified_tensor_gpu.mojo` and `quantum_well.mojo` launch GPU kernels alongside their CPU paths.
+`unified_tensor_gpu.mojo`, `quantum_well.mojo` and `batched_solve.mojo`
+launch GPU kernels alongside their CPU paths.
 They need a real GPU -- Metal or CUDA, whichever `DeviceContext` finds --
 and no GitHub-hosted runner has either, so they're a local-only check;
 `pixi run examples-cpu` skips them, `pixi run examples` includes them.
