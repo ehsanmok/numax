@@ -370,7 +370,7 @@ def main():
     refs = materialize[ZETA_BELOW_REF]()
     for i in range(ZETA_BELOW_N):
         s.observe(xs[i], zeta(p(xs[i])).v[0], refs[i])
-    s.report("zeta (Euler-Maclaurin N=10, M=8), [-2.5,0.9]")
+    s.report("zeta (Euler-Maclaurin | functional equation), [-20,0.9]")
 
     s = Stats()
     xs = materialize[HYP1F1_MID_X]()

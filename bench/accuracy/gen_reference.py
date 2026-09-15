@@ -120,8 +120,13 @@ def build() -> list[Case]:
     cases.append(
         Case("zeta_above", "zeta, [1.1, 30]", clustered(1.1, 30.0), mp.zeta)
     )
+    # The Riemann overload's whole continued range, not just the eighth of
+    # it Euler-Maclaurin used to cover: the functional equation carries the
+    # rest. The trivial zeros at -2, -4, ..., -18 are inside this sweep, so
+    # read the absolute column near them -- `observe` already drops a
+    # relative error taken against a value below 1e-12.
     cases.append(
-        Case("zeta_below", "zeta, [-2.5, 0.9]", clustered(-2.5, 0.9), mp.zeta)
+        Case("zeta_below", "zeta, [-20, 0.9]", clustered(-20.0, 0.9), mp.zeta)
     )
     cases.append(
         Case(

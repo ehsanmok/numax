@@ -158,18 +158,27 @@ Temme's `d = -ln(x/2)`.
 | function / domain | max abs | max rel | max ULP |
 | --- | --- | --- | --- |
 | `zeta` (Euler-Maclaurin, N=10, M=8), [1.1, 30] | 1.78e-15 | 5.99e-16 | 3 |
-| `zeta` (Euler-Maclaurin, N=10, M=8), [-2.5, 0.9] | 4.25e-13 | 8.26e-11 | 467,677 |
+| `zeta` (Euler-Maclaurin \| functional equation), [-20, 0.9] | 2.56e-13 | 3.05e-14 | >1e15 |
 | `hyp1f1(1.5, 2.5, x)` (series \| Kummer), [-40, 40] | 1.10e+01 | 2.06e-15 | 11 |
 | `hyp2f1(0.5, 1.5, 2.5, x)` (series \| Pfaff), [-5, 0.9] | 4.00e-15 | 2.40e-15 | 18 |
 | `hyp2f1(0.5, 1.5, 2.5, x)` (A&S 15.3.6), [0.9, 0.999] | 5.77e-15 | 3.16e-15 | 24 |
 
-The two `zeta` rows are one formula measured on two sides of a
-cancellation. Above the pole the answer is the sum's size and the error is
-rounding. Below it, `zeta(-2.5) = 0.0085` is a difference of terms near
-`300`, so half an ulp on each term is already `1e-13` of the answer and
-ten such terms give the `8e-11`; the formula itself is at `1e-18` in
-mpmath. The `hyp1f1` row's 11.0 absolute is `2e-15` relative on an answer
-of `7e+11` at `x = 40`.
+The two `zeta` rows are two formulas, not one measured twice. Above the
+pole Euler-Maclaurin's answer is the sum's size and the error is rounding.
+Below `-0.5` the functional equation takes over, and the row now covers
+`[-20, 0.9]` where it used to cover `[-2.5, 0.9]` and read `8.26e-11`
+relative: the cancellation that produced that number -- `zeta(-2.5) =
+0.0085` as a difference of terms near `300` -- is gone, because the
+reflection evaluates `zeta(1 - s)` in the half-plane where the series
+converges and multiplies by `Gamma`. What is left is rounding through
+`Gamma` and the `exp`/`ln` powers. The absolute `2.56e-13` is at `x =
+-19.79`, where `zeta` is `21.3`, so it is the `3.05e-14` relative column
+read the other way. The ULP column reads `>1e15` because the sweep crosses
+the trivial zeros at `-2, -4, ..., -18`: two values straddling zero are
+half the float64 range apart in bit patterns however close they are in
+value, and the `1e-15` absolute error there is the honest measure. The
+`hyp1f1` row's 11.0 absolute is `2e-15` relative on an answer of `7e+11`
+at `x = 40`.
 
 The two `hyp2f1` rows meet at `x = 0.9`, which the `>=` side of the
 switch puts in the second one -- so the first row's worst point, its own

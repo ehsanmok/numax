@@ -39,11 +39,36 @@ def test_riemann_zeta_matches_mpmath_on_both_sides_of_the_pole() raises:
     assert_almost_equal(s(zeta(pv(0.5))), -1.4603545088095868, rtol=1e-10)
     assert_almost_equal(s(zeta(pv(0.0))), -0.5, atol=1e-9)
     assert_almost_equal(s(zeta(pv(-0.5))), -0.20788622497735457, rtol=1e-10)
-    assert_almost_equal(s(zeta(pv(-1.5))), -0.025485201889833036, rtol=1e-9)
-    assert_almost_equal(s(zeta(pv(-2.5))), 0.008516928777850331, rtol=1e-9)
+    assert_almost_equal(s(zeta(pv(-1.5))), -0.025485201889833036, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(-2.5))), 0.008516928777850331, rtol=1e-12)
     # zeta(-1) = -1/12, zeta(2) = pi^2 / 6.
     assert_almost_equal(s(zeta(pv(-1.0))), -1.0 / 12.0, atol=1e-9)
     assert_almost_equal(s(zeta(pv(2.0))), 1.6449340668482264, rtol=1e-9)
+
+
+def test_riemann_zeta_reflects_far_below_the_pole() raises:
+    """The functional equation's arm, past where `M = 8` Bernoulli
+    corrections carry Euler-Maclaurin. Every value from mpmath at 50
+    digits."""
+    assert_almost_equal(s(zeta(pv(-3.5))), 0.004441011335479432, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(-7.0))), 0.0041666666666666667, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(-10.5))), 0.011146122473942814, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(-15.0))), 0.44325980392156863, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(-20.5))), -108.21747505877606, rtol=1e-12)
+    # Just below the switch at -0.5, where the reflection takes over from
+    # a formula that was still accurate: the two agree, so the seam is not
+    # a step.
+    assert_almost_equal(s(zeta(pv(-0.6))), -0.17459571193801339, rtol=1e-12)
+    assert_almost_equal(s(zeta(pv(-0.9))), -0.10119350398535188, rtol=1e-12)
+
+
+def test_riemann_zeta_vanishes_at_the_trivial_zeros() raises:
+    """`sin(pi s / 2)` is zero at every even negative integer, so the
+    trivial zeros fall out of the functional equation rather than being
+    special-cased -- to rounding, since the sine of a large multiple of
+    `pi` is not exactly zero in floating point."""
+    for k in [-2.0, -4.0, -6.0, -10.0, -18.0]:
+        assert_almost_equal(s(zeta(pv(k))), 0.0, atol=1e-14)
 
 
 def test_hurwitz_zeta_matches_mpmath_and_reduces_to_riemann() raises:
