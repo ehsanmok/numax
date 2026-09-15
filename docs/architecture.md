@@ -285,9 +285,14 @@ survey of what MAX does ship.
 
 `numax.core.tensor`'s walks originally required `all_dims_known`, because they
 flatten with `TileTensor.coalesce()` and `coalesce()` is itself constrained
-to statically-shaped storage. That is what a GPU launch needs: a kernel
-reaching `enqueue_function` must have its entire type resolved before the
-launch, and a runtime extent is not part of the type.
+to statically-shaped storage. That is what `enqueue_function` needs: a
+kernel reaching it must have its entire type resolved before the launch,
+and a runtime extent is not part of the type. It is not what *the device*
+needs -- `max.algorithm.elementwise` computes its grid from a run-time
+`Coord`, so a run-time-shaped tensor launched through it runs on the GPU
+exactly as a statically-shaped one does. That is the route
+`numax.core._drive` takes for the NumPy-named surface and `numax.stats`'s
+distributions.
 
 It is also why nothing could express a reshape to a computed shape, a
 boolean mask, or any operation whose output extent depends on input
@@ -301,7 +306,7 @@ of each other:
 | | shape | flattening | GPU |
 |---|---|---|---|
 | static overload | `row_major[n]()`, comptime | `coalesce()` | yes, via `gpu=True` |
-| runtime overload | `row_major(Coord(n))`, runtime | rank-1 layout over the same pointer | no |
+| runtime overload | `row_major(Coord(n))`, runtime | rank-1 layout over the same pointer | yes, through `elementwise`; `enqueue_function` on `map` stays static |
 
 The runtime overload flattens by *construction* rather than by
 `coalesce()`: a row-major tensor's elements are already contiguous, so a

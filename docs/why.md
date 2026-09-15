@@ -133,8 +133,10 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
   (`norm.cdf` 5.4x, `interp` 9.4x, `welch` 12x, on the processor named in
   [`performance.md`](performance.md)).
 - **A drop-in NumPy or CuPy replacement.** No fancy indexing, no owned
-  slicing, no dtype promotion (`astype` is explicit), and run-time-shaped
-  tensors are CPU-only because a GPU launch needs the extent in the type.
+  slicing, no dtype promotion (`astype` is explicit), and `map`/`reduce`'s
+  run-time-shaped overloads are CPU-only because `enqueue_function` needs the
+  extent in the type — the NumPy-named surface and the distributions do run a
+  run-time shape on the device, through `elementwise`.
 - **Every SciPy operation at every conformer.** The `Tensor` tier is
   `dtype`-monomorphic by construction: a `DeviceBuffer` holds a machine
   scalar, and the conformers are Mojo structs. Conformers live on

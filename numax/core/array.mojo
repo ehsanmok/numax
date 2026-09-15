@@ -493,8 +493,11 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
 
         What it buys is a single type for a variable that is sometimes one
         shape and sometimes another, at the price of the `where` clauses a
-        static shape satisfies -- no GPU launch, no `coalesce`. Going back
-        is `static_view`.
+        static shape satisfies -- no `coalesce`, and no `enqueue_function`
+        launch, which is what `map[gpu=True]` is. The NumPy-named surface
+        and `numax.stats`'s distributions still reach the device from here:
+        they launch through `max.algorithm.elementwise`, whose grid comes
+        from a run-time `Coord`. Going back is `static_view`.
         """
         var extents = List[Int](capacity=Self.rank)
         for d in range(Self.rank):

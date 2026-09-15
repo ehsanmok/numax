@@ -26,16 +26,18 @@ var q = gamma.ppf[gpu=True](probabilities, shape, scale)        # on the device
 ```
 
 The `Tensor` form is the `FloatLike` kernel driven across the tensor by
-`max.algorithm.elementwise` -- threaded at native SIMD width on the host,
-one thread per element at `gpu=True` -- with the distribution's parameters
-captured by the body. A tensor whose shape is only known at run time takes
-a host walk instead, since a GPU launch needs the extent in the type; that
-is a second overload of each method rather than a branch, because a `where`
-clause does not propagate through a generic caller and an untaken
-`comptime if` branch is still constraint-checked (`findings.mdc` has both).
-Both forms are one definition: the `Tensor` overload *is* the `FloatLike`
-one, evaluated per lane. `numax.core.tensor.map`'s scalar-parameter
-overloads remain the route for a caller launching the raw kernel by hand.
+`numax.core._drive` -- threaded at native SIMD width on the host, one
+thread per element at `gpu=True` -- with the distribution's parameters
+captured by the body. One overload per method covers both shapes: a tensor
+whose extents are known only at run time launches on the device exactly as
+a compile-time-shaped one does, because `max.algorithm.elementwise`
+computes its grid from a run-time `Coord`. It is `enqueue_function` that
+needs the extent in the type, and this route does not use it. A `gpu` that
+disagrees with where the tensor's memory lives falls back to a host walk
+and says so on `stderr`. Both forms are one definition: the `Tensor`
+overload *is* the `FloatLike` one, evaluated per lane.
+`numax.core.tensor.map`'s scalar-parameter overloads remain the route for a
+caller launching the raw kernel by hand.
 
 `gamma` and `beta` are the *distributions*; `numax.special.gamma` and
 `numax.special.beta` are the functions they are named after. That is why
@@ -117,17 +119,19 @@ quantile above `max_k` is silently reported as `max_k`. The default of
 a short scan around it, once `FloatLike` can round a seed to an integer.
 """
 
-from std.sys.info import simd_width_of
-
-from layout import Coord, TileTensor
-from max.algorithm.functional import elementwise
+from layout import Coord
 from layout.tile_layout import TensorLayout
-from layout.tile_tensor import PointerStorage
-from max.gpu.host import DeviceContext
 
+from ..core._drive import (
+    _check_device,
+    _flat,
+    _flat_out,
+    _launch,
+    _notice,
+    _width,
+)
 from ..core.array import Tensor
 from ..core.plain import Plain
-from .statistics import _target
 from ..special.beta import betainc, betaincc
 from ..special.gamma import gammainc, gammaincc, lgamma
 from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
@@ -163,76 +167,57 @@ def _log_beta[T: FloatLike](a: T, b: T) -> T:
     return lgamma(a.copy()) + lgamma(b.copy()) - lgamma(a + b)
 
 
-@always_inline
-def _width[dtype: DType, gpu: Bool]() -> Int:
-    """Native SIMD width on the host, one element per thread on the device
-    -- the same choice `numax.core.tensor.map` documents measuring."""
-    comptime if gpu:
-        return 1
-    else:
-        return simd_width_of[dtype]()
-
-
 def _over1[
     dtype: DType,
     LayoutType: TensorLayout,
     step: def[w: Int](SIMD[dtype, w], SIMD[dtype, 1]) thin -> SIMD[dtype, w],
     gpu: Bool,
-](mut x: Tensor[dtype, LayoutType], p0: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-] where (
-    dtype.is_floating_point()
-    and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].all_dims_known
-    and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].is_row_major
-):
-    """Drive a one-parameter distribution kernel across `x` through
-    `max.algorithm.elementwise`: threaded at native SIMD width on the host,
-    one thread per element on the device, with `p0` captured by the body.
-
-    `elementwise` rather than `map[gpu=True]` under `enqueue_function`,
-    and for a reason `findings.mdc` now records: a kernel that carries a
-    layout `where` clause cannot be named inside `enqueue_function` from a
-    generic function, because the body is checked abstractly in every
-    translation unit that imports the module and never instantiates it, and
-    the conversion fails with the layout still symbolic. `numax.fft` and
-    `transpose` launch this way for the same reason. On the host this is
-    `map_threaded`'s walk, so it is the faster of the two paths there.
-    """
-    var ctx = x.context()
-    var out = Tensor[dtype, LayoutType](ctx, x.layout)
-    var xs = x.view().coalesce()
-    var ys = out.view().coalesce()
-    var n = xs.num_elements()
-
-    @always_inline
-    def body[w: Int, alignment: Int = 1](coord: Coord) {var xs, var ys, var p0}:
-        ys.store[w](coord, step[w](xs.load[w](coord), p0))
-
-    elementwise[simd_width=_width[dtype, gpu](), target=_target[gpu]()](
-        body, Coord(n), ctx
-    )
-    ctx.synchronize()
-    return out^
-
-
-def _over1_host[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    step: def[w: Int](SIMD[dtype, w], SIMD[dtype, 1]) thin -> SIMD[dtype, w],
+    name: StaticString,
 ](mut x: Tensor[dtype, LayoutType], p0: Scalar[dtype]) raises -> Tensor[
     dtype, LayoutType
 ] where dtype.is_floating_point():
-    """The run-time-shape path: a host walk over the elements, since a GPU
-    launch needs the extent in the type."""
-    var values = x.to_host()
-    var out = List[Scalar[dtype]](length=len(values), fill=0)
-    for i in range(len(values)):
-        out[i] = step[1](values[i], p0)[0]
-    return Tensor[dtype, LayoutType](x.context(), x.layout, out^)
+    """Drive a one-parameter distribution kernel across `x` through
+    `numax.core._drive`: threaded at native SIMD width on the host, one
+    thread per element on the device, with `p0` captured by the body.
+
+    One signature covers `Static` and `Dynamic` alike. `_flat` builds the
+    rank-1 view over the buffer pointer rather than `coalesce()`, and
+    `max.algorithm.elementwise` computes its grid from a run-time `Coord`,
+    so a tensor whose extents are known only at run time launches on the
+    device exactly as a compile-time-shaped one does. `enqueue_function` is
+    what needs the extent in the type, and this route does not use it.
+
+    `elementwise` rather than `map[gpu=True]` under `enqueue_function` for
+    the reason `findings.mdc` records: a kernel that carries a layout
+    `where` clause cannot be named inside `enqueue_function` from a generic
+    function. `numax.fft` and `transpose` launch this way for the same
+    reason.
+
+    A `gpu` that disagrees with where `x`'s memory lives runs the host walk
+    and says so on `stderr` -- the same fallback, through the same
+    `_check_device`/`_notice`, that the elementwise surface takes.
+    """
+    if not _check_device[gpu=gpu](x):
+        _notice[gpu](name)
+        var values = x.to_host()
+        var walked = List[Scalar[dtype]](length=len(values), fill=0)
+        for i in range(len(values)):
+            walked[i] = step[1](values[i], p0)[0]
+        return Tensor[dtype, LayoutType](x.context(), x.layout, walked^)
+
+    var ctx = x.context()
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.layout)
+    var xs = _flat(x)
+    var ys = _flat_out(out)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xs, var ys, var p0}:
+        ys.store[width](coord, step[width](xs.load[width](coord), p0))
+
+    _launch[gpu=gpu, lanes=_width[dtype, gpu]()](body, x.size(), ctx)
+    return out^
 
 
 def _over2[
@@ -242,52 +227,32 @@ def _over2[
         SIMD[dtype, w], SIMD[dtype, 1], SIMD[dtype, 1]
     ) thin -> SIMD[dtype, w],
     gpu: Bool,
-](
-    mut x: Tensor[dtype, LayoutType], p0: Scalar[dtype], p1: Scalar[dtype]
-) raises -> Tensor[dtype, LayoutType] where (
-    dtype.is_floating_point()
-    and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].all_dims_known
-    and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
-    ].is_row_major
-):
-    """`_over1` for a two-parameter distribution."""
-    var ctx = x.context()
-    var out = Tensor[dtype, LayoutType](ctx, x.layout)
-    var xs = x.view().coalesce()
-    var ys = out.view().coalesce()
-    var n = xs.num_elements()
-
-    @always_inline
-    def body[
-        w: Int, alignment: Int = 1
-    ](coord: Coord) {var xs, var ys, var p0, var p1}:
-        ys.store[w](coord, step[w](xs.load[w](coord), p0, p1))
-
-    elementwise[simd_width=_width[dtype, gpu](), target=_target[gpu]()](
-        body, Coord(n), ctx
-    )
-    ctx.synchronize()
-    return out^
-
-
-def _over2_host[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    step: def[w: Int](
-        SIMD[dtype, w], SIMD[dtype, 1], SIMD[dtype, 1]
-    ) thin -> SIMD[dtype, w],
+    name: StaticString,
 ](
     mut x: Tensor[dtype, LayoutType], p0: Scalar[dtype], p1: Scalar[dtype]
 ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
-    """The run-time-shape path of the two-parameter driver."""
-    var values = x.to_host()
-    var out = List[Scalar[dtype]](length=len(values), fill=0)
-    for i in range(len(values)):
-        out[i] = step[1](values[i], p0, p1)[0]
-    return Tensor[dtype, LayoutType](x.context(), x.layout, out^)
+    """`_over1` for a two-parameter distribution."""
+    if not _check_device[gpu=gpu](x):
+        _notice[gpu](name)
+        var values = x.to_host()
+        var walked = List[Scalar[dtype]](length=len(values), fill=0)
+        for i in range(len(values)):
+            walked[i] = step[1](values[i], p0, p1)[0]
+        return Tensor[dtype, LayoutType](x.context(), x.layout, walked^)
+
+    var ctx = x.context()
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.layout)
+    var xs = _flat(x)
+    var ys = _flat_out(out)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xs, var ys, var p0, var p1}:
+        ys.store[width](coord, step[width](xs.load[width](coord), p0, p1))
+
+    _launch[gpu=gpu, lanes=_width[dtype, gpu]()](body, x.size(), ctx)
+    return out^
 
 
 def _norm_pdf_step[
@@ -654,52 +619,12 @@ struct norm:
         mut x: Tensor[dtype, LayoutType],
         mu: Scalar[dtype],
         sigma: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_norm_pdf_step[dtype, _], gpu=gpu](x, mu, sigma)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType],
-        mu: Scalar[dtype],
-        sigma: Scalar[dtype],
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_norm_pdf_step[dtype, _]](x, mu, sigma)
+        return _over2[step=_norm_pdf_step[dtype, _], gpu=gpu, name="norm.pdf"](
+            x, mu, sigma
+        )
 
     @staticmethod
     def cdf[
@@ -708,52 +633,12 @@ struct norm:
         mut x: Tensor[dtype, LayoutType],
         mu: Scalar[dtype],
         sigma: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_norm_cdf_step[dtype, _], gpu=gpu](x, mu, sigma)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType],
-        mu: Scalar[dtype],
-        sigma: Scalar[dtype],
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_norm_cdf_step[dtype, _]](x, mu, sigma)
+        return _over2[step=_norm_cdf_step[dtype, _], gpu=gpu, name="norm.cdf"](
+            x, mu, sigma
+        )
 
     @staticmethod
     def ppf[
@@ -762,52 +647,12 @@ struct norm:
         mut p: Tensor[dtype, LayoutType],
         mu: Scalar[dtype],
         sigma: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_norm_ppf_step[dtype, _], gpu=gpu](p, mu, sigma)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType],
-        mu: Scalar[dtype],
-        sigma: Scalar[dtype],
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_norm_ppf_step[dtype, _]](p, mu, sigma)
+        return _over2[step=_norm_ppf_step[dtype, _], gpu=gpu, name="norm.ppf"](
+            p, mu, sigma
+        )
 
 
 def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
@@ -909,146 +754,36 @@ struct expon:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut x: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_expon_pdf_step[dtype, _], gpu=gpu](x, rate)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_expon_pdf_step[dtype, _]](x, rate)
+        return _over1[
+            step=_expon_pdf_step[dtype, _], gpu=gpu, name="expon.pdf"
+        ](x, rate)
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut x: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_expon_cdf_step[dtype, _], gpu=gpu](x, rate)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_expon_cdf_step[dtype, _]](x, rate)
+        return _over1[
+            step=_expon_cdf_step[dtype, _], gpu=gpu, name="expon.cdf"
+        ](x, rate)
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut p: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_expon_ppf_step[dtype, _], gpu=gpu](p, rate)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_expon_ppf_step[dtype, _]](p, rate)
-
-    # ----------------------------------------------------------------- gamma
+        return _over1[
+            step=_expon_ppf_step[dtype, _], gpu=gpu, name="expon.ppf"
+        ](p, rate)
 
 
 struct gamma:
@@ -1142,52 +877,12 @@ struct gamma:
         mut x: Tensor[dtype, LayoutType],
         shape: Scalar[dtype],
         scale: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_gamma_pdf_step[dtype, _], gpu=gpu](x, shape, scale)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType],
-        shape: Scalar[dtype],
-        scale: Scalar[dtype],
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_gamma_pdf_step[dtype, _]](x, shape, scale)
+        return _over2[
+            step=_gamma_pdf_step[dtype, _], gpu=gpu, name="gamma.pdf"
+        ](x, shape, scale)
 
     @staticmethod
     def cdf[
@@ -1196,52 +891,12 @@ struct gamma:
         mut x: Tensor[dtype, LayoutType],
         shape: Scalar[dtype],
         scale: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_gamma_cdf_step[dtype, _], gpu=gpu](x, shape, scale)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType],
-        shape: Scalar[dtype],
-        scale: Scalar[dtype],
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_gamma_cdf_step[dtype, _]](x, shape, scale)
+        return _over2[
+            step=_gamma_cdf_step[dtype, _], gpu=gpu, name="gamma.cdf"
+        ](x, shape, scale)
 
     @staticmethod
     def ppf[
@@ -1250,54 +905,12 @@ struct gamma:
         mut p: Tensor[dtype, LayoutType],
         shape: Scalar[dtype],
         scale: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_gamma_ppf_step[dtype, _], gpu=gpu](p, shape, scale)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType],
-        shape: Scalar[dtype],
-        scale: Scalar[dtype],
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_gamma_ppf_step[dtype, _]](p, shape, scale)
-
-    # ------------------------------------------------------------ chi-square
+        return _over2[
+            step=_gamma_ppf_step[dtype, _], gpu=gpu, name="gamma.ppf"
+        ](p, shape, scale)
 
 
 struct chi2:
@@ -1342,146 +955,36 @@ struct chi2:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_chi2_pdf_step[dtype, _], gpu=gpu](x, df)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_chi2_pdf_step[dtype, _]](x, df)
+        return _over1[step=_chi2_pdf_step[dtype, _], gpu=gpu, name="chi2.pdf"](
+            x, df
+        )
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_chi2_cdf_step[dtype, _], gpu=gpu](x, df)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_chi2_cdf_step[dtype, _]](x, df)
+        return _over1[step=_chi2_cdf_step[dtype, _], gpu=gpu, name="chi2.cdf"](
+            x, df
+        )
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut p: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_chi2_ppf_step[dtype, _], gpu=gpu](p, df)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_chi2_ppf_step[dtype, _]](p, df)
-
-    # ------------------------------------------------------------------ beta
+        return _over1[step=_chi2_ppf_step[dtype, _], gpu=gpu, name="chi2.ppf"](
+            p, df
+        )
 
 
 struct beta:
@@ -1561,152 +1064,36 @@ struct beta:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut x: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_beta_pdf_step[dtype, _], gpu=gpu](x, a, b)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_beta_pdf_step[dtype, _]](x, a, b)
+        return _over2[step=_beta_pdf_step[dtype, _], gpu=gpu, name="beta.pdf"](
+            x, a, b
+        )
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut x: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_beta_cdf_step[dtype, _], gpu=gpu](x, a, b)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_beta_cdf_step[dtype, _]](x, a, b)
+        return _over2[step=_beta_cdf_step[dtype, _], gpu=gpu, name="beta.cdf"](
+            x, a, b
+        )
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut p: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_beta_ppf_step[dtype, _], gpu=gpu](p, a, b)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_beta_ppf_step[dtype, _]](p, a, b)
-
-    # ------------------------------------------------------------- Student-t
+        return _over2[step=_beta_ppf_step[dtype, _], gpu=gpu, name="beta.ppf"](
+            p, a, b
+        )
 
 
 struct t:
@@ -1784,146 +1171,30 @@ struct t:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_t_pdf_step[dtype, _], gpu=gpu](x, df)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_t_pdf_step[dtype, _]](x, df)
+        return _over1[step=_t_pdf_step[dtype, _], gpu=gpu, name="t.pdf"](x, df)
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_t_cdf_step[dtype, _], gpu=gpu](x, df)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_t_cdf_step[dtype, _]](x, df)
+        return _over1[step=_t_cdf_step[dtype, _], gpu=gpu, name="t.cdf"](x, df)
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut p: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_t_ppf_step[dtype, _], gpu=gpu](p, df)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_t_ppf_step[dtype, _]](p, df)
-
-    # --------------------------------------------------------------------- F
+        return _over1[step=_t_ppf_step[dtype, _], gpu=gpu, name="t.ppf"](p, df)
 
 
 struct f:
@@ -2006,152 +1277,36 @@ struct f:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut x: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_f_pdf_step[dtype, _], gpu=gpu](x, df1, df2)
-
-    @staticmethod
-    def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The density over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_f_pdf_step[dtype, _]](x, df1, df2)
+        return _over2[step=_f_pdf_step[dtype, _], gpu=gpu, name="f.pdf"](
+            x, df1, df2
+        )
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut x: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_f_cdf_step[dtype, _], gpu=gpu](x, df1, df2)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_f_cdf_step[dtype, _]](x, df1, df2)
+        return _over2[step=_f_cdf_step[dtype, _], gpu=gpu, name="f.cdf"](
+            x, df1, df2
+        )
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut p: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_f_ppf_step[dtype, _], gpu=gpu](p, df1, df2)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_f_ppf_step[dtype, _]](p, df1, df2)
-
-    # --------------------------------------------------------------- discrete
+        return _over2[step=_f_ppf_step[dtype, _], gpu=gpu, name="f.ppf"](
+            p, df1, df2
+        )
 
 
 struct poisson:
@@ -2235,144 +1390,36 @@ struct poisson:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut k: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The PMF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_poisson_pmf_step[dtype, _], gpu=gpu](k, rate)
-
-    @staticmethod
-    def pmf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut k: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The PMF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_poisson_pmf_step[dtype, _]](k, rate)
+        return _over1[
+            step=_poisson_pmf_step[dtype, _], gpu=gpu, name="poisson.pmf"
+        ](k, rate)
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut k: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_poisson_cdf_step[dtype, _], gpu=gpu](k, rate)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut k: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_poisson_cdf_step[dtype, _]](k, rate)
+        return _over1[
+            step=_poisson_cdf_step[dtype, _], gpu=gpu, name="poisson.cdf"
+        ](k, rate)
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](mut p: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
         dtype, LayoutType
-    ] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over1[step=_poisson_ppf_step[dtype, _], gpu=gpu](p, rate)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over1_host[step=_poisson_ppf_step[dtype, _]](p, rate)
+        return _over1[
+            step=_poisson_ppf_step[dtype, _], gpu=gpu, name="poisson.ppf"
+        ](p, rate)
 
 
 struct binom:
@@ -2463,147 +1510,33 @@ struct binom:
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut k: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The PMF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_binom_pmf_step[dtype, _], gpu=gpu](k, n, prob)
-
-    @staticmethod
-    def pmf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut k: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The PMF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_binom_pmf_step[dtype, _]](k, n, prob)
+        return _over2[
+            step=_binom_pmf_step[dtype, _], gpu=gpu, name="binom.pmf"
+        ](k, n, prob)
 
     @staticmethod
     def cdf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut k: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_binom_cdf_step[dtype, _], gpu=gpu](k, n, prob)
-
-    @staticmethod
-    def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut k: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The CDF over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_binom_cdf_step[dtype, _]](k, n, prob)
+        return _over2[
+            step=_binom_cdf_step[dtype, _], gpu=gpu, name="binom.cdf"
+        ](k, n, prob)
 
     @staticmethod
     def ppf[
         dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
     ](
         mut p: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where (
-        dtype.is_floating_point()
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
+    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
-        return _over2[step=_binom_ppf_step[dtype, _], gpu=gpu](p, n, prob)
-
-    @staticmethod
-    def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point() and not (
-        TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].all_dims_known
-        and TileTensor[
-            dtype,
-            LayoutType,
-            MutAnyOrigin,
-            Storage=PointerStorage[element_width=1],
-        ].is_row_major
-    ):
-        """The quantile over a run-time-shaped `Tensor`: the host walk. `gpu`
-        is accepted and ignored so a caller's spelling does not change with
-        the tensor's layout."""
-        return _over2_host[step=_binom_ppf_step[dtype, _]](p, n, prob)
+        return _over2[
+            step=_binom_ppf_step[dtype, _], gpu=gpu, name="binom.ppf"
+        ](p, n, prob)

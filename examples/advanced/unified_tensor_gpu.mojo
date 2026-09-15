@@ -17,6 +17,12 @@ them one at a time until 0.2; `exp[gpu=True]`, `greater[gpu=True]` and
 `exp(a)` on a device tensor still answers -- on the host, with a line on
 `stderr` naming the spelling that would not have.
 
+The last section runs the same two routines over a `Dynamic`, whose extents
+live in the value rather than the type. That is not a host fallback either:
+`max.algorithm.elementwise` computes its grid from a run-time `Coord`, so
+only `enqueue_function` -- the `map[gpu=True]` launch above -- needs the
+extent in the type.
+
 This example runs one `FloatLike` kernel over the same tensor type on both
 devices and checks the results agree elementwise to within one float32 ulp
 (they are not bit-identical: `exp` is one of the functions whose host and
@@ -37,6 +43,7 @@ from max.gpu.host import DeviceContext
 from numax import Plain, exp, gaussian, greater
 from numax.core.array import Static, Tensor, linspace, zeros
 from numax.core.tensor import map
+from numax.stats import norm
 from numax.stats import sum as tensor_sum
 
 comptime dtype = DType.float32
@@ -147,3 +154,37 @@ def main() raises:
     # `linspace(-2, 2)` sums to zero by symmetry, so the scale to judge the
     # gap against is the sum of magnitudes, about n/2 * 2 = 1024.
     print("sum agrees to 1e-3 of the vector scale:", sum_gap <= 1.0)
+
+    # ---- a run-time shape, on the device. `Dynamic` carries its extents in
+    # the value, not the type, and `max.algorithm.elementwise` computes its
+    # grid from a run-time `Coord`, so `exp[gpu=True]` and `norm.cdf[gpu=True]`
+    # launch over it unchanged. `enqueue_function` is what needs the extent in
+    # the type, which is why `map[gpu=True]` above still wants a `Static` ----
+    var mu = Scalar[dtype](0.0)
+    var sigma = Scalar[dtype](1.0)
+    var dyn_xs = linspace[n, dtype](-2.0, 2.0, ctx=gpu).dynamic()
+    var dyn_exp = exp[gpu=True](dyn_xs).to_host()
+    var dyn_cdf = norm.cdf[gpu=True](dyn_xs, mu, sigma).to_host()
+    var host_cdf = norm.cdf(cpu_xs, mu, sigma).to_host()
+
+    var max_dyn_exp_diff = Scalar[dtype](0)
+    var max_dyn_cdf_diff = Scalar[dtype](0)
+    for i in range(n):
+        var e = host_exp[i] - dyn_exp[i]
+        if e < 0:
+            e = -e
+        if e > max_dyn_exp_diff:
+            max_dyn_exp_diff = e
+        var c = host_cdf[i] - dyn_cdf[i]
+        if c < 0:
+            c = -c
+        if c > max_dyn_cdf_diff:
+            max_dyn_cdf_diff = c
+
+    var widest = max_dyn_exp_diff
+    if max_dyn_cdf_diff > widest:
+        widest = max_dyn_cdf_diff
+    print("dynamic shape:", dyn_xs.dim_at(0), "elements, extent in the value")
+    print("max |exp static cpu - exp dynamic gpu| =", max_dyn_exp_diff)
+    print("max |norm.cdf static cpu - dynamic gpu| =", max_dyn_cdf_diff)
+    print("widest dynamic gap =", widest)

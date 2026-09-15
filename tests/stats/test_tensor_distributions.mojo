@@ -122,9 +122,10 @@ def test_quantiles_over_a_tensor_invert_cdfs_over_a_tensor() raises:
         assert_almost_equal(back[i], p_host[i], atol=1e-9)
 
 
-def test_a_run_time_shaped_tensor_takes_the_host_walk() raises:
+def test_a_run_time_shaped_tensor_goes_through_the_same_driver() raises:
     # A broadcast result is a `Dynamic`, whose extent is not in the type; the
-    # distribution still has to accept it, through the host path.
+    # driver flattens it over its buffer pointer, so it takes the same route
+    # a `Static` takes rather than a second one.
     var ctx = DeviceContext(api="cpu")
     var a = zeros[dtype, 2, 3](ctx)
     var row = zeros[dtype, 3](ctx)
@@ -156,6 +157,60 @@ def test_the_tensor_form_covers_a_length_that_does_not_divide_the_width() raises
         assert_almost_equal(
             got[i], norm.cdf(P(source[i]), P(0.3), P(0.8)).v[0], atol=1e-15
         )
+
+
+def _agree(got: List[Scalar[dtype]], want: List[Scalar[dtype]]) raises:
+    assert_equal(len(got), len(want))
+    for i in range(len(want)):
+        assert_equal(got[i], want[i])
+
+
+def test_every_family_agrees_between_static_and_run_time_shapes() raises:
+    # One driver, one flatten, so the two shapes are not two code paths and
+    # the agreement is bit-exact rather than within a tolerance.
+    comptime n = 11
+    var xs = _ramp[n](0.1, 0.9)
+    var ks = _ramp[n](0.0, 10.0)
+    var dx = _ramp[n](0.1, 0.9).dynamic()
+    var dk = _ramp[n](0.0, 10.0).dynamic()
+
+    var one = Scalar[dtype](1.0)
+    var two = Scalar[dtype](2.0)
+    var three = Scalar[dtype](3.0)
+    var ten = Scalar[dtype](10.0)
+    var p = Scalar[dtype](0.3)
+
+    _agree(norm.cdf(dx, one, two).to_host(), norm.cdf(xs, one, two).to_host())
+    _agree(expon.cdf(dx, one).to_host(), expon.cdf(xs, one).to_host())
+    _agree(
+        gamma.cdf(dx, three, two).to_host(),
+        gamma.cdf(xs, three, two).to_host(),
+    )
+    _agree(chi2.cdf(dx, three).to_host(), chi2.cdf(xs, three).to_host())
+    _agree(
+        beta.pdf(dx, two, three).to_host(), beta.pdf(xs, two, three).to_host()
+    )
+    _agree(t.cdf(dx, three).to_host(), t.cdf(xs, three).to_host())
+    _agree(f.cdf(dx, three, two).to_host(), f.cdf(xs, three, two).to_host())
+    _agree(poisson.pmf(dk, two).to_host(), poisson.pmf(ks, two).to_host())
+    _agree(binom.cdf(dk, ten, p).to_host(), binom.cdf(ks, ten, p).to_host())
+
+
+def test_gpu_true_on_a_host_tensor_falls_back_and_says_so() raises:
+    # `gpu=True` against a CPU context is the mismatch the driver answers
+    # with a `stderr` notice and the host walk; the values are the default
+    # spelling's, which is what makes the fallback safe to take silently.
+    comptime f32 = DType.float32
+    var ctx = DeviceContext(api="cpu")
+    var dyn = linspace[7, f32](-2.0, 2.0, ctx=ctx).dynamic()
+    var same = linspace[7, f32](-2.0, 2.0, ctx=ctx).dynamic()
+
+    var mu = Scalar[f32](0.25)
+    var sigma = Scalar[f32](1.5)
+    var fallback = norm.cdf[gpu=True](dyn, mu, sigma).to_host()
+    var want = norm.cdf(same, mu, sigma).to_host()
+    for i in range(7):
+        assert_equal(fallback[i], want[i])
 
 
 def main() raises:

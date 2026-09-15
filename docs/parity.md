@@ -353,8 +353,12 @@ right-sized tensor rather than a full-length one plus a count. Every walker
 in `numax.core.tensor` has a run-time-shape overload selected by a `where`
 clause that is the exact negation of the static one, and `map_strided` /
 `reduce_strided` walk a transposed or sliced view that is not row-major at
-all. The run-time paths are CPU-only, because a GPU launch needs the extent
-in the type.
+all. Those overloads are CPU-only because they launch through
+`enqueue_function`, which needs the extent in the type — not because the
+device does. `numax.core._drive` launches through
+`max.algorithm.elementwise`, which computes its grid from a run-time
+`Coord`, so the NumPy-named surface and `numax.stats`'s distributions run a
+run-time-shaped tensor on the GPU.
 
 Also absent, each a decision: sparse matrices, iterative solvers, distributed
 execution, and dtype promotion. The first three are a different library's job;

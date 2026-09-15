@@ -126,8 +126,9 @@ Every function here accepts a `TileTensor` of *any* rank, and how it gets
 from that rank down to a walk is what separates the three groups below.
 
 * **Statically shaped and row-major.** `TileTensor.coalesce()` flattens it,
-  which is the only form that can be launched on a GPU (the thread count
-  has to come from the type) and the only one that vectorizes. Everything
+  which is the only form this module can launch on a GPU (the thread count
+  has to come from the type, because the launch is `enqueue_function`) and
+  the only one that vectorizes. Everything
   with a `gpu` parameter is in this group, and a `where` clause
   (`all_dims_known and is_row_major`, exactly `coalesce()`'s own
   requirement) keeps anything else out at compile time.
@@ -137,7 +138,13 @@ from that rank down to a walk is what separates the three groups below.
   that is the exact negation, so the two can never be ambiguous. They
   flatten by constructing a rank-1 layout over the same pointer rather than
   by `coalesce()` -- the same addresses in the same order, without needing
-  to prove the shape first. No `gpu` parameter, for the reason above.
+  to prove the shape first. No `gpu` parameter, and the constraint is
+  `enqueue_function` specifically: a kernel launched through it needs the
+  extent in its type, while a launch through `max.algorithm.elementwise`
+  computes its grid from a run-time `Coord` and does not. That is the route
+  `numax.core._drive` takes, which is why the NumPy-named surface and the
+  `numax.stats` distributions reach the device from a run-time shape and
+  these overloads do not.
   `reduce_rows`/`broadcast_op_rows` need no second overload at all: they
   index by coordinate and never flatten, so they already accept either.
 * **Not row-major at all** -- a transposed view, or a slice with gaps in
@@ -1295,12 +1302,17 @@ def map[
     """`map` for a runtime-shaped tensor -- same contract as the static
     overload above, minus the GPU path.
 
-    There is no `gpu` parameter here on purpose. A kernel launched through
+    There is no `gpu` parameter here on purpose, and the constraint is
+    `enqueue_function` rather than the device. A kernel launched through
     `enqueue_function` needs its entire type resolved before the launch, and
     a runtime extent is not part of the type; the thread count would also
     have to come from a value the host reads out of the tensor rather than
-    from the type. Reach for the static overload when the shape is known,
-    which is the case at every GPU call site in this library.
+    from the type. A launch through `max.algorithm.elementwise` does not,
+    since it computes its grid from a run-time `Coord` -- that is the route
+    `numax.core._drive` takes, and it is how the NumPy-named surface and
+    the `numax.stats` distributions run a run-time-shaped tensor on the
+    device. Reach for the static overload when the shape is known, which is
+    the case at every `enqueue_function` call site in this library.
 
     Same `width` meaning as the static CPU path (elements per SIMD
     register), same non-overlapping bulk-then-tail walk, so a `width` that

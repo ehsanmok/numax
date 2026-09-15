@@ -110,9 +110,11 @@ siblings rather than replacements.
 kernel over a MAX `TileTensor`, CPU or GPU, chosen by one `gpu: Bool`
 parameter. Shapes may be comptime or runtime: `map`/`reduce` have two
 overloads under one name, picked by `where` clauses that are exact negations.
-The static path can be launched on a GPU; the runtime one is CPU-only, since a
-launch needs the extent in the type. There is no second tensor type — both are
-`TileTensor`.
+Both paths reach the GPU: `map`/`reduce`'s own runtime overload is CPU-only
+because it launches through `enqueue_function`, which needs the extent in the
+type, while `numax.core._drive` launches through `max.algorithm.elementwise`,
+whose grid comes from a run-time `Coord`, and so runs a run-time-shaped tensor
+on the device. There is no second tensor type — both are `TileTensor`.
 
 | Surface | Where |
 |---|---|
@@ -564,8 +566,10 @@ An extent that depends on a value has somewhere to live: each dimension of a
 `Tensor` is independently compile-time or run-time, so `unique`, `extract` and
 `take` return a right-sized result. A transposed or sliced view is walked by
 `map_strided` / `reduce_strided`, which address elements through their own
-strides; the run-time and strided paths are CPU-only, because a GPU launch
-needs the extent in the type.
+strides; those two and `map`/`reduce`'s run-time overloads are CPU-only
+because they launch through `enqueue_function`, which needs the extent in the
+type. A run-time shape is not off the device: `numax.core._drive` launches it
+through `max.algorithm.elementwise`.
 
 ## Accuracy
 
