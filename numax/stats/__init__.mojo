@@ -7,7 +7,7 @@ from numax.stats import mean, variance, norm, uniform, seed
 | Module | Contents |
 |---|---|
 | `statistics` | `sum`, `mean`, `median`, `mode`, `prod`, `cumsum`, `cumprod`, `variance`, `stddev`, `variance_axis`, `min`/`max`, `argmin`/`argmax`, `ptp`, `average`, `moment` |
-| `quantiles` | `quantile`/`percentile` under every NumPy `method`, `nanquantile`/`nanpercentile`/`nanmedian`, `iqr` -- host-side, one sort |
+| `quantiles` | `quantile`/`percentile` under every NumPy `method`, `nanquantile`/`nanpercentile`/`nanmedian`, `iqr` -- host-side, one `O(n)` selection |
 | `histograms` | `histogram` (uniform, ranged, explicit edges, density, weights), `histogram2d`, `histogramdd`, `bincount`, `digitize` -- NumPy's edge rules, host-side |
 | `correlation` | `cov`, `corrcoef`, `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore` -- SciPy's p-values through `t.sf`/`norm.sf`, host-side |
 | `descriptive` | `skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `trim_mean`, `describe` -- SciPy's bias corrections and conventions, host-side |

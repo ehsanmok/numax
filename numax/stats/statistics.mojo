@@ -53,10 +53,10 @@ two different questions:
   compose from MAX's reductions and `numax.core.tensor.reduce` the same way
   `numax.core.array`'s creation
   routines compose from `TileTensor` -- a thin, `Plain`-only layer, axis 2
-  only. `median`/`mode` sort first via the standard library's `List.sort()`
-  -- the fixed-iteration invariant restricts what *numax* writes inside a
-  `FloatLike`-generic kernel, not what a `Plain`-only orchestration calls
-  out to.
+  only. `median` selects with `std.builtin.sort.partition` and `mode` sorts
+  with the standard library's `sort` -- the fixed-iteration invariant
+  restricts what *numax* writes inside a `FloatLike`-generic kernel, not
+  what a `Plain`-only orchestration calls out to.
 - **`FloatLike`-generic, `List[T]`-based** (`mean`, `variance`, `stddev`,
   `cumsum`): "does calling this at `Compensated` instead of `Plain` recover
   precision a long summation would otherwise lose". These take a
@@ -107,6 +107,7 @@ tier-2 terms `docs/architecture.md` sets out.
 """
 
 from std.math import sqrt as _sqrt
+from std.utils.numerics import nan as _nan
 
 from std.utils import IndexList
 
@@ -134,6 +135,7 @@ from ..core.rowwise import (
     reduce_all,
     sum_axis,
 )
+from .quantiles import _select_pair
 
 
 @always_inline
@@ -594,16 +596,21 @@ def _median_of[
 ](var values: List[Scalar[dtype]]) -> Scalar[
     dtype
 ] where dtype.is_floating_point():
-    """The median of `values`, sorting them in place.
+    """The median of `values`, by selection, permuting them in place.
 
     Shared by the whole-tensor `median` and the axis one, so the even-count
-    convention is decided once.
+    convention is decided once. `numax.stats.quantiles._select_pair` is the
+    quickselect underneath -- one `O(n)` pass for the one or two middle
+    order statistics, where this used to sort all `n`.
     """
     var n = len(values)
-    sort(values)
+    if n == 0:
+        return _nan[dtype]()
     if n % 2 == 1:
-        return values[n // 2]
-    return (values[n // 2 - 1] + values[n // 2]) / Scalar[dtype](2)
+        var middle = _select_pair(values, n // 2, n // 2)
+        return middle[0]
+    var pair = _select_pair(values, n // 2 - 1, n // 2)
+    return (pair[0] + pair[1]) / Scalar[dtype](2)
 
 
 def _mode_of[
@@ -670,9 +677,13 @@ def median[
     """The median of `xs` -- the average of the two middle elements when
     `xs` has an even count, matching NumPy's default.
 
-    **Host-side**, unlike `sum`/`min`/`max`: a median needs the whole
-    sorted slice, not a monoid fold, so it downloads `xs` and sorts. It
-    takes no `gpu` parameter for that reason.
+    **Host-side**, unlike `sum`/`min`/`max`: a median is an order
+    statistic, not a monoid fold, so it downloads `xs`. It does not sort --
+    one `O(n)` quickselect puts the one or two middle elements in place
+    (`numax.stats.quantiles`) and the rest stay unordered. It takes no
+    `gpu` parameter because MAX ships no selection kernel and `nn.top_k` at
+    `k = n / 2 + 1` is its own worst case; that argument is in
+    `numax/stats/quantiles.mojo`'s module docstring.
     """
     return _median_of(xs.to_host())
 
@@ -689,11 +700,11 @@ def median[
 ):
     """`xs` reduced to its median along `axis`. `numpy.median(a, axis=k)`.
 
-    A median is not a fold -- it needs the whole slice at once -- so this
-    gathers each slice on the host rather than folding through a monoid the
-    way `sum[axis=k]` does, and takes no `gpu` parameter. The even-count
-    convention is `_median_of`'s, the same one the whole-tensor overload
-    uses.
+    A median is not a fold -- it is an order statistic of the whole slice
+    -- so this gathers each slice on the host and selects rather than
+    folding through a monoid the way `sum[axis=k]` does, and takes no `gpu`
+    parameter. The even-count convention is `_median_of`'s, the same one
+    the whole-tensor overload uses.
     """
     var split = _axis_split[axis=axis](xs)
     var outer = split[0]

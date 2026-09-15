@@ -8,9 +8,9 @@ Four rows, one per shape of work the surface has:
 2. `histogram` at 64 bins over the same tensor -- a host-side count, as
    the `histograms` module says (MAX ships no scatter-add), against
    NumPy's.
-3. `quantile` at `q = 0.5` -- a host sort of a copy, against NumPy's
-   partition, and the row that says what a host-side path costs at this
-   size.
+3. `quantile` at `q = 0.5` -- a host selection over a copy, against
+   NumPy's partition, and the row that says what a host-side path costs at
+   this size.
 4. `cov` and `corrcoef` of an `8 x 2^20` matrix -- host-side today, the
    `O(rows^2 n)` in a `Float64` loop; the row measures what that costs
    against the centering `map` and one `matmul` it could be.
