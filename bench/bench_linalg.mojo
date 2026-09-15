@@ -43,10 +43,12 @@ Three tables, because three different things limit them:
    so its default of 16 is right at n = 512 and leaves about 2x on the
    table at n = 1024. Pass `block` explicitly for a large QR. `eigvalsh`
    is here for the same reason and it wants the *opposite* of `eigh`: its
-   `block` is `sytrd`'s `latrd` panel, whose per-column arithmetic runs on
-   one thread block, so a narrow panel wins for a values-only run while
-   `eigh` -- which pays for the rotation window and `q()` out of the same
-   number -- wants 32.
+   `block` is `sytrd`'s `latrd` panel, and a `latrd` column costs
+   `O(n * block)` whatever it is threaded on while the trailing GEMM the
+   panel saves is a few milliseconds at any width, so a narrow panel wins
+   for a values-only run while `eigh` -- which pays for the rotation
+   window and `q()` out of the same number -- wants 32. The sweep starts
+   at 8 for that reason.
 
 Each row carries a residual so a fast wrong answer cannot hide: `L L^T`
 against `A` for Cholesky, `A x - b` for the solves, `Q R` against `A` for
@@ -730,6 +732,7 @@ def main() raises:
     bench_qr[512, 512, 16](ctx)
     bench_qr[1024, 1024, 4](ctx)
     bench_qr[1024, 1024, 16](ctx)
+    bench_eigvalsh[1024, 8](ctx)
     bench_eigvalsh[1024, 16](ctx)
     bench_eigvalsh[1024, 32](ctx)
     bench_eigvalsh[1024, 64](ctx)

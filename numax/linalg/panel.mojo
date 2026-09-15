@@ -90,6 +90,26 @@ reason these routines cannot use it.
 """
 
 
+comptime _LATRD_MIN_WORK = 1 << 17
+"""Work below which `latrd_w`'s two parallel phases stay serial.
+
+Four times `_PARALLEL_MIN_WORK`, and it is a different number because the
+comparison is different. `gemv_sub` and `latrd_column` are called once per
+block *step*; `latrd_w` runs once per *column*, so a dispatch that does not
+pay is paid `n` times over a factorization.
+
+Measured on the M3 Pro at `n = 1024`, `float32`, `sytrd` end to end, the
+machine not otherwise quiet. One `parallelize` costs tens of microseconds,
+and the `w` build is about `n * (4j + 6)` scalar operations, so the
+crossover is in `j`: handing the build to the threads from `j = 15` on
+(`1 << 16`) took `block = 32` from 153 ms to 168 while `block = 64` went
+from 199 to 188 -- the same dispatch, paying at one width and not at the
+other. `1 << 17` puts the line between them. It is an absolute work count
+rather than a width, so a larger `n` crosses it at a narrower panel, which
+is the behaviour wanted.
+"""
+
+
 comptime _View[dtype: DType, Lay: TensorLayout] = TileTensor[
     dtype, Lay, MutAnyOrigin, Storage=PointerStorage[element_width=1]
 ]
@@ -669,21 +689,22 @@ def latrd_w[
     VLayout: TensorLayout,
     PLayout: TensorLayout,
     LLayout: TensorLayout,
+    RLayout: TensorLayout,
     TauLayout: TensorLayout,
-    SLayout: TensorLayout,
-    gpu: Bool = False,
+    target: StaticString = "cpu",
 ](
     vpad: _View[dtype, VLayout],
     p: _View[dtype, PLayout],
     left: _View[dtype, LLayout],
     right: _View[dtype, LLayout],
+    red: _View[dtype, RLayout],
     tau: _View[dtype, TauLayout],
-    scratch: _View[dtype, SLayout],
-    k0: Int32,
-    j: Int32,
-    half: Int32,
-    n: Int32,
-) where dtype.is_floating_point():
+    k0: Int,
+    j: Int,
+    half: Int,
+    n: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
     """Build column `j` of a `latrd` panel's `W`, and park `v` and `w` in
     the two GEMM operands. The second half of LAPACK's `latrd` inner step.
 
@@ -702,10 +723,28 @@ def latrd_w[
     v` computed here rather than by a separate `dot` -- which is what takes
     the per-column device-to-host synchronization out of the reduction.
 
-    `tau` is read from the device, at `tau[k0 + j]`, for the same reason:
-    a host read of the scale would be a synchronization per column. A zero
-    `tau` -- a column that was already reduced -- needs no branch, because
-    it scales `w` to zero and the panel's update then adds nothing.
+    **Three launches, one per phase, because the middle one is the only
+    part with a cross-thread dependency.** The `2j + 1` reductions are
+    independent of each other, so they are one task each; the scalar
+    `alpha` needs all of them and is one thread; the `w` build and the two
+    operand stores are independent per row. Phases one and three take
+    `gemv_sub`'s shape -- `parallelize` above `_PARALLEL_MIN_WORK` on the
+    host, one `elementwise` on the accelerator -- and that is what keeps
+    the `O(n j)` arithmetic off a single thread. As one single-block
+    kernel it ran serially on the host and `sytrd` got monotonically
+    *slower* from `block = 8` to `block = 64`, which is the shape a serial
+    term makes in a panel-width sweep.
+
+    `red` is `2 * half + 2` entries: `p . v` at `0`, `V^T v` at `1 ..
+    j`, `W^T v` at `j + 1 .. 2j`, and `alpha` in the last slot, which is
+    fixed rather than at `2j + 1` so the build phase reads one index
+    whatever the panel column is.
+
+    `tau` is read from the device, at `tau[k0 + j]`, for the same reason
+    the reductions are: a host read of the scale would be a
+    synchronization per column. A zero `tau` -- a column that was already
+    reduced -- needs no branch, because it scales `w` to zero and the
+    panel's update then adds nothing.
 
     **`w` is forced to zero at and above row `i = k0 + j`, and that is
     load-bearing.** `v` already vanishes there, but `p` does not: it is `A
@@ -719,78 +758,125 @@ def latrd_w[
     `sum_c (v_c w_c^T + w_c v_c^T)`, the panel's whole symmetric rank-`2j`
     update in one GEMM with `transpose_b=True`. That identity is what lets
     numax skip the `syr2k` MAX does not ship.
-
-    `scratch` is `(_PANEL_THREADS + 1) * (2 * half + 1)` entries: one row
-    of partial sums per thread and one row of totals.
-
-    Launch on the accelerator with `grid_dim=1`,
-    `block_dim=_PANEL_THREADS`; the host path runs it single-threaded.
     """
-    var t = _lane[gpu]()
-    var nt = _lanes[gpu]()
-    var rows = Int(n)
-    var done = Int(j)
-    var hw = Int(half)
-    var i = Int(k0) + done
+    var i = k0 + j
     var first = i + 1
-    var cols = 2 * done + 1
-    var this_tau = tau[Coord(i)]
+    var cols = 2 * j + 1
+    var slot = 2 * half + 1
 
-    # `p . v`, then `V^T v` and `W^T v` column by column. One register
-    # accumulator per reduction and one scratch store per (thread,
-    # reduction), so the traffic is one pass over the panel rather than
-    # `cols` passes over scratch.
-    for r in range(cols):
+    # Phase one: the `2j + 1` reductions, one task each.
+    @always_inline
+    @parameter
+    def reduce_one(r: Int):
         var total = Scalar[dtype](0)
-        var row = first + t
-        while row < rows:
+        for row in range(first, n):
             var value = Scalar[dtype](0)
             if r == 0:
                 value = p[Coord(row)]
-            elif r <= done:
+            elif r <= j:
                 value = left[Coord(row, r - 1)]
             else:
-                value = left[Coord(row, hw + r - 1 - done)]
+                value = left[Coord(row, half + r - 1 - j)]
             total += value * vpad[Coord(row)]
-            row += nt
-        scratch.store[1](Coord(t * cols + r), total)
-    _sync[gpu]()
+        red.store[1](Coord(r), total)
 
-    var base = nt * cols
-    var which = t
-    while which < cols:
-        var total = Scalar[dtype](0)
-        for c in range(nt):
-            total += scratch[Coord(c * cols + which)]
-        scratch.store[1](Coord(base + which), total)
-        which += nt
-    _sync[gpu]()
+    comptime if target == "cpu":
+        if (n - first) * cols * 3 >= _LATRD_MIN_WORK:
+            parallelize[reduce_one](cols)
+        else:
+            for r in range(cols):
+                reduce_one(r)
+    else:
 
-    var pv = scratch[Coord(base)]
-    for c in range(done):
-        pv -= (
-            Scalar[dtype](2)
-            * scratch[Coord(base + 1 + c)]
-            * scratch[Coord(base + 1 + done + c)]
+        @always_inline
+        def reduce_all[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var p,
+            var vpad,
+            var left,
+            var red,
+            var first,
+            var j,
+            var half,
+            var n,
+        }:
+            reduce_one(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](reduce_all, Coord(cols), ctx)
+
+    # Phase two: `alpha`, which needs every reduction and is one scalar.
+    @always_inline
+    @parameter
+    def fold_alpha():
+        var this_tau = tau[Coord(i)]
+        var total = red[Coord(0)]
+        for c in range(j):
+            total -= (
+                Scalar[dtype](2) * red[Coord(1 + c)] * red[Coord(1 + j + c)]
+            )
+        red.store[1](
+            Coord(slot), -this_tau * this_tau * total / Scalar[dtype](2)
         )
-    var alpha = -this_tau * this_tau * pv / Scalar[dtype](2)
 
-    var row = t
-    while row < rows:
+    comptime if target == "cpu":
+        fold_alpha()
+    else:
+
+        @always_inline
+        def fold[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var red, var tau, var i, var j, var slot}:
+            fold_alpha()
+
+        elementwise[simd_width=1, target=target](fold, Coord(1), ctx)
+
+    # Phase three: the masked axpy and the two operand stores, per row.
+    @always_inline
+    @parameter
+    def build_row(row: Int):
+        var this_tau = tau[Coord(i)]
+        var alpha = red[Coord(slot)]
         var v = vpad[Coord(row)]
         var w = Scalar[dtype](0)
         if row >= first:
             var acc = p[Coord(row)]
-            for c in range(done):
-                acc -= left[Coord(row, c)] * scratch[Coord(base + 1 + done + c)]
-                acc -= left[Coord(row, hw + c)] * scratch[Coord(base + 1 + c)]
+            for c in range(j):
+                acc -= left[Coord(row, c)] * red[Coord(1 + j + c)]
+                acc -= left[Coord(row, half + c)] * red[Coord(1 + c)]
             w = this_tau * acc + alpha * v
-        left.store[1](Coord(row, done), v)
-        left.store[1](Coord(row, hw + done), w)
-        right.store[1](Coord(row, done), w)
-        right.store[1](Coord(row, hw + done), v)
-        row += nt
-    _sync[gpu]()
+        left.store[1](Coord(row, j), v)
+        left.store[1](Coord(row, half + j), w)
+        right.store[1](Coord(row, j), w)
+        right.store[1](Coord(row, half + j), v)
+
+    comptime if target == "cpu":
+        if n * (4 * j + 6) >= _LATRD_MIN_WORK:
+            parallelize[build_row](n)
+        else:
+            for row in range(n):
+                build_row(row)
+    else:
+
+        @always_inline
+        def build[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var p,
+            var vpad,
+            var left,
+            var right,
+            var red,
+            var tau,
+            var i,
+            var first,
+            var j,
+            var half,
+            var slot,
+        }:
+            build_row(coord_to_index_list(coord)[0])
+
+        elementwise[simd_width=1, target=target](build, Coord(n), ctx)
 
 
 def gebd2_col[

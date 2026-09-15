@@ -608,13 +608,45 @@ puts sizes on it:
   154.6. The block sweep after the change reads 53 / 66 / 80 / 109 ms for
   `sytrd` at `block` 8 / 16 / 32 / 64 and 242 / 173 / 155 / 183 for `eigh`
   at the same widths: the reduction alone wants a *narrow* panel because
-  its per-column arithmetic still runs on the one thread block the panel
+  its per-column arithmetic still ran on the one thread block the panel
   kernels launch with, while `eigh` wants a wide one because the same
   number is the rotation window and the `q()` panel. 32 stays the default
   on `eigh`'s number; a values-only caller who wants the other end passes
   `eigvalsh[..., block=8]` and gets 68 ms.
+
+  And `latrd_w`'s own `O(n j)` arithmetic is off the single thread block
+  now: the `2j + 1` reductions are one task each and the `w` build one
+  task per row, two `parallelize`s on the host and two `elementwise`s on
+  the accelerator with only the scalar between them serial. The sweep
+  after that change, measured back to back against the commit before it,
+  same machine, `n = 1024`, `float32`, twice and taking the smaller, the
+  machine not otherwise quiet:
+
+  | `block` | `sytrd` before | after | `eigvalsh` before | after | `eigh` before | after |
+  |---|---|---|---|---|---|---|
+  | 8 | 109.2 | 111.0 | 117.0 | 120.4 | 460.5 | 469.4 |
+  | 16 | 120.7 | 117.9 | 127.0 | 130.9 | 283.5 | 287.2 |
+  | 32 | 146.6 | 150.0 | 157.7 | 156.9 | 272.5 | 275.4 |
+  | 64 | 197.3 | 189.1 | 206.4 | 189.1 | 304.9 | 287.7 |
+
+  The reading to take is that the slope is the panel's own arithmetic and
+  not a scheduling artifact: a `latrd` column costs `O(n * block)` whether
+  it is threaded or not, and the only term blocking *saves* -- the
+  trailing rank-`2 block` GEMM -- is a few milliseconds of `sytrd`'s total
+  at every width, because the whole-matrix `p = A v` dominates. So a wider
+  panel stays more expensive for the reduction alone, `block = 8` stays
+  the values-only answer, and 32 stays the default on `eigh`'s number.
+
+  What the split buys is the wide end, where the serial term was large
+  enough to beat the dispatch: `sytrd` at `block = 64` 197 ms to 189 and
+  `eigvalsh` 206 to 189. Below that a `parallelize` per column costs more
+  than the work it spreads, so `_LATRD_MIN_WORK` keeps the narrow panels
+  on the serial path and they run exactly as they did. The threshold is an
+  absolute work count, so the same code threads a narrower panel as `n`
+  grows.
 - **The reductions are BLAS-2, not BLAS-3.** *(Superseded for `sytrd` by
-  the `latrd` panel above; still true of `gebrd` and `gehrd`.)* `eigvalsh` is `sytrd` plus an
+  the `latrd` panel above, whose per-column arithmetic is threaded now
+  too; still true of `gebrd` and `gehrd`.)* `eigvalsh` is `sytrd` plus an
   `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
   unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
   at matvec shapes), the B1a form whose B1b upgrade is `latrd` plus one

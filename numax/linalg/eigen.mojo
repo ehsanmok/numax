@@ -234,6 +234,15 @@ def sytrd[
     over them. At `block == 1` the restriction coincides with the masking
     `latrd_w` already does, which is why the two agree there.
 
+    **No `O(n * block)` term runs on one thread.** `latrd_w`'s `2j + 1`
+    reductions and its `w` build are both `O(n j)`, and both are
+    independent across the axis they are launched over, so each is one
+    `parallelize` on the host and one `elementwise` on the accelerator
+    with only the scalar between them on a single thread. Before that
+    split they sat inside a single-block kernel and `sytrd` got *slower*
+    as `block` grew -- 53, 66, 80, 109 ms at block 8, 16, 32, 64 and
+    n = 1024 -- which is the shape a serial term makes in a width sweep.
+
     `ponytail:` what is left is the matrix-vector product. `p = A v` is
     one `matvec` over the whole matrix per column -- `2n^3` flops in
     total, bandwidth-bound rather than GEMM-bound, and taken over the
@@ -256,20 +265,19 @@ def sytrd[
     var taus = zeros[dtype, n](ctx)
     var vpad = zeros[dtype, n](ctx)
     var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
-    # One row of partial sums per thread of the single block `latrd_w`
-    # launches with, plus a row of totals.
-    var folds = zeros[dtype, (_PANEL_THREADS + 1) * (2 * width + 1)](ctx)
     var left = zeros[dtype, n, 2 * width](ctx)
     var right = zeros[dtype, n, 2 * width](ctx)
+    # `latrd_w`'s reductions and the scalar it folds out of them.
+    var red = zeros[dtype, 2 * width + 2](ctx)
     var product = zeros[dtype, n, n](ctx)
 
     var wv = work.view()
     var tv = taus.view()
     var vv = vpad.view()
     var sv = scratch.view()
-    var fv = folds.view()
     var lv = left.view()
     var rv = right.view()
+    var redv = red.view()
     var pv = product.view()
 
     pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
@@ -330,45 +338,9 @@ def sytrd[
             # reach `p` inside `latrd_w` instead of through `work`.
             var p = matvec[gpu=gpu](work, vpad)
 
-            comptime if gpu:
-                ctx.enqueue_function[
-                    latrd_w[
-                        dtype,
-                        VLayout=type_of(vv).LayoutType,
-                        PLayout=type_of(p.view()).LayoutType,
-                        LLayout=type_of(lv).LayoutType,
-                        TauLayout=type_of(tv).LayoutType,
-                        SLayout=type_of(fv).LayoutType,
-                        gpu=True,
-                    ]
-                ](
-                    vv,
-                    p.view(),
-                    lv,
-                    rv,
-                    tv,
-                    fv,
-                    Int32(k0),
-                    Int32(j),
-                    Int32(width),
-                    Int32(n),
-                    grid_dim=1,
-                    block_dim=_PANEL_THREADS,
-                )
-                ctx.synchronize()
-            else:
-                latrd_w(
-                    vv,
-                    p.view(),
-                    lv,
-                    rv,
-                    tv,
-                    fv,
-                    Int32(k0),
-                    Int32(j),
-                    Int32(width),
-                    Int32(n),
-                )
+            latrd_w[target=_target[gpu]()](
+                vv, p.view(), lv, rv, redv, tv, k0, j, width, n, ctx
+            )
             # `p`'s last mention is `.view()`, and a view erases the
             # origin; see `findings.mdc` on the queued free.
             _ = p^
@@ -378,14 +350,14 @@ def sytrd[
         )
         k0 += nb
 
-    # `sv`, `fv`, `lv`, `rv` and `pv` are read by the launches above and
+    # `sv`, `lv`, `rv`, `redv` and `pv` are read by the launches above and
     # their owners are named nowhere else, so without these Mojo would
     # destroy them after `.view()`; see `findings.mdc` on the origin-erased
     # view and the queued free.
     _ = scratch^
-    _ = folds^
     _ = left^
     _ = right^
+    _ = red^
     _ = product^
 
     var d = zeros[dtype, n](ctx)
