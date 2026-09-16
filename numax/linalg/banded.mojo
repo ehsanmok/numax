@@ -64,11 +64,6 @@ from ..core.array import Static, copy, zeros
 from ..fft.fft import Spectrum, fft, ifft
 
 
-def _band_index[l: Int, u: Int, n: Int](row: Int, col: Int) -> Int:
-    """Where `a[row, col]` sits in the flattened `(l + u + 1) x n` band."""
-    return (u + row - col) * n + col
-
-
 def solve_banded[
     dtype: DType, l: Int, u: Int, n: Int
 ](

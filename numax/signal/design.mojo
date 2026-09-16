@@ -1041,13 +1041,9 @@ def freqz[
     ](coord: Coord) {var ws, var bs, var az, var rs, var ims}:
         var k = coord_to_index_list(coord)[0]
         var angle = ws[Coord(k)]
-        var er = Scalar[dtype](1)
-        var ei = Scalar[dtype](0)
         # e^{-jw}: cos and sin at the working precision, once per lane.
-        var c = _cos(angle)
-        var s = -_sin(angle)
-        er = c
-        ei = s
+        var er = _cos(angle)
+        var ei = -_sin(angle)
         var nr = bs[Coord(nb - 1)]
         var ni = Scalar[dtype](0)
         for step in range(1, nb):

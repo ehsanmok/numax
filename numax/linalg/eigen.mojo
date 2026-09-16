@@ -2045,47 +2045,6 @@ def _left_products[
     return result^
 
 
-def _rank_one_subtract_rect[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](
-    mut a: Static[dtype, m, n],
-    mut col: Static[dtype, m],
-    mut row: Static[dtype, n],
-    scale: Scalar[dtype],
-    mut product: Static[dtype, m, n],
-    ctx: DeviceContext,
-) raises:
-    """`A -= scale * col row^T` for a rectangular `A`, through `matmul`'s
-    epilogue -- `_rank_one_subtract` at `m x n`."""
-    var target = a.view()
-
-    @parameter
-    @always_inline
-    @__copy_capture(target, scale)
-    def subtract[
-        _dtype: DType,
-        lanes: SIMDLength,
-        *,
-        alignment: Int = align_of[SIMD[_dtype, lanes]](),
-    ](idx: IndexList[2], value: SIMD[_dtype, lanes]) capturing -> None:
-        var at = Coord(idx[0], idx[1])
-        target.store[lanes](
-            at,
-            target.load[lanes](at) - scale * rebind[SIMD[dtype, lanes]](value),
-        )
-
-    var c: _Dense[dtype] = TileTensor(
-        col.view().ptr_at_offset(Coord(0)), row_major(Coord(m, 1))
-    )
-    var r: _Dense[dtype] = TileTensor(
-        row.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
-    )
-    _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
-        product.view(), c, r, ctx
-    )
-    ctx.synchronize()
-
-
 def _column_of[
     dtype: DType, m: Int, n: Int, gpu: Bool = False
 ](mut dense: Static[dtype, m, n], k: Int) raises -> Static[dtype, m]:
