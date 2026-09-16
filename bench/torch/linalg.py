@@ -46,7 +46,7 @@ import numpy as np
 import torch
 
 DTYPE = torch.float32
-FACTOR_SIZES = [128, 256, 512, 1024]
+FACTOR_SIZES = [128, 256, 512, 1024, 2048]
 BLAS_SIZES = [1 << 16, 1 << 20, 1 << 24, 1 << 26]
 WARMUP_ITERS = 2
 

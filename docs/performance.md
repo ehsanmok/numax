@@ -525,6 +525,96 @@ What this machine says:
   changing (`nb^3 / 3` against the products it enables) and which needs
   measuring before it is.
 
+### Scaling with n
+
+Every linalg table above this one is a single size. `n = 1024` was the
+largest the harness had ever instantiated, so "numax is only useful for
+small tensors" had no measurement against it either way. The sweep now
+runs the four factorizations to **n = 4096** on the CPU and to **n = 2048**
+on Metal, and the answer is the opposite of the critique: the ratio to
+LAPACK **rises** with `n`, because a blocked factorization's trailing
+update is `O(n^3)` in `linalg.matmul` while its panel is `O(n^2 block)` on
+one core.
+
+**CPU -- Apple M3 Pro, `float32`, numax `bench-linalg` against SciPy
+1.18.1 on Accelerate (`bench-scipy-linalg`), best of four numax runs and
+two SciPy runs, load average 2.3 to 5.3 with no other process above 1% of
+a core.** Each cell is `numax GFLOP/s / LAPACK GFLOP/s`:
+
+| `n` | `cholesky` | `lu_factor` | `solve` | `qr_factor` |
+|---|---|---|---|---|
+| 128 | 0.14 | 0.18 | 0.35 | 0.75 |
+| 256 | 0.10 | 0.21 | 0.29 | 0.81 |
+| 512 | 0.17 | 0.23 | 0.36 | 0.58 |
+| 1,024 | 0.23 | 0.32 | 0.54 | 0.66 |
+| 2,048 | 0.26 | 0.33 | 0.48 | 0.78 |
+| 4,096 | **0.41** | **0.42** | 0.50 | 0.69 |
+
+and the absolute numbers behind them (GFLOP/s, numax then LAPACK):
+
+| `n` | `cholesky` | `lu_factor` | `solve` | `qr_factor` | `matmul` ceiling |
+|---|---|---|---|---|---|
+| 128 | 7.3 / 52.3 | 7.6 / 42.4 | 7.7 / 22.2 | 12.1 / 16.1 | 558 / 882 |
+| 256 | 15.7 / 151.8 | 20.1 / 97.6 | 17.8 / 60.5 | 19.1 / 23.5 | 1,030 / 1,293 |
+| 512 | 40.6 / 234.4 | 42.4 / 180.4 | 40.4 / 112.3 | 22.2 / 38.4 | 1,412 / 1,600 |
+| 1,024 | 81.1 / 356.8 | 84.4 / 263.0 | 86.2 / 160.9 | 35.9 / 54.1 | 1,487 / 1,406 |
+| 2,048 | 113.0 / 436.9 | 116.7 / 355.1 | 116.6 / 241.3 | 57.9 / 74.0 | 1,442 / 1,550 |
+| 4,096 | 140.2 / 339.7 | 137.5 / 331.6 | 130.4 / 261.6 | 58.3 / 84.8 | 1,324 / 1,386 |
+
+numax's own throughput rises by **19x** from `n = 128` to `n = 4096` on
+`cholesky` (7.3 to 140.2 GFLOP/s) and 18x on `lu_factor`, while LAPACK's
+rises 6.5x and 7.8x and then turns over at 4096. That turn is why the last
+row's ratios jump: Accelerate loses ground at 4096 (`cholesky` 436.9 to
+339.7) where numax does not, so part of the final gain is LAPACK falling
+back rather than numax pulling forward. The honest summary is that the gap
+narrows steadily from `n = 256` on and is roughly halved across the sweep.
+
+The `n = 128` column is the one to distrust in both directions. LAPACK's
+`cholesky` there measures 52.3 GFLOP/s against 151.8 at `n = 256` -- call
+overhead, not arithmetic -- and numax's `qr_factor` ratio of 0.75 at 128
+and 0.81 at 256 is the same effect on the other side. Nothing at `n = 128`
+is measuring a factorization.
+
+`qr_factor` is the row that does not improve. It sits between 0.58 and
+0.81 with no trend, and at `n = 4096` it is the only routine still under
+60 GFLOP/s. Its default `block = 16` is the reason the file's own
+docstring gives -- the best block for QR *shrinks* with `n` while the
+others hold -- and the `q()`/`solve()` rebuild of `T` is the rest.
+
+**Metal -- the same M3 Pro's 18-core GPU, `float32`, `bench-linalg-gpu`
+against PyTorch 2.13.0 on MPS (`bench-torch-linalg`).** A separate
+processor and a separate baseline, so no cell here may be read against a
+cell above. Each cell is `numax GFLOP/s / PyTorch-MPS GFLOP/s`:
+
+| `n` | `cholesky` | `lu_factor` | `solve` | `qr_factor` |
+|---|---|---|---|---|
+| 256 | 0.41 | 0.38 | 0.43 | 0.72 |
+| 512 | 0.43 | 0.35 | 0.55 | **1.48** |
+| 1,024 | 0.54 | 0.35 | 0.81 | -- |
+| 2,048 | 0.55 | 0.37 | **1.18** | -- |
+
+and the absolute numbers (GFLOP/s, numax then PyTorch MPS):
+
+| `n` | `cholesky` | `lu_factor` | `solve` | `matmul` ceiling |
+|---|---|---|---|---|
+| 256 | 3.3 / 8.1 | 1.2 / 3.1 | 1.0 / 2.4 | 137 / 144 |
+| 512 | 15.2 / 35.2 | 4.8 / 13.9 | 4.3 / 7.8 | 734 / 612 |
+| 1,024 | 65.0 / 120.7 | 18.9 / 53.5 | 16.9 / 21.0 | 1,867 / 1,813 |
+| 2,048 | 182.2 / 329.5 | 66.1 / 176.3 | 59.7 / 50.4 | 2,986 / 4,936 |
+
+The same shape, more steeply: numax's Metal `cholesky` goes from 3.3 to
+182.2 GFLOP/s across three doublings, a **55x** rise, because the panel's
+single-thread-block kernel and its per-step launch latency are a fixed
+cost that `n^3` of GEMM eventually buries. `solve` passes PyTorch at
+`n = 2048` and `qr_factor` is 1.48x ahead at 512.
+
+**The two `qr_factor` cells are blank on purpose.** PyTorch's MPS
+`linalg_qr` is limited to `min(m, n) <= 512` and silently falls back to
+the CPU above it (it warns, and the warning is in the harness output), so
+its `n = 1024` and `n = 2048` rows are CPU numbers. Putting them in a
+Metal column would be exactly the CPU/GPU mixing this page forbids, so
+they are left out rather than quietly compared.
+
 ### The 0.2 surfaces, measured
 
 Everything the `Tensor` tier gained in 0.2 shipped with a `ponytail:` note
@@ -538,214 +628,165 @@ data.
 
 **Spectral, `n = 1024`** (ms per call; GFLOP/s from Golub and Van Loan's
 counts, so the two columns are comparable to each other and to the
-factorization table above, not to a flop counter):
+factorization table above, not to a flop counter). Re-measured after the
+whole A-lane landed: `bench-linalg` against `bench-scipy-linalg`, **Apple
+M3 Pro**, `float32`, best of four numax runs and two SciPy runs, load
+average 2.3 to 5.3 with no other process above 1% of a core. A spectral
+row's four samples span up to 1.3x -- more than any factorization row --
+so the third digit is not a measurement:
 
-| op | numax ms | numax GFLOP/s | LAPACK ms | LAPACK GFLOP/s | numax / LAPACK |
-|---|---|---|---|---|---|
-| `eigvalsh` | 358 | 4.0 | 39.7 | 36.0 | 0.11 |
-| `eigh` | 6,101 | 1.6 | 89.1 | 108.5 | 0.015 |
-| `svdvals` | 2,263 | 1.3 | 49.8 | 57.5 | 0.022 |
-| `svd` | 41,465 | 0.6 | 90.4 | 261.3 | 0.002 |
-| `eigvals` | 2,436 | 4.4 | 136.4 | 78.7 | 0.056 |
-| `schur` | 7,292 | 3.7 | 154.8 | 173.4 | 0.021 |
+| op | numax ms | numax GFLOP/s | LAPACK ms | LAPACK GFLOP/s | numax / LAPACK | was (0.2 draft) |
+|---|---|---|---|---|---|---|
+| `eigvalsh` | 142 | 10.1 | 39.8 | 35.9 | **0.28** | 0.11 |
+| `eigh` | 199 | 48.5 | 88.8 | 108.9 | **0.45** | 0.015 |
+| `svdvals` | 1,459 | 2.0 | 50.1 | 57.2 | 0.034 | 0.022 |
+| `svd` | 1,583 | 14.9 | 89.1 | 265.0 | 0.056 | 0.002 |
+| `eigvals` | 920 | 11.7 | 139.2 | 77.1 | **0.15** | 0.056 |
+| `schur` | 1,056 | 25.4 | 165.3 | 162.4 | **0.16** | 0.021 |
 
-Read against `cholesky` at 83 and `qr_factor` at 38 GFLOP/s on the same
-machine, the table says exactly what the `ponytail:` notes predicted, and
-puts sizes on it:
+The last column is the table this section shipped with, and every row
+above it is the same call on the same machine, so the two columns are a
+before and an after: **`eigh` is 30x faster than it was** (6,101 ms to
+199), `svd` 26x (41,465 to 1,583), `schur` 6.9x, `eigvals` 2.7x,
+`eigvalsh` 2.5x, `svdvals` 1.55x. What moved them is in the record below.
 
-- **The band iteration is the run.** `eigh` minus `eigvalsh` is 5.7 s of
-  the 6.1 s: that is the `steqr` vector accumulation, `O(n^3)` scalar
-  Givens rotations applied to `Z` on the host, at well under 1 GFLOP/s.
-  `svd` minus `svdvals` is 39 s of 41 -- `bdsqr` rotating `U` and `V` the
-  same way -- and `schur` minus `eigvals` is 4.9 s of `Z`. The reductions
-  and the values-only iterations are the small remainder. The upgrade
-  path is the one those notes name: accumulate the rotations in blocks
-  and apply each block as a GEMM (the `stedc`/`dlasr`-by-blocks shape),
-  so the `O(n^3)` moves from a host loop to `linalg.matmul`.
+Against the targets the plan set for this work: `eigh` was to reach 0.25
+of LAPACK and reaches 0.45; `eigvalsh` was to reach 0.2 and reaches 0.28;
+`schur` was to improve with its ceiling stated and improved 7.5x.
+**`svd` was to reach 0.08 and reaches 0.056, so that one is missed**, for
+the reason the next paragraph gives.
 
-  **That landed after these rows were taken, so the `eigh` and `svd` rows
-  above are stale and the next sweep replaces them.** `bench-linalg` on
-  the same machine now reads 2,431 ms for `eigh` at `n = 1024` against the
-  6,101 here, and 6,101 for `svd` against 41,465 -- taken while the
-  machine was not otherwise quiet, so treat them as the direction rather
-  than the number. The accumulation itself is 31 ms of `eigh`: 597,560
-  rotations in 665 windowed GEMMs, so it is no longer the term that
-  matters. 1.8 s of what is left is `TensorTridiagonal.q()`, still `2n`
-  matvec launches. `svd` gets the same accumulation through the same
-  sweep but keeps its `2n` width and its host de-interleave of `U` and
-  `V`, and `schur` is untouched.
+**What each row is waiting on now**, which is no longer the band
+iteration in any of them:
 
-  That `q()` is blocked now too -- `orgtr` and `orghr` run `qr_factor`'s
-  panel walk, three GEMMs per `block` reflectors instead of `3n` launches
-  and `2n` synchronizations -- so the `eigh` row is stale a second time
-  and the same sweep replaces it.
+- **`svd` and `svdvals` are `gebrd`, and `gebrd` is two whole-matrix
+  products per column.** The two rows are 1,583 and 1,459 ms and the
+  reduction is about 1,450 of both, which is why a values-only run is
+  barely cheaper than one that forms `U` and `V`: everything the vectors
+  cost is roughly 120 ms. The `labrd` panel below took the per-column
+  traffic from four passes over the matrix to two, and the two that are
+  left -- `A v` and `A u` -- are the ceiling. They are `matvec` at
+  whole-matrix shape, so the fix is not a wider panel; it is the
+  two-stage dense-to-banded reduction, which is 0.3 work.
+- **`eigvalsh` is `sytrd`, and `sytrd` is the same product once.** 142 ms
+  at the default `block = 32`, and **74.8 ms at `block = 8`** -- a ratio
+  of 0.53 to LAPACK -- because a `latrd` column costs `O(n * block)`
+  whatever it is threaded on while the trailing GEMM a wider panel saves
+  is a few milliseconds at any width. A values-only caller should pass
+  `eigvalsh[..., block=8]`; 32 stays the default because `eigh` pays for
+  the rotation window and `q()` out of the same number.
+- **`eigh` is the one row where the reduction is no longer most of the
+  run**: 199 ms against `eigvalsh`'s 142 at the same block, so the
+  vectors -- the windowed rotation GEMMs plus `orgtr`'s panel walk --
+  cost about 57 ms for `9n^3` of work. That is the shape the whole
+  accumulation design was for.
+- **`schur` and `eigvals` are the host Francis iteration.** `eigvals` is
+  920 ms of which the `lahr2` reduction is about 146, so five sixths of
+  the call is `_hqr` on the host; `schur` adds 136 ms of Schur vectors
+  and its far-from-diagonal `T` update on top. Only multishift QR with
+  aggressive early deflation moves that term, and it is 0.3 work, filed
+  in `docs/parity.md` with these numbers.
 
-  And `svd`'s singular vectors are off the host as well: the de-interleave
-  of `U` and `V` out of the `2n x 2n` `Z^T` is one `elementwise`, and
-  `orgbr` is the same panel walk, which takes the `svd` row from the 6,101
-  above -- 7,020 when re-measured beside the change -- to 2,286 ms at
-  `n = 1024`, on the same not-quiet machine and with the same caveat.
-  What is left is no longer the sweep: `gebrd` alone measures 1,992 ms of
-  that 2,286, the values-only `2n` band iteration 44 ms, and everything
-  the vectors cost 250 ms. So `svd` and `svdvals` were both waiting on the
-  unblocked reduction at that point, not on the band sweep -- the `labrd`
-  panel further down is what answered it -- and the `2n` doubling the
-  Golub-Kahan route costs is taken out by the `bdsqr` paragraph below.
+**`float32` residuals are LAPACK's too**, and on three rows better.
+numax's trace gap on `eigvalsh` at `n = 1024` is 0.0041 against
+Accelerate's 0.375, its `eigvals` gap 0.106 against 0.833 and its `schur`
+residual 0.0091 against 0.0188; `svd` is a tie at 0.0106 against 0.0100,
+and the two numax loses are `eigh` at 1.5e-3 against 2.7e-4 and `svdvals`
+at 5.5e-7 against 3.8e-8. All at the same precision, not a wider one: the
+band iteration runs at the caller's `dtype` throughout (`_tql` is generic
+over it and `sytrd` hands it `List[Scalar[dtype]]`), and there is no
+`float64` promotion anywhere in these routines.
 
-  And `schur`'s Schur vectors go through the same batch at reach two, so
-  the `schur` row is stale as well: 5,567 ms before, 2,147 ms after at
-  `n = 1024` on the same not-quiet machine, the vector accumulation
-  falling from 3,156 ms of scalar host rotations to 37 ms of windowed
-  GEMMs. The remaining `T` update -- the far-from-diagonal `wantt` rows
-  and columns, which only multishift QR batches -- is 105 ms of it, down
-  from 153 with the row walk vectorized, against 723 ms for the
-  values-only Francis iteration and 1,259 for the `hessenberg` of the day,
-  which was still unblocked -- the `lahr2` paragraph below supersedes that
-  last figure.
+**One known correctness bug is not in this table.** Every row above is
+`gpu=False`. The same routines named with `gpu=True` return wrong answers
+on Metal -- `sytrd[gpu=True]` disagrees with the host band at `n = 4`
+already, at every `block` including 1, so it predates the `latrd` panel --
+and `svd[gpu=True]` raises rather than converging. Nothing in numax,
+its tests or its examples calls that spelling, which is why it went
+unnoticed; there is no device spectral table here because timing a wrong
+answer is not a measurement. See "What is not measured" below.
 
-  And `sytrd` is blocked now -- a `latrd` panel of `block` columns, one
-  rank-`2 * block` GEMM per panel instead of a rank-2 GEMM per column --
-  so the `eigvalsh` and `eigh` rows are stale too. Measured back to back
-  against the commit before it, same machine, `n = 1024`, `float32`:
-  `sytrd` 197.5 ms to 80.5, `eigvalsh` 206.9 to 97.7, `eigh` 270.2 to
-  154.6. The block sweep after the change reads 53 / 66 / 80 / 109 ms for
-  `sytrd` at `block` 8 / 16 / 32 / 64 and 242 / 173 / 155 / 183 for `eigh`
-  at the same widths: the reduction alone wants a *narrow* panel because
-  its per-column arithmetic still ran on the one thread block the panel
-  kernels launch with, while `eigh` wants a wide one because the same
-  number is the rotation window and the `q()` panel. 32 stays the default
-  on `eigh`'s number; a values-only caller who wants the other end passes
-  `eigvalsh[..., block=8]` and gets 68 ms.
+**How it got here.** The four changes that produced the after column,
+each measured back to back against the commit before it on the same
+machine, are kept as the record of which term each one moved.
 
-  And `latrd_w`'s own `O(n j)` arithmetic is off the single thread block
-  now: the `2j + 1` reductions are one task each and the `w` build one
-  task per row, two `parallelize`s on the host and two `elementwise`s on
-  the accelerator with only the scalar between them serial. The sweep
-  after that change, measured back to back against the commit before it,
-  same machine, `n = 1024`, `float32`, twice and taking the smaller, the
-  machine not otherwise quiet:
+`sytrd` through a `latrd` panel, and then `latrd_w`'s own `O(n j)`
+arithmetic off the single thread block -- the `2j + 1` reductions one task
+each and the `w` build one task per row, two `parallelize`s on the host
+and two `elementwise`s on the accelerator. `n = 1024`, `float32`, twice
+and taking the smaller, the machine not otherwise quiet:
 
-  | `block` | `sytrd` before | after | `eigvalsh` before | after | `eigh` before | after |
-  |---|---|---|---|---|---|---|
-  | 8 | 109.2 | 111.0 | 117.0 | 120.4 | 460.5 | 469.4 |
-  | 16 | 120.7 | 117.9 | 127.0 | 130.9 | 283.5 | 287.2 |
-  | 32 | 146.6 | 150.0 | 157.7 | 156.9 | 272.5 | 275.4 |
-  | 64 | 197.3 | 189.1 | 206.4 | 189.1 | 304.9 | 287.7 |
+| `block` | `sytrd` before | after | `eigvalsh` before | after | `eigh` before | after |
+|---|---|---|---|---|---|---|
+| 8 | 109.2 | 111.0 | 117.0 | 120.4 | 460.5 | 469.4 |
+| 16 | 120.7 | 117.9 | 127.0 | 130.9 | 283.5 | 287.2 |
+| 32 | 146.6 | 150.0 | 157.7 | 156.9 | 272.5 | 275.4 |
+| 64 | 197.3 | 189.1 | 206.4 | 189.1 | 304.9 | 287.7 |
 
-  The reading to take is that the slope is the panel's own arithmetic and
-  not a scheduling artifact: a `latrd` column costs `O(n * block)` whether
-  it is threaded or not, and the only term blocking *saves* -- the
-  trailing rank-`2 block` GEMM -- is a few milliseconds of `sytrd`'s total
-  at every width, because the whole-matrix `p = A v` dominates. So a wider
-  panel stays more expensive for the reduction alone, `block = 8` stays
-  the values-only answer, and 32 stays the default on `eigh`'s number.
+The slope there is the panel's own arithmetic and not a scheduling
+artifact, and what the threading buys is the wide end, where the serial
+term was large enough to beat the dispatch. Below `_LATRD_MIN_WORK` a
+`parallelize` per column costs more than the work it spreads, so narrow
+panels stay on the serial path; the threshold is an absolute work count,
+so the same code threads a narrower panel as `n` grows.
 
-  What the split buys is the wide end, where the serial term was large
-  enough to beat the dispatch: `sytrd` at `block = 64` 197 ms to 189 and
-  `eigvalsh` 206 to 189. Below that a `parallelize` per column costs more
-  than the work it spreads, so `_LATRD_MIN_WORK` keeps the narrow panels
-  on the serial path and they run exactly as they did. The threshold is an
-  absolute work count, so the same code threads a narrower panel as `n`
-  grows.
-  And `gebrd` is blocked now as well -- a `labrd` panel of `block`
-  columns, the two rank-one updates per column deferred into two GEMMs per
-  panel -- so the `svd` and `svdvals` rows above are stale a second time.
-  Measured back to back against the commit before it, same machine,
-  `n = 1024`, `float32`, twice and taking the smaller, the machine not
-  otherwise quiet:
+`gebrd` through a `labrd` panel, the two rank-one updates per column
+deferred into two GEMMs per panel. Same method, `n = 1024`:
 
-  | `block` | `gebrd` before | after | `svdvals` before | after | `svd` before | after |
-  |---|---|---|---|---|---|---|
-  | 16 | 2,361 | 1,650 | 2,348 | 1,693 | 2,913 | 2,227 |
-  | 32 | 2,355 | 1,740 | 2,392 | 1,733 | 2,654 | 2,059 |
-  | 64 | 2,419 | 1,769 | 2,371 | 1,783 | 2,646 | 2,002 |
+| `block` | `gebrd` before | after | `svdvals` before | after | `svd` before | after |
+|---|---|---|---|---|---|---|
+| 16 | 2,361 | 1,650 | 2,348 | 1,693 | 2,913 | 2,227 |
+| 32 | 2,355 | 1,740 | 2,392 | 1,733 | 2,654 | 2,059 |
+| 64 | 2,419 | 1,769 | 2,371 | 1,783 | 2,646 | 2,002 |
 
-  About 27% off `gebrd` and `svdvals` and 23% off `svd`, and the reason is
-  traffic rather than flops: the unblocked reduction made four passes over
-  the matrix per column -- `v^T A`, a rank-one subtract, `A u`, another
-  rank-one subtract -- and the panel defers both subtracts, leaving two.
-  What is left is those two products, which are `sytrd`'s `A v` ceiling
-  again. Unlike `sytrd` the sweep is nearly flat in `block`, because
-  `gebrd`'s panel corrections are `O((m + n) j)` against two whole-matrix
-  passes rather than one; 32 stays the default, between `gebrd`'s own best
-  at 16 and `svd`'s at 64, where the same number is also the rotation
-  window and the `q()`/`p()` panel.
+About 27% off `gebrd` and `svdvals` and 23% off `svd`, and the reason is
+traffic rather than flops: the unblocked reduction made four passes over
+the matrix per column and the panel defers both subtracts, leaving two.
+The sweep is nearly flat in `block` because `gebrd`'s panel corrections
+are `O((m + n) j)` against two whole-matrix passes rather than one; 32
+stays the default, between `gebrd`'s own best at 16 and `svd`'s at 64.
 
-  And `hessenberg` is blocked now too -- a `lahr2` panel of `block`
-  columns, the panel's `V`, `T` and `Y = A V T` accumulated per column and
-  the two-sided update deferred into one `transpose_b=True` GEMM on the
-  right and `larfb`'s three on the left -- so the `eigvals` and `schur`
-  rows above are stale as well. Measured on `bench_linalg`'s `_general`
-  fixture back to back against the commit before it, alternating binaries,
-  three rounds each and taking the minimum, same machine, `n = 1024`,
-  `float32`, load average 4.8 to 8.8:
+`hessenberg` through a `lahr2` panel, the panel's `V`, `T` and
+`Y = A V T` accumulated per column and the two-sided update deferred into
+one `transpose_b=True` GEMM on the right and `larfb`'s three on the left.
+Measured on the `_general` fixture, alternating binaries, three rounds
+each and taking the minimum, `n = 1024`, load average 4.8 to 8.8:
 
-  | | before | after |
-  |---|---|---|
-  | `hessenberg`, `block = 16` | 1,474 | 108 |
-  | `hessenberg`, `block = 32` | 1,461 | 146 |
-  | `hessenberg`, `block = 64` | 1,457 | 199 |
-  | `eigvals`, `block = 16` | 2,261 | 915 |
-  | `eigvals`, `block = 32` | 2,263 | 924 |
-  | `eigvals`, `block = 64` | 2,280 | 999 |
-  | `schur`, `block = 32` | 2,442 | 1,099 |
+| | before | after |
+|---|---|---|
+| `hessenberg`, `block = 16` | 1,474 | 108 |
+| `hessenberg`, `block = 32` | 1,461 | 146 |
+| `hessenberg`, `block = 64` | 1,457 | 199 |
+| `eigvals`, `block = 16` | 2,261 | 915 |
+| `eigvals`, `block = 32` | 2,263 | 924 |
+| `eigvals`, `block = 64` | 2,280 | 999 |
+| `schur`, `block = 32` | 2,442 | 1,099 |
 
-  The `before` column repeats because `block` reached only `.q()` there and
-  neither `hessenberg` nor `eigvals` forms `Q`; the spread across its three
-  rows is run-to-run noise and the size of the honest error bar on the
-  column. A factor of ten on the reduction, for the reason the `gebrd`
-  paragraph gives at a factor of four thirds: the unblocked reduction made
-  four whole-matrix passes per column and this makes one, `p = A v`. What
-  the reduction stops being is the term that matters -- `eigvals` is now
-  924 ms of which 146 is the reduction, so the host Francis iteration is
-  five sixths of it, and the ceiling `schur`'s docstring names is the whole
-  story.
+The `before` column repeats because `block` reached only `.q()` there and
+neither `hessenberg` nor `eigvals` forms `Q`; the spread across its three
+rows is the honest error bar on the column. A factor of ten on the
+reduction, for the reason the `labrd` paragraph gives at a factor of four
+thirds. 32 stays the default because `eigvals` is nearly flat across it
+and because the same number is `.q()`'s panel width, which `schur` forms.
 
-  The width sweep slopes up for `sytrd`'s reason and not a scheduling one:
-  a `lahr2` column costs `O(n * block)` in the panel's own reductions while
-  the only term blocking saves is the trailing GEMM. 32 stays the default,
-  because `eigvals` is nearly flat across it (924 against 915 and 999) and
-  because the same number is `.q()`'s panel width, which `schur` does form.
+And the `2n x 2n` Golub-Kahan doubling is gone: `_bdsqr` chases the
+bidiagonal itself and pushes a rotation into each of two batches, so
+`U_B^T` and `V_B^T` are accumulated at width `n` instead of the
+eigenvectors of a `2n` tridiagonal being de-interleaved afterwards. Same
+method, `n = 1024`, load average 3.8 to 9.5:
 
-  And the `2n x 2n` Golub-Kahan doubling is gone: `_bdsqr` chases the
-  bidiagonal itself and pushes a rotation into each of two batches, so
-  `U_B^T` and `V_B^T` are accumulated at width `n` instead of the
-  eigenvectors of a `2n` tridiagonal being de-interleaved afterwards.
-  Measured on `bench_linalg`'s `_general` fixture back to back against the
-  commit before it, alternating binaries, three rounds each and taking the
-  minimum, `n = 1024`, `float32`, load average 3.8 to 9.5:
+| `block` | `svdvals` before | after | `svd` before | after |
+|---|---|---|---|---|
+| 16 | 1,621 | 1,615 | 2,034 | 1,686 |
+| 32 | 1,644 | 1,648 | 1,949 | 1,768 |
+| 64 | 1,704 | 1,691 | 1,949 | 1,752 |
 
-  | `block` | `svdvals` before | after | `svd` before | after |
-  |---|---|---|---|---|
-  | 16 | 1,621 | 1,615 | 2,034 | 1,686 |
-  | 32 | 1,644 | 1,648 | 1,949 | 1,768 |
-  | 64 | 1,704 | 1,691 | 1,949 | 1,752 |
-
-  Nine to seventeen per cent off `svd` and nothing off `svdvals`, and both
-  numbers are the honest ones: a values-only sweep pushes no rotation, so
-  the doubling only ever cost it tens of milliseconds of band arithmetic,
-  while the vectors were paying for stripes four times the area. What both
-  rows are waiting on now is `gebrd` -- about 1,650 of every figure in the
-  table -- which is where the `labrd` paragraph above left it. Anyone
-  reading "four times fewer rotations" as a factor on the call should read
-  the `svdvals` row first.
-
-- **The reductions are BLAS-2, not BLAS-3.** *(Superseded: `sytrd` by the
-  `latrd` panel above, whose per-column arithmetic is threaded now too,
-  `gebrd` by the `labrd` panel, and `gehrd` by the `lahr2` panel. The row
-  below is the *before* for all three.)* `eigvalsh` is `sytrd` plus an
-  `O(n^2)` `sterf`, and 358 ms for `4n^3/3` flops is 4 GFLOP/s -- the
-  unblocked `sytrd` (`w = A v`, `A -= v w^T + w v^T`, about `3n` launches
-  at matvec shapes), the B1a form whose B1b upgrade is `latrd` plus one
-  rank-`2k` GEMM per panel -- which is the paragraph above, so this row
-  is the *before*. `svdvals` at 1.3 GFLOP/s was `gebrd` in the same shape,
-  and the `labrd` paragraph above is its *before* likewise.
-- **`float32` residuals are LAPACK's too.** numax's trace gap on
-  `eigvalsh` at `n = 1024` is 0.033 against Accelerate's 0.37, and its
-  `eigh` residual `2.7e-4` against `8.0e-4` -- at the same precision, not
-  a wider one. The band iteration runs at the caller's `dtype` throughout
-  (`_tql` is generic over it and `sytrd` hands it `List[Scalar[dtype]]`);
-  there is no `float64` promotion anywhere in these routines.
+Nine to seventeen per cent off `svd` and nothing off `svdvals`, and both
+are the honest numbers: a values-only sweep pushes no rotation, so the
+doubling only ever cost it tens of milliseconds of band arithmetic, while
+the vectors were paying for stripes four times the area. Anyone reading
+"four times fewer rotations" as a factor on the call should read the
+`svdvals` row first.
 
 **Convolution -- where `fftconvolve` overtakes `convolve`** (µs per call,
 `full` mode; the two numax rows at each `(m, k)` agree to `1e-6`, and so
@@ -1060,6 +1101,29 @@ dispatches Apple simdgroup, CDNA or RDNA underneath, with no
 per-architecture code anywhere in numax -- so the *coverage* is inherited
 from MAX's dispatch. That is a statement about what compiles and runs, not
 about what it costs, and nothing here should be read as an AMD number.
+
+**There is no Metal spectral table, and the reason is a correctness bug
+rather than a build limit.** The six spectral routines all take a `gpu`
+parameter, and naming it `True` returns wrong answers on Metal. Measured
+against the host path on the same matrices: `eigvalsh[gpu=True]` at
+`n = 8` differs from `eigvalsh[gpu=False]` by 6.3 in an eigenvalue and
+leaves a trace gap of 3.1 where the host path leaves 5e-6; at `n = 128`
+the gap is 90. `svdvals[gpu=True]` reports a Frobenius identity off by
+1e22 and `svd[gpu=True]` raises rather than converging. Narrowed one step,
+`sytrd[gpu=True]` already disagrees with the host band at **`n = 4`**, and
+it disagrees at `block = 1` -- the unblocked algorithm -- so the fault is
+older than the `latrd` panel and is not the blocking.
+
+Nothing in numax, its tests, its examples or its benches calls that
+spelling, which is why it survived: `examples-gpu-build` compiles no
+spectral device kernel and CI has no GPU. The harness rows for the table
+were written and are what found this, and they are not committed, because
+a benchmark that times a wrong answer publishes a number worse than none.
+They belong in the commit that fixes the device path, where they are the
+proof it is fixed. The factorization half of `bench-linalg-gpu` is
+unaffected -- `cholesky[gpu=True]` at `n = 256` has a residual of 6e-5 --
+so the upload path and the GEMM routing are fine and the fault is inside
+the reduction.
 
 Metal *is* measured now, in the M3 Pro section above; it was not before,
 and the reason was partly that neither harness could reach it.

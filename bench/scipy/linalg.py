@@ -1,7 +1,8 @@
 """SciPy/LAPACK CPU baseline for the linalg sweep ../bench_linalg.mojo runs.
 
 Same matrices, same sizes, same dtype, same flop counts, same residual
-definitions -- the two files are meant to be read side by side, so anything
+definitions -- the factorizations at 128 through 4096 and the spectral
+rows at 128 through 1024, which is what the Mojo harness runs -- the two files are meant to be read side by side, so anything
 that would change a number is spelled the same way in both:
 
 - `float32`, because the GPU half of this comparison cannot be anything
@@ -37,7 +38,8 @@ import scipy.linalg as sla
 from scipy.linalg import blas
 
 DTYPE = np.float32
-FACTOR_SIZES = [128, 256, 512, 1024]
+FACTOR_SIZES = [128, 256, 512, 1024, 2048, 4096]
+SPECTRAL_SIZES = [128, 256, 512, 1024]
 BLAS_SIZES = [1 << 16, 1 << 20, 1 << 24, 1 << 26]
 WARMUP_ITERS = 2
 
@@ -265,7 +267,7 @@ def main() -> None:
         bench_eigvals,
         bench_schur,
     ):
-        for n in FACTOR_SIZES:
+        for n in SPECTRAL_SIZES:
             fn(n)
 
     print()

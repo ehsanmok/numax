@@ -12,7 +12,8 @@ panel or whose block size is eating the run.
 Three tables, because three different things limit them:
 
 1. **Factorizations** -- `cholesky`, `lu_factor`, `solve`, `qr_factor` at
-   n = 128 through 1024. Cubic work, so GFLOP/s is the comparable number
+   n = 128 through 4096, five doublings, so the ratio to LAPACK is a
+   trend and not a point. Cubic work, so GFLOP/s is the comparable number
    and the flop counts are the standard LAPACK ones (`n^3/3` for Cholesky,
    `2n^3/3` for LU, `4n^3/3` for a square QR, LU plus two substitutions
    for `solve`).
@@ -664,22 +665,32 @@ def main() raises:
     bench_gemm[256](ctx)
     bench_gemm[512](ctx)
     bench_gemm[1024](ctx)
+    bench_gemm[2048](ctx)
+    bench_gemm[4096](ctx)
     bench_cholesky[128](ctx)
     bench_cholesky[256](ctx)
     bench_cholesky[512](ctx)
     bench_cholesky[1024](ctx)
+    bench_cholesky[2048](ctx)
+    bench_cholesky[4096](ctx)
     bench_lu[128](ctx)
     bench_lu[256](ctx)
     bench_lu[512](ctx)
     bench_lu[1024](ctx)
+    bench_lu[2048](ctx)
+    bench_lu[4096](ctx)
     bench_solve[128](ctx)
     bench_solve[256](ctx)
     bench_solve[512](ctx)
     bench_solve[1024](ctx)
+    bench_solve[2048](ctx)
+    bench_solve[4096](ctx)
     bench_qr[128, 128](ctx)
     bench_qr[256, 256](ctx)
     bench_qr[512, 512](ctx)
     bench_qr[1024, 1024](ctx)
+    bench_qr[2048, 2048](ctx)
+    bench_qr[4096, 4096](ctx)
 
     print()
     print("Spectral (ms is per call, GFLOP/s from Golub-Van Loan's count)")
