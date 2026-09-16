@@ -22,9 +22,10 @@ Neither tier pivots, and neither needs to: a symmetric positive definite
 matrix does not require it. That is a theorem, not luck.
 """
 
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major
 from linalg.matmul import matmul as _max_matmul
+from max.algorithm.functional import elementwise
 from std.sys.info import align_of
 from std.utils import IndexList
 
@@ -33,6 +34,7 @@ from ..core.array import Static, tril, zeros, zeros_dyn
 from .blas import _target
 from .common import _Dense
 from .panel import _PANEL_THREADS, pack_block, potrf_diag, trsm_right_lower_t
+from .qr import _MIN_GEMM_COLS
 from .triangular import solve_triangular
 
 
@@ -236,6 +238,45 @@ def cholesky[
 
                     var r0 = base + row0
                     var c0 = base + col0
+
+                    # See `numax.linalg.qr`'s `_MIN_GEMM_COLS`: a
+                    # one-column product takes MAX's GEMV path, which
+                    # walks the rows in whole SIMD vectors and so reads
+                    # past a matrix whose row count is not a lane
+                    # multiple. The ragged last *column* tile is exactly
+                    # that shape -- `tile = 7` at `n = 11`, `block = 3`
+                    # leaves a `1 x 1` tile -- and a GEMM there is
+                    # `rows * nb` of arithmetic, small enough to write
+                    # directly. `_subtract_panel` in `numax.linalg.eigen`
+                    # takes the same fallback for the same reason.
+                    if cols < _MIN_GEMM_COLS:
+
+                        @always_inline
+                        def narrow[
+                            w: Int, alignment: Int = 1
+                        ](coord: Coord) {
+                            var wv,
+                            var ov,
+                            var r0,
+                            var c0,
+                            var row0,
+                            var col0,
+                            var nb,
+                        }:
+                            var at = coord_to_index_list(coord)
+                            var to = Coord(r0 + at[0], c0 + at[1])
+                            var total = wv[to]
+                            for t in range(nb):
+                                total -= (
+                                    ov[Coord(row0 + at[0], t)]
+                                    * ov[Coord(col0 + at[1], t)]
+                                )
+                            wv.store[1](to, total)
+
+                        elementwise[simd_width=1, target=_target[gpu]()](
+                            narrow, Coord(rows, cols), ctx
+                        )
+                        continue
 
                     @parameter
                     @always_inline
