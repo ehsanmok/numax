@@ -98,9 +98,21 @@ jobs:
           echo "── $total suites, three attempts each ──"
           failed=""
           for suite in $suites; do
+            # Build with line tables and run the binary rather than `mojo run`
+            # the file: a crash then reports the function it died in instead
+            # of eight raw addresses, and nothing the suite printed is lost in
+            # a stdout buffer the crash never flushed. The retry loop below is
+            # unchanged.
+            file=$(sed -n "s/^$suite = \"mojo -I . \(.*\)\"/\1/p" pixi.toml)
+            if [ -z "$file" ]; then
+              echo "── could not read the file for $suite from pixi.toml ──"
+              failed="$failed $suite"
+              continue
+            fi
             ok=0
             for attempt in 1 2 3; do
-              pixi run "$suite"
+              pixi run mojo build -debug-level=line-tables -I . "$file" -o "/tmp/$suite" \
+                && "/tmp/$suite"
               rc=$?
               if [ $rc -eq 0 ]; then
                 ok=1
