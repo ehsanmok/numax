@@ -100,6 +100,10 @@ jobs:
           # llvm-symbolizer; the runner has none on PATH but the pinned
           # toolchain ships one.
           export LLVM_SYMBOLIZER_PATH="$PWD/.pixi/envs/default/bin/llvm-symbolizer"
+          # Line-buffer the suite's output so a crash cannot swallow the test
+          # names before it; `stdbuf` is GNU coreutils and absent on macOS.
+          unbuffered=""
+          if command -v stdbuf >/dev/null 2>&1; then unbuffered="stdbuf -oL -eL"; fi
           failed=""
           for suite in $suites; do
             # Build with line tables and run the binary rather than `mojo run`
@@ -116,7 +120,7 @@ jobs:
             ok=0
             for attempt in 1 2 3; do
               pixi run mojo build -debug-level=line-tables -I . "$file" -o "/tmp/$suite" \
-                && stdbuf -oL -eL "/tmp/$suite"
+                && $unbuffered "/tmp/$suite"
               rc=$?
               if [ $rc -eq 0 ]; then
                 ok=1
