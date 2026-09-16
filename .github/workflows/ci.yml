@@ -75,78 +75,45 @@ jobs:
           post-cleanup: false
 
       - name: Run unit tests
-        # The Mojo runtime segfaults transiently inside
+        # `pixi run tests` is tools/run_test_aggregates.sh: it compiles each
+        # area of tests/ into one binary, builds those in parallel, and runs
+        # them. This step used to inline an 89-suite build-and-run loop with
+        # its own retry, and the aggregate runner now owns all of it.
+        #
+        # Why aggregate: the per-file chain re-elaborated the `numax` source
+        # graph once per file, and this step was the whole job -- 22.9 min on
+        # macos-15 and 27.4 min on ubuntu-latest at run 35066346719, the last
+        # green one before the change. The 1437 tests themselves run in under
+        # a second; compilation was all of it.
+        #
+        # This runner starts cold every time, since the environment is
+        # installed fresh and the Mojo compilation cache comes with it.
+        # Caching `$MODULAR_HOME/cache` between runs is the remaining lever
+        # and is deliberately not done yet: the size one clean run writes
+        # there has to be measured before a cache key is worth adding.
+        #
+        # The retry still exists and is still per *area*, not per run: the
+        # Mojo runtime segfaults transiently inside
         # `libKGENCompilerRTShared` on a fresh process before any user code
-        # runs; the next invocation succeeds.
+        # runs, so retrying the whole set would re-roll every start to
+        # recover from one flake. Aggregation cuts the exposure from 89
+        # process starts to 11, and a genuinely broken area still fails
+        # three times and fails the job. The runner also keeps the
+        # `-debug-level=line-tables` build, so a crash names the function it
+        # died in rather than eight raw addresses.
         #
-        # The retry is **per suite**, not per aggregate, and the difference
-        # decides whether the job is usable. `pixi run tests` is 87
-        # processes; retrying the whole thing re-rolls all 87 starts to
-        # recover from one flake, so the chance of a clean pass falls off a
-        # cliff as suites are added, and three attempts of eighty-seven can
-        # all die on a different suite each time. That is what it did. Each
-        # suite here gets its own three attempts, so one flaky start costs
-        # one rerun of one file, and a suite that is genuinely broken still
-        # fails three times and fails the job -- the guarantee is unchanged,
-        # only the granularity.
-        #
-        # `set +e` is deliberate so the loops can observe a non-zero exit.
-        # The disk report at the end is diagnostic: a runner that fills up
-        # mid-run would look exactly like a flaky crash.
+        # The disk report is diagnostic: a runner that fills up mid-run
+        # would look exactly like a flaky crash.
         run: |
-          set +e
-          suites=$(sed -n '/^tests = { depends-on = \[/,/^] }/p' pixi.toml \
-            | grep -oE '"[^"]+"' | tr -d '"')
-          if [ -z "$suites" ]; then
-            echo "── could not read the suite list from pixi.toml ──"
-            exit 1
-          fi
-          total=$(echo $suites | wc -w | tr -d ' ')
-          echo "── $total suites, three attempts each ──"
           # The Mojo runtime symbolicates a crash dump only if it can find
           # llvm-symbolizer; the runner has none on PATH but the pinned
           # toolchain ships one.
           export LLVM_SYMBOLIZER_PATH="$PWD/.pixi/envs/default/bin/llvm-symbolizer"
-          # Line-buffer the suite's output so a crash cannot swallow the test
-          # names before it; `stdbuf` is GNU coreutils and absent on macOS.
-          unbuffered=""
-          if command -v stdbuf >/dev/null 2>&1; then unbuffered="stdbuf -oL -eL"; fi
-          failed=""
-          for suite in $suites; do
-            # Build with line tables and run the binary rather than `mojo run`
-            # the file: a crash then reports the function it died in instead
-            # of eight raw addresses, and nothing the suite printed is lost in
-            # a stdout buffer the crash never flushed. The retry loop below is
-            # unchanged.
-            file=$(sed -n "s/^$suite = \"mojo -I . \(.*\)\"/\1/p" pixi.toml)
-            if [ -z "$file" ]; then
-              echo "── could not read the file for $suite from pixi.toml ──"
-              failed="$failed $suite"
-              continue
-            fi
-            ok=0
-            for attempt in 1 2 3; do
-              pixi run mojo build -debug-level=line-tables -I . "$file" -o "/tmp/$suite" \
-                && $unbuffered "/tmp/$suite"
-              rc=$?
-              if [ $rc -eq 0 ]; then
-                ok=1
-                break
-              fi
-              echo "── $suite attempt $attempt/3 failed (rc=$rc), retrying ──"
-              sleep 2
-            done
-            if [ $ok -ne 1 ]; then
-              echo "── $suite failed all three attempts ──"
-              failed="$failed $suite"
-            fi
-          done
+          pixi run tests
+          rc=$?
           echo "── disk after the run ──"
           df -h . | tail -1
-          if [ -n "$failed" ]; then
-            echo "── failed suites:$failed ──"
-            exit 1
-          fi
+          exit $rc
 
       - name: Run CPU examples
         run: pixi run examples-cpu

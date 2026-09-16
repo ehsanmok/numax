@@ -305,9 +305,32 @@ test-creation = "mojo -I . tests/core/test_creation.mojo"
 test-constants = "mojo -I . tests/core/test_constants.mojo"
 test-rowwise = "mojo -I . tests/core/test_rowwise.mojo"
 test-map-blocks = "mojo -I . tests/core/test_map_blocks.mojo"
-# Listed as dependencies rather than one long `&&` chain so a new suite is
-# one line to add in one place; pixi runs them in the order given.
-tests = { depends-on = [
+# `tests` compiles each area of tests/ into ONE binary and runs that,
+# instead of one `mojo` invocation per file. The per-file chain spent all
+# its time re-elaborating the `numax` source graph 89 times over, and the
+# 1437 tests themselves run in under a second -- compilation was the entire
+# cost. On CI that step was 22.9 min on macos-15 and 27.4 min on
+# ubuntu-latest (run 35066346719); locally and warm, 5:30 against 35s.
+# CI is always cold, so expect it to land between those regimes.
+#
+# It also cuts process starts from 89 to 11, which matters for the
+# transient `libKGENCompilerRTShared` segfault the CI job documents: fewer
+# starts is fewer chances to roll it, and the runner still retries each
+# aggregate three times.
+#
+# The aggregates are generated (tools/gen_test_aggregates.py) and the
+# runner re-checks them against the tree before building, so a newly added
+# test file cannot silently stop running.
+tests = "bash tools/run_test_aggregates.sh"
+tests-gen = "python3 tools/gen_test_aggregates.py"
+
+# The old per-file chain. Kept for bisecting a failure down to a single
+# file, and because every `test-<name>` task above is still the way to run
+# one suite. Listed as dependencies rather than one long `&&` chain so a
+# new suite is one line to add in one place; pixi runs them in the order
+# given. A new suite goes here AND is picked up by the aggregates
+# automatically -- the generator reads the tree, not this list.
+tests-per-file = { depends-on = [
     "test-dual",
     "test-format",
     "test-compensated",
@@ -454,22 +477,28 @@ examples = { depends-on = [
 # the binary is deleted immediately -- the architecture only has to be one the
 # compiler can generate code for, not one the machine owns. Bump it only if a
 # kernel in these examples starts depending on a newer NVIDIA feature.
-examples-gpu-build = { cmd = """
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/gaussian_gpu.mojo &&
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/unified_tensor_gpu.mojo &&
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/ode.mojo &&
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/intermediate/softmax.mojo &&
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/intermediate/random_ensemble.mojo &&
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/quantum_well.mojo &&
-mojo build --target-accelerator sm_80 -I . -o /tmp/numax-build-check examples/advanced/batched_solve.mojo &&
-rm -f /tmp/numax-build-check
-""" }
+#
+# The seven builds are independent, so they run concurrently:
+# tools/run_examples.sh owns the list and the job cap. 7.0s -> 2.3s.
+examples-gpu-build = "bash tools/run_examples.sh --gpu-build"
 # Every example except `gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`,
 # `random_ensemble.mojo`, `unified_tensor_gpu.mojo`, `quantum_well.mojo` and
 # `batched_solve.mojo`, which launch GPU kernels alongside their CPU paths --
 # this is what CI runs, on GPU-less runners, alongside `examples-gpu-build`
 # for the other seven.
-examples-cpu = { depends-on = [
+#
+# An example cannot be aggregated the way a test suite can -- each one is
+# its own `main` and its output is the point -- but the build phase is
+# still the cost, and the builds are independent. `tools/run_examples.sh`
+# compiles them concurrently and then runs one process each: 1:19 -> 23s.
+# It discovers the files from `git ls-files` minus the GPU list, so a new
+# example is covered without being added anywhere.
+examples-cpu = "bash tools/run_examples.sh"
+
+# The per-example chain, kept for the same reason as `tests-per-file`: one
+# example at a time when bisecting, and every `example-<name>` task below
+# still runs exactly one file.
+examples-cpu-per-file = { depends-on = [
     "example-gaussian",
     "example-array-creation",
     "example-npy-interop",

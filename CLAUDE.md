@@ -40,12 +40,36 @@ tasks shell out to a sibling `../mojodoc` checkout, overridable with
 
 ### Adding a test suite
 
-Two steps, both required: create `tests/<subpkg>/test_<name>.mojo`, then add a
-`test-<name>` task **and** wire it into the `tests` aggregate's `depends-on`
-list in `pixi.toml`. A suite not in that list never runs in CI.
+Create `tests/<subpkg>/test_<name>.mojo`, then run `pixi run tests-gen`. The
+aggregates are generated from the tree, so the new file is picked up by being
+there; `pixi run tests` re-checks them and fails if they are stale, which is
+what stops a new suite from silently not running. Commit the regenerated
+`tests/_agg/agg_<subpkg>.mojo` with the test.
+
+Adding a `test-<name>` task and a `tests-per-file` entry is optional and only
+buys the one-file spelling used when bisecting.
 
 Test files use `std.testing`: `def test_*() raises` functions plus
-`TestSuite.discover_tests[__functions_in_module()]().run()` in `main`.
+`TestSuite.discover_tests[__functions_in_module()]().run()` in `main`. Keep
+tests **plain** `def test_x()` — the generator imports them by name and
+rejects a parameterized `def test_x[...]()` rather than skipping it.
+
+**How `tests` runs.** One binary per area of `tests/`, built in parallel,
+rather than one `mojo` invocation per file. The per-file chain re-elaborated
+the whole source graph 89 times, and that was the entire cost — the 1437 test
+bodies run in under a second. It is the dominant term in CI: the unit-test
+step was 22.9 min on macos-15 and 27.4 min on ubuntu-latest before this
+(run 35066346719). Locally and warm, 5:30 against 35s.
+
+`pixi run tests-per-file` is the old chain, for bisecting to one file.
+`examples-cpu` is the same trick for the build phase only, since each example
+is its own `main`: 1:19 to 23s locally, against 2.4–3.1 min on CI.
+
+**CI is always cold**, which is a different regime from any local
+measurement: a fresh pixi environment means an empty Mojo compilation cache,
+and locally the eleven aggregate builds took 3:21 cold against 56s warm.
+Caching `$MODULAR_HOME/cache` across runs is the remaining lever; the number
+to get first is what one clean CI run writes there.
 
 ### Type-check gate for generics
 

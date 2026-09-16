@@ -18,6 +18,9 @@ skills-lock.json
 
 # Build outputs
 target/
+# Aggregate test binaries and concurrently built examples
+# (tools/run_test_aggregates.sh, tools/run_examples.sh).
+build/
 *.conda
 
 # Mojo cache
