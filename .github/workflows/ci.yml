@@ -96,6 +96,10 @@ jobs:
           fi
           total=$(echo $suites | wc -w | tr -d ' ')
           echo "── $total suites, three attempts each ──"
+          # The Mojo runtime symbolicates a crash dump only if it can find
+          # llvm-symbolizer; the runner has none on PATH but the pinned
+          # toolchain ships one.
+          export LLVM_SYMBOLIZER_PATH="$PWD/.pixi/envs/default/bin/llvm-symbolizer"
           failed=""
           for suite in $suites; do
             # Build with line tables and run the binary rather than `mojo run`
@@ -112,7 +116,7 @@ jobs:
             ok=0
             for attempt in 1 2 3; do
               pixi run mojo build -debug-level=line-tables -I . "$file" -o "/tmp/$suite" \
-                && "/tmp/$suite"
+                && stdbuf -oL -eL "/tmp/$suite"
               rc=$?
               if [ $rc -eq 0 ]; then
                 ok=1
