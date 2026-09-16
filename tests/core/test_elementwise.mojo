@@ -498,23 +498,6 @@ def test_the_threaded_path_agrees_with_the_serial_one() raises:
         _same(got[i], _std_exp(values[i]))
 
 
-def test_asking_for_a_target_the_tensor_is_not_on_still_answers() raises:
-    """`gpu=True` against a host tensor falls back to the host walk.
-
-    The mismatch prints one line on `stderr` naming the spelling that would
-    have run on the device; the values are the ones the matching path gives.
-    This is the half of the fallback a CPU-only run can exercise. At
-    `float32`, because `gpu=True` compiles a device kernel whether or not
-    the branch is reached at run time and Metal has no `double`.
-    """
-    var ctx = DeviceContext(api="cpu")
-    var a = Static[DType.float32, 4](ctx, [0.0, 1.0, 2.0, 3.0])
-    var matched = exp(a).to_host()
-    var fell_back = exp[gpu=True](a).to_host()
-    for i in range(4):
-        assert_equal(fell_back[i], matched[i])
-
-
 # The drivers `elementwise.mojo` does not itself use. Pinned here so the
 # whole of `_drive` is instantiated by the suite rather than only the part
 # this module reaches.

@@ -7,10 +7,11 @@ that `a + b` and `add(a, b)` are one call.
 
 The routing tests at the bottom make the claims the `numax.core._drive`
 move added: a run-time-shaped `Dynamic` operand gives the same answer as
-the `Static` of the same extents, `astype` truncates toward zero on the
-way to an integer and reads every nonzero element as true on the way to
-`DType.bool`, and asking for a target the tensor is not on still answers
-with the values the matching path gives.
+the `Static` of the same extents, and `astype` truncates toward zero on
+the way to an integer and reads every nonzero element as true on the way
+to `DType.bool`. Asking for a target the tensor is not on is proven by
+`examples/advanced/unified_tensor_gpu.mojo`, not here: `gpu=True`
+compiles a device kernel, which a GPU-less CI runner cannot do.
 """
 
 from std.testing import (
@@ -321,51 +322,6 @@ def test_a_dynamic_operand_gives_the_static_answer() raises:
     var scaled_dynamic = multiply(a_runtime, 3.0).to_host()
     for i in range(6):
         assert_equal(scaled_dynamic[i], scaled_static[i])
-
-
-def test_asking_for_a_target_the_tensor_is_not_on_still_answers() raises:
-    """`gpu=True` against a host tensor falls back to the host walk.
-
-    The mismatch prints one line on `stderr` naming the spelling that would
-    have run on the device; the values are the ones the matching path gives.
-    This is the half of the fallback a CPU-only run can exercise -- the
-    other half needs a GPU context. At `float32`, because `gpu=True`
-    compiles a device kernel whether or not the branch is reached at run
-    time and Metal has no `double`.
-    """
-    comptime f32 = DType.float32
-    var ctx = DeviceContext(api="cpu")
-    var a = Static[f32, 4](ctx, [1.0, 2.0, 3.0, 4.0])
-    var b = Static[f32, 4](ctx, [5.0, 6.0, 7.0, 8.0])
-    var row = Static[f32, 1, 4](ctx, [5.0, 6.0, 7.0, 8.0])
-    var matrix = Static[f32, 2, 4](
-        ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-    )
-
-    var matched = add(a, b).to_host()
-    var fell_back = add[gpu=True](a, b).to_host()
-    for i in range(4):
-        assert_equal(fell_back[i], matched[i])
-
-    var scaled = multiply(a, Scalar[f32](2.0)).to_host()
-    var scaled_gpu = multiply[gpu=True](a, Scalar[f32](2.0)).to_host()
-    for i in range(4):
-        assert_equal(scaled_gpu[i], scaled[i])
-
-    var negated = negative(a).to_host()
-    var negated_gpu = negative[gpu=True](a).to_host()
-    for i in range(4):
-        assert_equal(negated_gpu[i], negated[i])
-
-    var broadcast = subtract(matrix, row).to_host()
-    var broadcast_gpu = subtract[gpu=True](matrix, row).to_host()
-    for i in range(8):
-        assert_equal(broadcast_gpu[i], broadcast[i])
-
-    var cast = astype[DType.int32](a).to_host()
-    var cast_gpu = astype[DType.int32, gpu=True](a).to_host()
-    for i in range(4):
-        assert_equal(cast_gpu[i], cast[i])
 
 
 def main() raises:

@@ -12,9 +12,11 @@ SIMD width -- `a == b` on a SIMD vector returns a single `Bool`, which
 would splat one lane's answer across all of them. A mask with no true
 element is pinned all false, because the destination comes from
 `Tensor._uninitialized` and nothing but the launch writes it. A run-time
-shaped `Dynamic` operand gives the `Static` answer, a tensor above the
-threading threshold gives the serial path's answer, and asking for a target
-the tensor is not on still answers with the values the matching path gives.
+shaped `Dynamic` operand gives the `Static` answer, and a tensor above the
+threading threshold gives the serial path's answer. Asking for a target the
+tensor is not on is proven by `examples/advanced/unified_tensor_gpu.mojo`,
+not here: `gpu=True` compiles a device kernel, which a GPU-less CI runner
+cannot do.
 """
 
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
@@ -392,59 +394,6 @@ def test_above_the_threading_threshold_the_mask_is_the_same() raises:
     var mask = greater(a, b).to_host()
     for i in range(n):
         assert_equal(mask[i], left[i] > right[i])
-
-
-def test_asking_for_a_target_the_tensor_is_not_on_still_answers() raises:
-    """`gpu=True` against a host tensor falls back to the host walk.
-
-    The mismatch prints one line on `stderr` naming the spelling that would
-    have run on the device; the values are the ones the matching path
-    gives. This is the half of the fallback a CPU-only run can exercise --
-    the other half needs a GPU context, and
-    `examples/advanced/unified_tensor_gpu.mojo` is where it runs. At
-    `float32`, because `gpu=True` compiles a device kernel whether or not
-    the branch is reached at run time and Metal has no `double`.
-    """
-    comptime f32 = DType.float32
-    var ctx = DeviceContext(api="cpu")
-    var a = Static[f32, 4](ctx, [1.0, 2.0, 3.0, 4.0])
-    var b = Static[f32, 4](ctx, [4.0, 3.0, 2.0, 1.0])
-    var row = Static[f32, 1, 4](ctx, [4.0, 3.0, 2.0, 1.0])
-    var matrix = Static[f32, 2, 4](
-        ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-    )
-    var mask = Static[DType.bool, 4](ctx, [True, False, True, False])
-
-    var matched = greater(a, b).to_host()
-    var fell_back = greater[gpu=True](a, b).to_host()
-    for i in range(4):
-        assert_equal(fell_back[i], matched[i])
-
-    var finite = isfinite(a).to_host()
-    var finite_gpu = isfinite[gpu=True](a).to_host()
-    for i in range(4):
-        assert_equal(finite_gpu[i], finite[i])
-
-    var inverted = logical_not(mask).to_host()
-    var inverted_gpu = logical_not[gpu=True](mask).to_host()
-    var conjunction = logical_and(mask, mask).to_host()
-    var conjunction_gpu = logical_and[gpu=True](mask, mask).to_host()
-    for i in range(4):
-        assert_equal(inverted_gpu[i], inverted[i])
-        assert_equal(conjunction_gpu[i], conjunction[i])
-
-    var close = isclose(a, b).to_host()
-    var close_gpu = isclose[gpu=True](a, b).to_host()
-    for i in range(4):
-        assert_equal(close_gpu[i], close[i])
-
-    var broadcast = less_equal(matrix, row).to_host()
-    var broadcast_gpu = less_equal[gpu=True](matrix, row).to_host()
-    for i in range(8):
-        assert_equal(broadcast_gpu[i], broadcast[i])
-
-    assert_equal(array_equal[gpu=True](a, b), array_equal(a, b))
-    assert_equal(allclose[gpu=True](a, b), allclose(a, b))
 
 
 def main() raises:

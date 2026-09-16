@@ -15,7 +15,10 @@ back only the scalar. Those took a host copy of the elements and walked
 them one at a time until 0.2; `exp[gpu=True]`, `greater[gpu=True]` and
 `sum[gpu=True]` now run over the tensor where it already lives, and
 `exp(a)` on a device tensor still answers -- on the host, with a line on
-`stderr` naming the spelling that would not have.
+`stderr` naming the spelling that would not have. The mismatch runs both
+ways, and `exp[gpu=True]` on a *host* tensor is checked below: that half
+has no test, because naming `gpu=True` compiles a device kernel and a
+GPU-less CI runner cannot.
 
 The last section runs the same two routines over a `Dynamic`, whose extents
 live in the value rather than the type. That is not a host fallback either:
@@ -122,6 +125,24 @@ def main() raises:
         if diff > max_exp_diff:
             max_exp_diff = diff
     print("max |exp cpu - exp gpu| =", max_exp_diff)
+
+    # ---- the other direction of the same gate, which has no test: asking
+    # for `gpu=True` on a tensor that lives in host memory. `_drive._notice`
+    # prints one line on `stderr` and the host walk runs, so the values are
+    # the ones the matching spelling gives. It is proven here rather than in
+    # `tests/` because naming `gpu=True` compiles a device kernel, which a
+    # GPU-less CI runner cannot do ----
+    var host_a = Static[dtype, 4](cpu, [0.0, 1.0, 2.0, 3.0])
+    var matched = exp(host_a).to_host()
+    var fell_back = exp[gpu=True](host_a).to_host()
+    var fallback_agrees = True
+    for i in range(4):
+        if fell_back[i] != matched[i]:
+            fallback_agrees = False
+    print(
+        "exp[gpu=True] on a host tensor fell back, values match:",
+        fallback_agrees,
+    )
 
     # ---- a comparison, whose destination is a bool tensor the launch
     # writes on the device: the mask has to come back identical, since a

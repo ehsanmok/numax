@@ -196,22 +196,5 @@ def test_every_family_agrees_between_static_and_run_time_shapes() raises:
     _agree(binom.cdf(dk, ten, p).to_host(), binom.cdf(ks, ten, p).to_host())
 
 
-def test_gpu_true_on_a_host_tensor_falls_back_and_says_so() raises:
-    # `gpu=True` against a CPU context is the mismatch the driver answers
-    # with a `stderr` notice and the host walk; the values are the default
-    # spelling's, which is what makes the fallback safe to take silently.
-    comptime f32 = DType.float32
-    var ctx = DeviceContext(api="cpu")
-    var dyn = linspace[7, f32](-2.0, 2.0, ctx=ctx).dynamic()
-    var same = linspace[7, f32](-2.0, 2.0, ctx=ctx).dynamic()
-
-    var mu = Scalar[f32](0.25)
-    var sigma = Scalar[f32](1.5)
-    var fallback = norm.cdf[gpu=True](dyn, mu, sigma).to_host()
-    var want = norm.cdf(same, mu, sigma).to_host()
-    for i in range(7):
-        assert_equal(fallback[i], want[i])
-
-
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

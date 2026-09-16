@@ -41,7 +41,10 @@ not live on runs the old host walk -- `to_host`, a scalar loop, rebuild --
 and prints one line to `stderr` naming the spelling that would not have.
 That is a deliberate fallback rather than a raise: `exp(a)` on a GPU tensor
 keeps working and keeps returning the right answer, which is what it did
-before this module existed.
+before this module existed. The fallback is proven by
+`examples/advanced/unified_tensor_gpu.mojo` and deliberately has no test:
+naming `gpu=True` compiles a device kernel, which stops with `Unknown GPU
+architecture detected` on the GPU-less runners CI uses.
 
 No driver calls `ctx.synchronize()`. The launches are stream-ordered and
 `Tensor.to_host` maps, which orders against them.

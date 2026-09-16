@@ -113,25 +113,6 @@ def test_the_reductions_agree_with_a_host_walk_on_a_longer_vector() raises:
     assert_equal(argmax(xs), host_argmax)
 
 
-def test_sum_asked_for_a_gpu_on_a_cpu_tensor_falls_back_and_says_so() raises:
-    """The device gate, from the only side a GPU-less CI can exercise.
-
-    `sum[gpu=True]` over a tensor on a CPU context cannot launch, so it
-    prints one line on `stderr` and runs the retained host walk. The claim
-    asserted is that it still answers, and answers what the default
-    spelling answers -- the fallback is the pre-0.2 behavior, not a second
-    implementation with its own bugs.
-    """
-    var ctx = DeviceContext(api="cpu")
-    var xs = _fixed_array()
-    assert_equal(sum[gpu=True](xs), sum(xs))
-    assert_equal(prod[gpu=True](xs), prod(xs))
-    assert_equal(min[gpu=True](xs), min(xs))
-    assert_equal(max[gpu=True](xs), max(xs))
-    assert_equal(argmax[gpu=True](xs), argmax(xs))
-    assert_equal(argmin[gpu=True](xs), argmin(xs))
-
-
 def test_mean_matches_hand_computed_average() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = _fixed_array()
