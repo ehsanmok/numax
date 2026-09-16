@@ -1,11 +1,16 @@
 # macOS
 .DS_Store
 
-# Local agent config/rules, not shipped with the repo
-.cursor/
+# Local agent config/rules, not shipped with the repo. `.cursor/*` rather
+# than `.cursor/`, because git will not descend into an ignored directory
+# and the exception below has to be reachable.
+.cursor/*
 .claude/
 .agents/
 skills-lock.json
+
+# Shipped: the upstream feedback for Modular and the repros that back it.
+!.cursor/upstream-repros/
 
 # pixi environments
 .pixi/*

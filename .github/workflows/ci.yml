@@ -2,7 +2,12 @@ name: CI
 
 # Prose-only changes cannot break the build, so they do not spend a matrix of
 # macOS and Linux runners. Mojo docstrings live in .mojo files and are still
-# covered: the ignored globs are markdown and images only.
+# covered: the ignored globs are markdown, images and agent-local material.
+#
+# `.cursor/**` is ignored for a stronger reason than cost. Most of it is
+# untracked, but `.cursor/upstream-repros/` ships, and the `.mojo` files in it
+# are upstream bug reports that are *expected* to fail to compile. Letting
+# them reach a build step would turn evidence into a red build.
 on:
   push:
     branches: [main]
@@ -11,6 +16,7 @@ on:
       - '**/*.png'
       - '**/*.svg'
       - 'docs/**'
+      - '.cursor/**'
       - 'LICENSE'
   pull_request:
     branches: [main]
@@ -19,6 +25,7 @@ on:
       - '**/*.png'
       - '**/*.svg'
       - 'docs/**'
+      - '.cursor/**'
       - 'LICENSE'
   workflow_dispatch:
 

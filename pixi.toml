@@ -208,6 +208,14 @@ bench-rust = { features = ["bench-rust"], no-default-feature = true }
 # have it and cannot find `numax`.
 run = { cmd = "mojo -I . {{ file }}", args = ["file"] }
 
+# One upstream repro from `.cursor/upstream-repros/`:
+# `pixi run repro 1.1b-conformance-where-rejected.mojo`. These are the
+# evidence behind `mojo-feedback.md` and `max-feedback.md`, so most are
+# *expected* to fail -- the diagnostic is the result. No `-I .`, because a
+# repro that imported numax would not be sendable upstream. `1.8` never
+# terminates by design; interrupt it.
+repro = { cmd = "mojo .cursor/upstream-repros/{{ file }}", args = ["file"] }
+
 test-dual = "mojo -I . tests/core/test_dual.mojo"
 test-format = "mojo -I . tests/core/test_format.mojo"
 test-compensated = "mojo -I . tests/core/test_compensated.mojo"

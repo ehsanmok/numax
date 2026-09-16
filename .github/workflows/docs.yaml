@@ -8,6 +8,7 @@ on:
       - '**/*.png'
       - '**/*.svg'
       - 'docs/**'
+      - '.cursor/**'
       - 'LICENSE'
   pull_request:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - '**/*.png'
       - '**/*.svg'
       - 'docs/**'
+      - '.cursor/**'
       - 'LICENSE'
   workflow_dispatch:
 
