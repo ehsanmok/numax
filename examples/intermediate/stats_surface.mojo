@@ -16,10 +16,11 @@ device with no host round trip.
 
 The rest is the NumPy and SciPy surface that sits on top of a sample:
 quantiles, a histogram, the correlation family, a regression and a t-test.
-Most of it is host-side by declaration rather than by accident -- a
-histogram needs a scatter-add MAX does not ship, and a quantile needs a
-sort -- and `docs/parity.md` records which is which, with
-`docs/performance.md` measuring what that costs.
+Each picks its route on purpose: `cov` is a centering pass and one GEMM,
+a quantile is a selection over one host copy of the sample, and a
+histogram is a host count because MAX ships no scatter-add.
+`docs/parity.md` records which is which, with `docs/performance.md`
+measuring what that costs.
 
 Run: `pixi run example-stats-surface`
 """

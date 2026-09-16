@@ -254,7 +254,18 @@ survey of what MAX does ship.
   components are each themselves a tensor.
 - **`numax.core.ops`, `numax.core.elementwise`, `numax.core.logic`** — arithmetic and
   operators on `Tensor`, the elementwise math surface, and comparisons
-  returning `Static[DType.bool]`. `Plain`-only, tier 2.
+  returning `Static[DType.bool]`. `Plain`-only and tier 2 in shape, but
+  **not host-only in fact**: all three are driven by the private
+  `numax.core._drive`, which takes a `gpu: Bool = False` last parameter on
+  every routine and launches `max.algorithm.elementwise` at `target="gpu"`,
+  at `target="cpu"` above `1 << 16` elements, and as a serial SIMD loop
+  below it, where thread dispatch loses. `elementwise` computes its grid
+  from a run-time `Coord`, so a `Dynamic` reaches the device exactly as a
+  `Static` does and there is one signature per name. The operators
+  themselves (`+`, `-`, `*`, `/`) have no parameter list to spell
+  `[gpu=True]` in, so they forward at the default; a device tensor through
+  one of them takes the retained host walk and one line on `stderr` naming
+  the fast spelling.
 - **`numax.stats`** — whole-tensor reductions, every one taking a `Tensor`,
   with `argmax`/`argmin` routed to `nn.argmaxmin`; the quantiles, histograms,
   correlation family, shape statistics and hypothesis tests as host-side

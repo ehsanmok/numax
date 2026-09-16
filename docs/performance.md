@@ -790,88 +790,97 @@ the vectors were paying for stripes four times the area. Anyone reading
 
 **Convolution -- where `fftconvolve` overtakes `convolve`** (µs per call,
 `full` mode; the two numax rows at each `(m, k)` agree to `1e-6`, and so
-do SciPy's):
+do SciPy's). Re-measured on a quiet machine after the engine change,
+best of two runs each, **Apple M3 Pro**, `float32`, load average 3.2 to
+6.0 with no other process above 1% of a core:
 
 | `m` | `k` | numax direct | numax FFT | SciPy direct | SciPy FFT |
 |---|---|---|---|---|---|
-| 4,096 | 8 | 13.0 | 654 | 5.8 | 44.9 |
-| 4,096 | 32 | 59.8 | 615 | 30.5 | 44.5 |
-| 4,096 | 128 | 336 | 576 | 46.1 | 44.7 |
-| 4,096 | 512 | 1,650 | 581 | 125 | 45.0 |
-| 4,096 | 2,048 | 7,221 | 626 | 615 | 52.1 |
-| 65,536 | 8 | 96.0 | 10,826 | 78.6 | 743 |
-| 65,536 | 128 | 1,776 | 11,101 | 697 | 777 |
-| 65,536 | 512 | 9,954 | 10,856 | 1,941 | 780 |
-| 65,536 | 2,048 | 43,866 | 10,929 | 11,262 | 485 |
+| 4,096 | 8 | 12.7 | 272 | 5.8 | 44.9 |
+| 4,096 | 32 | 59.2 | 272 | 31.0 | 44.7 |
+| 4,096 | 128 | 319 | 272 | 45.4 | 44.8 |
+| 4,096 | 512 | 1,743 | 275 | 126 | 45.1 |
+| 4,096 | 2,048 | 7,870 | 271 | 635 | 52.6 |
+| 65,536 | 8 | 83.0 | 5,638 | 58.5 | 749 |
+| 65,536 | 32 | 329 | 5,602 | 458 | 752 |
+| 65,536 | 128 | 1,761 | 5,579 | 679 | 784 |
+| 65,536 | 512 | 9,902 | 5,581 | 1,937 | 787 |
+| 65,536 | 2,048 | 43,656 | 5,514 | 11,060 | 475 |
 
-The table above is the one-stage-per-launch engine, kept as the "before"
-column. The direct form is within 1.2-2x of SciPy's up to 128 taps -- one
-`elementwise` launch of `m + k - 1` dot products -- and falls to 4x behind
-at 2048 taps, where SciPy's direct kernel pulls ahead. The transform route
-was the weak one: 10.9 ms for a `131072`-point round trip was 14x SciPy's
-`pocketfft`, because `numax.fft` was `log2(n) + 1` `elementwise` launches
-per transform, three transforms plus two padding passes per convolution,
-and on a CPU each launch is a thread-pool dispatch over `n/2` butterflies
-of trivial work.
+**The crossover, which is what this table is for**: numax's transform
+route overtakes its direct one at about **`k = 110` at `m = 4,096`** and
+**`k = 310` at `m = 65,536`**, against SciPy's `k ~ 128` and `k ~ 165` on
+the same runs. So the acceptance target of `k <= 128` is met at the
+smaller length and missed at the larger, and the reason is the row above:
+numax's direct convolution is competitive (it *beats* SciPy's at
+`m = 65,536, k = 32`, 329 µs against 458) while its transform is 5-12x
+behind `pocketfft`, so the ratio that sets the crossover is the transform's.
+`numax/signal/convolution.mojo`'s docstring carries these two numbers.
 
-**The engine is now fused and radix-4**, and the launch count is the whole
-of the change: `1 + ceil((log2(n) - 6) / 2)` rather than `log2(n) + 1`, so
-7 launches at `n = 2^17` where there were 18, and 1 at every `n <= 64`.
-One kernel does the bit-reversal gather and the first six stages in 128
+**The engine is fused and radix-4**, and the launch count is the whole of
+the change: `1 + ceil((log2(n) - 6) / 2)` rather than `log2(n) + 1`, so 7
+launches at `n = 2^18` where there were 18, and 1 at every `n <= 64`. One
+kernel does the bit-reversal gather and the first six stages in 128
 registers, each pair of stages after it is one radix-4 kernel over `n/4`
 butterflies, and the inverse `1/n` rides on the last kernel's stores
-instead of a pass of its own. Measured beside the change on an M3 Pro at
-`float32` -- **not on a quiet machine**, another lane was running gates, so
-read the direction and not the third digit; the final table is the M2
-sweep:
+instead of a pass of its own.
 
-| | before | after |
-|---|---|---|
-| `fft`, `n = 2^10` (engine only) | 20.2 | 15.6 |
-| `fft`, `n = 2^14` | 322 | 221 |
-| `fft`, `n = 2^16` | 1,481 | 979 |
-| `fft`, `n = 2^18` | 7,527 | 5,100 |
-| `fft`, `n = 2^20` | 37,036 | 26,922 |
-| `fftconvolve`, `m = 4096`, `k = 128` | 509 | 312 |
-| `fftconvolve`, `m = 4096`, `k = 2048` | 498 | 390 |
-| `fftconvolve`, `m = 65536`, `k = 512` | 12,552 | 7,560 |
-| `fftconvolve`, `m = 65536`, `k = 2048` | 14,326 | 7,463 |
-| `welch`, `nperseg = 256`, `n = 2^20` | 19,094 | 13,219 |
+**Against `pocketfft`** (`bench-fft` against `bench-scipy-fft`, same
+machine and session, best of two numax runs; numax's figure is the timed
+call minus that size's `input` row, which is the buffer construction every
+transform here consumes):
 
-About 1.4-1.5x on the transform itself and the same on everything built on
-it, and the crossover the convolution module said it would not guess moves
-with it: **about `k = 100` at `m = 4096` and `k = 300` at `m = 65536`**,
-from `~180` and `~570` on the same runs, against SciPy's `k ~ 128` and
-`~150`. Against `pocketfft` the gap is now about **3x** (`bench-fft`
-against `bench-scipy-fft` in one session: `n = 2^18`, 5.1 ms against 1.7;
-`n = 2^20`, 26.9 against 9.5), down from 14x. What is left is that one
-radix-4 launch still writes its result to memory and reads it back, where
-pocketfft keeps a whole cache-sized block in registers across every stage;
-a six-stage fused block at the *top* of the transform as well as the
-bottom is the shape that closes it, and it is not written.
+| `n` | numax `fft` | SciPy `fft` | ratio | numax `rfft` | SciPy `rfft` | ratio |
+|---|---|---|---|---|---|---|
+| `2^10` | 16.5 | 4.0 | 4.1 | 15.2 | 4.1 | 3.7 |
+| `2^12` | 49.8 | 10.6 | 4.7 | 39.8 | 8.8 | 4.5 |
+| `2^14` | 173 | 42.5 | 4.1 | 158 | 28.7 | 5.5 |
+| `2^16` | 875 | 213 | 4.1 | 808 | 155 | 5.2 |
+| `2^18` | 4,075 | 1,241 | 3.3 | 3,755 | 957 | 3.9 |
+| `2^20` | 17,647 | 6,002 | **2.9** | 16,631 | 3,817 | 4.4 |
 
-**Filters and spectra, `n = 2^20`** (µs per call):
+and `fft2` at `512 x 512` is 4,782 against 887, a ratio of 5.4.
 
-| op | numax | SciPy | numax / SciPy |
-|---|---|---|---|
-| `lfilter`, 32-tap FIR | 99,192 | 7,955 | 0.08 |
-| `filtfilt`, Butterworth order 4 | 31,994 | 14,127 | 0.44 |
-| `medfilt`, kernel 5 | 2,391 | 4,843 | **2.0** |
-| `savgol_filter`, window 11 / order 3 | 2,507 | 4,852 | **1.9** |
-| `welch`, `nperseg = 256` | 6,780 | 83,839 | **12.4** |
+**The honest summary is 3 to 5.5x behind, not "about 3x".** 2.9x is the
+best cell in the table -- the complex `fft` at the largest size, where the
+launch count is amortized over the most work -- and the real transforms
+sit nearer 4-5x because `rfft` pays a pack/unpack pass that `pocketfft`
+folds into its own butterflies. Before the fused engine the same
+comparison was 14x, so the launch count was most of the old gap and is
+not most of what is left. What is left is that one radix-4 launch still
+writes its result to memory and reads it back, where `pocketfft` keeps a
+cache-sized block in registers across every stage; a six-stage fused block
+at the *top* of the transform as well as the bottom is the shape that
+closes it, and it is not written.
 
-The two `elementwise` filters beat SciPy's C by 2x and `welch` -- 8,191
-segments through one batched `rfft` -- by 12x. The `welch` row predates
-the fused engine; re-measured beside that change it fell about 1.45x
-(19,094 to 13,219 µs on a busy machine, the pair above), so the ratio is
-better than 12.4 and the number to publish is the M2 sweep's, not either
-of those. The recurrences lose, as
-the module docstring says they diverge for: `lfilter` is a `Float64` host
-loop over a `List`, and at 32 taps it is 12x behind `scipy.signal`'s C
-`lfilter`; the IIR `filtfilt` at 4 taps is 2.3x behind. The gap is the
-`List[Float64]` indexing and the two host round trips, not the algorithm,
-and a `Scalar[dtype]`-typed loop over the tensor's own buffer is the
-straightforward fix.
+**Filters and spectra, `n = 2^20`** (µs per call, best of two runs each,
+same machine and session):
+
+| op | numax | SciPy | numax / SciPy | was |
+|---|---|---|---|---|
+| `lfilter`, 32-tap FIR | 10,649 | 7,926 | 0.74 | 0.08 |
+| `filtfilt`, Butterworth order 4 | 12,396 | 14,870 | **1.20** | 0.44 |
+| `medfilt`, kernel 5 | 2,371 | 4,870 | **2.05** | 2.0 |
+| `savgol_filter`, window 11 / order 3 | 2,401 | 4,951 | **2.06** | 1.9 |
+| `welch`, `nperseg = 256` | 9,480 | 84,035 | **8.9** | 12.4 |
+
+The two recurrences are the rows that moved. `lfilter` was a `Float64`
+host loop over four full-length `List`s and 12x behind SciPy's C; a
+`Scalar[dtype]` loop over the tensor's own mapped buffer is **9.3x
+faster** and now 1.35x behind, which meets the acceptance target of 2x.
+`filtfilt` runs its backward pass in place over the extended buffer
+instead of materializing a reversed copy and is now **ahead** of SciPy.
+The recurrence itself stays host-side and the module docstring says why:
+a first-order recurrence has no parallel form that is worth its constant.
+
+`welch` reads 8.9x rather than the 12.4x this table first published, and
+the ratio moved because **SciPy got faster on this machine, not numax
+slower** -- 84,035 µs here against the 83,839 the first table recorded,
+while numax went 6,780 to 9,480. Both numax figures are `welch` through
+one batched `rfft` over 8,191 segments; the difference is that the 6,780
+was taken before the FFT engine was rewritten and on a machine whose state
+is not recoverable. 8.9x is the number measured on a quiet machine with
+both halves in one session, and it is the one to use.
 
 **Interpolation** (µs per call, `n = 1024` knots, `m = 2^20` queries):
 
@@ -888,30 +897,44 @@ Construction is the not-a-knot tridiagonal system on the host, 3x behind
 SciPy's `solve_banded`, at a cost that is a quarter of a millisecond and
 independent of how many points are later evaluated.
 
-**Statistics** (µs per call; `norm.cdf` and `histogram` at `n = 2^24`,
-`quantile` too, `cov`/`corrcoef` on `8 x 2^20`):
+**Statistics** (µs per call; `norm.cdf`, `histogram` and `quantile` at
+`n = 2^24`, `cov`/`corrcoef` on `8 x 2^20`; best of two runs each, same
+machine and session, load average 2.6 to 2.7):
 
-| op | numax | NumPy / SciPy | numax / SciPy |
-|---|---|---|---|
-| `norm.cdf` | 41,048 (3.3 GB/s) | 221,533 (0.6 GB/s) | **5.4** |
-| `histogram`, 64 bins | 72,286 | 75,643 | 1.05 |
-| `quantile`, `q = 0.5` | 1,096,237 | 51,090 | 0.05 |
-| `cov`, 8 variables | 124,783 | 14,307 | 0.11 |
-| `corrcoef`, 8 variables | 124,843 | 14,354 | 0.11 |
+| op | numax | NumPy / SciPy | numax / SciPy | was |
+|---|---|---|---|---|
+| `norm.cdf` | 34,392 (3.9 GB/s) | 217,048 (0.6 GB/s) | **6.3** | 5.4 |
+| `histogram`, 64 bins | 70,012 | 75,181 | **1.07** | 1.05 |
+| `quantile`, `q = 0.5` | 150,546 | 52,765 | 0.35 | 0.05 |
+| `cov`, 8 variables | 4,133 | 13,502 | **3.27** | 0.11 |
+| `corrcoef`, 8 variables | 4,012 | 13,557 | **3.38** | 0.11 |
 
 `norm.cdf` is one `elementwise` through the tier-1 `erf` and beats
-`scipy.stats` by 5x -- and is still at 3.3 GB/s on a machine whose
-memory moves `~150`, so it is compute-bound on the `erf` polynomial,
-not bandwidth-bound: the same `elementwise` walk moves `medfilt` over
-`2^20` points in 2.4 ms. The device path is where that changes.
-`histogram` matches NumPy; both are host-side counts. The two rows to
-fix are the other host loops: `quantile` sorts a `List` of `2^24` on
-the host where NumPy partitions, 21x behind, and `cov` runs its
-`O(rows^2 n)` in a `Float64` host loop, 9x behind. The `correlation`
-module is host-side because its inputs are whole-tensor reductions; a
-centering `map` and one `matmul` is the device shape that would put
-`cov` at GEMM speed, and it joins the same backlog as the spectral
-accumulation above.
+`scipy.stats` by 6x -- and is still at 3.9 GB/s on a machine whose memory
+moves `~150`, so it is compute-bound on the `erf` polynomial rather than
+bandwidth-bound: the same `elementwise` walk moves `medfilt` over `2^20`
+points in 2.4 ms. `histogram` matches NumPy; both are host-side counts.
+
+**`cov` is the largest single ratio this page records.** It was an
+`O(rows^2 n)` `Float64` host loop at 124,783 µs and is now a Welford
+`variance_axis` for the means, one `broadcast_op_axis` to centre, and one
+`inner` for the Gram matrix with the `1/(n - ddof)` scaling folded into
+the matmul epilogue: **30x faster** and 3.3x ahead of NumPy, because the
+cubic term is `linalg.matmul` and NumPy's `cov` is not a GEMM.
+`corrcoef` adds one `elementwise` over the outer product of the
+diagonal's square roots and costs nothing more.
+
+**`quantile` is the row that improved most and still loses.** The host
+sort of a `List[Float64]` of the whole tensor is gone -- it partitions at
+the one or two indices the method needs, at `dtype` rather than widened --
+which is **7.3x** off the old figure, from 21x behind NumPy to 2.85x. It
+misses the acceptance target of 2x, and the reason is not the selection
+any more: at `n = 2^24` the call still moves the whole 64 MB tensor to the
+host before partitioning, and 64 MB at the `to_host` path's rate is most
+of the 150 ms. The device route exists for the comptime-shaped median
+(`top_k[largest=False]` at `k = n//2 + 1` is fully device-resident) and
+does not cover the general `q`. That download is the ceiling, and closing
+it is a device selection network, not a better partition.
 
 ### The core surface, measured
 

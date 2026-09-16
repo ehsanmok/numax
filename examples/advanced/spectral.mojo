@@ -8,13 +8,16 @@ it be pointed at a matrix too large to sit in a kernel's stack frame.
 two phases with different characters:
 
 1. A **reduction** to band form -- `sytrd` to tridiagonal, `gebrd` to
-   bidiagonal, `gehrd` to Hessenberg. Blocked, device-resident, every
-   heavy step a `linalg.matmul`, exactly like `cholesky` and `qr_factor`.
-2. An **iteration** on that band -- implicit QL/QR, Golub-Kahan, Francis
-   double-shift. Sequential, data-dependent, `float64` on the host. It is
-   tier 2 and says so, and when eigenvectors are wanted it is also where
-   the time goes: accumulating Givens rotations into `Z` is `O(n^3)` of
-   scalar work with no GEMM to send it to.
+   bidiagonal, `gehrd` to Hessenberg. Blocked panels, device-resident,
+   every heavy step a `linalg.matmul`, exactly like `cholesky` and
+   `qr_factor`. This is where most of the time goes: one whole-matrix
+   product per column that no panel width removes.
+2. An **iteration** on that band -- implicit QL, bidiagonal QR, Francis
+   double-shift. Sequential and data-dependent, so the sweep itself runs on
+   the host at `dtype`; it is tier 2 and says so. Its rotations are grouped
+   into windows and applied to the eigenvectors as GEMMs on the device, so
+   asking for vectors costs a fraction more than the values, not a
+   multiple.
 
 `docs/performance.md` measures that split rather than asserting it. Read
 it before assuming `eigh` costs what `cholesky` costs.

@@ -131,14 +131,29 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
 
 ## What numax does not claim
 
-- **Speed of the spectral decompositions, the FFT, or the host-loop
-  statistics.** On `Tensor` at `n = 1024`, `eigh`, `svd` and `schur` are at
-  0.002-0.11 of LAPACK because eigenvector accumulation is still a host
-  loop; a `2^17`-point FFT round trip is 14x behind pocketfft; `quantile`,
-  `cov` and `lfilter` are at 0.05-0.11 of NumPy and SciPy. The surfaces
-  that are one `elementwise` launch or one batched transform are ahead
-  (`norm.cdf` 5.4x, `interp` 9.4x, `welch` 12x, on the processor named in
-  [`performance.md`](performance.md)).
+- **LAPACK's speed on the spectral decompositions, or pocketfft's on the
+  transform.** On `Tensor` at `n = 1024`, `float32`, against Accelerate on
+  the processor named in [`performance.md`](performance.md): `eigh` is at
+  0.45 of LAPACK and `eigvalsh` 0.28, `schur` 0.16 and `eigvals` 0.15,
+  `svd` 0.056 and `svdvals` 0.034. What is left in each is named there --
+  the reduction's whole-matrix `A v` for the symmetric and singular pairs,
+  the host Francis iteration for the general ones -- and both are filed for
+  0.3 in [`parity.md`](parity.md) with their numbers. The FFT is 3x behind
+  pocketfft on a complex `2^20` transform and 4-5.5x on the real ones and
+  in the middle of the range, down from 14x before the engine was fused.
+  `quantile` is 2.85x behind NumPy, because at `2^24` it still moves the
+  whole tensor to the host to select on it.
+- **A GPU spectral path.** The six spectral entry points accept `gpu=True`
+  and return wrong answers on Metal in 0.2; the factorizations do not.
+  Use the default until it is fixed.
+
+  The surfaces that are one `elementwise` launch, one GEMM or one batched
+  transform are ahead: `interp` 9.4x, `welch` 8.9x, `norm.cdf` 6.3x, `cov`
+  and `corrcoef` 3.3x, `medfilt` and `savgol_filter` 2.05x, `filtfilt`
+  1.2x, and the NumPy-named core surface -- `exp`, `a + b`, `a * 2`, the
+  comparisons, `sum` -- ahead of NumPy on every row at `2^24`, mostly
+  because `elementwise[target="cpu"]` uses every core where a ufunc uses
+  one.
 - **A drop-in NumPy or CuPy replacement.** No fancy indexing, no owned
   slicing, no dtype promotion (`astype` is explicit), and `map`/`reduce`'s
   run-time-shaped overloads are CPU-only because `enqueue_function` needs the
@@ -147,8 +162,11 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
 - **Every SciPy operation at every conformer.** The `Tensor` tier is
   `dtype`-monomorphic by construction: a `DeviceBuffer` holds a machine
   scalar, and the conformers are Mojo structs. Conformers live on
-  `Array[T, n]`, and `to_tensor` lowers `Plain` only. The two tiers are a
-  real choice, not a staging area; [`architecture.md`](architecture.md)
+  `Array[T, n]`, and `to_tensor` lowers three of them -- `Plain` to one
+  tensor, `Dual` to a `(value, derivative)` pair and `Gradient[.., n_vars]`
+  to a value plus its partials in `(variable, element)` order -- which is
+  the set whose components are each themselves a tensor. The two tiers are
+  a real choice, not a staging area; [`architecture.md`](architecture.md)
   has the seam.
 - **Reverse-mode autodiff or large parameter vectors.** `Gradient[T, n]` is
   forward-mode and its cost grows with `n`. A tape was prototyped, ran

@@ -154,7 +154,7 @@ and `Plain` has its own one-ulp `exp`, `ln` and `erf` at `float64`.
 
 Young and experimental, so APIs may change. Not here yet, each on purpose:
 fancy indexing and owned slicing, dtype promotion (`astype` is explicit),
-GPU launches over run-time shapes, reverse-mode autodiff (`Gradient` is
+decompositions over run-time shapes, reverse-mode autodiff (`Gradient` is
 forward and was measured against a tape), sparse matrices, Krylov solvers
 and distributed execution. [`docs/why.md`](docs/why.md) says why for each.
 
@@ -474,12 +474,12 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.optimize.root` | `root[n, f](x0)` over `Array`, `root[dtype, n, f, jac](x0)` over `Tensor` | `newton` and `lm`; check `residual_norm`, not only `converged`, since a system with no root still has points where `\|\|F\|\|` stops falling |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
-| `np.fft.fft`, `np.fft.rfft`, `np.fft.irfft` | `fft`, `rfft`, `irfft` | **any length** over `Tensor`: radix-2 at a power of two, Bluestein's chirp-z otherwise. `numax.fft` is the `Tensor` tier, a real/imaginary pair across `log2(n) + 1` device stages; `numax.fft.array` is `Array[Complex[T], n]`, differentiates, and stays power-of-two |
+| `np.fft.fft`, `np.fft.rfft`, `np.fft.irfft` | `fft`, `rfft`, `irfft` | **any length** over `Tensor`: radix-2 and radix-4 at a power of two, Bluestein's chirp-z otherwise. `numax.fft` is the `Tensor` tier, a real/imaginary pair through a few fused device launches per axis; `numax.fft.array` is `Array[Complex[T], n]`, differentiates, and stays power-of-two |
 | `np.fft.fft2` / `rfft2` / `fftshift` | `fft2`, `ifft2`, `rfft2`, `fftshift`, `ifftshift`, `next_fast_len` | rectangular, one axis at a time, device-resident between them |
 | `scipy.fft.dct` / `dst` | `dct`, `idct`, `dst`, `idst` | types I through IV, each a real projection of one complex DFT |
 | `scipy.signal.convolve` / `correlate` / `fftconvolve` | same names | `full`/`same`/`valid`. The direct form is one launch of dot products; which route is faster depends on the kernel length and [`docs/performance.md`](docs/performance.md) measures the crossover rather than guessing |
 | `scipy.signal.lfilter` / `filtfilt` / `sosfilt` | same names, plus `lfilter_zi` | recurrences, so host-side by declaration: sample `k` needs sample `k - 1`, which leaves neither a GEMM nor independent lanes |
-| `scipy.signal.firwin` / `butter` / `freqz` | same names | `firwin` covers every band shape; `butter` is IIR design, which used to be out of scope here and is a recorded reversal rather than a quiet addition |
+| `scipy.signal.firwin` / `butter` / `cheby1` / `cheby2` / `ellip` / `iirfilter` / `freqz` | same names | `firwin` covers every band shape; `butter`, `cheby1`, `cheby2` and `ellip` design lowpass, highpass, bandpass and bandstop, and `iirfilter` picks the family by name |
 | `scipy.signal.medfilt` / `savgol_filter` / `detrend` / `resample` | same names | a window per lane, so these are the filters that go to a device unchanged |
 | `scipy.signal.get_window` and the window factories | `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `boxcar`, `get_window` | SciPy's symmetric and periodic forms both |
 | `scipy.signal.welch` / `spectrogram` / `stft` / `hilbert` | same names from `numax.signal`, plus `periodogram`, `find_peaks` | each one batched transform over framed input |
@@ -661,13 +661,12 @@ rather than `if`, because the lanes of one SIMD value can disagree about which
 branch they want.
 
 Tier 2 is free to loop until it converges and to branch on the data it sees. It
-is `Plain`-only and host-side: `ops`, `elementwise`, `logic`, `sorting`, `io`,
-the tensor reductions and the whole statistics surface in `stats`, the
-converge-to-tolerance minimizers in `optimize`, the adaptive
-`quad`/`solve_ivp` in `integrate`, and the `Tensor` tier of `linalg` --
-including the spectral decompositions, whose reduction to band form is
-blocked and device-resident but whose sweep over that band is a host loop
-that deflates on a test of the data.
+is `Plain`-only: `sorting`, `io`, the converge-to-tolerance minimizers in
+`optimize`, the adaptive `quad`/`solve_ivp` in `integrate`, and the `Tensor`
+tier of `linalg`, whose panels run on the device while each sweep over a band
+deflates on a host test of the data. `ops`, `elementwise`, `logic` and the
+reductions are tier 2 in shape and run through MAX on either processor,
+chosen by one `gpu` parameter.
 
 Tier 1 never calls tier 2, so a kernel you can launch stays launchable. Where
 both make sense the library ships both: `newton` at a fixed iteration count and
@@ -728,17 +727,19 @@ same source produces both device rows. Full sweeps from 64K to 67M, both sync
 shapes, and the methodology: [`docs/performance.md`](docs/performance.md),
 [`bench/README.md`](bench/README.md).
 
-**Where this version is slow, stated rather than omitted.** Everything that
-is one `elementwise` launch or one batched transform is ahead of SciPy on the
-same processor -- `norm.cdf` 5.4x, `interp` 9.4x, `welch` 12x, `medfilt` and
-`savgol_filter` about 2x. Everything that is still a host loop is behind it
-by roughly what a scalar loop costs against C: `quantile` 0.05x, `lfilter`
-0.08x, `cov` 0.11x. The spectral decompositions are the sharpest case, at
-0.002-0.11 of LAPACK at `n = 1024`, because the reduction to band form is
-blocked and device-resident but accumulating the eigenvectors is `O(n^3)` of
-scalar Givens rotations on the host. Every one of those numbers, and what
-would close each gap, is in
-[`docs/performance.md`](docs/performance.md).
+**Where this version is slow, stated rather than omitted.** M3 Pro,
+`float32`, against NumPy and SciPy on Accelerate. Ahead: `exp`, `a + b` and
+`sum` over a `Tensor` at 2^24 elements, since they run on every core; `cov`
+3.3x, `filtfilt` 1.2x, `welch` 8.9x, `norm.cdf` 6.3x, `interp` 9.4x. Behind:
+`quantile` at 0.35x, which still downloads the sample before selecting;
+`lfilter` at 0.74x; the FFT at about a third of pocketfft on a 2^20
+transform; and the spectral decompositions, `eigh` at 0.45 of LAPACK at
+`n = 1024`, `schur` 0.16, `svd` 0.056. Their eigenvectors accumulate on the
+device; the cost left is one whole-matrix product per column in the
+reductions and the host sweep over the band. The factorizations' ratio to
+LAPACK rises with `n`, from 0.10 at 256 to 0.41 at 4096 for `cholesky`. The
+`gpu=True` spelling of the spectral routines is wrong on Metal, a known bug.
+Every number and its harness is in `docs/performance.md`.
 
 **Dense linalg is a separate measurement, on separate hardware** (EPYC 7R32
 host, A10G device), `float32` because MAX's `matmul` does not compile for GPU
