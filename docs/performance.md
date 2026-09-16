@@ -872,6 +872,157 @@ centering `map` and one `matmul` is the device shape that would put
 `cov` at GEMM speed, and it joins the same backlog as the spectral
 accumulation above.
 
+### The core surface, measured
+
+At `b0c0def` every NumPy-named routine over `Tensor` -- `exp(a)`, `a + b`,
+`a * 2`, the comparisons, `sum` -- was a `to_host()`, a scalar `for` loop
+and a rebuild, whatever the tensor's memory or the caller's target. 0.2
+routes all of them through `numax.core._drive`, which picks a serial SIMD
+loop, `max.algorithm.elementwise[target="cpu"]` or
+`elementwise[target="gpu"]` from one `gpu: Bool` and one size threshold.
+These are the numbers.
+
+Harness `bench/bench_core_surface.mojo` (`pixi run bench-core-surface`)
+against `bench/numpy/core_surface.py`
+(`pixi run -e bench-python bench-numpy-core-surface`), the same hashed data
+on `[-3, 3)` and the same byte count per row in both. **Apple M3 Pro**, 6
+performance and 6 efficiency cores, `float32`, NumPy 2.5.2. Each figure is
+the best of five consecutive runs for the 0.2 column and the best of three
+for the other two: the four elementwise rows allocate their destination
+per call the way a caller's would, and that allocation occasionally hits a
+slow path in the CPU allocator, which puts a 10-30x outlier in one run out
+of five at `n <= 2^14` and leaves the rows that allocate nothing (the
+crossover table below) reproducible to 1%. The `uptime` figure read 2.0 to
+5.8 before each run, which is the decay tail of the run before it;
+`ps -Ao pid,%cpu,comm` between runs showed nothing above 1% of one core.
+
+**At `n = 2^24`** (µs per call; `B/elem` is the bytes each row moves per
+element, so the GB/s columns are comparable only within a row):
+
+| op | B/elem | `b0c0def` µs | 0.2 µs | 0.2 GB/s | speedup | NumPy µs | numax / NumPy |
+|---|---|---|---|---|---|---|---|
+| `exp(a)` | 8 | 55,745 | 1,624 | 82.6 | **34.3x** | 25,153 | **15.5** |
+| `a + b` | 12 | 73,530 | 2,153 | 93.5 | **34.2x** | 5,271 | **2.4** |
+| `a * 2` | 8 | 53,732 | 1,580 | 85.0 | **34.0x** | 4,641 | **2.9** |
+| `greater(a, zeros)` | 9 | 63,940 | 1,397 | 108.1 | **45.8x** | 4,875 | **3.5** |
+| `sum(a)` | 4 | 19,698 | 567 | 118.3 | **34.7x** | 2,000 | **3.5** |
+
+The host walk was moving 2.4-3.4 GB/s at every size above `2^14` -- one
+element per iteration, one round trip per call -- and the routed surface
+moves 83-118, against a machine whose memory tops out near 150. `sum` at
+118 GB/s is 79% of that. The acceptance question this table was built to
+answer ("only useful for small tensors") is answered in the last column:
+at `2^24` numax is ahead of NumPy on all five, and `greater` is ahead
+while moving 9 bytes per element to NumPy's 5 -- NumPy's own `a > 0`
+spelling, which broadcasts a scalar instead of naming a zero tensor, is
+3,903 µs, still 2.8x the routed comparison.
+
+**Do not read that last column as a kernel comparison.** Most of it is
+core count: `elementwise[target="cpu"]` runs on all twelve, NumPy's
+ufuncs are single-threaded. On a pure memory-bound add NumPy reaches 38.2
+GB/s on one core where numax reaches 93.5 on twelve, so per core NumPy's
+kernel is the better one and the ratio is a statement about the launch
+policy, not about the arithmetic. The one row where numax's *serial*
+kernel is genuinely faster is `exp`: the crossover table's serial walk
+moves 21.3 GB/s through `std.math.exp`, four times NumPy's 5.3 for
+`np.exp` at `float32`.
+
+**At `n = 2^10`** the same five rows, where the policy deliberately does
+*not* thread (µs per call):
+
+| op | `b0c0def` | 0.2 | NumPy |
+|---|---|---|---|
+| `exp(a)` | 8.95 | 0.81 | 1.69 |
+| `a + b` | 12.22 | 0.51 | 0.39 |
+| `a * 2` | 8.81 | 0.51 | 0.51 |
+| `greater(a, zeros)` | 11.60 | 2.79 | 0.58 |
+| `sum(a)` | 3.47 | 3.56 | 0.51 |
+
+Ten to twenty-four times faster than the host walk and within about 1.3x
+of NumPy on the two arithmetic rows, which is the allocation and the
+device gate. `sum` does not move at all at this size, because its
+`b0c0def` spelling was already a MAX reduction rather than a host loop;
+what 0.2 changed for it is the 2^24 row above. `greater` is the outlier
+at 2.79 µs, and it is the one row whose five samples spanned 3.6x, so
+treat it as "a few microseconds" rather than as a measurement.
+
+**Where threading starts to pay, and why `_THREADED_FROM` did not move.**
+The last table in the harness runs one `exp` body through
+`numax.core.tensor.map` (a serial SIMD walk) and `map_threaded` (the same
+walk through `elementwise[target="cpu"]`) over two buffers the caller
+already owns, so neither row pays for an allocation and both are
+reproducible to 1%:
+
+| `n` | `map`, serial SIMD µs | `map_threaded` µs | threaded / serial |
+|---|---|---|---|
+| `2^12` | 1.53 | 1.59 | 0.96 |
+| `2^14` | 6.19 | 6.22 | 1.00 |
+| `2^15` | 12.31 | 12.33 | 1.00 |
+| `2^16` | 24.73 | 16.28 | **1.52** |
+| `2^18` | 97.55 | 71.52 | 1.36 |
+| `2^20` | 390.31 | 79.69 | **4.90** |
+| `2^24` | 6,298.6 | 1,581.5 | 3.98 |
+
+The serial walk is flat at 2.65 G elem/s (21.3 GB/s) at every size from
+`2^12` up, so the ratio column is entirely what threading adds. It adds
+nothing through `2^15` and 1.52x at `2^16`, which puts the crossover
+inside a single doubling of `_THREADED_FROM`'s provisional `1 << 16`.
+**The constant stays where it was**; this is the measurement that was
+owed for it, not a change to it.
+
+Two things in that table are worth naming rather than smoothing. The
+`2^18` row is slower *per element* than `2^20` -- 3.7 G elem/s against
+13.2 -- and it is not noise: it reproduces across all five runs to
+within 1.3x, and the routed `exp(a)` dips at the same size, so it is
+`elementwise`'s CPU grain policy rather than anything numax does. And
+the jump from 1.00 to 1.52 between `2^15` and `2^16` is sharp enough
+that no smoother threshold would fit it better.
+
+At `2^24` the same three spellings read 6,299 µs for `map`, 1,582 for
+`map_threaded` and 1,614 for `exp(a)`, so the NumPy-named call costs **2%**
+over the primitive it is built on -- the device gate, the rank-1 flatten
+and the destination allocation together.
+
+**The same surface on Metal**, `pixi run bench-core-surface-gpu`, same M3
+Pro, `float32`, best of three. Separate table and separate processor: no
+row here may be compared with a row above. Both sync shapes are reported
+because they differ by 5x at small sizes -- **per-call** synchronizes
+inside the timed region, so it is one launch through completion, and
+**amortized** enqueues ten launches and synchronizes once:
+
+| op | `n` | µs/call | GB/s | µs amortized | GB/s |
+|---|---|---|---|---|---|
+| `exp(a)` | `2^10` | 125.8 | 0.07 | 24.2 | 0.34 |
+| `a + b` | `2^10` | 120.4 | 0.10 | 24.0 | 0.51 |
+| `a * 2` | `2^10` | 119.5 | 0.07 | 23.9 | 0.34 |
+| `greater(a, zeros)` | `2^10` | 114.8 | 0.08 | 24.0 | 0.38 |
+| `sum(a)` | `2^10` | 302.0 | 0.01 | 290.9 | 0.01 |
+| `exp(a)` | `2^20` | 289.0 | 29.0 | 138.2 | 60.7 |
+| `a + b` | `2^20` | 345.7 | 36.4 | 149.4 | 84.2 |
+| `a * 2` | `2^20` | 300.9 | 27.9 | 134.7 | 62.3 |
+| `greater(a, zeros)` | `2^20` | 221.1 | 42.7 | 88.7 | 106.4 |
+| `sum(a)` | `2^20` | 348.5 | 12.0 | 332.5 | 12.6 |
+| `exp(a)` | `2^24` | 2,674 | 50.2 | 2,106 | 63.7 |
+| `a + b` | `2^24` | 3,284 | 61.3 | 2,204 | 91.4 |
+| `a * 2` | `2^24` | 2,672 | 50.2 | 2,087 | 64.3 |
+| `greater(a, zeros)` | `2^24` | 1,911 | 79.0 | 1,387 | 108.9 |
+| `sum(a)` | `2^24` | 1,017 | 66.0 | 1,033 | 65.0 |
+
+Below about `2^16` the table is launch latency and nothing else: every
+elementwise row costs the same 115-126 µs per call and the same 24 µs
+amortized whatever `n` is, because the work is far under one dispatch.
+`sum` is the exception that names itself -- it ends in a one-element
+`to_host`, which orders against the launch whatever the caller does, so
+its two columns are the same measurement twice.
+
+The reading to take from the `2^24` rows is **not** that the GPU is
+faster. On an M3 Pro the two processors share one memory controller, so a
+memory-bound elementwise kernel reaches 64-109 GB/s amortized on the
+device against 83-118 GB/s threaded on the CPU, and the CPU is ahead on
+four rows of five. What the device path is for is that the data does not
+move: a tensor built on a `DeviceContext` and operated on with `gpu=True`
+never round-trips, which at `b0c0def` it did on every single call.
+
 ### The ceiling row is not the ceiling a blocked factorization can reach
 
 Every table above opens with `linalg.matmul` at `n x n x n` and invites

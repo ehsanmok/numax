@@ -1,7 +1,8 @@
 """NumPy CPU baseline for the core-surface sweep ../bench_core_surface.mojo
 runs.
 
-Same hashed data on `[-3, 3)`, same sizes, same `float32`, same columns,
+Same hashed data on `[-3, 3)`, the same seven sizes, same `float32`,
+same columns,
 and the same byte count per row -- `np.exp`, `a + b`, `a * 2`, the
 comparison, and `a.sum()` are the routines numax's names come from.
 
@@ -20,7 +21,7 @@ import time
 import numpy as np
 
 DTYPE = np.float32
-SIZES = [1 << 10, 1 << 14, 1 << 20, 1 << 22, 1 << 24]
+SIZES = [1 << 10, 1 << 14, 1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24]
 WARMUP_ITERS = 2
 BUDGET_SECS = 1.0
 

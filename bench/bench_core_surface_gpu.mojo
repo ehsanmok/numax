@@ -1,9 +1,14 @@
 """The same core-surface sweep as `bench_core_surface.mojo`, on the device.
 
-Same operations, same hashed data, same sizes, same byte counts per
-element -- but a separate table and a separate file, because per
-`CLAUDE.md` a CPU and a GPU number never share a row. These are different
-processors and a mixed table would be a claim about which machine this is.
+Same operations, same hashed data, same byte counts per element -- but a
+separate table and a separate file, because per `CLAUDE.md` a CPU and a
+GPU number never share a row. These are different processors and a mixed
+table would be a claim about which machine this is.
+
+Five sizes rather than the CPU sweep's seven: `2^16` and `2^18` are there
+to bracket `_THREADED_FROM`, and there is no such threshold here. `gpu=True`
+is one launch policy at every size, so the extra rows would only be two
+more kernel instantiations in the metallib.
 
 Every routine is named with `gpu=True`, so `numax.core._drive` launches
 `max.algorithm.elementwise[target="gpu"]` and the data never leaves the

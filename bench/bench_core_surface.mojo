@@ -1,9 +1,9 @@
 """How fast is the NumPy-named core surface over `Tensor` on this CPU?
 
-Five operations, one per shape the surface has, at five sizes spanning
+Five operations, one per shape the surface has, at seven sizes spanning
 `numax.core._drive`'s launch policy -- `2^10` and `2^14` below
-`_THREADED_FROM`, where the host path is a serial SIMD loop, and `2^20`,
-`2^22`, `2^24` above it, where it is `max.algorithm.elementwise` over every
+`_THREADED_FROM`, where the host path is a serial SIMD loop, and `2^16`
+through `2^24` above it, where it is `max.algorithm.elementwise` over every
 core. The threshold is printed in the header, so a table records the policy
 it measured rather than a policy someone has to go and look up.
 
@@ -25,8 +25,12 @@ not: each of the four elementwise rows allocates its output the way a
 caller's would, so the microseconds include one buffer allocation. `sum`
 allocates nothing.
 
-The last table is the abstraction cost at `2^24`, three spellings of the
-same `exp` body:
+The last table is the abstraction cost, three spellings of the same `exp`
+body, run at `2^12` through `2^20` and again at `2^24`. Its first two rows
+are what sets `_THREADED_FROM`: they are the same walk over the same two
+buffers, so the size at which `map_threaded` overtakes `map` is the
+crossover the policy has to encode, measured without the destination
+allocation the third row carries. The three spellings:
 
 1. `map` -- the kernel-author primitive, a serial SIMD walk over a
    `TileTensor` the caller already owns.
@@ -268,6 +272,8 @@ def main() raises:
     print("op\tn\tus\tM elem/s\tB/elem\tGB/s")
     bench_size[1 << 10](ctx)
     bench_size[1 << 14](ctx)
+    bench_size[1 << 16](ctx)
+    bench_size[1 << 18](ctx)
     bench_size[1 << 20](ctx)
     bench_size[1 << 22](ctx)
     bench_size[1 << 24](ctx)
@@ -275,4 +281,10 @@ def main() raises:
     print()
     print("Abstraction cost: one exp body through three spellings")
     print("op\tn\tus\tM elem/s\tB/elem\tGB/s")
+    bench_abstraction[1 << 12](ctx)
+    bench_abstraction[1 << 14](ctx)
+    bench_abstraction[1 << 15](ctx)
+    bench_abstraction[1 << 16](ctx)
+    bench_abstraction[1 << 18](ctx)
+    bench_abstraction[1 << 20](ctx)
     bench_abstraction[1 << 24](ctx)
