@@ -6,8 +6,11 @@ version = "0.1.0"
 preview = ["pixi-build"]
 
 # Below this, the aliased platform entries need a newer pixi; an older one
-# rejects the whole file with `expected a string, found table`.
-requires-pixi = ">=0.76"
+# rejects the whole file with `expected a string, found table`. 0.80 is
+# where the lock file renders those aliases by name rather than as `p1`,
+# `p2`; the lock is committed in that rendering, and an older pixi would
+# rewrite it back on every `pixi run`.
+requires-pixi = ">=0.80"
 
 # The `-mac14`/`-glibc235` aliases are for bench-python only: mlx and torch
 # ship wheels for macOS 14+ / glibc 2.35+, above pixi's assumed baseline.
