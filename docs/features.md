@@ -114,7 +114,7 @@ Both paths reach the GPU: `map`/`reduce`'s own runtime overload is CPU-only
 because it launches through `enqueue_function`, which needs the extent in the
 type, while `numax.core._drive` launches through `max.algorithm.elementwise`,
 whose grid comes from a run-time `Coord`, and so runs a run-time-shaped tensor
-on the device. There is no second tensor type — both are `TileTensor`.
+on the device. There is no second owning tensor type — both are `TileTensor`.
 
 | Surface | Where |
 |---|---|
@@ -132,9 +132,16 @@ on the device. There is no second tensor type — both are `TileTensor`.
 `Tensor` ([`core/array.mojo`](../numax/core/array.mojo)) adds ownership only:
 it owns a MAX `DeviceBuffer`, so the `DeviceContext` passed to a factory
 decides host or device memory, and `.view()` yields the same `TileTensor`
-either way. Reads go through `to_host()`/`copy_from_host()`, never
-`DeviceBuffer.unsafe_ptr()`, which on CUDA returns a *device* pointer that
-segfaults a host read.
+either way, borrowing the tensor at the mutability of the binding. Reads go
+through `to_host()`/`copy_from_host()`, never `DeviceBuffer.unsafe_ptr()`,
+which on CUDA returns a *device* pointer that segfaults a host read.
+
+| Surface | Where |
+|---|---|
+| `TensorLike` — the bound over owned and borrowed: associated `dtype`, `LayoutType`, `Engine`, `rank`, plus `view(ref self)` and `context()`. `Tensor` and `View` conform; a routine `def f[T: TensorLike](a: T)` takes either | [`core/tensorlike.mojo`](../numax/core/tensorlike.mojo), [`test_tensorlike.mojo`](../tests/core/test_tensorlike.mojo) |
+| `View` — a `TileTensor` plus the device it lives on; `View(a.view().tile[2, 2](0, 0), a.context())` is a quadrant of `a` a routine can write into, no copy. Host when the context is omitted, like every factory | same |
+| `dim[T, i]`, `is_row_major[T]` — a compile-time extent for a signature, and the `where` clause a flattening walk carries so a strided block is refused where it is written | same |
+| `Tensor` is `DevicePassable` with its `MutAnyOrigin` view as `device_type`: `ctx.enqueue_function[map[...]](xs, ys, ...)` takes the tensors and the kernel receives the tiles | [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo), [`unified_tensor_gpu.mojo`](../examples/advanced/unified_tensor_gpu.mojo) |
 
 ## `numax.core` — arrays and the NumPy-named surface
 

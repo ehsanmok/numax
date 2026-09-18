@@ -32,7 +32,12 @@ lane load is consecutive (`examples/advanced/batched_solve.mojo`, 4096 SPD
 **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory decides host or device memory: the
 same kernel, any accelerator, unmodified. Nothing else changes, and
-`.view()` yields the `TileTensor` every MAX kernel takes. Its shape lives
+`.view()` yields the `TileTensor` every MAX kernel takes, borrowing the
+tensor at the mutability of the binding. `Tensor` and the borrowed `View`
+both conform to `TensorLike`, so a routine written once against that bound
+runs on a whole tensor or on a sub-block of one without a copy, and a
+`Tensor` is `DevicePassable`: `enqueue_function` takes it directly and the
+kernel receives the view. Its shape lives
 in its layout type, so `Static[f32, 2, 3]` and `Dynamic[f32, 2]` -- extents
 compiled in, extents supplied at run time -- are one type, not two.
 `to_array` lifts a tensor into the conformer tier and `to_tensor` lowers
@@ -272,6 +277,7 @@ from .core.logic import (
     not_equal,
 )
 from .core.numeric import FloatLike
+from .core.tensorlike import TensorLike, View, dim, is_row_major
 from .core.ops import (
     add,
     invert,

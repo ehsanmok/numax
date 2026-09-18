@@ -74,7 +74,10 @@ about:
     derivative needs no separate implementation. Tensors own MAX
     DeviceBuffers and carry their shape in their layout type, with extents
     either compiled in or supplied at run time, so numax.core.tensor drives
-    any of it across MAX's TileTensor on CPU or GPU.
+    any of it across MAX's TileTensor on CPU or GPU. A borrowed View
+    conforms to the same TensorLike bound as Tensor, so a routine written
+    once takes a whole tensor or a sub-block of one without a copy, and a
+    Tensor is DevicePassable: a kernel launch takes the tensor itself.
 
     Every approximation documents an error bound and pixi run accuracy
     checks it against mpmath references at 50 digits; Plain carries its own

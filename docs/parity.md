@@ -447,7 +447,9 @@ returns a dynamically-laid-out `TileTensor`. They are graph-operator kernels.
 
 ## What is still missing
 
-Slicing as a first-class owned type, and fancy indexing.
+Slicing as a first-class *owned* type, and fancy indexing. Borrowed slicing
+is `View` over `a.view().tile[...]`/`.slice(...)`, which the `TensorLike`
+bound lets a routine take in place of the tensor.
 
 **General broadcasting is no longer missing.** `broadcast_shapes` in
 `numax/core/array.mojo` is NumPy's right-alignment rule written down once,

@@ -278,8 +278,12 @@ def _averaged_power[
     comptime keep = nperseg // 2 + 1
     var ctx = spectra[0].context()
     var out = Static[dtype, keep]._uninitialized(ctx)
-    var re = spectra[0].view()
-    var im = spectra[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var re = spectra[0].view().as_unsafe_any_origin()
+    var im = spectra[1].view().as_unsafe_any_origin()
     var ys = out.view()
     var factor = Scalar[dtype](scale / Float64(frames))
 
@@ -446,8 +450,12 @@ def spectrogram[
     )
 
     var power = Static[dtype, keep, frames]._uninitialized(ctx)
-    var re = spectra[0].view()
-    var im = spectra[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var re = spectra[0].view().as_unsafe_any_origin()
+    var im = spectra[1].view().as_unsafe_any_origin()
     var ps = power.view()
     var factor = Scalar[dtype](scale)
 
@@ -520,8 +528,12 @@ def stft[
 
     var real = Static[dtype, keep, frames]._uninitialized(ctx)
     var imag = Static[dtype, keep, frames]._uninitialized(ctx)
-    var re = spectra[0].view()
-    var im = spectra[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var re = spectra[0].view().as_unsafe_any_origin()
+    var im = spectra[1].view().as_unsafe_any_origin()
     var rs = real.view()
     var ims = imag.view()
     var factor = Scalar[dtype](1.0 / sums[0])
@@ -630,10 +642,14 @@ def csd[
     # destinations have to be built here anyway.
     var out_re = Static[dtype, keep]._uninitialized(ctx)
     var out_im = Static[dtype, keep]._uninitialized(ctx)
-    var xr = xf[0].view()
-    var xi = xf[1].view()
-    var yr = yf[0].view()
-    var yi = yf[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var xr = xf[0].view().as_unsafe_any_origin()
+    var xi = xf[1].view().as_unsafe_any_origin()
+    var yr = yf[0].view().as_unsafe_any_origin()
+    var yi = yf[1].view().as_unsafe_any_origin()
     var rs = out_re.view()
     var ims = out_im.view()
     var factor = Scalar[dtype](scale / Float64(frames))
@@ -721,10 +737,14 @@ def coherence[
     var yf = _framed[dtype, n, nperseg, step, frames, gpu](y, win, 0, detrend)
 
     var out = Static[dtype, keep]._uninitialized(ctx)
-    var xr = xf[0].view()
-    var xi = xf[1].view()
-    var yr = yf[0].view()
-    var yi = yf[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var xr = xf[0].view().as_unsafe_any_origin()
+    var xi = xf[1].view().as_unsafe_any_origin()
+    var yr = yf[0].view().as_unsafe_any_origin()
+    var yi = yf[1].view().as_unsafe_any_origin()
     var cs = out.view()
 
     @always_inline
@@ -897,8 +917,12 @@ def hilbert[
             Static[dtype, n](ctx, x.to_host()), zeros[dtype, n](ctx)
         )
     )
-    var re = spectrum[0].view()
-    var im = spectrum[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var re = spectrum[0].view().as_unsafe_any_origin()
+    var im = spectrum[1].view().as_unsafe_any_origin()
 
     @always_inline
     def weight[w: Int, alignment: Int = 1](coord: Coord) {var re, var im}:

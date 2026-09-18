@@ -842,8 +842,12 @@ def _rfft[
 
     var re = Static[dtype, keep]._uninitialized(ctx)
     var im = Static[dtype, keep]._uninitialized(ctx)
-    var fre = full[0].view()
-    var fim = full[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var fre = full[0].view().as_unsafe_any_origin()
+    var fim = full[1].view().as_unsafe_any_origin()
     var hre = re.view()
     var him = im.view()
 
@@ -901,8 +905,12 @@ def irfft[
 
     var full_re = Static[dtype, n]._uninitialized(ctx)
     var full_im = Static[dtype, n]._uninitialized(ctx)
-    var hre = x[0].view()
-    var him = x[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var hre = x[0].view().as_unsafe_any_origin()
+    var him = x[1].view().as_unsafe_any_origin()
     var fre = full_re.view()
     var fim = full_im.view()
 

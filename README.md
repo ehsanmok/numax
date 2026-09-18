@@ -80,7 +80,7 @@ def main() raises:
     var ws = linspace[256, f64](0.5, 2.0, ctx=gpu)  # a Tensor, in device memory
     var es = zeros[f64, 256](gpu)
     gpu.enqueue_function[map[LayoutType=Sweep, step=step, gpu=True]](
-        ws.view(), es.view(), grid_dim=4, block_dim=64
+        ws, es, grid_dim=4, block_dim=64            # the tensors themselves; the kernel gets their views
     )                                               # 256 wells, one eigensolve per thread
     gpu.synchronize()
     print(es.to_host()[255])                        # 0.9846  bit-identical to the CPU path
@@ -244,12 +244,19 @@ tier, and `to_tensor`/`to_array` cross between them. NumPy gets away with one
 array type because it needs neither property.
 
 `TileTensor` is MAX's borrowed view, a pointer and a layout that own nothing.
-`.view()` hands one to a kernel and that is the only place it appears; you do
-not build one yourself.
+`.view()` hands one to a kernel, borrowing the tensor at the mutability of
+the binding, and `View` wraps one with the device it lives on. `Tensor` and
+`View` both conform to `TensorLike`, the bound a routine generic over "owned
+or borrowed" is written against: `def f[T: TensorLike](a: T)`, with
+`dim[T, i]` for a compile-time extent and `is_row_major[T]` to refuse a
+strided block where a walk would flatten it. A `Tensor` is also
+`DevicePassable`, so `enqueue_function` takes it directly and the kernel
+receives the view.
 
 | | Owns its memory | Shape | Where you meet it |
 |---|---|---|---|
 | `Tensor` (`Static`, `Dynamic`) | yes, a MAX `DeviceBuffer` | in the layout type, compile time or run time per dimension | every NumPy-named call |
+| `View` | no, it borrows a `TileTensor` | from the tile it wraps | a sub-block of a tensor handed to a routine, no copy |
 | `TileTensor` | no, it borrows | from the tensor it views | `.view()`, at a kernel boundary |
 | `Array[T, n]` | it *is* the value, in registers | `n` at compile time | a SciPy-named algorithm you want to differentiate, or to run per SIMD lane |
 

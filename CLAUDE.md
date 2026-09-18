@@ -144,10 +144,23 @@ Then label it:
 Two rules hold the boundary. **Interop is `TileTensor`-only**: a MAX API that
 takes the older `LayoutTensor` is denied, not bridged — `linalg.qr_factorization`
 (with `apply_q`/`form_q`) and `outer_product_acc` are the ones met so far, and
-`rg LayoutTensor numax/` stays free of code. And **`Tensor` is the only
-user-facing tensor type**; `TileTensor` appears at the interop boundary and in
-the kernel-author primitives of `numax/core/tensor.mojo`, never as the thing a
-user of `numax.linalg` passes.
+`rg LayoutTensor numax/` stays free of code. And **the user-facing tensor
+types are `Tensor` and `View`, both `TensorLike`** (`numax/core/tensorlike.mojo`):
+`Tensor` owns a `DeviceBuffer`, `View` borrows a `TileTensor` plus the device
+it lives on, and a public routine takes either through the trait bound
+(`def f[T: TensorLike](a: T)`, spelling extents as `dim[T, i]` and guarding a
+flattening walk with `is_row_major[T]`). A bare `TileTensor` appears at the
+interop boundary (`.view()`, which borrows at the mutability of the binding
+and erases to `MutAnyOrigin` through MAX's implicit cast), inside `View`, and
+in the kernel-author primitives of `numax/core/tensor.mojo`, never as the
+thing a user of `numax.linalg` passes. `Tensor` is also `DevicePassable`, so
+`enqueue_function` takes the tensor and the kernel receives its view.
+
+Mojo 1.1 trap behind that trait: a struct parameter does **not** satisfy a
+trait's associated `comptime` member of the same name, so `Tensor`'s
+parameters are `dtype_`/`LayoutType_` re-exposed as `comptime dtype`/
+`LayoutType`, the way MAX's `KVCacheT` conformers do. Positional spellings
+are unaffected; keep it that way and never name them by keyword.
 
 **Never write per-arch code.** `matmul` already dispatches Apple simdgroup,
 SM100, SM90, Ampere/CDNA, vendor cuBLAS/rocBLAS/hipBLASLt, AMD RDNA and a naive

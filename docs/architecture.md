@@ -252,6 +252,17 @@ survey of what MAX does ship.
   The view seam is cheap downward and a copy upward: `.view()` hands out a
   pointer plus a layout, `Tensor.from_view` copies, and no constructor takes
   a `TileTensor` at all, because a view owns nothing to adopt.
+  `Tensor` conforms to `TensorLike` (`numax/core/tensorlike.mojo`), the
+  bound every `Tensor`-tier routine takes its tensors through, and so does
+  `View`, a borrowed `TileTensor` plus its device: one generic routine,
+  `def f[T: TensorLike](a: T)`, runs on a whole tensor or on
+  `View(a.view().tile[4, 4](0, 0), a.context())` without a copy. `view()`
+  borrows `self` at the mutability of the binding (`ref self`, origin
+  tracked), so a read-only routine can take a `Tensor` by borrow and still
+  view it; MAX's implicit origin cast erases to the `MutAnyOrigin` the
+  kernels spell, with parameter inference intact. `Tensor` is
+  `DevicePassable` with that erased view as its `device_type`, so
+  `enqueue_function` takes the tensor itself.
   `to_array`/`to_tensor` are the seam to the `Array[T, n]` half of the
   library. Lifting is generic over the conformer; lowering names it, because
   `FloatLike` builds a value from a `Float64` and offers no way back out.
@@ -345,8 +356,14 @@ same memory in the same order. That is all `coalesce()` does for a
 row-major input -- it just insists on proving the shape at compile time
 first.
 
-**There is no second tensor type.** Both overloads take a `TileTensor`,
-which is the type every MAX kernel accepts; a parallel numax array type
-would have to be converted at every boundary into MAX. The
+**There is no second owning tensor type.** Both overloads take a
+`TileTensor`, which is the type every MAX kernel accepts; a parallel numax
+array type would have to be converted at every boundary into MAX. The
 compile-time/runtime distinction lives in the *layout*, where MAX already
-put it, not in a numax-owned wrapper.
+put it, not in a numax-owned wrapper. `View` is not a second owner either:
+it is a `TileTensor` with the device it lives on attached, so that the
+`TensorLike` bound has a borrowed conformer beside the owned one. Making
+`Tensor` *be* a `TileTensor` with an owning engine is not expressible --
+MAX's `TensorEngine` is borrowed-only and `TileTensor` is unconditionally
+`TrivialRegisterPassable`, which Mojo will not let a conformance make
+conditional -- and `numax/core/tensorlike.mojo` records the reasoning.

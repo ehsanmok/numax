@@ -24,10 +24,21 @@ is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
 `DeviceContext(api="cpu")` and the buffer is host memory, pass
 `DeviceContext()` and it is device memory. Nothing else about the type
 changes between the two, and `.view()` hands back the same
-`TileTensor[dtype, LayoutType, MutAnyOrigin]` either way -- which is exactly
-what `numax.core.tensor.map`/`reduce` and every MAX kernel already take, on both
-paths (`map[gpu=False]` walks the host view, `map[gpu=True]` launches on the
-device view through `enqueue_function`).
+`TileTensor[dtype, LayoutType, origin_of(self)]` either way -- a tile that
+borrows the tensor at the mutability of the binding, which MAX's implicit
+origin cast turns into the `MutAnyOrigin` spelling `numax.core.tensor.map`/
+`reduce` and every MAX kernel take, on both paths (`map[gpu=False]` walks the
+host view, `map[gpu=True]` launches on the device view through
+`enqueue_function`). `Tensor` is also `DevicePassable`, with that erased
+view as its device type, so the tensor itself can be the argument to
+`enqueue_function` and the kernel receives the tile.
+
+**Owned or borrowed, one bound.** `Tensor` conforms to `TensorLike`
+(`numax.core.tensorlike`), as does `View`, which wraps a `TileTensor` someone
+else owns. Every public routine in the `Tensor` tier takes its tensors
+through that trait, so `cholesky(a)` and `cholesky(View(a.view().tile[4,
+4](0, 0), a.context()))` are one `cholesky`: the second factors a quadrant
+in place, no copy, no second kernel.
 
 **Why a `Tensor` wrapper, not a bare `TileTensor`.** `TileTensor` is a
 *view*: a pointer plus a layout, not the memory itself, under every engine
@@ -127,6 +138,9 @@ never touches the host.
 from std.collections import Array
 
 from max.gpu.host import DeviceBuffer, DeviceContext
+from max.gpu.host.device_context import DeviceTypeEncoder
+from std.builtin.device_passable import DevicePassable
+from std.memory import MutOpaquePointer
 from layout import Coord, TileTensor
 from layout.coord import DynamicCoord
 from layout.tile_layout import row_major, TensorLayout
@@ -147,6 +161,7 @@ from .dual import Dual
 from .gradient import Gradient
 from .numeric import FloatLike
 from .plain import Plain
+from .tensorlike import TensorLike
 from .ops import (
     add as _add,
     divide as _divide,
@@ -205,7 +220,9 @@ def _dyn_shape_from[
     return shape
 
 
-struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
+struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
+    DevicePassable, Movable, TensorLike, Writable
+):
     """An owned `DeviceBuffer` paired with a row-major layout.
 
     The one owning tensor type in `numax`, on CPU and GPU alike -- see this
@@ -221,11 +238,25 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
     when `LayoutType.all_dims_known`; `size()` is the run-time count and is
     correct either way.
 
+    The parameters are spelled `dtype_` and `LayoutType_` and re-exposed as
+    `dtype` and `LayoutType` because that is how a struct satisfies a
+    trait's associated members in Mojo 1.1: a parameter of the same name
+    does not count (`required member 'dtype' is not specified`), and MAX's
+    own `TensorLike`-shaped conformers spell it the same way. Positional
+    use, `Tensor[dtype, LayoutType]`, is unaffected.
+
+    Conforms to `TensorLike`, so every `Tensor`-tier routine takes one, and
+    `view()` hands out a `TileTensor` that borrows `self` at the mutability
+    of the binding. Conforms to `DevicePassable` with the `MutAnyOrigin`
+    view as its device type, so a tensor can be passed straight to
+    `DeviceContext.enqueue_function` and the kernel receives the tile.
     Conforms to `Writable`, so `print(a)` works; `a.format(precision=8)`
     is the same output with the precision and truncation under the
     caller's control.
     """
 
+    comptime dtype = Self.dtype_
+    comptime LayoutType = Self.LayoutType_
     comptime rank = Self.LayoutType.rank
     comptime num_elements = Self.LayoutType.static_product
 
@@ -437,22 +468,64 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
                 stride = Int(self.layout.stride[i]().value())
         return stride
 
-    def view(mut self) -> TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin]:
-        """A `TileTensor` view over this tensor's storage.
+    def view(
+        ref self,
+    ) -> TileTensor[Self.dtype, Self.LayoutType, origin_of(self)]:
+        """A `TileTensor` view over this tensor's storage, borrowing `self`.
 
         The type every `numax.core.tensor` entry point and every MAX kernel
-        takes, on CPU and GPU alike. Valid only as long as `self` is alive
-        -- pass `self` (or a `mut` reference to it) around, not just the
-        value returned here, if the view needs to outlive this call.
+        takes, on CPU and GPU alike. The tile's origin is this borrow of
+        `self`: on a `var` or `mut` binding it is writable, on an immutable
+        one it is read-only, and either way it cannot outlive `self`. Where
+        a kernel spells `MutAnyOrigin`, MAX's implicit origin cast erases the
+        origin at the call site with parameter inference intact, so
+        `map(a.view(), b.view())` reads as it always did. `store` on a
+        read-only tile, or handing one to a `MutAnyOrigin` parameter, is a
+        compile error rather than a write through a borrow.
+
+        Built from the buffer's pointer rather than the buffer itself,
+        because MAX's `DeviceBuffer` constructor pins the tile to the
+        buffer field's origin, which is narrower than `self`'s and not what
+        `TensorLike.view` promises.
         """
-        var v: TileTensor[
-            Self.dtype, Self.LayoutType, MutAnyOrigin
-        ] = TileTensor(self.buffer, self.layout)
-        return v
+        return TileTensor[Self.dtype, Self.LayoutType, origin_of(self)](
+            ptr=self.buffer.unsafe_ptr()
+            .unsafe_mut_cast[origin_of(self).mut]()
+            .unsafe_origin_cast[origin_of(self)](),
+            layout=self.layout,
+        )
+
+    # ------------------------------------------------------------------ #
+    # DevicePassable: the kernel receives the `MutAnyOrigin` view. This is
+    # the projection `DeviceBuffer` itself makes to a `Pointer`; the owner
+    # never crosses the launch boundary, its tile does.
+    # ------------------------------------------------------------------ #
+
+    comptime device_type: AnyType = TileTensor[
+        Self.dtype, Self.LayoutType, MutAnyOrigin
+    ]
+    """What a GPU kernel receives when a `Tensor` is passed to
+    `enqueue_function`: the same tile `view()` yields, origin erased, which
+    is the type `numax.core.tensor`'s kernels declare."""
+
+    def _to_device_type(
+        self, mut encoder: Some[DeviceTypeEncoder], target: MutOpaquePointer[_]
+    ):
+        var v = Self.device_type(
+            ptr=self.buffer.unsafe_ptr()
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutAnyOrigin](),
+            layout=self.layout,
+        )
+        v._to_device_type(encoder, target)
+
+    @staticmethod
+    def get_type_name() -> String:
+        return String(t"Tensor[{Self.dtype}, rank={Self.rank}]")
 
     @staticmethod
     def from_view(
-        v: TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin],
+        v: TileTensor[Self.dtype, Self.LayoutType, _],
         ctx: Optional[DeviceContext] = None,
     ) raises -> Self:
         """A new owning tensor holding a **copy** of `v`'s elements.

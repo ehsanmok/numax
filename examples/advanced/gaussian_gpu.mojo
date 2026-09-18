@@ -96,15 +96,17 @@ def main() raises:
     comptime block_size = 256
     comptime num_blocks = (n + block_size - 1) // block_size
 
-    # 1. Plain SIMD -- unchanged from the CPU example.
+    # 1. Plain SIMD -- unchanged from the CPU example. The tensors are the
+    # launch arguments: `Tensor` is `DevicePassable`, and what the kernel
+    # receives is each one's `MutAnyOrigin` view, exactly `.view()`'s type.
     ctx.enqueue_function[
         map[LayoutType=Flat.LayoutType, step=gaussian_step, gpu=True]
-    ](xs.view(), ys.view(), grid_dim=num_blocks, block_dim=block_size)
+    ](xs, ys, grid_dim=num_blocks, block_dim=block_size)
 
     # 2. The same function, differentiated -- unchanged from the CPU example.
     ctx.enqueue_function[
         map[LayoutType=Flat.LayoutType, step=gaussian_deriv_step, gpu=True]
-    ](xs.view(), dydx.view(), grid_dim=num_blocks, block_dim=block_size)
+    ](xs, dydx, grid_dim=num_blocks, block_dim=block_size)
 
     # 3. The same function again, at extra precision.
     ctx.enqueue_function[
@@ -114,8 +116,8 @@ def main() raises:
             gpu=True,
         ]
     ](
-        xs.view(),
-        precise_values.view(),
+        xs,
+        precise_values,
         grid_dim=num_blocks,
         block_dim=block_size,
     )
@@ -126,8 +128,8 @@ def main() raises:
             gpu=True,
         ]
     ](
-        xs.view(),
-        precise_errors.view(),
+        xs,
+        precise_errors,
         grid_dim=num_blocks,
         block_dim=block_size,
     )
@@ -181,7 +183,7 @@ def main() raises:
     var ys3 = Cube(ctx)
     ctx.enqueue_function[
         map[LayoutType=Cube.LayoutType, step=gaussian_step, gpu=True]
-    ](xs3.view(), ys3.view(), grid_dim=num_blocks, block_dim=block_size)
+    ](xs3, ys3, grid_dim=num_blocks, block_dim=block_size)
     ctx.synchronize()
 
     var ys3_h = ys3.to_host()
@@ -203,9 +205,9 @@ def main() raises:
             gpu=True,
         ]
     ](
-        xs.view(),
-        ys.view(),
-        weighted.view(),
+        xs,
+        ys,
+        weighted,
         grid_dim=num_blocks,
         block_dim=block_size,
     )
@@ -237,7 +239,7 @@ def main() raises:
             width=coarse_width,
             gpu=True,
         ]
-    ](xs.view(), coarse.view(), grid_dim=coarse_blocks, block_dim=block_size)
+    ](xs, coarse, grid_dim=coarse_blocks, block_dim=block_size)
     ctx.synchronize()
 
     var c_h = coarse.to_host()
@@ -260,8 +262,8 @@ def main() raises:
     ctx.enqueue_function[
         map[LayoutType=Odd.LayoutType, step=gaussian_step, gpu=True]
     ](
-        odd_xs.view(),
-        odd_scalar.view(),
+        odd_xs,
+        odd_scalar,
         grid_dim=(odd_n + block_size - 1) // block_size,
         block_dim=block_size,
     )
@@ -273,8 +275,8 @@ def main() raises:
             gpu=True,
         ]
     ](
-        odd_xs.view(),
-        odd_coarse.view(),
+        odd_xs,
+        odd_coarse,
         grid_dim=odd_blocks,
         block_dim=block_size,
     )
@@ -300,9 +302,9 @@ def main() raises:
             gpu=True,
         ]
     ](
-        xs.view(),
-        ys.view(),
-        coarse_weighted.view(),
+        xs,
+        ys,
+        coarse_weighted,
         grid_dim=coarse_blocks,
         block_dim=block_size,
     )

@@ -207,8 +207,12 @@ def fftconvolve[
     var padded_b = Static[dtype, n]._uninitialized(ctx)
     var xs = a.view()
     var taps = b.view()
-    var pa = padded_a.view()
-    var pb = padded_b.view()
+    # `pad` captures views of the two padded buffers, and the buffers are
+    # consumed by `_rfft` right after the launch; a tracked origin would
+    # hold them past that point, so erase it. The launch has completed by
+    # the time they are consumed.
+    var pa = padded_a.view().as_unsafe_any_origin()
+    var pb = padded_b.view().as_unsafe_any_origin()
 
     @always_inline
     def pad[
@@ -226,10 +230,14 @@ def fftconvolve[
     var spectrum_b = _rfft[dtype, n, gpu](padded_b^)
     var product_re = Static[dtype, keep]._uninitialized(ctx)
     var product_im = Static[dtype, keep]._uninitialized(ctx)
-    var ar = spectrum_a[0].view()
-    var ai = spectrum_a[1].view()
-    var br = spectrum_b[0].view()
-    var bi = spectrum_b[1].view()
+    # The two halves of a `Spectrum` share the tuple's origin, so their
+    # tracked views read as aliasing when a body captures both; erase to
+    # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
+    # outlives every launch below.
+    var ar = spectrum_a[0].view().as_unsafe_any_origin()
+    var ai = spectrum_a[1].view().as_unsafe_any_origin()
+    var br = spectrum_b[0].view().as_unsafe_any_origin()
+    var bi = spectrum_b[1].view().as_unsafe_any_origin()
     var pr = product_re.view()
     var pi = product_im.view()
 

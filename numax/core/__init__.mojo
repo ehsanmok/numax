@@ -200,6 +200,7 @@ from .ops import (
     subtract,
 )
 from .plain import Plain
+from .tensorlike import TensorLike, View, dim, is_row_major
 from .dtypes import (
     bf16,
     bool,

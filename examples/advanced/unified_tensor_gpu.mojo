@@ -80,11 +80,11 @@ def main() raises:
 
     var gpu_xs = linspace[n, dtype](-2.0, 2.0, ctx=gpu)
     var gpu_ys = TensorType(gpu)
-    var gpu_xs_view = gpu_xs.view()
-    var gpu_ys_view = gpu_ys.view()
+    # The tensors themselves are the launch arguments: `Tensor` is
+    # `DevicePassable` and the kernel receives each one's view.
     gpu.enqueue_function[
         map[LayoutType=LayoutType, step=gaussian_step, gpu=True]
-    ](gpu_xs_view, gpu_ys_view, grid_dim=num_blocks, block_dim=block_size)
+    ](gpu_xs, gpu_ys, grid_dim=num_blocks, block_dim=block_size)
     gpu.synchronize()
 
     # ---- the same values, from two devices ----
