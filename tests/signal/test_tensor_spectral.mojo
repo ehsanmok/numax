@@ -19,16 +19,24 @@ from numax.signal import (
     butter,
     cheby1,
     cheby2,
+    coherence,
+    csd,
+    decimate,
     ellip,
     find_peaks,
     freqz,
     hilbert,
     iirfilter,
+    istft,
+    oaconvolve,
+    peak_prominences,
     periodogram,
     spectrogram,
     stft,
     welch,
+    zpk2tf,
 )
+from numax.signal import fftconvolve
 
 comptime dtype = DType.float64
 
@@ -791,6 +799,302 @@ def test_butter_feeds_freqz_with_unit_gain_at_dc() raises:
     var high = butter[dtype, 3](0.4, "highpass")
     var blocked = freqz[worN=4](high.b, high.a).real.to_host()
     assert_almost_equal(Float64(blocked[0]), 0.0, atol=1e-12)
+
+
+# ------------------------------------------------------------------
+# csd, coherence, istft
+# ------------------------------------------------------------------
+
+
+def test_csd_of_a_signal_with_itself_is_its_welch_psd() raises:
+    """The identity that pins the cross spectrum's scaling: Pxy with y = x
+    is Pxx, with an imaginary part that cancels exactly."""
+    var x = _from[16](_x())
+    var y = _from[16](_x())
+    var cross = csd[dtype, 16, 8](x, y, 4.0)
+
+    var x2 = _from[16](_x())
+    var direct = welch[dtype, 16, 8](x2, 4.0)
+
+    var cr = cross.real.to_host()
+    var ci = cross.imag.to_host()
+    var want = direct.power.to_host()
+    for k in range(5):
+        assert_almost_equal(Float64(cr[k]), Float64(want[k]), atol=1e-12)
+        assert_almost_equal(Float64(ci[k]), 0.0, atol=1e-12)
+
+    # The frequency grid is welch's too.
+    var cf = cross.frequencies.to_host()
+    var wf = direct.frequencies.to_host()
+    for k in range(5):
+        assert_almost_equal(Float64(cf[k]), Float64(wf[k]), atol=1e-12)
+
+
+def test_csd_is_conjugate_symmetric_in_its_arguments() raises:
+    """Pyx == conj(Pxy), which is what makes the phase a lead rather than
+    an unsigned lag."""
+    var x = _from[16](_x())
+    var y = _from[16](
+        [
+            0.5,
+            1.0,
+            0.25,
+            -1.0,
+            2.0,
+            0.0,
+            1.5,
+            -0.5,
+            1.0,
+            2.0,
+            -1.5,
+            0.5,
+            0.0,
+            1.0,
+            -2.0,
+            0.25,
+        ]
+    )
+    var forward = csd[dtype, 16, 8](x, y, 4.0)
+
+    var x2 = _from[16](_x())
+    var y2 = _from[16](
+        [
+            0.5,
+            1.0,
+            0.25,
+            -1.0,
+            2.0,
+            0.0,
+            1.5,
+            -0.5,
+            1.0,
+            2.0,
+            -1.5,
+            0.5,
+            0.0,
+            1.0,
+            -2.0,
+            0.25,
+        ]
+    )
+    var backward = csd[dtype, 16, 8](y2, x2, 4.0)
+
+    var fr = forward.real.to_host()
+    var fi = forward.imag.to_host()
+    var br = backward.real.to_host()
+    var bi = backward.imag.to_host()
+    for k in range(5):
+        assert_almost_equal(Float64(fr[k]), Float64(br[k]), atol=1e-12)
+        assert_almost_equal(Float64(fi[k]), -Float64(bi[k]), atol=1e-12)
+
+
+def test_coherence_lies_in_the_unit_interval() raises:
+    var x = _from[16](_x())
+    var y = _from[16](
+        [
+            0.5,
+            1.0,
+            0.25,
+            -1.0,
+            2.0,
+            0.0,
+            1.5,
+            -0.5,
+            1.0,
+            2.0,
+            -1.5,
+            0.5,
+            0.0,
+            1.0,
+            -2.0,
+            0.25,
+        ]
+    )
+    var got = coherence[dtype, 16, 8](x, y, 4.0)
+    var values = got.power.to_host()
+    for k in range(5):
+        assert_true(Float64(values[k]) >= -1e-12, "coherence below zero")
+        assert_true(Float64(values[k]) <= 1.0 + 1e-12, "coherence above one")
+
+
+def test_coherence_of_a_signal_with_itself_is_one() raises:
+    """A fixed gain and phase between the two signals -- the strongest
+    possible linear relationship -- reads as one at every bin."""
+    var x = _from[16](_x())
+    var y = _from[16](_x())
+    var got = coherence[dtype, 16, 8](x, y, 4.0)
+    var values = got.power.to_host()
+    for k in range(5):
+        assert_almost_equal(Float64(values[k]), 1.0, atol=1e-12)
+
+
+def test_coherence_of_a_scaled_copy_is_also_one() raises:
+    """Scaling is a fixed gain, so it cannot change a coherence."""
+    var raw = _x()
+    var scaled = List[Float64](capacity=16)
+    for i in range(16):
+        scaled.append(raw[i] * -2.5)
+    var x = _from[16](_x())
+    var y = _from[16](scaled^)
+    var got = coherence[dtype, 16, 8](x, y, 4.0)
+    var values = got.power.to_host()
+    for k in range(5):
+        assert_almost_equal(Float64(values[k]), 1.0, atol=1e-12)
+
+
+def test_istft_inverts_stft() raises:
+    """The round trip recovers the signal over its own length."""
+    var x = _from[16](_x())
+    var spectra = stft[dtype, 16, 8](x, 4.0)
+    var back = istft[nperseg=8, noverlap=4](spectra)
+    var got = back.to_host()
+    var want = _x()
+    for i in range(16):
+        assert_almost_equal(Float64(got[i]), want[i], atol=1e-10)
+
+
+def test_istft_output_covers_at_least_the_original_length() raises:
+    var x = _from[16](_x())
+    var spectra = stft[dtype, 16, 8](x, 4.0)
+    var back = istft[nperseg=8, noverlap=4](spectra)
+    assert_true(
+        back.num_elements >= 16, "istft should cover the original signal"
+    )
+
+
+# ------------------------------------------------------------------
+# oaconvolve, peak_prominences, decimate, zpk2tf
+# ------------------------------------------------------------------
+
+
+def test_oaconvolve_agrees_with_fftconvolve() raises:
+    var a = _from[16](_x())
+    var b = _from[5]([0.25, 0.5, -0.25, 1.0, 0.125])
+    var a2 = _from[16](_x())
+    var b2 = _from[5]([0.25, 0.5, -0.25, 1.0, 0.125])
+
+    var viaoa = oaconvolve(a, b).to_host()
+    var viafft = fftconvolve(a2, b2).to_host()
+    for i in range(20):
+        assert_almost_equal(Float64(viaoa[i]), Float64(viafft[i]), atol=1e-11)
+
+
+def test_peak_prominences_matches_the_definition() raises:
+    """SciPy: `peak_prominences([0, 2, 0, 4, 0, 3, 0], [1, 3, 5])` gives
+    [2, 4, 3] -- each peak's height above the higher enclosing saddle,
+    which here is the zero floor on both sides."""
+    var x = _from[7]([0.0, 2.0, 0.0, 4.0, 0.0, 3.0, 0.0])
+    var peaks = List[Int]()
+    peaks.append(1)
+    peaks.append(3)
+    peaks.append(5)
+    var got = peak_prominences(x, peaks)
+    assert_equal(len(got), 3)
+    assert_almost_equal(got[0], 2.0, atol=1e-12)
+    assert_almost_equal(got[1], 4.0, atol=1e-12)
+    assert_almost_equal(got[2], 3.0, atol=1e-12)
+
+
+def test_peak_prominences_uses_the_higher_saddle() raises:
+    """SciPy: `peak_prominences([0, 5, 3, 4, 0], [3])` is 1.0 -- the left
+    saddle at 3 is higher than the right floor at 0, and the taller peak
+    at 5 is what bounds the walk.
+    """
+    var x = _from[5]([0.0, 5.0, 3.0, 4.0, 0.0])
+    var peaks = List[Int]()
+    peaks.append(3)
+    var got = peak_prominences(x, peaks)
+    assert_almost_equal(got[0], 1.0, atol=1e-12)
+
+
+def test_peak_prominences_rejects_an_index_off_the_signal() raises:
+    var x = _from[4]([0.0, 1.0, 0.0, 1.0])
+    var peaks = List[Int]()
+    peaks.append(9)
+    var raised = False
+    try:
+        _ = peak_prominences(x, peaks)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_decimate_keeps_a_slow_signal_and_shortens_it() raises:
+    """A constant is below any cutoff, so decimation leaves it alone --
+    which checks the filter's DC gain is one, not just that the stride
+    happened."""
+    comptime n = 256
+    var values = List[Float64](capacity=n)
+    for i in range(n):
+        values.append(2.0)
+    var x = _from[n](values^)
+    var got = decimate[dtype, n, 2](x)
+    assert_equal(got.num_elements, 128)
+    var host = got.to_host()
+    for i in range(128):
+        assert_almost_equal(Float64(host[i]), 2.0, atol=1e-8)
+
+
+def test_decimate_attenuates_a_signal_above_the_new_nyquist() raises:
+    """Alternating +/-1 is exactly at the old Nyquist, far above the new
+    one, so the anti-alias filter must remove it rather than folding it
+    down to DC."""
+    comptime n = 256
+    var values = List[Float64](capacity=n)
+    for i in range(n):
+        values.append(1.0 if i % 2 == 0 else -1.0)
+    var x = _from[n](values^)
+    var got = decimate[dtype, n, 2](x).to_host()
+    # Away from the edges the passband is clean, so the tone is gone.
+    for i in range(32, 96):
+        assert_true(
+            Float64(got[i]).__abs__() < 1e-3,
+            "the aliasing tone survived decimation",
+        )
+
+
+def test_zpk2tf_expands_a_real_root_pair() raises:
+    """SciPy: `zpk2tf([0.5], [0.25, -0.75], 2.0)` gives
+    b = [2, -1] padded to the pole order and a = [1, 0.5, -0.1875]."""
+    var zr = List[Float64]()
+    zr.append(0.5)
+    var zi = List[Float64]()
+    zi.append(0.0)
+    var pr = List[Float64]()
+    pr.append(0.25)
+    pr.append(-0.75)
+    var pi = List[Float64]()
+    pi.append(0.0)
+    pi.append(0.0)
+
+    var tf = zpk2tf[dtype, 1, 2](zr^, zi^, pr^, pi^, 2.0)
+    var b = tf.b.to_host()
+    var a = tf.a.to_host()
+    assert_almost_equal(Float64(b[0]), 2.0, atol=1e-12)
+    assert_almost_equal(Float64(b[1]), -1.0, atol=1e-12)
+    assert_almost_equal(Float64(b[2]), 0.0, atol=1e-12)
+    assert_almost_equal(Float64(a[0]), 1.0, atol=1e-12)
+    assert_almost_equal(Float64(a[1]), 0.5, atol=1e-12)
+    assert_almost_equal(Float64(a[2]), -0.1875, atol=1e-12)
+
+
+def test_zpk2tf_of_a_conjugate_pair_is_real() raises:
+    """Poles at 0.5 +/- 0.5i expand to a = [1, -1, 0.5], entirely real --
+    the case every real filter's poles fall into."""
+    var zr = List[Float64]()
+    var zi = List[Float64]()
+    var pr = List[Float64]()
+    pr.append(0.5)
+    pr.append(0.5)
+    var pi = List[Float64]()
+    pi.append(0.5)
+    pi.append(-0.5)
+
+    var tf = zpk2tf[dtype, 0, 2](zr^, zi^, pr^, pi^, 1.0)
+    var a = tf.a.to_host()
+    assert_almost_equal(Float64(a[0]), 1.0, atol=1e-12)
+    assert_almost_equal(Float64(a[1]), -1.0, atol=1e-12)
+    assert_almost_equal(Float64(a[2]), 0.5, atol=1e-12)
 
 
 def main() raises:

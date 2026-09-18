@@ -95,3 +95,67 @@ def find_peaks[
         peaks = kept^
 
     return peaks^
+
+
+def peak_prominences[
+    dtype: DType, n: Int
+](mut x: Static[dtype, n], peaks: List[Int]) raises -> List[Float64] where (
+    dtype.is_floating_point() and n > 0
+):
+    """The topographic prominence of each peak in `peaks`.
+    `scipy.signal.peak_prominences(x, peaks)`, first return value.
+
+    How far a peak stands above the higher of the two saddles that
+    separate it from any taller ground: walk left from the peak until a
+    sample at least as high as the peak is met or the signal ends, keeping
+    the minimum along the way, do the same to the right, and subtract the
+    larger of the two minima from the peak's height. That is SciPy's
+    definition exactly, including the treatment of the ends -- a peak with
+    no taller ground on one side takes that side's window out to the
+    boundary.
+
+    `peaks` is what `find_peaks` returns, and an index outside the signal
+    raises rather than being skipped, since a mismatched pair of arrays is
+    a caller bug rather than a sample to ignore.
+
+    **Tier 2, host-side.** The walks are data-dependent and their combined
+    length is `O(n)` per peak in the worst case; SciPy's is the same
+    algorithm. The `left_bases`/`right_bases` SciPy also returns are not
+    provided -- ask for them when a caller needs the saddle positions
+    rather than the heights.
+    """
+    var xs = x.to_host()
+    var out = List[Float64](capacity=len(peaks))
+    for p in range(len(peaks)):
+        var at = peaks[p]
+        if at < 0 or at >= n:
+            raise Error(
+                "peak_prominences: peak index ",
+                at,
+                " is outside a signal of ",
+                n,
+                " samples",
+            )
+        var height = Float64(xs[at])
+
+        var left_min = height
+        var i = at
+        while i > 0:
+            i -= 1
+            if Float64(xs[i]) > height:
+                break
+            if Float64(xs[i]) < left_min:
+                left_min = Float64(xs[i])
+
+        var right_min = height
+        var j = at
+        while j < n - 1:
+            j += 1
+            if Float64(xs[j]) > height:
+                break
+            if Float64(xs[j]) < right_min:
+                right_min = Float64(xs[j])
+
+        var base = left_min if left_min > right_min else right_min
+        out.append(height - base)
+    return out^

@@ -23,7 +23,15 @@ signal-processing one; `numax/signal/convolution.mojo` records why the
 `docs/parity.md` carries the disposition.
 """
 
-from .convolution import convolve, correlate, fftconvolve, full, same, valid
+from .convolution import (
+    convolve,
+    correlate,
+    fftconvolve,
+    full,
+    oaconvolve,
+    same,
+    valid,
+)
 from .windows import (
     bartlett,
     blackman,
@@ -34,6 +42,7 @@ from .windows import (
     kaiser,
 )
 from .filters import (
+    decimate,
     detrend,
     filtfilt,
     firwin,
@@ -46,15 +55,19 @@ from .filters import (
 )
 from .spectral import (
     STFT,
+    CrossSpectrum,
     Periodogram,
     Spectrogram,
+    coherence,
+    csd,
     hilbert,
+    istft,
     periodogram,
     spectrogram,
     stft,
     welch,
 )
-from .peaks import find_peaks
+from .peaks import find_peaks, peak_prominences
 from .design import (
     FrequencyResponse,
     TransferFunction,
@@ -64,4 +77,5 @@ from .design import (
     ellip,
     freqz,
     iirfilter,
+    zpk2tf,
 )

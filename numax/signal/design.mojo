@@ -1067,3 +1067,79 @@ def freqz[
     )
     ctx.synchronize()
     return FrequencyResponse[dtype, worN](grid^, real^, imag^)
+
+
+def zpk2tf[
+    dtype: DType, nz: Int, np: Int
+](
+    zeros_re: List[Float64],
+    zeros_im: List[Float64],
+    poles_re: List[Float64],
+    poles_im: List[Float64],
+    gain: Float64 = 1.0,
+    ctx: Optional[DeviceContext] = None,
+) raises -> TransferFunction[dtype, np] where (
+    dtype.is_floating_point() and nz >= 0 and np >= 1 and np >= nz
+):
+    """Transfer-function coefficients from zeros, poles and a gain.
+    `scipy.signal.zpk2tf(z, p, k)`.
+
+    `b` is `gain` times the expanded product of `(1 - z_i / s)` and `a`
+    the expanded product of `(1 - p_i / s)`, both descending in powers of
+    the delay, which is the order `lfilter`, `filtfilt` and `freqz` take.
+
+    Zeros and poles arrive as separate real and imaginary lists because a
+    `Tensor` is `dtype`-monomorphic and holds no `Complex` -- the same
+    split `Eigenvalues` and `STFT` make. A conjugate pair is two entries
+    with opposite imaginary parts, and the expansion is real whenever the
+    roots come in such pairs, which is the only case a real filter has.
+    The imaginary part of the product is computed and **discarded**: for a
+    conjugate-closed root set it is zero to rounding, and for one that is
+    not closed the answer was never a real filter to begin with.
+
+    `np >= nz` because a transfer function with more zeros than poles is
+    not causal, and `TransferFunction` carries one order for both.
+
+    Host-side, `O((nz + np)^2)` complex multiplies -- a coefficient
+    expansion, not a signal pass.
+    """
+    var b = _expand_roots(zeros_re, zeros_im, np, gain)
+    var a = _expand_roots(poles_re, poles_im, np, 1.0)
+    return _to_transfer_function[dtype, np]((b^, a^), ctx)
+
+
+def _expand_roots(
+    re: List[Float64], im: List[Float64], order: Int, gain: Float64
+) raises -> List[Float64]:
+    """`gain * prod_i (1 - r_i x)` expanded into `order + 1` descending
+    coefficients, the polynomial's real part.
+
+    Synthetic multiplication one root at a time: multiplying by
+    `(1 - r x)` shifts the accumulated coefficients and subtracts `r`
+    times them, which is `O(degree)` per root and needs no root finding
+    in reverse.
+    """
+    if len(re) != len(im):
+        raise Error(
+            "zpk2tf: ",
+            len(re),
+            " real parts against ",
+            len(im),
+            " imaginary parts",
+        )
+    if len(re) > order:
+        raise Error("zpk2tf: ", len(re), " roots exceed the order ", order)
+    var cr = List[Float64](length=order + 1, fill=0.0)
+    var ci = List[Float64](length=order + 1, fill=0.0)
+    cr[0] = 1.0
+    var degree = 0
+    for i in range(len(re)):
+        degree += 1
+        # Walk down so a slot is read before it is overwritten.
+        for j in range(degree, 0, -1):
+            cr[j] -= re[i] * cr[j - 1] - im[i] * ci[j - 1]
+            ci[j] -= re[i] * ci[j - 1] + im[i] * cr[j - 1]
+    var out = List[Float64](capacity=order + 1)
+    for j in range(order + 1):
+        out.append(gain * cr[j])
+    return out^

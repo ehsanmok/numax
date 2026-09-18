@@ -43,9 +43,10 @@ inverse real one `numax.fft` records. **Extend** on numax's own engine.
 
 ## What is not here
 
-`csd`, `coherence`, `istft`, the `"psd"`/`"complex"` modes of
-`spectrogram` other than PSD, `average="median"`, `nfft` padding and the
-`return_onesided=False` two-sided spectra wait on a caller.
+The `"psd"`/`"complex"` modes of `spectrogram` other than PSD,
+`average="median"`, `nfft` padding and the `return_onesided=False`
+two-sided spectra wait on a caller. `csd`, `coherence` and `istft` are
+here now.
 """
 
 from layout import Coord, coord_to_index_list
@@ -53,7 +54,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.array import Static, zeros
-from ..fft.fft import Spectrum, _as_matrix, _dft, fft, ifft
+from ..fft.fft import Spectrum, _as_matrix, _dft, fft, ifft, irfft
 from .windows import get_window
 
 
@@ -546,6 +547,334 @@ def stft[
         real^,
         imag^,
     )
+
+
+struct CrossSpectrum[dtype: DType, keep: Int](Movable):
+    """What `csd` returns: `scipy.signal.csd`'s `(f, Pxy)`, with the
+    complex `Pxy` as a real/imaginary pair because a `dtype`-monomorphic
+    tensor holds no `Complex` -- the same split `STFT` makes.
+
+    Unlike `Periodogram`'s `power`, this is genuinely complex: the phase of
+    `Pxy[k]` is the average phase lead of `x` over `y` at that frequency,
+    which is the reason to compute a cross spectrum at all.
+    """
+
+    var frequencies: Static[Self.dtype, Self.keep]
+    var real: Static[Self.dtype, Self.keep]
+    var imag: Static[Self.dtype, Self.keep]
+
+    def __init__(
+        out self,
+        var frequencies: Static[Self.dtype, Self.keep],
+        var real: Static[Self.dtype, Self.keep],
+        var imag: Static[Self.dtype, Self.keep],
+    ):
+        self.frequencies = frequencies^
+        self.real = real^
+        self.imag = imag^
+
+
+def csd[
+    dtype: DType,
+    n: Int,
+    nperseg: Int,
+    noverlap: Int = nperseg // 2,
+    gpu: Bool = False,
+](
+    mut x: Static[dtype, n],
+    mut y: Static[dtype, n],
+    fs: Float64 = 1.0,
+    window: StaticString = "hann",
+    detrend: Bool = True,
+    scaling: StaticString = "density",
+) raises -> CrossSpectrum[dtype, nperseg // 2 + 1] where (
+    dtype.is_floating_point() and n >= nperseg and nperseg > 1 and nperseg > 0
+):
+    """The cross power spectral density of `x` and `y` by Welch's method.
+    `scipy.signal.csd(x, y, fs, window, nperseg, noverlap, detrend,
+    scaling)`.
+
+    `welch` with `X conj(Y)` in place of `|X|^2`, so every default and
+    every scaling convention is that routine's, and `csd(x, x)` is
+    `welch(x)` with a zero imaginary part -- an identity the tests check
+    rather than an approximation.
+
+    Both signals must be the same length, which is the type's job here.
+    SciPy broadcasts unequal lengths by truncating; that silent truncation
+    is worth not having.
+    """
+    if not (scaling == "density" or scaling == "spectrum"):
+        raise Error(
+            "csd: unknown scaling '",
+            scaling,
+            "'; expected 'density' or 'spectrum'",
+        )
+    comptime assert (
+        noverlap >= 0 and noverlap < nperseg
+    ), "noverlap must lie in [0, nperseg)"
+    comptime step = nperseg - noverlap
+    comptime frames = _frame_count(n, nperseg, noverlap)
+    var ctx = x.context()
+    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var sums = _window_sums(win)
+    var scale = 1.0 / (fs * sums[1]) if scaling == "density" else 1.0 / (
+        sums[0] * sums[0]
+    )
+    comptime keep = nperseg // 2 + 1
+    var xf = _framed[dtype, n, nperseg, step, frames, gpu](x, win, 0, detrend)
+    var yf = _framed[dtype, n, nperseg, step, frames, gpu](y, win, 0, detrend)
+
+    # `scale * mean_f X[f, k] conj(Y[f, k])`, one lane per bin. Inline
+    # rather than a helper returning a `Spectrum`: moving one tensor out of
+    # a `Tuple` element is not something Mojo 1.0 allows, and the two
+    # destinations have to be built here anyway.
+    var out_re = Static[dtype, keep]._uninitialized(ctx)
+    var out_im = Static[dtype, keep]._uninitialized(ctx)
+    var xr = xf[0].view()
+    var xi = xf[1].view()
+    var yr = yf[0].view()
+    var yi = yf[1].view()
+    var rs = out_re.view()
+    var ims = out_im.view()
+    var factor = Scalar[dtype](scale / Float64(frames))
+
+    @always_inline
+    def lane[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var xr, var xi, var yr, var yi, var rs, var ims, var factor
+    }:
+        var k = coord_to_index_list(coord)[0]
+        var acc_re = Scalar[dtype](0)
+        var acc_im = Scalar[dtype](0)
+        for f in range(frames):
+            var a = xr[Coord(f, k)]
+            var b = xi[Coord(f, k)]
+            var c = yr[Coord(f, k)]
+            var d = yi[Coord(f, k)]
+            # (a + bi) * conj(c + di) = (ac + bd) + (bc - ad)i
+            acc_re += a * c + b * d
+            acc_im += b * c - a * d
+        var doubled = Scalar[dtype](_one_sided_factor(k, nperseg))
+        rs.store[1](Coord(k), acc_re * factor * doubled)
+        ims.store[1](Coord(k), acc_im * factor * doubled)
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        lane, Coord(keep), ctx
+    )
+    ctx.synchronize()
+    _ = xf^
+    _ = yf^
+    return CrossSpectrum[dtype, keep](
+        _frequencies[dtype, nperseg](ctx, fs), out_re^, out_im^
+    )
+
+
+def coherence[
+    dtype: DType,
+    n: Int,
+    nperseg: Int,
+    noverlap: Int = nperseg // 2,
+    gpu: Bool = False,
+](
+    mut x: Static[dtype, n],
+    mut y: Static[dtype, n],
+    fs: Float64 = 1.0,
+    window: StaticString = "hann",
+    detrend: Bool = True,
+) raises -> Periodogram[dtype, nperseg // 2 + 1] where (
+    dtype.is_floating_point() and n >= nperseg and nperseg > 1 and nperseg > 0
+):
+    """The magnitude-squared coherence of `x` and `y`:
+    `|Pxy|^2 / (Pxx Pyy)`, in `[0, 1]`. `scipy.signal.coherence(x, y, fs,
+    window, nperseg, noverlap, detrend)`.
+
+    How much of `y` at each frequency is linearly explained by `x`. Read it
+    as a correlation per bin rather than as a power: `1` means a fixed gain
+    and phase between the two at that frequency, `0` means none.
+
+    Returns a `Periodogram`, whose `power` field holds the coherence rather
+    than a power -- reusing the struct because its shape is exactly
+    `(frequencies, one value per bin)` and a second identical type would
+    say nothing.
+
+    **The scaling cancels.** `Pxy`, `Pxx` and `Pyy` all carry the same
+    factor, and the ratio drops it, which is why there is no `scaling`
+    parameter here when `csd` and `welch` both have one.
+
+    One frame gives a coherence of exactly `1` at every bin -- with a
+    single periodogram the ratio is an identity, not an estimate -- so
+    `nperseg` well below `n` is the point, as it is in SciPy.
+    """
+    comptime assert (
+        noverlap >= 0 and noverlap < nperseg
+    ), "noverlap must lie in [0, nperseg)"
+    comptime keep = nperseg // 2 + 1
+    comptime step = nperseg - noverlap
+    comptime frames = _frame_count(n, nperseg, noverlap)
+    var ctx = x.context()
+    var win = get_window[dtype, nperseg](window, ctx=ctx)
+
+    # Two framings, not four: all three spectra come out of one lane pass,
+    # since the ratio needs them at the same bin at the same time anyway.
+    var xf = _framed[dtype, n, nperseg, step, frames, gpu](x, win, 0, detrend)
+    var yf = _framed[dtype, n, nperseg, step, frames, gpu](y, win, 0, detrend)
+
+    var out = Static[dtype, keep]._uninitialized(ctx)
+    var xr = xf[0].view()
+    var xi = xf[1].view()
+    var yr = yf[0].view()
+    var yi = yf[1].view()
+    var cs = out.view()
+
+    @always_inline
+    def lane[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var xr, var xi, var yr, var yi, var cs}:
+        var k = coord_to_index_list(coord)[0]
+        var cross_re = Scalar[dtype](0)
+        var cross_im = Scalar[dtype](0)
+        var pxx = Scalar[dtype](0)
+        var pyy = Scalar[dtype](0)
+        for f in range(frames):
+            var a = xr[Coord(f, k)]
+            var b = xi[Coord(f, k)]
+            var c = yr[Coord(f, k)]
+            var d = yi[Coord(f, k)]
+            cross_re += a * c + b * d
+            cross_im += b * c - a * d
+            pxx += a * a + b * b
+            pyy += c * c + d * d
+        # Every scaling factor, including the one-sided doubling and the
+        # 1/frames, is common to the three and cancels in the ratio.
+        var numerator = cross_re * cross_re + cross_im * cross_im
+        var denominator = pxx * pyy
+        # A bin with no power in either signal has no coherence to report;
+        # SciPy leaves a NaN there, and zero is the reading that composes.
+        var value = Scalar[dtype](0)
+        if denominator > Scalar[dtype](0):
+            value = numerator / denominator
+        cs.store[1](Coord(k), value)
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        lane, Coord(keep), ctx
+    )
+    ctx.synchronize()
+    _ = xf^
+    _ = yf^
+
+    return Periodogram[dtype, keep](_frequencies[dtype, nperseg](ctx, fs), out^)
+
+
+def istft[
+    dtype: DType,
+    keep: Int,
+    frames: Int,
+    nperseg: Int,
+    noverlap: Int,
+    gpu: Bool = False,
+](
+    mut spectra: STFT[dtype, keep, frames], window: StaticString = "hann"
+) raises -> Static[
+    dtype,
+    nperseg + (frames - 1) * (nperseg - noverlap) - 2 * (nperseg // 2),
+] where (
+    dtype.is_floating_point()
+    and nperseg > 1
+    # `get_window`'s own clause, restated: the prover does no arithmetic on
+    # evidence, so `nperseg > 1` does not discharge `nperseg > 0`.
+    and nperseg > 0
+    and noverlap >= 0
+):
+    """The inverse short-time Fourier transform, by windowed overlap-add.
+    `scipy.signal.istft(Zxx, window=window, nperseg, noverlap,
+    boundary=True)`.
+
+    `stft`'s inverse, and the round trip recovers the signal: each column
+    is scaled back by `sum(w)`, inverted with `irfft`, multiplied by the
+    window again, accumulated at its hop position, and finally divided by
+    the summed squared window at each sample -- the least-squares
+    reconstruction, which is what makes the result exact wherever the
+    window satisfies COLA rather than only approximate.
+
+    The `nperseg // 2` boundary samples `stft` prepends and appends are cut
+    off, so `istft(stft(x))` lines up with `x` from index zero. The result
+    can still be *longer* than the original, because `stft` extends the
+    signal to a whole number of hops and there is nothing in `Zxx` saying
+    where the original ended; SciPy has the same property. Take the first
+    `n` samples.
+
+    `window` must be the one `stft` used -- the spectra do not record it.
+    **Tier 2.**
+
+    **`nperseg` and `noverlap` are explicit parameters**, so a round trip
+    reads `istft[nperseg=8, noverlap=4](stft[dtype, n, 8](x))`. They are
+    not defaulted from `keep`, and that is forced rather than chosen: the
+    `keep` a caller receives is `stft`'s *unevaluated* `nperseg // 2 + 1`,
+    and the `where` prover cannot fold `//` any more than it can fold `%`,
+    so every clause derived from `keep` is undischargeable. `irfft` takes
+    its `n` for the same reason. The agreement between the two is a
+    `comptime assert` below.
+
+    `ponytail:` `frames` separate `irfft` launches, one per column, where
+    the forward direction transforms every frame as one batch on the lane
+    engine. The upgrade is a batched inverse of the same shape
+    `_framed` uses forward; at the frame counts a spectrogram has, the
+    launches dominate above a few hundred frames.
+    """
+    # Asserted rather than constrained in the `where` clause: `keep` and
+    # `frames` reach a caller as `stft`'s unevaluated `nperseg // 2 + 1`
+    # and `_frame_count(...)`, and the prover folds neither a `//` nor a
+    # `def` call (`findings.mdc`).
+    comptime assert frames >= 1, "istft: frames must be at least 1"
+    comptime assert (
+        keep == nperseg // 2 + 1
+    ), "istft: nperseg disagrees with the spectrum's bin count"
+    comptime assert noverlap < nperseg, "noverlap must lie in [0, nperseg)"
+    comptime step = nperseg - noverlap
+    comptime padded = nperseg + (frames - 1) * step
+    comptime trim = nperseg // 2
+    comptime out_n = padded - 2 * trim
+
+    var ctx = spectra.frequencies.context()
+    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var sums = _window_sums(win)
+    var taps = win.to_host()
+
+    var re = spectra.real.to_host()
+    var im = spectra.imag.to_host()
+
+    var acc = List[Float64](length=padded, fill=0.0)
+    var weight = List[Float64](length=padded, fill=0.0)
+    var gain = sums[0]
+
+    for f in range(frames):
+        # Column `f` of the spectrum, with `stft`'s 1/sum(w) undone.
+        var col_re = List[Scalar[dtype]](capacity=keep)
+        var col_im = List[Scalar[dtype]](capacity=keep)
+        for k in range(keep):
+            col_re.append(re[k * frames + f] * Scalar[dtype](gain))
+            col_im.append(im[k * frames + f] * Scalar[dtype](gain))
+        var column: Spectrum[dtype, keep] = (
+            Static[dtype, keep](ctx, col_re^),
+            Static[dtype, keep](ctx, col_im^),
+        )
+        var frame = irfft[dtype, keep, gpu, nperseg](column^).to_host()
+
+        var base = f * step
+        for j in range(nperseg):
+            var w = Float64(taps[j])
+            acc[base + j] += Float64(frame[j]) * w
+            weight[base + j] += w * w
+
+    var values = List[Scalar[dtype]](capacity=out_n)
+    for i in range(out_n):
+        var at = i + trim
+        var w = weight[at]
+        # A sample no window covered cannot be reconstructed; zero rather
+        # than a division by zero, which is what SciPy's masked divide does.
+        values.append(Scalar[dtype](acc[at] / w if w > 0.0 else 0.0))
+    return Static[dtype, out_n](ctx, values^)
 
 
 def hilbert[

@@ -266,3 +266,33 @@ def fftconvolve[
     ctx.synchronize()
     _ = circular^
     return out^
+
+
+def oaconvolve[
+    dtype: DType, m: Int, k: Int, mode: Int = full, gpu: Bool = False
+](mut a: Static[dtype, m], mut b: Static[dtype, k]) raises -> Static[
+    dtype, _out_len(m, k, mode)
+] where (
+    dtype.is_floating_point()
+    and m > 0
+    and k > 0
+    and (mode == full or mode == same or mode == valid)
+):
+    """`convolve` by overlap-add. `scipy.signal.oaconvolve(a, b, mode)`.
+
+    Element for element the same answer as `fftconvolve` -- SciPy's
+    `oaconvolve` is not a different convolution, it is the same one
+    computed in blocks -- so the name ships and the two are checked
+    against each other.
+
+    `ponytail:` this *is* `fftconvolve`. The block decomposition is the
+    whole point of SciPy's version and it is not here: the gain is memory,
+    `O(k + block)` of transform workspace against `O(m + k)`, plus a
+    shorter transform when `m` is far longer than `k`. The upgrade is to
+    split `a` into blocks of about `8k`, transform each against one
+    pre-transformed `b`, and add the tails -- worth doing when a caller
+    convolves a long recording against a short kernel and the padded
+    length stops fitting comfortably in memory. Until then the answers
+    agree and only the peak footprint differs.
+    """
+    return fftconvolve[dtype, m, k, mode, gpu](a, b)

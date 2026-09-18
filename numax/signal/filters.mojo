@@ -47,8 +47,8 @@ these. **Extend** throughout.
 ## What is not here
 
 `lfilter`'s `zi`/`zf` state is used internally by `filtfilt` and not
-exposed; `sosfiltfilt`, `lfiltic`, `deconvolve`, `decimate` and
-`resample_poly` wait on a caller. IIR *design* -- `butter`, `cheby1`,
+exposed; `sosfiltfilt`, `lfiltic`, `deconvolve` and `resample_poly` wait
+on a caller. `decimate` is here, in SciPy's `ftype="fir"` form. IIR *design* -- `butter`, `cheby1`,
 `iirfilter` -- is `design.mojo`'s, one module over.
 """
 
@@ -899,3 +899,54 @@ def firwin[
         for i in range(numtaps):
             taps[i] /= total
     return _upload[dtype, numtaps](device, taps)
+
+
+def decimate[
+    dtype: DType, n: Int, q: Int, numtaps: Int = 20 * q + 1
+](mut x: Static[dtype, n]) raises -> Static[dtype, (n + q - 1) // q] where (
+    dtype.is_floating_point() and n > 0 and q >= 2 and numtaps > 0
+):
+    """Downsample `x` by the integer factor `q`, low-passing first.
+    `scipy.signal.decimate(x, q, ftype="fir", zero_phase=True)`.
+
+    The anti-alias filter is the point: taking every `q`-th sample of a
+    signal with energy above the new Nyquist folds that energy down onto
+    the bands below it, and no later step can separate the two again. So
+    this is `firwin` at a cutoff of `1 / q`, applied with `filtfilt` so
+    the phase response cancels, and only then the stride.
+
+    `q` is a parameter because the output length `ceil(n / q)` is part of
+    the type. `numtaps` follows SciPy's FIR default, `20 * q + 1`, odd so
+    the taps are symmetric about a sample.
+
+    SciPy's default is `ftype="iir"` -- an order-8 Chebyshev type I -- and
+    this is its `ftype="fir"` branch. The FIR route is chosen because
+    `filtfilt` over an order-8 IIR at `zero_phase=True` runs the recurrence
+    twice and its transient handling has more ways to go wrong, where a
+    symmetric FIR is exactly linear phase by construction. A caller wanting
+    the IIR spelling composes it: `cheby1[dtype, 8](0.8 / q, ...)` then
+    `filtfilt` then the stride.
+
+    **Tier 2**, since `filtfilt` is.
+    """
+    var ctx = x.context()
+    var cutoff = List[Float64](capacity=1)
+    cutoff.append(1.0 / Float64(q))
+    var taps = firwin[dtype, numtaps](cutoff^, True, ctx=ctx)
+    var unit = List[Scalar[dtype]](capacity=1)
+    unit.append(Scalar[dtype](1))
+    var denominator = Static[dtype, 1](ctx, unit^)
+
+    # SciPy's own padlen for this call, `3 * (len(b) // 2)`, rather than
+    # `filtfilt`'s default `3 * max(len(a), len(b))`. The smaller pad is
+    # what lets a signal only a few times longer than the taps be
+    # decimated at all: at `q = 2` the default would demand 124 samples
+    # where this needs 61.
+    var smoothed = filtfilt(taps, denominator, x, 3 * (numtaps // 2))
+    var host = smoothed.to_host()
+
+    comptime out_n = (n + q - 1) // q
+    var values = List[Scalar[dtype]](capacity=out_n)
+    for i in range(out_n):
+        values.append(host[i * q])
+    return Static[dtype, out_n](ctx, values^)
