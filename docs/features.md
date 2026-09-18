@@ -236,7 +236,7 @@ spelling, `cholesky[gpu=True, block=32](a)` the tuned one, and
 solve accepts a `View` of a sub-block in place of a tensor -- the panel
 kernels read through the layout, so `cholesky(View(a.view().tile[4, 4](0,
 0), a.context()))` factors a quadrant with no copy
-(`tests/linalg/test_tensorlike_linalg.mojo`). The two routines that flatten
+(`tests/linalg/test_tensorlike_linalg.mojo`, [`borrowed_views.mojo`](../examples/intermediate/borrowed_views.mojo)). The two routines that flatten
 an argument by pointer, `matvec`'s vector and the matrix `norm`, carry
 `where is_row_major[T]` and refuse a strided block at compile time. The
 `TensorLU`/`TensorQR` `solve` methods keep their overloads; the private
