@@ -236,12 +236,10 @@ def test_cos_falls_back_to_the_trivial_enclosure_when_it_spans_both() raises:
 
 
 def test_copysign_treats_a_source_ending_at_zero_as_non_positive() raises:
-    # `[-0.1, 0.0]` is entirely at or below zero, and zero counts as
-    # positive, so the sign is genuinely ambiguous only at the single
-    # point `0`; `copysign`'s own convention resolves that toward `+`.
-    # Negating the `+0.0` upper bound to test "all negative" produced
-    # `-0.0`, which reads as negative, so the source was treated as
-    # straddling zero and both signs came back.
+    # `[-0.1, 0.0]` is ambiguous only at the single point `0`, which
+    # `copysign` resolves toward `+`. Negating the `+0.0` bound to test
+    # "all negative" gave `-0.0`, which reads as negative, so the interval
+    # looked like it straddled zero and both signs came back.
     var magnitude = _interval(2.0, 3.0)
     var from_non_positive = magnitude.copysign(_interval(-0.1, 0.0))
     assert_almost_equal(from_non_positive.lo.v, P.constant(-3.0).v)

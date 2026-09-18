@@ -255,13 +255,11 @@ def main():
         )
 
     print("--- zeta(s): one Euler-Maclaurin sum on both sides of the pole ---")
-    # Above s = 1 the Dirichlet series' own values, below it the analytic
-    # continuation, out of the same formula with no reflection: zeta(2) =
-    # pi^2/6 = 1.6449340668482264, zeta(4) = pi^4/90 = 1.0823232337111382,
-    # zeta(0) = -1/2, zeta(-1) = -1/12, and zeta(-2) = 0, the first trivial
-    # zero, which arrives as a few 1e-15 because it is a difference of terms
-    # near 1 rather than an exact cancellation. The sweep stops at s = -2.5,
-    # which is as far as the fixed eight Bernoulli corrections reach.
+    # The Dirichlet series above s = 1 and the analytic continuation below
+    # it, out of one formula: zeta(2) = pi^2/6, zeta(0) = -1/2,
+    # zeta(-1) = -1/12, zeta(-2) = 0 -- the trivial zero, which arrives as
+    # a few 1e-15 rather than exactly. The sweep stops at s = -2.5, as far
+    # as eight Bernoulli corrections reach.
     for s_raw in [-2.5, -2.0, -1.0, 0.0, 0.5, 2.0, 4.0, 10.0]:
         print("s=", s_raw, " zeta(s)=", zeta(P.constant(s_raw)))
 

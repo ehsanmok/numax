@@ -173,12 +173,9 @@ def expm[
     var scaled = multiply(a, scale)
 
     # 2. The approximant. `a2`, `a4` and `a6` are shared by both halves,
-    # which is what makes degree 13 cost six products rather than thirteen.
-    # `matmul` takes both operands mutably -- a writable `TileTensor` view
-    # cannot be built from an immutable binding -- and Mojo will not pass
-    # one binding through two `mut` arguments, so a squaring needs a second
-    # named copy of the same matrix. `numax.core.array.copy` is the explicit
-    # spelling; `matrix_power` in `blas.mojo` pays the same cost.
+    # which is what makes degree 13 six products rather than thirteen. A
+    # squaring needs a second named copy: `matmul` takes both operands
+    # `mut` and Mojo will not pass one binding twice.
     var scaled_again = copy(scaled)
     var a2 = matmul[dtype, n, n, n, gpu](scaled, scaled_again)
     var a2_again = copy(a2)

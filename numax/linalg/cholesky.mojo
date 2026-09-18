@@ -157,12 +157,9 @@ def cholesky[
     # `L21` made dense for the GEMM. `n x block` covers every step's panel,
     # so it is allocated once rather than per step.
     var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
-    # The GEMM's own output, which nothing here reads: the epilogue takes
-    # each tile as it is computed and subtracts it into the trailing block.
-    # It still has to exist and be the product's full size, because `matmul`
-    # writes `c` whether an epilogue is given or not -- but the product is
-    # now one `tile x tile` block rather than the whole `n x n` trailing
-    # submatrix, which is most of what the tiling buys.
+    # The GEMM's own output, which nothing reads -- the epilogue subtracts
+    # each tile into the trailing block as it is computed. It still has to
+    # be the product's full size, since `matmul` writes `c` regardless.
     var scratch = zeros_dyn[dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
 
     var wv = work.view()
@@ -239,16 +236,11 @@ def cholesky[
                     var r0 = base + row0
                     var c0 = base + col0
 
-                    # See `numax.linalg.qr`'s `_MIN_GEMM_COLS`: a
-                    # one-column product takes MAX's GEMV path, which
-                    # walks the rows in whole SIMD vectors and so reads
-                    # past a matrix whose row count is not a lane
-                    # multiple. The ragged last *column* tile is exactly
-                    # that shape -- `tile = 7` at `n = 11`, `block = 3`
-                    # leaves a `1 x 1` tile -- and a GEMM there is
-                    # `rows * nb` of arithmetic, small enough to write
-                    # directly. `_subtract_panel` in `numax.linalg.eigen`
-                    # takes the same fallback for the same reason.
+                    # See `_MIN_GEMM_COLS`: a one-column product takes
+                    # MAX's GEMV path, which reads past a row count off a
+                    # lane multiple. The ragged last column tile is that
+                    # shape, and `rows * nb` is small enough to write
+                    # directly.
                     if cols < _MIN_GEMM_COLS:
 
                         @always_inline

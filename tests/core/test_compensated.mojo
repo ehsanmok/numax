@@ -135,20 +135,10 @@ def test_ln_undoes_exp() raises:
 
 
 def test_erf_approx_compensated_beats_plain_for_small_x() raises:
-    # `default_erf_approx` (`numax.core.numeric`) computes `1 - poly(x) *
-    # exp(-x^2)`, a near-total cancellation for small `x` -- exactly the
-    # pattern compensated arithmetic is built to survive. At x=1e-5, that
-    # formula run in plain float32 loses most of its significant digits in
-    # the subtraction; run through `Compensated`'s `+`/`*`/`exp` instead,
-    # it shouldn't.
-    #
-    # This compares the *shared formula* at two precisions, not
-    # `Plain.erf()` (which no longer runs this formula at all -- it calls
-    # `std.math.erf` directly, a differently-conditioned implementation
-    # that sidesteps this cancellation entirely and beats both of the
-    # numbers compared here; see `test_erf_matches_known_values` above and
-    # `numax.core.numeric.default_erf_approx`'s docstring for why `Compensated`
-    # still carries this approximation on its own).
+    # `default_erf_approx` computes `1 - poly(x) * exp(-x^2)`, a near-total
+    # cancellation at small `x`. This compares that *shared formula* at two
+    # precisions -- not `Plain.erf()`, which calls `std.math.erf` and
+    # sidesteps the cancellation entirely.
     var x = SIMD[dtype, width](1e-05)
     var reference: Float64 = 1.1283791670579e-05
 

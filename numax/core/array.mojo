@@ -641,12 +641,10 @@ struct Tensor[dtype: DType, LayoutType: TensorLayout](Movable, Writable):
         except e:
             writer.write("<unreadable: ", String(e), ">")
 
-    # The operators forward to `numax.core.ops` at its default `gpu=False`.
-    # An operator has no parameter list a caller can write `[gpu=True]` in,
-    # so `a + b` on a tensor that lives on a GPU context runs the host walk
-    # `_drive` retains and prints one line on `stderr` naming `add[gpu=True]`
-    # -- the function is the device spelling, and the operator says so
-    # rather than silently costing a round trip.
+    # Forward to `numax.core.ops` at `gpu=False`: an operator has no
+    # parameter list to write `[gpu=True]` in, so `a + b` on a device
+    # tensor takes the host walk and prints one `stderr` line naming
+    # `add[gpu=True]`.
 
     def __add__(self, other: Self) raises -> Self:
         """`a + b`, elementwise. Forwards to `numax.core.ops.add`.
@@ -2909,26 +2907,11 @@ def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
 # The seam between the two array types
 # --------------------------------------------------------------------------
 #
-# `Tensor` is the array of `numax.core`, `numax.stats` and `numax.io`: heap
-# storage on a device, a shape in its type. `Array[T, n]` is the array of
-# `numax.linalg`, `numax.signal`, `numax.interpolate` and `numax.optimize`:
-# comptime-sized, register-resident, and generic over the `FloatLike`
-# conformer -- which is what makes `cholesky` differentiable at `Dual` and
-# launchable inside a GPU thread.
-#
-# Both are right for their half of the library, and the functions below are
-# how a program crosses between them: load a matrix with
-# `numax.io.numpy.load`, `to_array` it, factor it, `to_tensor` the result,
-# save it.
-#
 # Lifting works at any conformer, since `FloatLike` builds a value from a
-# `Float64`. Lowering has to name the conformer, because the trait offers no
-# way back out and there is no one right answer for what an arbitrary
-# conformer is as a tensor element. Three lowerings ship -- `Plain`, `Dual`
-# and `Gradient` -- which is the set whose components are each themselves a
-# tensor: a value, a directional derivative, a gradient. `Interval`,
-# `Complex`, `Compensated` and `Decimal` lower by taking the component the
-# caller wants (`.lo`/`.hi`, `.re`/`.im`, `.hi`) at `Plain` first.
+# `Float64`. Lowering has to name one, because the trait offers no way back
+# out. Three ship -- `Plain`, `Dual`, `Gradient` -- the set whose components
+# are each themselves a tensor; `Interval`, `Complex`, `Compensated` and
+# `Decimal` lower by taking the component wanted at `Plain` first.
 
 
 def to_array[

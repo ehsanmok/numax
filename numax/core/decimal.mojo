@@ -80,10 +80,9 @@ struct Decimal[width: Int, scale: Int](
         return Self(-self.raw)
 
     def __mul__(self, rhs: Self) -> Self:
-        # (a*10^s) * (b*10^s) = (a*b)*10^s * 10^s, so dividing back out by
-        # 10^s recovers a value scaled by 10^s again. `//` floors rather
-        # than rounding to nearest, so this can be off by up to one raw
-        # unit (`10^-scale`) versus a round-to-nearest product.
+        # (a*10^s)(b*10^s) = (ab*10^s)*10^s, so dividing 10^s back out
+        # rescales correctly. `//` floors, so this can sit one raw unit
+        # (`10^-scale`) below a round-to-nearest product.
         comptime factor = _pow10[Self.scale]()
         return Self((self.raw * rhs.raw) // factor)
 
@@ -94,12 +93,9 @@ struct Decimal[width: Int, scale: Int](
         return Self((self.raw * factor) // rhs.raw)
 
     def exp(self) -> Self:
-        # sum_{n=0}^{29} self^n / n!, built term-by-term (term_n =
-        # term_{n-1} * self / n) so no factorial ever needs its own
-        # representation. No range reduction (unlike `Compensated.exp()`),
-        # so this converges well for `self` within a few units of zero and
-        # progressively needs more of the fixed 30 terms the larger
-        # `|self|` gets.
+        # sum_{n=0}^{29} self^n / n!, term-by-term so no factorial needs a
+        # representation. No range reduction, so accuracy falls off as
+        # `|self|` grows past a few units.
         comptime num_terms = 30
         var term = Self.one()
         var total = term.copy()
@@ -109,11 +105,9 @@ struct Decimal[width: Int, scale: Int](
         return total^
 
     def ln(self) -> Self:
-        # Newton's method on f(y) = exp(y) - self, exactly like
-        # `Compensated.ln()` -- seeded from an ordinary `float64` `log` of
-        # `self`'s value (going through `float64` here, unlike the rest of
-        # this type's arithmetic, purely to get a starting guess) and
-        # refined with this type's own exact decimal `exp`/`__add__`/`__mul__`.
+        # Newton on f(y) = exp(y) - self, as `Compensated.ln()`: a
+        # `float64` `log` for the seed only, then this type's own exact
+        # decimal `exp`/`+`/`*` for the refinement.
         comptime factor = _pow10[Self.scale]()
         var x_f64 = self.raw.cast[DType.float64]() / SIMD[
             DType.float64, Self.width
@@ -130,12 +124,9 @@ struct Decimal[width: Int, scale: Int](
         return y^
 
     def sqrt(self) -> Self:
-        # Newton's method on f(y) = y^2 - self, i.e.
-        # y_{n+1} = (y_n + self/y_n) / 2, seeded from an ordinary `float64`
-        # `sqrt` of this value -- the same "float64 for the seed only, this
-        # type's own exact arithmetic for the refinement" split `ln` uses.
-        # A zero or negative `self` is outside the domain and returns zero
-        # rather than dividing by it.
+        # Newton on f(y) = y^2 - self, seeded from a `float64` sqrt and
+        # refined in this type's exact arithmetic, as `ln` does. A
+        # non-positive `self` returns zero rather than dividing.
         comptime factor = _pow10[Self.scale]()
         var x_f64 = self.raw.cast[DType.float64]() / SIMD[
             DType.float64, Self.width
@@ -170,10 +161,9 @@ struct Decimal[width: Int, scale: Int](
         return Self.one() - self.erf()
 
     def sin(self) -> Self:
-        # sin(x) = sum_{k=0}^{29} term_k, term_0 = x, term_k = term_{k-1} *
-        # (-x^2) / ((2k)*(2k+1)) -- same fixed-30-term, no-range-reduction
-        # shape as `exp()` above, and the same "converges well near zero,
-        # needs more of the fixed terms the larger `|self|` gets" caveat.
+        # sin(x) = sum_{k=0}^{29} term_k, term_k = term_{k-1} * (-x^2) /
+        # ((2k)(2k+1)). Fixed 30 terms and no range reduction, as `exp()`
+        # above, with the same falloff as `|self|` grows.
         comptime num_terms = 30
         var neg_x2 = -(self * self)
         var term = self.copy()
@@ -210,19 +200,17 @@ struct Decimal[width: Int, scale: Int](
         return Self(abs(self.raw))
 
     def copysign(self, sign_source: Self) -> Self:
-        # Round-trips through `float64` rather than a boolean mask/select,
-        # since `SIMD[DType.int64, width]` comparisons don't expose the
-        # same lane-select API `Plain`/`Dual`/`Compensated` use for
-        # `copysign` on their floating-point fields.
+        # Through `float64` rather than a mask: `SIMD[DType.int64, w]`
+        # comparisons expose no lane-select like the one `copysign` uses on
+        # the floating-point conformers.
         var mag_f = abs(self.raw).cast[DType.float64]()
         var sign_f = sign_source.raw.cast[DType.float64]()
         return Self(_copysign_f64(mag_f, sign_f).cast[DType.int64]())
 
     def floor(self) -> Self:
-        # `raw` is exact, so this is exact too, and it never touches a
-        # float: `//` on `SIMD[DType.int64, ...]` already floors (rounds
-        # toward negative infinity, confirmed directly: `-7 // 10 == -1`),
-        # which is exactly what `floor` of `raw/10^scale` needs.
+        # Exact and float-free: `//` on `SIMD[DType.int64, ...]` already
+        # rounds toward negative infinity (`-7 // 10 == -1`), which is what
+        # `floor` of `raw/10^scale` needs.
         comptime factor = _pow10[Self.scale]()
         return Self((self.raw // factor) * factor)
 

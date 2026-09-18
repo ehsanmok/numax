@@ -808,12 +808,9 @@ def test_eigh_is_differentiable_at_dual() raises:
 
 def test_eigh_derivative_survives_float32() raises:
     # The Jacobi rotation used to floor a zero off-diagonal at `1e-30` and
-    # divide by it, and the quotient rule squares that denominator: below
-    # `float32`'s smallest normal, so every derivative through
-    # `eigh[Dual[Plain[float32]]]` came out NaN on a matrix with any exact
-    # zero off the diagonal -- which is every tridiagonal one. A diagonal
-    # matrix is the sharpest case: the eigenvalues are its entries and
-    # their derivatives with respect to `a[0, 0]` are `1` and `0`.
+    # divide by it, and the quotient rule squares that -- below `float32`'s
+    # smallest normal, so every derivative through `eigh` at `Dual` came
+    # out NaN on any matrix with an exact zero off the diagonal.
     comptime P32 = Plain[DType.float32, 1]
     comptime D32 = Dual[P32]
     var a = Array[D32, 4](fill=D32.constant(0.0))

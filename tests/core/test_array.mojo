@@ -276,12 +276,10 @@ def test_stack_along_axis_zero() raises:
 
 def test_tensor_survives_the_call_that_built_it() raises:
     var ctx = DeviceContext(api="cpu")
-    # The whole reason `Tensor` exists rather than returning a bare
-    # `TileTensor`: the value returned by a factory function must remain
-    # valid after the function that built it has returned and its locals
-    # have been destroyed. Allocate a bunch of unrelated memory afterward
-    # to make a use-after-free regression likely to show up as corruption
-    # rather than silently passing.
+    # Why `Tensor` exists rather than a bare `TileTensor`: a factory's
+    # result has to outlive the factory's locals. The unrelated allocation
+    # afterward turns a use-after-free into visible corruption rather than
+    # a silent pass.
     var t = full[dtype, 64](42, ctx=ctx)
     var junk = List[List[Scalar[dtype]]]()
     for i in range(256):

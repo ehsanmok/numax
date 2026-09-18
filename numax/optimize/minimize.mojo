@@ -304,12 +304,9 @@ def _bfgs_update[
     var s_hy = outer[dtype, n, n, gpu](s, hy)
     var hy_s = outer[dtype, n, n, gpu](hy, s)
 
-    # `s s^T` needs a second binding for the same vector: `outer` takes both
-    # operands mutably, because `.view()` cannot build a writable
-    # `TileTensor` from an immutable one, and Mojo rejects passing one
-    # binding through two `mut` arguments. A second materialization of the
-    # same host vector is the cost, and it is `O(n)` against the `O(n^2)`
-    # product it feeds.
+    # `s s^T` needs a second binding for the same vector: `outer` takes
+    # both operands `mut` and Mojo will not pass one binding twice. `O(n)`
+    # against the `O(n^2)` product it feeds.
     var s_again = _as_tensor[dtype, n](s_host, ctx)
     var s_s = outer[dtype, n, n, gpu](s, s_again)
 
@@ -989,12 +986,10 @@ def _descend[
                 var moved_trial = _as_tensor[dtype, n_vars](candidate, ctx)
                 f_candidate = Float64(f(moved_trial, ctx))
         else:
-            # Backtrack on Armijo alone: BFGS's `H` carries the scale of a
-            # good step, so a unit trial that is only ever halved is enough
-            # and costs no `jac` evaluations inside the search. With bounds
-            # every method takes this path, along the projected path `P(x +
-            # step d)` with the decrease measured against the move actually
-            # made.
+            # Armijo alone: BFGS's `H` carries the step scale, so a unit
+            # trial that is only halved needs no `jac` inside the search.
+            # With bounds every method takes this path, along `P(x + t d)`
+            # with the decrease measured against the move actually made.
             for _ in range(60):
                 var predicted = 0.0
                 for i in range(n_vars):

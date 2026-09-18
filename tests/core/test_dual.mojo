@@ -83,10 +83,9 @@ def test_ln_undoes_exp() raises:
 
 # --- Second-order autodiff: `Dual[D]`, a `Dual` nested inside a `Dual` ---
 #
-# Seeding the outer `Dual` at `deriv = D.one()` and the inner `D` at
-# `deriv = 1` means the outer `.value` is `(f(x), f'(x))` and the outer
-# `.deriv` is `(f'(x), f''(x))` -- so `.deriv.deriv` is the second
-# derivative, with no change to `gaussian`, `exp`, or any other kernel.
+# Seeding both levels at one makes the outer `.value` `(f, f')` and the
+# outer `.deriv` `(f', f'')`, so `.deriv.deriv` is the second derivative
+# with no change to any kernel.
 comptime D2 = Dual[D]
 
 

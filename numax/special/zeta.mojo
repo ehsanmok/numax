@@ -58,11 +58,9 @@ comptime _M = 8
 comptime _TINY = 1e-300
 
 # Where the Riemann overload leaves Euler-Maclaurin for the functional
-# equation, and the two clamps that keep the *unselected* side of that
-# blend finite: the reflection is evaluated at `min_of(s, -0.5)`, so
-# `1 - s` never falls below `1.5` and `gamma` never reaches a pole, and
-# Euler-Maclaurin at `max_of(s, -3)`, the bottom of the range `M = 8`
-# Bernoulli corrections cover.
+# equation. Both clamps keep the *unselected* side finite: the reflection
+# runs at `min_of(s, -0.5)` so `gamma` never reaches a pole, and
+# Euler-Maclaurin at `max_of(s, -3)`, the bottom `M = 8` covers.
 comptime _REFLECT_AT = -0.5
 comptime _EULER_FLOOR = -3.0
 

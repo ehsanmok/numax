@@ -400,11 +400,9 @@ def _subtract_panel[
         return
 
     # See `_MIN_GEMM_COLS`: a one-column product takes MAX's GEMV path,
-    # which stores whole SIMD vectors down the rows with no masked tail and
-    # so hands the epilogue coordinates past the block. A `labrd` panel
-    # ending one column short of `n` produces exactly that shape -- a
-    # `latrd` panel cannot, which is why `sytrd` never met it -- and the
-    # update is `O(rows * width)` there, small enough to write directly.
+    # which hands the epilogue coordinates past the block. A `labrd` panel
+    # ending one column short of `n` is that shape, and the update is
+    # `O(rows * width)` there, small enough to write directly.
     if cols < _MIN_GEMM_COLS:
 
         @always_inline

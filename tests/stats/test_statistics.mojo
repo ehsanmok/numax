@@ -218,13 +218,10 @@ def test_floatlike_cumsum_matches_the_running_sum() raises:
 
 def test_compensated_variance_beats_plain_on_a_long_summation() raises:
     var ctx = DeviceContext(api="cpu")
-    # Every value is close to 1.0 (so a single float32 stores each one
-    # almost exactly), but summing half a million of them drives the
-    # running accumulator up to where a single-precision `+=` starts
-    # discarding real bits of each new term -- the textbook case
-    # `Compensated` exists for. A float64 reference is the ground truth;
-    # `Plain`'s variance should drift measurably from it, `Compensated`'s
-    # should not.
+    # Each value is near 1.0 and stored almost exactly in float32, but
+    # summing half a million drives the accumulator to where a
+    # single-precision `+=` discards real bits of each new term. Against a
+    # float64 reference, `Plain` should drift and `Compensated` should not.
     comptime n = 300_000
     var plain_list = List[Plain[dtype]](capacity=n)
     var comp_list = List[Compensated[dtype, 1]](capacity=n)

@@ -103,11 +103,9 @@ comptime _TEMME_TERMS = 20
 comptime _ORDER_STEPS = 30
 
 # `1/Gamma(z) = sum_{k>=1} c_k z^k`, `c_1 .. c_26` (A&S 6.1.34, regenerated
-# in mpmath at 40 digits). Temme's `Gamma_1(mu) = (1/Gamma(1-mu) -
-# 1/Gamma(1+mu)) / (2 mu)` and `Gamma_2 = (1/Gamma(1-mu) + 1/Gamma(1+mu)) /
-# 2` fall out of it as the even and odd halves, `-sum c_{2j+2} mu^{2j}` and
-# `sum c_{2j+1} mu^{2j}`, with no cancellation at `mu -> 0` where the
-# quotient form loses every digit. `c_26 mu^26` is `2e-24` at `|mu| = 1/2`.
+# in mpmath at 40 digits). Temme's `Gamma_1`/`Gamma_2` fall out as the odd
+# and even halves, with no cancellation at `mu -> 0` where the quotient form
+# loses every digit. `c_26 mu^26` is `2e-24` at `|mu| = 1/2`.
 comptime _RGAMMA: Array[Float64, 26] = [
     1.0,
     0.577215664901532861,
@@ -512,12 +510,10 @@ def _chain_down[
     taken where `nl >= k + 1` and held elsewhere. Returns `(f_mu, f_{mu+1},
     f_v, nl)` with `f_v` rescaled alongside, so any one true value fixes
     them all."""
-    # `ceil(v - 1/2)`, not `floor(v + 1/2)`: both put `mu` within `1/2` of
-    # zero, but the half-integers -- every spherical Bessel order -- land
-    # on `mu = +1/2` this way and `-1/2` the other, and at `-1/2` Temme's
-    # series produces `Y_{-1/2} = J_{1/2}`, the small solution, as the
-    # difference of two terms of size `(2/x)^{1/2}`: nine digits gone at
-    # `x = 1e-9`. At `+1/2` the large solution is what it computes.
+    # `ceil(v - 1/2)`, not `floor(v + 1/2)`: both keep `|mu| <= 1/2`, but
+    # the half-integers land on `+1/2` this way and `-1/2` the other, and
+    # at `-1/2` Temme's series builds the *small* solution as a difference
+    # -- nine digits gone at `x = 1e-9`.
     var nl = -((T.constant(0.5) - v).floor())
     var xi = T.one() / x
     var a = sign.copy()

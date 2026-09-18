@@ -280,14 +280,11 @@ def _sytrd_reduction_at[
 
 
 def test_sytrd_blocking_does_not_change_the_answer() raises:
-    # `block` is the `latrd` panel width: how many columns are reduced
-    # against the panel's own `V` and `W` before the trailing block sees a
-    # single GEMM. It changes the order the same arithmetic happens in and
-    # nothing else, so the band and `Q` come out the same at every width.
-    # `block == 1` is the unblocked reduction -- no pre-update, one rank-2
-    # GEMM per column -- and `block == n` is one panel whose trailing
-    # update never runs. The reflectors are deterministic, so this pins
-    # entries rather than invariants.
+    # `block` is the `latrd` panel width. It reorders the same arithmetic
+    # and nothing else, so the band and `Q` match at every width;
+    # `block == 1` is the unblocked reduction and `block == n` one panel
+    # with no trailing update. The reflectors are deterministic, so this
+    # pins entries rather than invariants.
     comptime n = 6
     var reference = _hilbert[n]()
     var whole = sytrd[dtype, n, False, n](reference)
@@ -908,15 +905,12 @@ def _gebrd_band_at[
 
 
 def test_gebrd_blocking_does_not_change_the_answer() raises:
-    # `block` is the `labrd` panel width, not only the width `.q()` and
-    # `.p()` walk in: it decides how many columns are reduced against the
-    # panel's own `V`, `Y`, `X` and `U` before the trailing block sees a
-    # GEMM. It changes the order the same arithmetic happens in and
-    # nothing else, so the band and both factors come out the same at
-    # every width. `block == 1` is the unblocked reduction -- no
-    # pre-update, the masked rank-one updates restricted to exactly what
-    # they used to reach -- and `block == n` is one panel whose trailing
-    # GEMMs never run.
+    # `block` is the `labrd` panel width: how many columns are reduced
+    # against the panel's own `V`, `Y`, `X` and `U` before the trailing
+    # block sees a GEMM. It reorders the same arithmetic and nothing else,
+    # so the band and both factors match at every width; `block == 1` is
+    # the unblocked reduction and `block == n` one panel with no trailing
+    # GEMM.
     comptime n = 6
     var square = _rect[n, n]()
     var whole = gebrd[dtype, n, n, False, n](square)
@@ -2133,22 +2127,13 @@ def _hessenberg_form[
 
 
 def test_schur_blocking_does_not_change_the_answer() raises:
-    # `block` decides how many commuting rotations ride in one GEMM, so
-    # every width has to produce the same `T` and the same `Z` -- signs
-    # included, since the transformations themselves are unchanged and only
-    # their schedule moves. `block == 1` is the sharp end: one entry per
-    # window, so the windows have to come out in exactly the order the
-    # chase emitted them, and a tag that ran the other way would reverse
-    # every sweep.
+    # `block` only decides how many commuting rotations ride in one GEMM,
+    # so every width must give the same `T` and `Z`, signs included.
     #
-    # The fixtures are already Hessenberg, and that is load-bearing.
-    # `block` is also `gehrd`'s panel width, and a wider panel reorders the
-    # reduction's arithmetic -- `H` moves in the last bits, and `_hqr`'s
-    # deflation order is not continuous in `H`: at `_matrix_a` the four
-    # real eigenvalues come out in a different order on the diagonal, a
-    # different but equally valid real Schur form. Starting from a matrix
-    # with nothing to reduce takes that term out and leaves the windowing
-    # as the only thing `block` changes.
+    # The fixtures are already Hessenberg, and that is load-bearing:
+    # `block` is also `gehrd`'s panel width, and a wider panel moves `H` in
+    # the last bits, where `_hqr`'s deflation order is not continuous -- a
+    # different but equally valid Schur form comes out.
     comptime n = 4
 
     var source_a = _matrix_a()

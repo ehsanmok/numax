@@ -92,10 +92,9 @@ struct Dual[Inner: FloatLike](
         return Self(self.value.ln(), self.deriv / self.value)
 
     def sqrt(self) -> Self:
-        # d/dx[sqrt(f)] = f' / (2*sqrt(f)). Divides by the value already
-        # computed rather than calling `sqrt` a second time; the derivative
-        # is genuinely infinite at f = 0, which this reproduces rather than
-        # papering over.
+        # d/dx[sqrt(f)] = f' / (2*sqrt(f)), dividing by the value already
+        # computed. The derivative is genuinely infinite at f = 0, which
+        # this reproduces.
         var v = self.value.sqrt()
         var d = self.deriv / (Self.Inner.constant(2.0) * v)
         return Self(v^, d^)
@@ -149,10 +148,8 @@ struct Dual[Inner: FloatLike](
         return Self(self.value.copysign(sign_source.value), self.deriv * flip)
 
     def floor(self) -> Self:
-        # A step function -- constant almost everywhere, so its derivative
-        # is zero almost everywhere (undefined exactly at the integers,
-        # which this doesn't special-case, matching `abs`'s own silence at
-        # its own non-differentiable point at zero).
+        # A step function, so the derivative is zero almost everywhere.
+        # Undefined at the integers, which this does not special-case.
         return Self(self.value.floor(), Self.Inner.constant(0.0))
 
     def ceil(self) -> Self:

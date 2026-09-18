@@ -232,14 +232,9 @@ def power[
     ](a, b)
 
 
-# The broadcasting forms. Each is the same operation as the overload of its
-# name above, at two shapes NumPy would broadcast rather than one shape
-# twice -- a `(3, 1)` against a `(4,)`, a matrix against its row of column
-# means. The result is a `Dynamic` because the broadcast extents are
-# run-time values, so a caller who needs the shape back in the type
-# broadcasts explicitly with `broadcast_to` and stays on the overload above.
-# The same-shape overloads still match first and still return the input's
-# own layout type, so nothing that compiled before changes shape.
+# The broadcasting forms, at two shapes NumPy would broadcast. The result is
+# a `Dynamic`, since the extents are run-time values; the same-shape
+# overloads still match first and keep the input's own layout type.
 
 
 def add[

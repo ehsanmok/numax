@@ -65,14 +65,10 @@ from ._drive import (
 )
 
 
-# The per-element operations. Each is generic in the SIMD width, because the
-# drivers call them at the launch width rather than one lane at a time, and
-# each comparison is spelled as a method (`a.lt(b)`) rather than an operator.
-# `a < b` on a SIMD vector is `Strict inequality is only defined for Scalars`
-# and `a == b` at a width above one returns a single `Bool` -- which would
-# splat one lane's answer across the whole vector. The methods are the
-# ordered comparisons, which is what IEEE asks for everywhere except
-# not-equal; see `_ne_op`.
+# Comparisons are spelled as methods (`a.lt(b)`), not operators: `a < b` on
+# a SIMD vector is "Strict inequality is only defined for Scalars", and
+# `a == b` above width one returns one `Bool`, splatting a lane's answer
+# across the vector. The methods are the ordered comparisons; see `_ne_op`.
 
 
 def _eq_op[

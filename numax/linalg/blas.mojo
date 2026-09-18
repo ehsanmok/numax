@@ -291,12 +291,9 @@ def matvec[
         var av = a.view()
         var pv = padded.view()
 
-        # Width 1, for the reason `numax.linalg.special_matrices` gives:
-        # this reads its input at an index derived from the *output*
-        # coordinate, and a wider tile is not guaranteed to stay inside one
-        # row of `a` -- at small `k` it would run off the end of the source
-        # while copying the last real row, which is the very fault this
-        # function exists to avoid.
+        # Width 1: this reads its input at an index derived from the
+        # *output* coordinate, and a wider tile is not guaranteed to stay
+        # inside one row of `a` -- the very over-read this exists to avoid.
         @always_inline
         def grow[w: Int, alignment: Int = 1](coord: Coord) {var av, var pv}:
             var i = coord_to_index_list(coord)[0]
@@ -503,18 +500,11 @@ def matrix_power[
                 seeded = True
         remaining = remaining // 2
         if remaining > 0:
-            # `matmul(base, base)` is rejected: it takes both operands
-            # mutably, and Mojo will not pass one binding through two `mut`
-            # arguments. So the squaring step needs a second tensor holding
-            # the same values, and `numax.core.array.copy` is the only way
-            # to make one -- it round-trips through the host, since MAX
-            # exposes no device-to-device copy numax has found.
-            #
-            # The ceiling: `floor(log2(power))` host round trips per call,
-            # which is 1 at `power = 2 or 3` and 2 at `power = 4..7`. It is
-            # bounded and small, but on a device tensor it is real. A
-            # device-resident `copy` removes it without changing anything
-            # here.
+            # `matmul(base, base)` is rejected -- both operands are `mut`
+            # and Mojo will not pass one binding twice -- so squaring needs
+            # a second tensor, and `copy` round-trips through the host.
+            # `ponytail:` `floor(log2(power))` host round trips per call; a
+            # device-resident `copy` removes them.
             var mirror = copy(base)
             base = matmul[dtype, n, n, n, gpu](base, mirror)
 
@@ -706,16 +696,10 @@ def tensordot[
         b.buffer.copy(), row_major(_dyn_shape[2](k, n)), b.host_addressable
     )
 
-    # A contraction that leaves one column is a matrix-vector product, and
-    # that is the one shape not to hand to `matmul`: MAX routes `n == 1`
-    # to a GEMV kernel that stores whole SIMD vectors with no masked tail,
-    # so a row count that is not a multiple of the lane width comes back
-    # with the tail wrong -- uninitialized memory here, and on a machine
-    # with wider lanes than the one this was written on, a crash. The
-    # arithmetic saved is nothing: `m * k` multiply-adds is a BLAS-2 shape
-    # that no GEMM accelerates, so numax writes it as one `elementwise`
-    # over the output and reads both operands through flat rank-1 views,
-    # which is the indexing that stays correct at every extent.
+    # Not `matmul`: MAX routes `n == 1` to a GEMV that stores whole SIMD
+    # vectors with no masked tail, so a row count off a lane multiple comes
+    # back with the tail wrong. No GEMM accelerates a BLAS-2 shape anyway,
+    # so this is one `elementwise` over flat rank-1 views.
     if n == 1:
         var ctx = a.context()
         var out = zeros_dyn[dtype, 1](m, ctx=ctx)

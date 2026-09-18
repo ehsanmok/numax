@@ -1349,28 +1349,10 @@ def broadcast_op_rows[
 # ------------------------------------------------------------------
 # Runtime-shape overloads
 #
-# Everything above requires `all_dims_known`, because it walks a tensor by
-# calling `TileTensor.coalesce()` and `coalesce()` itself is constrained to
-# statically-shaped storage. That is what a GPU launch needs, and it stays
-# exactly as it is.
-#
-# But a NumPy-shaped caller cannot always supply it: `reshape` to a computed
-# shape, a boolean mask, `unique`, or anything whose output extent depends on
-# input *values* produces a tensor whose dims are runtime integers.
-# `row_major(Coord(3, 4))` builds precisely that -- `is_row_major=True`,
-# `all_dims_known=False` -- and `coalesce()` rejects it.
-#
-# The overloads below take that case. They are the *same* functions under the
-# *same* names, selected by a `where` clause that is the exact negation of the
-# static one, so the two can never be ambiguous and no existing call site
-# changes behavior. numax gains no new tensor type from this: the argument is
-# still a `TileTensor`, which is what every MAX kernel takes.
-#
-# The one thing they do differently is flatten by construction rather than by
-# `coalesce()`: a row-major tensor's elements are already contiguous, so a
-# rank-1 `row_major(Coord(n))` layout over the same pointer addresses exactly
-# the same memory in the same order. That is all `coalesce()` does for a
-# row-major input; it just insists on proving the shape at compile time first.
+# The same functions under the same names, selected by a `where` clause that
+# is the exact negation of the static one above. They flatten by building a
+# rank-1 layout over the same pointer rather than by `coalesce()`, which
+# insists on proving the shape at compile time.
 # ------------------------------------------------------------------
 
 
@@ -1827,28 +1809,11 @@ def broadcast_op_axis[
 # ------------------------------------------------------------------
 # Strided views
 #
-# Both families above walk memory linearly, which is only meaningful when
-# the elements are contiguous in the order the shape implies. A transposed
-# view or a sliced one is neither: `a.T` reorders the strides without moving
-# a byte, and `a[1:3]` leaves gaps between rows. `is_row_major` is what
-# separates the two cases, and it is false for exactly these.
-#
-# The two functions below take that case. They address each element through
-# its own coordinates -- `offset = sum_d coord[d] * stride[d]`, with the
-# coordinates recovered from a linear counter by dividing through the
-# extents -- so no assumption about contiguity is made anywhere. Rank is
-# compile-time, so the per-axis arithmetic unrolls; extents and strides may
-# be either.
-#
-# They are also generic over `Storage`, which the linear walkers are not: a
-# view produced by `slice` carries a different storage type than the tensor
-# it came from, so pinning `PointerStorage` would reject the very inputs
-# these exist for. And input and output layouts are independent, since the
-# useful direction is reading a strided view into compact storage.
-#
-# The cost is one integer division per axis per element, against a pointer
-# bump. Compact the view with a copy first if the same data is walked more
-# than once.
+# For the `is_row_major == False` case a transposed or sliced view produces.
+# Each element is addressed through `sum_d coord[d] * stride[d]`, so nothing
+# assumes contiguity, at one integer division per axis per element. Generic
+# over `Storage` because `slice`'s view carries a different storage type
+# than the tensor it came from.
 # ------------------------------------------------------------------
 
 

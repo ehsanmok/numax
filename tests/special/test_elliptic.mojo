@@ -32,16 +32,11 @@ def agm_reference(m: Float64) -> Tuple[Float64, Float64]:
     var c = m**0.5
     var two_pow = Float64(1.0)
     var sum_c2 = c * c
-    # AGM converges quadratically, so a small fixed iteration count already
-    # reaches full `float64` precision -- deliberately *not* iterating
-    # further or breaking on a tiny `|c|` threshold: `a` and `b` become so
-    # close after ~6-7 iterations that `a - b` loses almost all its
-    # significant digits to cancellation, so `c` stagnates at a noise floor
-    # rather than continuing to shrink, and `two_pow` (still doubling every
-    # iteration) would amplify that noise into real error in `sum_c2` if
-    # this ran anywhere near as long as a naive "keep going until `c` is
-    # tiny" loop suggests (confirmed directly: 60 iterations here corrupts
-    # `E(0.3)` by ~7.5e-5, while 12 matches `numax.elliptic_e` to ~1e-8).
+    # A fixed count, deliberately not a `|c|` threshold: after ~6-7
+    # iterations `a - b` has lost its digits to cancellation and `c`
+    # stagnates at a noise floor, which `two_pow`'s doubling then amplifies
+    # into `sum_c2`. Measured: 60 iterations corrupts `E(0.3)` by 7.5e-5
+    # where 12 matches `numax.elliptic_e` to 1e-8.
     for _ in range(12):
         var a_next = (a + b) / 2.0
         var b_next = (a * b) ** 0.5

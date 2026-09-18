@@ -359,12 +359,10 @@ def _radix2[
         fused_block, Coord(batch, blocks), ctx
     )
 
-    # Two stages per launch: the quartet `(i, i+h, i+2h, i+3h)` is what the
-    # composition of a span-`2h` stage and a span-`4h` stage touches. The
-    # first stage's twiddle is `W^(2 pos t)`, the second's are `W^(pos t)`
-    # on the `(i, i+2h)` pair and `W^(pos t + n/4)` on `(i+h, i+3h)` --
-    # and `W^(n/4)` is `-i` exactly, so it is a swap and a negation rather
-    # than a third table read.
+    # Two stages per launch: the quartet `(i, i+h, i+2h, i+3h)` is what a
+    # span-`2h` stage composed with a span-`4h` one touches. `W^(n/4)` is
+    # `-i` exactly, so the second pair's twiddle is a swap and a negation
+    # rather than a third table read.
     comptime for p in range(pairs):
         comptime s = fused + 2 * p
         comptime h = 1 << s

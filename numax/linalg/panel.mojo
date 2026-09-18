@@ -2264,14 +2264,10 @@ def trsm_right_lower_t[
                 p += 1
             a.store[1](Coord(row, k + j), total / a[Coord(k + j, k + j)])
 
-    # Not `elementwise`. Its CPU parallelization heuristic reads the element
-    # *count*, and this launch is one element per row -- a few hundred at
-    # any realistic `n` -- while each of those elements carries `nb^2 / 2`
-    # flops. Measured on a domain of exactly this shape, `elementwise` runs
-    # at 1.99 GFLOP/s and `parallelize` at 10.59, so the heuristic was
-    # leaving eleven cores idle. `parallelize` is CPU-only, so the device
-    # keeps `elementwise`, which is the right driver there anyway: a GPU
-    # launch wants one thread per row and has no such threshold.
+    # Not `elementwise` on the host: its CPU heuristic reads the element
+    # *count*, and one element per row carrying `nb^2 / 2` flops measured
+    # 1.99 GFLOP/s against `parallelize`'s 10.59. The device keeps
+    # `elementwise`, which wants one thread per row and has no threshold.
     comptime if target == "cpu":
         if height * nb * nb >= _PARALLEL_MIN_WORK:
             parallelize[solve_row](height)
@@ -2324,12 +2320,10 @@ def trsm_left_lower_unit[
                 total = total - a[Coord(k + i, k + p)] * a[Coord(k + p, col)]
             a.store[1](Coord(k + i, col), total)
 
-    # `parallelize` rather than `elementwise` on the host, for the reason
-    # `trsm_right_lower_t` above gives: one element per column is far too
-    # few for `elementwise`'s count-based threshold, however much work each
-    # column carries. The inner `p` loop is not vectorized here the way the
-    # other solve's is -- `a[k + p, col]` walks *down* a column, so
-    # consecutive `p` are a row apart.
+    # `parallelize` rather than `elementwise` on the host, as
+    # `trsm_right_lower_t` above. The inner `p` loop is not vectorized:
+    # `a[k + p, col]` walks down a column, so consecutive `p` are a row
+    # apart.
     comptime if target == "cpu":
         if width * nb * nb >= _PARALLEL_MIN_WORK:
             parallelize[solve_col](width)

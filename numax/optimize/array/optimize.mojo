@@ -64,16 +64,9 @@ from ...core.numeric import FloatLike
 from ...core.plain import Plain
 from ...linalg.array.cholesky import cholesky, cholesky_solve
 
-# The conformer every driver here evaluates `f` at. Fixed to float64 on
-# purpose, and not a parameter, for two reasons. Convergence work belongs at
-# the widest available precision -- a tolerance of 1e-12 is meaningless at
-# float32 -- and Mojo will not accept a struct instantiated with a
-# *function-level* `DType` parameter as a `FloatLike` type argument
-# (`f[Plain[dtype]]` inside a `def foo[dtype: DType]` fails with
-# "parameter 'U' has 'FloatLike' type, but value has type
-# 'AnyStruct[Plain[dtype, Int(1)]]'"), so a per-call dtype would not compile
-# at all. Anything needing another dtype is doing kernel work, which is
-# tier 1 and lives in `numax.optimize`.
+# Fixed to float64, not a parameter: a tolerance of 1e-12 is meaningless at
+# float32, and Mojo rejects a struct instantiated with a function-level
+# `DType` as a `FloatLike` argument, so a per-call dtype would not compile.
 comptime _P = Plain[DType.float64]
 
 
@@ -353,14 +346,10 @@ def brentq[
             # Secant through the two current endpoints.
             candidate = hi - f_hi * (hi - lo) / (f_hi - f_lo)
 
-        # Accept the interpolated point only if it lands in the outer
-        # quarter-to-endpoint window `[(3*lo + hi)/4, hi]` *and* is at
-        # least halving the step relative to the previous move. Reject on
-        # either count and bisect instead. This pair of tests is what makes
-        # Brent's method no worse than bisection in the limit rather than
-        # merely faster than it when the function cooperates -- an
-        # interpolation that keeps landing just outside the bracket, or that
-        # stalls, would otherwise let the interval stop shrinking.
+        # Accept the interpolated point only inside `[(3*lo + hi)/4, hi]`
+        # and only if it at least halves the previous step; bisect
+        # otherwise. That pair is what makes Brent no worse than bisection
+        # in the limit rather than only faster when `f` cooperates.
         var midpoint = (lo + hi) / 2
         var quarter = (3 * lo + hi) / 4
         var window_lo = min(quarter, hi)
@@ -528,13 +517,10 @@ def root_scalar[
 comptime _GOLDEN_SECTION = 0.3819660112501051
 comptime _GOLDEN_GROW = 1.618033988749895
 
-# The best a minimizer can locate `x` to. Near a minimum `f` is quadratic, so
-# a change in `x` of `d` moves `f` by `O(d^2)`: once `d` falls below
-# `sqrt(eps)` the change is below the noise in `f` itself and no further
-# progress is real. This is `sqrt(2.22e-16)`, and it is why the scalar
-# minimizers default to a tolerance eight orders looser than the root
-# finders in this module -- `brentq` locates a *crossing*, which has no such
-# floor.
+# `sqrt(2.22e-16)`: near a minimum `f` is quadratic, so a step `d` moves `f`
+# by `O(d^2)` and below `sqrt(eps)` no progress is real. This is why the
+# minimizers default eight orders looser than the root finders -- `brentq`
+# locates a crossing, which has no such floor.
 comptime _MINIMIZER_TOL = 1.48e-8
 
 

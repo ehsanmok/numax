@@ -187,14 +187,10 @@ struct Complex[Inner: FloatLike](
         return (self.re * self.re + self.im * self.im).sqrt()
 
     def sqrt(self) -> Self:
-        # The principal square root, via the standard half-angle-free form
-        # sqrt(z) = sqrt((|z|+a)/2) + i*sign(b)*sqrt((|z|-a)/2), which
-        # avoids computing an argument and halving it. Both radicands are
-        # non-negative mathematically (|z| >= |a|); `max_of` against zero
-        # keeps a lane that rounded a hair below from reaching `sqrt` as a
-        # negative. `copysign`'s `+1`-at-zero convention puts the branch cut
-        # on the negative real axis approached from below, matching the
-        # usual principal-branch convention (`sqrt(-4) = 2i`).
+        # sqrt(z) = sqrt((|z|+a)/2) + i*sign(b)*sqrt((|z|-a)/2), avoiding
+        # an argument and a halving. `max_of` against zero keeps a lane
+        # that rounded a hair below `0` out of `sqrt`; `copysign`'s
+        # `+1`-at-zero puts the branch cut where `sqrt(-4) = 2i`.
         var modulus = self._modulus()
         var half = Self.Inner.constant(0.5)
         var re_part = (half * (modulus + self.re)).sqrt()
@@ -224,10 +220,9 @@ struct Complex[Inner: FloatLike](
         var z2 = self * self
         var term = self.copy()
         var total = term.copy()
-        # `comptime for`, not an ordinary loop: `n` has to be a compile-time
-        # value for `Float64(n)` to fold into a `dtype` literal. A runtime
-        # index would instead emit the int64-to-double conversion Metal
-        # rejects, as `numax.special.orthopoly`'s module docstring records.
+        # `comptime for`: `n` has to be comptime for `Float64(n)` to fold
+        # into a `dtype` literal, where a runtime index emits the
+        # int64-to-double conversion Metal rejects.
         comptime for n in range(1, num_terms):
             var factor = Self.Inner.constant(
                 -(Float64(2 * n - 1)) / Float64(n * (2 * n + 1))

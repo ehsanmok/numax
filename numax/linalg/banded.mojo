@@ -384,21 +384,12 @@ def solve_toeplitz[
     backward[0] = 1.0 / diagonal
 
     for k in range(1, n):
-        # Reflection coefficients for the two auxiliary vectors.
-        # Appending a zero to `forward` and prepending one to `backward`
-        # leaves each solving its own system in the *interior* rows of the
-        # widened one -- a Toeplitz matrix's trailing `k x k` block is the
-        # previous matrix. What each leaves behind is one stray entry, and
-        # these are those two.
-        #
-        # `forward` is padded at the end, so its stray entry is the new
-        # bottom row against it: `sum_j t[k - j] * f[j]`, and `t` below the
-        # diagonal is `c`. `backward` is padded at the *front*, so its
-        # stray entry is the new top row against it, which pairs `b[j]`
-        # with `t[-(j + 1)]` -- `r[j + 1]`, indexed forwards. The two are
-        # not mirror images, and pairing `backward` with `r[k - j]` by
-        # symmetry with the line above is wrong for every non-palindromic
-        # right-hand side.
+        # Reflection coefficients for the two auxiliary vectors. `forward`
+        # is padded at the end, so its stray entry pairs `f[j]` with
+        # `t[k - j]`; `backward` is padded at the *front*, so its stray
+        # entry pairs `b[j]` with `r[j + 1]`, indexed forwards. The two are
+        # not mirror images: pairing `backward` with `r[k - j]` by symmetry
+        # is wrong for every non-palindromic right-hand side.
         var forward_error = 0.0
         var backward_error = 0.0
         for j in range(k):

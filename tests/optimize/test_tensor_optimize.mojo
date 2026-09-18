@@ -143,16 +143,11 @@ def test_powell_needs_no_gradient_and_finds_the_minimum() raises:
     assert_almost_equal(Float64(y[0]), 1.0, atol=1e-7)
     assert_almost_equal(Float64(y[1]), -2.0, atol=1e-7)
     assert_almost_equal(Float64(y[2]), 3.0, atol=1e-7)
-    # The bowl's minimum value is zero, which is what a purely relative
-    # stopping test cannot see: both sides of `2|df| <= tol (|f_a| + |f_b|)`
-    # shrink together, so the ratio stays of order one however close the
-    # iterate gets. Rosenbrock happens to escape it by reaching `f == 0`
-    # exactly, where the difference is exactly zero; the bowl settles at
-    # 1e-27 instead and never triggers, so it used to exhaust `max_iter`
-    # and come back `converged=False` with the answer sitting right there.
-    # Every one of those wasted iterations is a set of line searches and a
-    # device buffer per evaluation, which is what crashed the Linux CI
-    # runner. Assert the termination, not only the answer.
+    # The bowl's minimum is zero, which a purely relative stopping test
+    # cannot see: both sides of `2|df| <= tol (|f_a| + |f_b|)` shrink
+    # together. It used to exhaust `max_iter` and return
+    # `converged=False` with the answer sitting there, one device buffer
+    # per wasted evaluation -- which is what crashed the Linux runner.
     assert_true(bowl.converged)
     assert_true(bowl.iterations < 20)
 

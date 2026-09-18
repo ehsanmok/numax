@@ -220,18 +220,12 @@ def main() raises:
         )
     print("max |binary map on GPU - x*y|               =", max_diff)
 
-    # Thread coarsening: `width` on the GPU path gives each thread that many
-    # consecutive elements instead of one, which changes the launch geometry
-    # (`grid_dim` counts threads, and there are now `ceildiv(n, width)` of
-    # them, not `n`). The result must be bit-identical to the `width=1` pass
-    # above -- `step` is the same function either way, only the number of
-    # lanes it is instantiated at differs.
-    #
-    # `width=1` is the default precisely because coarsening measured no
-    # faster on Metal (see `bench/bench_gpu_roofline.mojo`); this section
-    # exists to keep the option correct rather than to recommend it. `odd_n`
-    # is deliberately not a multiple of `coarse_width`, so the scalar tail
-    # that picks up the final partial group is exercised rather than assumed.
+    # Thread coarsening: `width` gives each thread that many consecutive
+    # elements, so `grid_dim` counts `ceildiv(n, width)` threads. The
+    # result must be bit-identical to the `width=1` pass above. `width=1`
+    # is the default because coarsening measured no faster on Metal
+    # (`bench/bench_gpu_roofline.mojo`); `odd_n` is not a multiple of
+    # `coarse_width`, so the scalar tail is exercised rather than assumed.
     comptime coarse_width = 4
     comptime coarse_threads = (n + coarse_width - 1) // coarse_width
     comptime coarse_blocks = (coarse_threads + block_size - 1) // block_size

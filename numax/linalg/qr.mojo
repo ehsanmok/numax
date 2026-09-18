@@ -173,12 +173,10 @@ def _apply_block_reflector[
     # See `_MIN_GEMM_COLS`: a one-column update would segfault inside MAX.
     var padded = max(width, _MIN_GEMM_COLS)
 
-    # Every one of these is built at the shape this step needs, and the
-    # kernel that fills it is handed the same view. A buffer sized for the
-    # widest step has that step's row stride, so writing through the wide
-    # view and reading through a narrow one would disagree about where row
-    # `i` starts -- which is silent, and wrong only on the ragged last
-    # panel.
+    # Built at the shape this step needs, not the widest: a buffer sized
+    # for the widest step carries that stride, so a wide write and a narrow
+    # read disagree about where row `i` starts -- silent, and wrong only on
+    # the ragged last panel.
     var t_block: _Dense[dtype] = TileTensor(
         work.t_block.view().ptr_at_offset(Coord(0, 0)),
         row_major(Coord(nb, nb)),
@@ -231,12 +229,9 @@ def _apply_block_reflector[
             value = c[Coord(row0 + at[0], col0 + at[1])]
         staged.store[1](coord, value)
 
-    # With no pad column to fill this is exactly `pack_block`, whose copy
-    # walks `j` contiguously in both source and destination and so takes the
-    # native SIMD width. `_MIN_GEMM_COLS` is 2, so the scalar zero-filling
-    # walk is reached only by a `width == 1` tail. And a block that spans
-    # `c`'s full rows is already dense in memory, so it is read where it is
-    # and the copy is not made at all.
+    # With no pad column this is `pack_block`, whose copy walks `j`
+    # contiguously and takes the native SIMD width. A block spanning `c`'s
+    # full rows is already dense, so it is read in place and not copied.
     if full_rows and padded == width:
         staged = TileTensor(
             c.ptr_at_offset(Coord(row0, 0)), row_major(Coord(rows, width))

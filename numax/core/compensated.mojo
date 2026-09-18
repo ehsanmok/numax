@@ -107,10 +107,9 @@ struct Compensated[dtype: DType, width: Int](
         return Self(p2, err2)
 
     def __truediv__(self, rhs: Self) -> Self:
-        # Standard double-double division: one float division for a first
-        # estimate, one compensated multiply-and-subtract to find its
-        # residual, one more float division to correct for that residual,
-        # then a two_sum to fold the two estimates back into one pair.
+        # Double-double division: a float estimate, a compensated
+        # multiply-subtract for its residual, a second float division to
+        # correct, then a `two_sum` back into one pair.
         var q1 = self.value / rhs.value
         var residual = self + (
             -(Self(q1, SIMD[Self.dtype, Self.width](0)) * rhs)
@@ -145,13 +144,10 @@ struct Compensated[dtype: DType, width: Int](
 
         var r = Self(s, (self.error - t_err) - m * ln2_lo + s_err)
 
-        # exp(r) = sum_k r^k / k!, accumulated in compensated arithmetic.
-        # Coefficients are 1/k! for k=1..14 -- 14 terms lands comfortably
-        # past float32-double-double precision for |r| <= ln(2)/2. Each is
-        # a `Float64` literal only at compile time: `_split_f64` runs under
-        # `comptime for`, so every `hi`/`lo` pair below is baked in as a
-        # `DT`-native constant, with no runtime float64 arithmetic (or
-        # storage) reaching device code -- see `_split_f64`'s docstring.
+        # exp(r) = sum_k r^k / k!, 14 terms, past float32-double-double for
+        # |r| <= ln(2)/2. `_split_f64` runs under `comptime for`, so every
+        # `hi`/`lo` pair is a `DT`-native constant and no runtime float64
+        # reaches device code.
         comptime num_terms = 14
         comptime coef: Array[Float64, num_terms] = [
             1.0,
@@ -183,12 +179,8 @@ struct Compensated[dtype: DType, width: Int](
         return Self(total.value * scale, total.error * scale)
 
     def ln(self) -> Self where Self.dtype.is_floating_point():
-        # Newton's method on f(y) = exp(y) - self, i.e. y_{n+1} = y_n - 1 +
-        # self*exp(-y_n) -- quadratically convergent, so seeding it with an
-        # ordinary (single-`dtype`) `log` estimate and iterating a couple of
-        # fixed times roughly squares the number of correct digits each
-        # time, using nothing but the compensated `exp`/`__add__`/`__mul__`
-        # already implemented above.
+        # Newton on f(y) = exp(y) - self, seeded from a single-`dtype`
+        # `log` and refined in the compensated `exp`/`+`/`*` above.
         comptime DT = Self.dtype
         comptime W = Self.width
         var y = Self(log(self.value), SIMD[DT, W](0))
@@ -200,18 +192,11 @@ struct Compensated[dtype: DType, width: Int](
         return y
 
     def sqrt(self) -> Self where Self.dtype.is_floating_point():
-        # Newton's method on f(y) = y^2 - self, in the form
-        # y_{n+1} = (y_n + self/y_n) / 2 -- the same "seed from an ordinary
-        # single-`dtype` estimate, then refine a fixed number of times in
-        # compensated arithmetic" shape `ln` uses. Quadratic convergence
-        # means the ~24 correct bits of a float32 seed become ~48 after one
-        # step and past double-double precision after two; three is the
-        # same margin `ln` keeps.
-        #
-        # `self <= 0` is outside the domain, but `self == 0` exactly would
-        # divide by zero in the refinement rather than returning 0, so it
-        # short-circuits below -- branchlessly, since `Self` may be a SIMD
-        # vector with only some lanes at zero.
+        # Newton on f(y) = y^2 - self, seeded from a single-`dtype` sqrt
+        # and refined three times in compensated arithmetic -- the shape
+        # `ln` uses. `self == 0` would divide by zero in the refinement, so
+        # it short-circuits below, branchlessly: only some lanes may be
+        # zero.
         comptime DT = Self.dtype
         comptime W = Self.width
 
@@ -231,13 +216,10 @@ struct Compensated[dtype: DType, width: Int](
         return Self(y.value * is_positive, y.error * is_positive)
 
     def erf(self) -> Self where Self.dtype.is_floating_point():
-        # No double-double-precision `erf` to port here (see
-        # `numax.core.numeric.default_erf_approx`'s docstring), so this reuses
-        # the same rational approximation `Plain` used to -- run through
-        # compensated `+`/`*`/`exp`, which still recovers precision the
-        # formula's own internal cancellation (near `x = 0`) would
-        # otherwise lose to a single `dtype`; see
-        # `tests/core/test_compensated.mojo`.
+        # No double-double `erf` to port, so this reuses the rational
+        # approximation `Plain` used to, run through compensated
+        # `+`/`*`/`exp` -- which recovers what the formula's cancellation
+        # near `x = 0` loses at a single `dtype`.
         return default_erf_approx(self)
 
     def erfc(self) -> Self where Self.dtype.is_floating_point():
@@ -274,9 +256,8 @@ struct Compensated[dtype: DType, width: Int](
 
     def sin(self) -> Self where Self.dtype.is_floating_point():
         # sin(r) = r * sum_k (-1)^k r^(2k) / (2k+1)!, evaluated in `r^2`.
-        # 24 terms converge to well past double-double precision even at
-        # the reduction's `|r| = pi` boundary (checked numerically: the
-        # k=21 term is already ~4e-32, and every later term is smaller).
+        # 24 terms, past double-double even at the reduction's `|r| = pi`
+        # boundary: the k=21 term is already 4e-32.
         comptime DT = Self.dtype
         comptime W = Self.width
         var r = self._range_reduce_2pi()
@@ -366,10 +347,8 @@ struct Compensated[dtype: DType, width: Int](
 
     @staticmethod
     def constant(v: Float64) -> Self:
-        # Split the literal into a hi/lo pair at `dtype`'s precision, rather
-        # than just rounding it once and calling the residual zero -- a
-        # kernel's coefficients get the same double-`dtype` treatment as
-        # everything computed from them.
+        # Split into a hi/lo pair at `dtype`'s precision rather than
+        # rounding once and calling the residual zero.
         var v64 = SIMD[DType.float64, Self.width](v)
         var hi = v64.cast[Self.dtype]()
         var lo = (v64 - hi.cast[DType.float64]()).cast[Self.dtype]()
@@ -390,14 +369,10 @@ struct Compensated[dtype: DType, width: Int](
         return Self(self.value * flip, self.error * flip)
 
     def floor(self) -> Self where Self.dtype.is_floating_point():
-        # Floored from `value` alone, with `error` zeroed rather than
-        # refined -- an honest, documented gap rather than a claim of
-        # exactness: a `value` that rounds to just above an integer while
-        # `error` is negative enough to put the true `value + error` just
-        # below it produces the wrong integer here, since nothing folds
-        # `error` back in before the floor. Rare in practice (`error` is
-        # many orders of magnitude smaller than `value` whenever `value`
-        # itself isn't already near the rounding boundary), but real.
+        # `ponytail:` floored from `value` alone with `error` zeroed, so a
+        # `value` rounding just above an integer while `error` puts the
+        # true sum just below it gives the wrong integer. Folding `error`
+        # back in before the floor fixes it.
         return Self(floor(self.value), SIMD[Self.dtype, Self.width](0))
 
     def ceil(self) -> Self where Self.dtype.is_floating_point():

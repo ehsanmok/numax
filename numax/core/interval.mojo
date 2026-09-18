@@ -169,10 +169,9 @@ struct Interval[Inner: FloatLike](
         return Self(-self.hi, -self.lo)
 
     def __mul__(self, rhs: Self) -> Self:
-        # The extremes of a product over a box are attained at its corners,
-        # so all four are computed and the smallest and largest kept. Doing
-        # it by sign analysis instead would need per-lane branching for no
-        # gain -- four multiplies is cheaper than the branches would be.
+        # The extremes of a product over a box are at its corners, so all
+        # four are computed and the outer two kept -- cheaper than the
+        # per-lane branching sign analysis would need.
         var ll = self.lo * rhs.lo
         var lh = self.lo * rhs.hi
         var hl = self.hi * rhs.lo
@@ -183,10 +182,9 @@ struct Interval[Inner: FloatLike](
         )
 
     def __truediv__(self, rhs: Self) -> Self:
-        # Multiplication by the reciprocal interval. If `rhs` straddles
-        # zero, its reciprocal endpoints are infinite and the result is
-        # meaningless -- see this module's docstring for why that isn't
-        # detected here.
+        # Multiplication by the reciprocal interval. An `rhs` straddling
+        # zero gives infinite endpoints and a meaningless result; the
+        # module docstring says why that is not detected here.
         var one = Self.Inner.one()
         return self * Self(one / rhs.hi, one / rhs.lo)
 

@@ -43,12 +43,10 @@ def legendre_p[T: FloatLike](n: Int, x: T) -> T:
     var p_prev = T.one()
     var p_curr = x.copy()
 
-    # The loop counter is carried as a `T` rather than converted per
-    # iteration from the `Int` index. `T.constant` takes a `Float64`, and
-    # converting a *runtime* `Int` into one emits an int64-to-double
-    # instruction that Metal rejects outright ("air.convert.f.f64.s.i64 has
-    # Metal-unsupported instructions"), which would make this function
-    # CPU-only. Counting in `T` keeps every value `dtype`-native.
+    # The counter is carried as a `T`, not converted from the `Int` index:
+    # a runtime `Int` to `Float64` emits an int64-to-double instruction
+    # Metal rejects ("air.convert.f.f64.s.i64 has Metal-unsupported
+    # instructions"), which would make this CPU-only.
     var kf = T.one()
 
     for _ in range(1, n):

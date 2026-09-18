@@ -170,12 +170,9 @@ def hyp2f1[T: FloatLike](a: T, b: T, c: T, x: T) -> T:
     )
 
     # A&S 15.3.6. Both series run at `1 - x`, clamped into `[tiny, 0.1]` so
-    # the arm evaluates finitely at every `x`, not only the ones that select
-    # it. The `Gamma` ratios go through `lgamma` and `gammasgn` rather than
-    # `gamma` itself: a sum of logarithms cannot overflow on its way to a
-    # ratio that does not, and a non-positive integer `a` or `b` -- the
-    # polynomial case -- sends its term to zero through `exp(-huge)` instead
-    # of dividing by an infinity.
+    # the arm evaluates finitely at every `x`, not only the selecting ones.
+    # The `Gamma` ratios go through `lgamma`/`gammasgn`: a sum of logarithms
+    # cannot overflow on its way to a ratio that does not.
     var d = c - a - b
     var near = _near_integer(d)
     var ds = d + T.constant(_2F1_D_NUDGE) * near

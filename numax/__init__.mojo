@@ -378,10 +378,8 @@ from .special.orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l
 from .special.owens import owens_t
 from .special.struve import struve
 
-# Dense linear algebra over `Tensor` -- `numax.linalg`. The
-# `FloatLike`-generic `Array` tier is `numax.linalg.array`, deliberately not
-# re-exported here: it shares these names, so a flat surface carrying both
-# would resolve `cholesky` by a type the reader has to look up.
+# Dense linear algebra over `Tensor` -- `numax.linalg`. The `Array` tier is
+# `numax.linalg.array` and shares these names, so it is not re-exported.
 from .linalg import (
     Polar,
     TensorRQ,
@@ -460,11 +458,9 @@ from .linalg import (
     trace,
 )
 
-# Minimization and least-squares fitting -- `numax.optimize`.
-# The `Tensor` tier. The scalar root finders and minimizers, the vector
-# `root`, and `nelder_mead` are `Array`-tier only, one import away at
-# `numax.optimize.array`, which is also where the `Gradient`-exact
-# `least_squares` and `curve_fit` live.
+# Minimization and least-squares fitting -- `numax.optimize`, the `Tensor`
+# tier. The scalar root finders and minimizers, the vector `root`,
+# `nelder_mead` and the `Gradient`-exact fits are `numax.optimize.array`.
 from .optimize.least_squares import TensorFitResult, curve_fit, least_squares
 from .optimize.linear import TensorLinearResult, lsq_linear, nnls
 from .optimize.minimize import TensorMinimizeResult, minimize
@@ -525,10 +521,9 @@ from .fft.fft import (
 )
 from .fft.trig import dct, dst, idct, idst
 
-# Convolution, correlation, windows -- `numax.signal`, the `Tensor` tier.
-# The `FloatLike` filters and windows are one import away at
-# `numax.signal.array`. The mode constants `full`/`same`/`valid` stay in
-# `numax.signal`: `full` would collide with `numax.core.array.full`.
+# Convolution, correlation, windows -- `numax.signal`, the `Tensor` tier;
+# the `FloatLike` half is `numax.signal.array`. The mode constants stay
+# behind `numax.signal.`: `full` collides with `core.array.full`.
 from .signal.convolution import convolve, correlate, fftconvolve
 from .signal.windows import (
     bartlett,
@@ -575,11 +570,9 @@ from .signal.design import (
     iirfilter,
 )
 
-# Statistics, distributions, sampling -- `numax.stats`.
-# The nine distribution namespaces (`norm`, `gamma`, `beta`, `chi2`, `t`,
-# `f`, `expon`, `binom`, `poisson`) are reached as `numax.stats.norm` and
-# are deliberately not re-exported here: `gamma` and `beta` would collide
-# with the special functions of those names, and a root `t` or `f` names
+# Statistics, distributions, sampling -- `numax.stats`. The nine
+# distribution namespaces stay behind `numax.stats.`: `gamma` and `beta`
+# would collide with the special functions, and a root `t` or `f` names
 # nothing a reader could guess.
 from .stats.random import (
     Generator,
