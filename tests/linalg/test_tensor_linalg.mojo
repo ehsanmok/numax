@@ -188,6 +188,15 @@ def test_matvec_when_the_row_count_is_not_a_lane_multiple() raises:
 
 
 def _matvec_every_element_matches_matmul[m: Int, k: Int]() raises:
+    """`matvec` against a host dot product, not against `matmul`.
+
+    The reference used to be `matmul(b, column)` with a `k x 1` column,
+    which is the *same* `n == 1` GEMV shape `matvec` exists to guard --
+    and `matmul` carries no such guard, so the reference segfaulted on the
+    Linux runner at the larger `k` below while the thing under test was
+    already correct. A reference that shares the defect proves nothing;
+    this one is independent of MAX.
+    """
     var ctx = _cpu()
     var values = List[Scalar[DType.float64]](capacity=m * k)
     for i in range(m * k):
@@ -199,11 +208,11 @@ def _matvec_every_element_matches_matmul[m: Int, k: Int]() raises:
     var x = Static[DType.float64, k](ctx, xs.copy())
     var got = matvec(a, x).to_host()
 
-    var column = Static[DType.float64, k, 1](ctx, xs^)
-    var b = Static[DType.float64, m, k](ctx, values^)
-    var want = matmul(b, column).to_host()
     for i in range(m):
-        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
+        var want = 0.0
+        for j in range(k):
+            want += Float64(values[i * k + j]) * Float64(xs[j])
+        assert_almost_equal(Float64(got[i]), want, atol=1e-12)
 
 
 def test_matvec_odd_rows_and_odd_columns_every_element() raises:
@@ -266,11 +275,12 @@ def test_matvec_at_float32_where_a_lane_is_sixteen_wide() raises:
     var x = Static[DType.float32, k](ctx, xs.copy())
     var got = matvec(a, x).to_host()
 
-    var column = Static[DType.float32, k, 1](ctx, xs^)
-    var b = Static[DType.float32, m, k](ctx, values^)
-    var want = matmul(b, column).to_host()
+    # A host reference, for the reason the float64 helper above records.
     for i in range(m):
-        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-5)
+        var want = 0.0
+        for j in range(k):
+            want += Float64(values[i * k + j]) * Float64(xs[j])
+        assert_almost_equal(Float64(got[i]), want, atol=1e-5)
 
 
 def test_matvec_square_but_not_a_lane_multiple() raises:
