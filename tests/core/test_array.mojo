@@ -37,13 +37,17 @@ from numax.core.array import (
     Static,
     Tensor,
     arange,
+    array_split,
     concatenate,
     atleast_1d,
     atleast_2d,
+    atleast_3d,
+    dstack,
     empty,
     empty_like,
     expand_dims,
     eye,
+    flatten,
     full,
     full_like,
     linspace,
@@ -55,6 +59,7 @@ from numax.core.array import (
     repeat,
     reshape,
     roll,
+    rot90,
     split,
     squeeze,
     stack,
@@ -839,6 +844,131 @@ def test_atleast_1d_is_the_identity_at_the_only_rank_it_takes() raises:
     var got = atleast_1d(v)
     assert_equal(got.dim_at(0), 3)
     assert_equal(got.to_host()[1], 6.0)
+
+
+def _mat[
+    rows: Int, cols: Int
+](values: List[Float64]) raises -> Static[dtype, rows, cols]:
+    var ctx = DeviceContext(api="cpu")
+    var elements = List[Scalar[dtype]](capacity=rows * cols)
+    for i in range(rows * cols):
+        elements.append(Scalar[dtype](values[i]))
+    return Static[dtype, rows, cols](ctx, elements^)
+
+
+def test_flatten_agrees_with_ravel() raises:
+    var a = _mat[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var f = flatten(a).to_host()
+    var r = ravel(a).to_host()
+    assert_equal(len(f), 6)
+    for i in range(6):
+        assert_equal(f[i], r[i])
+
+
+def test_dstack_interleaves_rather_than_appending() raises:
+    # numpy: np.dstack(([[1, 2], [3, 4]], [[5, 6], [7, 8]])).ravel()
+    var a = _mat[2, 2]([1.0, 2.0, 3.0, 4.0])
+    var b = _mat[2, 2]([5.0, 6.0, 7.0, 8.0])
+    var got = dstack(a, b)
+    assert_equal(got.num_elements, 8)
+    var out = got.to_host()
+    var expected = [1.0, 5.0, 2.0, 6.0, 3.0, 7.0, 4.0, 8.0]
+    for i in range(8):
+        assert_equal(out[i], Scalar[dtype](expected[i]))
+
+
+def test_rot90_turns_counterclockwise_and_four_turns_is_identity() raises:
+    # numpy: np.rot90([[1, 2, 3], [4, 5, 6]])
+    var a = _mat[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    var once = rot90(a)
+    assert_equal(once.dim_at(0), 3)
+    assert_equal(once.dim_at(1), 2)
+    var o = once.to_host()
+    var expected = [3.0, 6.0, 2.0, 5.0, 1.0, 4.0]
+    for i in range(6):
+        assert_equal(o[i], Scalar[dtype](expected[i]))
+
+    # Two turns reverse both axes; the shape is unchanged.
+    var twice = rot90[k=2](a)
+    assert_equal(twice.dim_at(0), 2)
+    assert_equal(twice.dim_at(1), 3)
+    var t = twice.to_host()
+    var rev = [6.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+    for i in range(6):
+        assert_equal(t[i], Scalar[dtype](rev[i]))
+
+    # k=0 is the original, and k=3 is the single clockwise turn.
+    var zero = rot90[k=0](a).to_host()
+    var src = a.to_host()
+    for i in range(6):
+        assert_equal(zero[i], src[i])
+
+    var thrice = rot90[k=3](a).to_host()
+    var cw = [4.0, 1.0, 5.0, 2.0, 6.0, 3.0]
+    for i in range(6):
+        assert_equal(thrice[i], Scalar[dtype](cw[i]))
+
+
+def test_atleast_3d_uses_numpys_shapes_at_each_rank() raises:
+    var ctx = DeviceContext(api="cpu")
+    var v = arange[4, dtype](ctx=ctx)
+    var promoted = atleast_3d(v)
+    assert_equal(promoted.dim_at(0), 1)
+    assert_equal(promoted.dim_at(1), 4)
+    assert_equal(promoted.dim_at(2), 1)
+
+    # A matrix gains a *trailing* axis, not a leading one.
+    var m = _mat[2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var kept = atleast_3d(m)
+    assert_equal(kept.dim_at(0), 2)
+    assert_equal(kept.dim_at(1), 3)
+    assert_equal(kept.dim_at(2), 1)
+
+
+def test_array_split_divides_evenly_and_unevenly() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = arange[6, dtype](ctx=ctx)
+
+    var even = array_split(a, 3)
+    assert_equal(len(even), 3)
+    for s in range(3):
+        assert_equal(even[s].size(), 2)
+    assert_equal(even[1].to_host()[0], Scalar[dtype](2))
+
+    # numpy: [len(p) for p in np.array_split(np.arange(7), 3)] == [3, 2, 2]
+    var b = arange[7, dtype](ctx=ctx)
+    var uneven = array_split(b, 3)
+    assert_equal(len(uneven), 3)
+    assert_equal(uneven[0].size(), 3)
+    assert_equal(uneven[1].size(), 2)
+    assert_equal(uneven[2].size(), 2)
+    assert_equal(uneven[0].to_host()[0], Scalar[dtype](0))
+    assert_equal(uneven[1].to_host()[0], Scalar[dtype](3))
+    assert_equal(uneven[2].to_host()[0], Scalar[dtype](5))
+
+
+def test_array_split_along_a_later_axis_keeps_the_other_extents() raises:
+    var a = _mat[2, 5]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+    var parts = array_split[axis=1](a, 2)
+    assert_equal(len(parts), 2)
+    assert_equal(parts[0].dim_at(0), 2)
+    assert_equal(parts[0].dim_at(1), 3)
+    assert_equal(parts[1].dim_at(1), 2)
+    # Row 1 of the first part is [6, 7, 8].
+    assert_equal(parts[0].to_host()[3], Scalar[dtype](6))
+    assert_equal(parts[1].to_host()[0], Scalar[dtype](4))
+
+
+def test_array_split_rejects_a_nonpositive_count() raises:
+    var ctx = DeviceContext(api="cpu")
+    var a = arange[4, dtype](ctx=ctx)
+    var raised = False
+    try:
+        _ = array_split(a, 0)
+    except:
+        raised = True
+    assert_equal(raised, True)
 
 
 def main() raises:

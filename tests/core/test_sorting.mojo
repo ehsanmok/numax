@@ -20,10 +20,13 @@ from numax.core.logic import greater
 from numax.core.sorting import (
     all_nonzero,
     any_nonzero,
+    argpartition,
     argsort,
     argwhere,
+    compress,
     count_nonzero,
     extract,
+    partition,
     nonzero,
     put,
     searchsorted,
@@ -748,6 +751,78 @@ def test_put_rejects_an_out_of_range_index() raises:
     except:
         raised = True
     assert_true(raised)
+
+
+# ------------------------------------------------------------------
+# compress / partition / argpartition
+# ------------------------------------------------------------------
+
+
+def test_compress_selects_where_the_condition_is_true() raises:
+    var a = mk[5]([10.0, 20.0, 30.0, 40.0, 50.0])
+    var cond = mk_mask[5]([True, False, True, False, True])
+    var got = compress(cond, a).to_host()
+    assert_equal(len(got), 3)
+    assert_equal(got[0], 10.0)
+    assert_equal(got[1], 30.0)
+    assert_equal(got[2], 50.0)
+
+
+def test_compress_drops_positions_past_a_short_condition() raises:
+    """The one behavior that separates `compress` from `extract`.
+
+    numpy: np.compress([True, False, True], [10, 20, 30, 40, 50])
+    gives [10, 30] -- positions 3 and 4 are dropped, not kept.
+    """
+    var a = mk[5]([10.0, 20.0, 30.0, 40.0, 50.0])
+    var cond = mk_mask[3]([True, False, True])
+    var got = compress(cond, a).to_host()
+    assert_equal(len(got), 2)
+    assert_equal(got[0], 10.0)
+    assert_equal(got[1], 30.0)
+
+
+def test_compress_rejects_a_condition_longer_than_the_tensor() raises:
+    var a = mk[2]([1.0, 2.0])
+    var cond = mk_mask[4]([True, True, True, True])
+    var raised = False
+    try:
+        _ = compress(cond, a)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_partition_puts_the_kth_element_in_its_sorted_place() raises:
+    var a = mk[7]([7.0, 2.0, 9.0, 4.0, 1.0, 8.0, 3.0])
+    var got = partition(a, 3).to_host()
+    # The contract: position 3 holds the value a sorted copy would have
+    # there, nothing before it is larger and nothing after it is smaller.
+    assert_equal(got[3], 4.0)
+    for i in range(3):
+        assert_true(got[i] <= got[3])
+    for i in range(4, 7):
+        assert_true(got[i] >= got[3])
+
+
+def test_partition_rejects_a_kth_outside_the_tensor() raises:
+    var a = mk[3]([1.0, 2.0, 3.0])
+    var raised = False
+    try:
+        _ = partition(a, 3)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_argpartition_indices_reproduce_partition() raises:
+    var a = mk[7]([7.0, 2.0, 9.0, 4.0, 1.0, 8.0, 3.0])
+    var idx = argpartition(a, 3)
+    assert_equal(len(idx), 7)
+    var values = a.to_host()
+    var direct = partition(a, 3).to_host()
+    for i in range(7):
+        assert_equal(values[idx[i]], direct[i])
 
 
 def main() raises:

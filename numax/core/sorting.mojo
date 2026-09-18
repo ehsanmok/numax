@@ -591,6 +591,109 @@ def extract[
     return asarray(out^, a.context())
 
 
+def compress[
+    dtype: DType, CondLayout: TensorLayout, LayoutType: TensorLayout
+](
+    condition: Tensor[DType.bool, CondLayout], a: Tensor[dtype, LayoutType]
+) raises -> Dynamic[dtype, 1] where (CondLayout.rank == 1):
+    """The flat elements of `a` where the rank-1 `condition` is true.
+    `numpy.compress` with no `axis`.
+
+    Close to `extract` and different in one way that matters: `extract`
+    takes a mask over `a`'s own layout, so the two shapes must match, while
+    `condition` here is rank 1 and **may be shorter than `a`**. Positions
+    past its end are dropped rather than treated as false-by-default or
+    raising, which is NumPy's rule and the reason both names exist. A
+    condition longer than `a` is the error case and raises.
+    """
+    var n = a.size()
+    var m = condition.size()
+    if m > n:
+        raise Error(
+            "compress: a condition of ",
+            m,
+            " entries is longer than the ",
+            n,
+            " elements it selects from",
+        )
+    var mask = condition.to_host()
+    var values = a.to_host()
+    var out = List[Scalar[dtype]](capacity=m)
+    for i in range(m):
+        if mask[i]:
+            out.append(values[i])
+    return asarray(out^, a.context())
+
+
+def partition[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], kth: Int) raises -> Static[
+    dtype, LayoutType.static_product
+] where LayoutType.all_dims_known:
+    """A rank-1 copy of `a` with the `kth` element in its sorted position,
+    everything smaller before it and everything larger after.
+    `numpy.partition(a, kth, axis=None)`.
+
+    `ponytail:` this sorts. A full sort satisfies the partition contract
+    exactly -- position `kth` holds the value it would in a sorted array,
+    and both sides are ordered, which is stronger than required -- so the
+    answer is right and the cost is `O(n log n)` where introselect is
+    `O(n)`. The upgrade is the three-way quickselect that
+    `numax.stats.quantiles._select_pair` already runs: it cannot be called
+    from here because `numax.core` depends on no other numax subpackage,
+    so sharing it means moving it down into this package, which is a
+    change to a measured hot path rather than a new name.
+    """
+    if kth < 0 or kth >= a.size():
+        raise Error(
+            "partition: kth ",
+            kth,
+            " is outside a tensor of ",
+            a.size(),
+            " elements",
+        )
+    return sort(a)
+
+
+def partition[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], kth: Int) raises -> Dynamic[
+    dtype, 1
+] where not LayoutType.all_dims_known:
+    """`numpy.partition` for a run-time shape. See the overload above,
+    including why it sorts."""
+    if kth < 0 or kth >= a.size():
+        raise Error(
+            "partition: kth ",
+            kth,
+            " is outside a tensor of ",
+            a.size(),
+            " elements",
+        )
+    return sort(a)
+
+
+def argpartition[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType], kth: Int) raises -> List[Int]:
+    """The flat indices that would partition `a` about `kth`.
+    `numpy.argpartition(a, kth, axis=None)`.
+
+    `argsort`'s indices, which satisfy the partition contract for the same
+    reason `partition` sorts -- a full ordering is a partition about every
+    `kth` at once. The ceiling `partition` names applies here too.
+    """
+    if kth < 0 or kth >= a.size():
+        raise Error(
+            "argpartition: kth ",
+            kth,
+            " is outside a tensor of ",
+            a.size(),
+            " elements",
+        )
+    return argsort(a)
+
+
 def take[
     dtype: DType, LayoutType: TensorLayout
 ](a: Tensor[dtype, LayoutType], indices: List[Int]) raises -> Dynamic[dtype, 1]:

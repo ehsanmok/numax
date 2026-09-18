@@ -1306,6 +1306,63 @@ def atleast_2d[
     )
 
 
+def atleast_3d[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 3] where (
+    LayoutType.rank == 1
+):
+    """`a` as a `(1, n, 1)`. `numpy.atleast_3d` at rank 1.
+
+    The shape is NumPy's and is worth stating because it is not the one
+    either neighbor would suggest: `atleast_2d` promotes a vector to a
+    `(1, n)` row, and promoting that row again would give `(1, n, 1)` --
+    which is what this does, so the two compose. A `(n, 1, 1)` would be
+    the other plausible reading and is not it.
+    """
+    var extents = List[Int](capacity=3)
+    extents.append(1)
+    extents.append(a.size())
+    extents.append(1)
+    return Dynamic[dtype, 3](
+        a.context(), row_major(_dyn_shape_from[3](extents)), a.to_host()
+    )
+
+
+def atleast_3d[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 3] where (
+    LayoutType.rank == 2
+):
+    """`a` as a `(rows, cols, 1)`. `numpy.atleast_3d` at rank 2.
+
+    A trailing axis rather than a leading one, again NumPy's rule: a
+    matrix of values becomes a matrix of length-1 pixels, which is the
+    convention image code depends on.
+    """
+    var extents = List[Int](capacity=3)
+    extents.append(a.dim_at(0))
+    extents.append(a.dim_at(1))
+    extents.append(1)
+    return Dynamic[dtype, 3](
+        a.context(), row_major(_dyn_shape_from[3](extents)), a.to_host()
+    )
+
+
+def atleast_3d[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, LayoutType.rank
+] where (LayoutType.rank >= 3):
+    """`a` unchanged, at rank 3 or above. `numpy.atleast_3d`."""
+    comptime rank = LayoutType.rank
+    var extents = List[Int](capacity=rank)
+    for d in range(rank):
+        extents.append(a.dim_at(d))
+    return Dynamic[dtype, rank](
+        a.context(), row_major(_dyn_shape_from[rank](extents)), a.to_host()
+    )
+
+
 def stack[
     dtype: DType, n: Int
 ](a: Static[dtype, n], b: Static[dtype, n]) raises -> Static[dtype, 2, n]:
@@ -1700,6 +1757,33 @@ def ravel[
     return asarray(a.to_host(), a.context())
 
 
+def flatten[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Static[
+    dtype, LayoutType.static_product
+] where LayoutType.all_dims_known:
+    """A rank-1 copy in row-major order. `numpy.flatten`.
+
+    The same call as `ravel`. In NumPy the two differ in exactly one way --
+    `ravel` returns a view where it can and `flatten` always copies -- and
+    that distinction does not exist here, because `Tensor` owns its storage
+    and every manipulation in this module copies. Both names ship so that
+    neither reads as missing; `ravel`'s docstring has the reason for the
+    copy.
+    """
+    return ravel(a)
+
+
+def flatten[
+    dtype: DType, LayoutType: TensorLayout
+](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
+    dtype, 1
+] where not LayoutType.all_dims_known:
+    """A rank-1 copy in row-major order, for a run-time shape.
+    `numpy.flatten`, and the same call as `ravel`."""
+    return ravel(a)
+
+
 def concatenate[
     dtype: DType, n: Int, m: Int
 ](a: Static[dtype, n], b: Static[dtype, m]) raises -> Static[dtype, n + m]:
@@ -1754,6 +1838,69 @@ def split[
         Static[dtype, at](ctx, head^),
         Static[dtype, n - at](ctx, tail^),
     )
+
+
+def array_split[
+    dtype: DType, LayoutType: TensorLayout, axis: Int = 0
+](a: Tensor[dtype, LayoutType], sections: Int) raises -> List[
+    Dynamic[dtype, LayoutType.rank]
+] where (axis >= 0 and axis < LayoutType.rank):
+    """`a` cut into `sections` parts along `axis`, as a list.
+    `numpy.array_split`.
+
+    The general form `split` cannot express. `split`'s docstring records
+    why it takes one index and returns two tensors: a section *count* makes
+    the number of outputs a run-time value, and a comptime-shaped tensor
+    cannot carry that. A `List[Dynamic[dtype, rank]]` can -- every part has
+    the same rank in its type and its extents at run time -- so the count
+    is an ordinary argument here.
+
+    The uneven case follows NumPy exactly, which is the whole difference
+    between `array_split` and `numpy.split`: with an extent of `n` and
+    `sections` parts, the first `n % sections` parts get `n // sections + 1`
+    entries and the rest get `n // sections`. `numpy.split` raises on an
+    uneven division instead; this never does.
+    """
+    comptime rank = LayoutType.rank
+    if sections < 1:
+        raise Error("array_split: sections must be at least 1, got ", sections)
+
+    var length = a.dim_at(axis)
+    var outer = 1
+    for d in range(axis):
+        outer *= a.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, rank):
+        inner *= a.dim_at(d)
+
+    var base = length // sections
+    var remainder = length % sections
+
+    var values = a.to_host()
+    var ctx = a.context()
+    var parts = List[Dynamic[dtype, rank]](capacity=sections)
+
+    var start = 0
+    for s in range(sections):
+        var take = base + 1 if s < remainder else base
+        var chunk = List[Scalar[dtype]](length=outer * take * inner, fill=0)
+        for o in range(outer):
+            for k in range(take):
+                for i in range(inner):
+                    chunk[(o * take + k) * inner + i] = values[
+                        (o * length + start + k) * inner + i
+                    ]
+        var extents = List[Int](capacity=rank)
+        for d in range(rank):
+            extents.append(take if d == axis else a.dim_at(d))
+        parts.append(
+            Dynamic[dtype, rank](
+                ctx, row_major(_dyn_shape_from[rank](extents)), chunk^
+            )
+        )
+        start += take
+
+    return parts^
 
 
 def geomspace[
@@ -2530,6 +2677,85 @@ def vstack[
     for i in range(rows_b * cols):
         values.append(b_values[i])
     return Static[dtype, rows_a + rows_b, cols](a.context(), values^)
+
+
+def dstack[
+    dtype: DType, rows: Int, cols: Int
+](a: Static[dtype, rows, cols], b: Static[dtype, rows, cols]) raises -> Static[
+    dtype, rows, cols, 2
+]:
+    """Two matrices joined along a new third axis. `numpy.dstack`.
+
+    The depth direction: `ys[r, c, 0]` is `a[r, c]` and `ys[r, c, 1]` is
+    `b[r, c]`, so the two inputs interleave element by element rather than
+    going back to back the way `vstack`'s do. Two inputs rather than a
+    variadic pack, for the reason `stack` records.
+    """
+    var a_values = a.to_host()
+    var b_values = b.to_host()
+    var values = List[Scalar[dtype]](length=rows * cols * 2, fill=0)
+    for i in range(rows * cols):
+        values[2 * i] = a_values[i]
+        values[2 * i + 1] = b_values[i]
+    return Static[dtype, rows, cols, 2](a.context(), values^)
+
+
+def rot90[
+    dtype: DType, rows: Int, cols: Int, k: Int = 1
+](a: Static[dtype, rows, cols]) raises -> Static[dtype, cols, rows] where (
+    k == 1 or k == 3
+):
+    """A matrix rotated `90 * k` degrees counterclockwise, for an odd `k`.
+    `numpy.rot90`.
+
+    `k` is a compile-time parameter, and **must be one of `0`, `1`, `2` or
+    `3`**. Both halves of that are forced. It has to be a parameter because
+    the result's shape depends on it -- an odd number of quarter turns
+    swaps the extents and an even one does not, so the two cases cannot
+    share a return type, and this overload is the odd one. And it has to be
+    already reduced because `where` cannot evaluate `%` in this Mojo
+    (`findings.mdc`), so `k % 4 == 1` is not a constraint the compiler can
+    discharge. NumPy reduces a larger or negative `k` itself; here a caller
+    writing a literal writes the reduced one, and `k = 3` is the single
+    clockwise turn that `k = -1` would mean there.
+    """
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=rows * cols, fill=0)
+    for r in range(rows):
+        for c in range(cols):
+            # One counterclockwise turn sends (r, c) to (cols - 1 - c, r);
+            # three turns is the same map run backwards, (c, rows - 1 - r).
+            comptime if k == 1:
+                values[(cols - 1 - c) * rows + r] = source[r * cols + c]
+            else:
+                values[c * rows + (rows - 1 - r)] = source[r * cols + c]
+    return Static[dtype, cols, rows](a.context(), values^)
+
+
+def rot90[
+    dtype: DType, rows: Int, cols: Int, k: Int = 1
+](a: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols] where (
+    k == 0 or k == 2
+):
+    """A matrix rotated `90 * k` degrees counterclockwise, for an even `k`.
+    `numpy.rot90`.
+
+    Two quarter turns reverse both axes; zero turns is a copy. The shape is
+    unchanged, which is why this is a separate overload from the odd case
+    above -- see it for why `k` is a parameter and why it must already be
+    in `0 .. 3`.
+    """
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=rows * cols, fill=0)
+    for r in range(rows):
+        for c in range(cols):
+            comptime if k == 0:
+                values[r * cols + c] = source[r * cols + c]
+            else:
+                values[(rows - 1 - r) * cols + (cols - 1 - c)] = source[
+                    r * cols + c
+                ]
+    return Static[dtype, rows, cols](a.context(), values^)
 
 
 def hstack[
