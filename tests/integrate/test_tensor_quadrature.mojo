@@ -12,6 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Static
+from numax.core.tensorlike import View
 from numax.integrate import cumulative_trapezoid, simpson, trapezoid
 
 comptime dtype = DType.float64
@@ -113,6 +114,13 @@ def test_a_mismatched_x_raises() raises:
     except:
         raised = True
     assert_equal(raised, True)
+
+
+def test_trapezoid_accepts_a_view() raises:
+    var y = _t[5]([1.0, 4.0, 9.0, 16.0, 25.0])
+    assert_almost_equal(
+        trapezoid(View(y.view()), Scalar[dtype](1.0)), Scalar[dtype](42.0)
+    )
 
 
 def main() raises:

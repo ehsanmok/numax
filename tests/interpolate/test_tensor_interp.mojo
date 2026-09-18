@@ -12,6 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Static
+from numax.core.tensorlike import View
 from numax.interpolate import (
     horner,
     interp,
@@ -219,7 +220,7 @@ def test_polyfit_recovers_a_polynomial_it_was_sampled_from() raises:
     var xs = _from[5]([-2.0, -1.0, 0.0, 1.0, 2.0])
     # y = 3x^2 - 2x + 1
     var ys = _from[5]([17.0, 6.0, 1.0, 2.0, 9.0])
-    var fit = polyfit[dtype, 5, 2](xs, ys)
+    var fit = polyfit[deg=2](xs, ys)
     assert_equal(fit.num_elements, 3)
     var c = fit.to_host()
     assert_almost_equal(c[0], 3.0, atol=1e-9)
@@ -235,9 +236,19 @@ def test_polyfit_recovers_a_polynomial_it_was_sampled_from() raises:
 def test_polyfit_at_degree_one_is_a_straight_line() raises:
     var xs = _from[4]([0.0, 1.0, 2.0, 3.0])
     var ys = _from[4]([1.0, 3.0, 5.0, 7.0])
-    var fit = polyfit[dtype, 4, 1](xs, ys).to_host()
+    var fit = polyfit[deg=1](xs, ys).to_host()
     assert_almost_equal(fit[0], 2.0, atol=1e-9)
     assert_almost_equal(fit[1], 1.0, atol=1e-9)
+
+
+def test_interp_accepts_views() raises:
+    var x = _from[10](_queries())
+    var xp = _from[5](_knots())
+    var fp = _from[5](_samples())
+    var want = interp(x, xp, fp).to_host()
+    var got = interp(View(x.view()), View(xp.view()), View(fp.view())).to_host()
+    for i in range(10):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]))
 
 
 def main() raises:

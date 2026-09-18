@@ -33,6 +33,7 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from std.utils.numerics import nan as _nan
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 from .interp import _interval
 
@@ -104,14 +105,19 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
         self.extrapolate = extrapolate
 
     def __call__[
-        m: Int, gpu: Bool = False
-    ](mut self, mut points: Static[Self.dtype, m, 2]) raises -> Static[
-        Self.dtype, m
-    ] where (
-        Self.dtype.is_floating_point()
-        and Self.rows >= 2
-        and Self.cols >= 2
-        and m > 0
+        T: TensorLike,
+        gpu: Bool = False,
+    ](mut self, points: T) raises -> Static[Self.dtype, dim[T, 0]] where (
+        (
+            Self.dtype.is_floating_point()
+            and Self.rows >= 2
+            and Self.cols >= 2
+            and dim[T, 0] > 0
+        )
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 2
+        and T.LayoutType.all_dims_known
+        and dim[T, 1] == 2
     ):
         """The grid's value at each of the `m` points, row `q` of `points`
         being `(x_q, y_q)`.
@@ -123,9 +129,10 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
         pass over `points`, so a caller who knows the points are inside
         can pass `bounds_error=False` and skip it.
         """
+        comptime m = dim[T, 0]
         var ctx = points.context()
         if self.bounds_error:
-            var host_points = points.to_host()
+            var host_points = points.to_host[Self.dtype]()
             var xs = self.x.to_host()
             var ys = self.y.to_host()
             for q in range(m):
@@ -148,7 +155,7 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
         var xg = self.x.view()
         var yg = self.y.view()
         var vals = self.values.view()
-        var ps = points.view()
+        var ps = points.view_as[Self.dtype]()
         var os = out.view()
         var nearest = self.nearest
         var extrapolate = self.extrapolate

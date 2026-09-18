@@ -91,7 +91,7 @@ def hann[
     dB/octave. Symmetric, the ends are exactly zero; periodic, the window
     tiles without a seam.
     """
-    return _cosine_window[dtype, n](0.5, 0.5, 0.0, sym, ctx)
+    return _cosine_window[dtype=dtype, n=n](0.5, 0.5, 0.0, sym, ctx)
 
 
 def hamming[
@@ -103,7 +103,7 @@ def hamming[
     `scipy.signal.windows.hamming(n, sym)`. The classic `0.54/0.46`
     coefficients, matching NumPy and SciPy, rather than the exactly optimal
     `0.53836/0.46164`."""
-    return _cosine_window[dtype, n](0.54, 0.46, 0.0, sym, ctx)
+    return _cosine_window[dtype=dtype, n=n](0.54, 0.46, 0.0, sym, ctx)
 
 
 def blackman[
@@ -114,7 +114,7 @@ def blackman[
     """The Blackman window, `0.42 - 0.5 cos(2 pi i / d) + 0.08 cos(4 pi i
     / d)`. `scipy.signal.windows.blackman(n, sym)`: -58 dB sidelobes for a
     main lobe half again as wide as Hann's."""
-    return _cosine_window[dtype, n](0.42, 0.5, 0.08, sym, ctx)
+    return _cosine_window[dtype=dtype, n=n](0.42, 0.5, 0.08, sym, ctx)
 
 
 def bartlett[
@@ -194,17 +194,17 @@ def get_window[
     """
     var sym = not fftbins
     if name == "boxcar":
-        return boxcar[dtype, n](sym, ctx)
+        return boxcar[dtype=dtype, n=n](sym, ctx)
     if name == "hann" or name == "hanning":
-        return hann[dtype, n](sym, ctx)
+        return hann[dtype=dtype, n=n](sym, ctx)
     if name == "hamming":
-        return hamming[dtype, n](sym, ctx)
+        return hamming[dtype=dtype, n=n](sym, ctx)
     if name == "blackman":
-        return blackman[dtype, n](sym, ctx)
+        return blackman[dtype=dtype, n=n](sym, ctx)
     if name == "bartlett":
-        return bartlett[dtype, n](sym, ctx)
+        return bartlett[dtype=dtype, n=n](sym, ctx)
     if name == "kaiser":
-        return kaiser[dtype, n](beta, sym, ctx)
+        return kaiser[dtype=dtype, n=n](beta, sym, ctx)
     raise Error(
         "get_window: unknown window '",
         name,

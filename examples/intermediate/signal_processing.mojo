@@ -85,7 +85,7 @@ def main() raises:
 
     # SciPy's symmetric and periodic forms both, `fftbins=True` being the
     # periodic one a transform wants.
-    var window = get_window[dtype, 8]("hann", fftbins=True, ctx=ctx)
+    var window = get_window[dtype=dtype, n=8]("hann", fftbins=True, ctx=ctx)
     var w = window.to_host()
     print("  get_window('hann', 8)")
     print("   ", w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7])
@@ -96,23 +96,21 @@ def main() raises:
 
     # firwin(numtaps, cutoff) -- the cutoff is in units of Nyquist, so
     # 0.2 is 100 Hz here: the 50 Hz tone passes, the 220 Hz does not.
-    var lowpass = firwin[dtype, taps]([0.2], ctx=ctx)
+    var lowpass = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
     var coefficients = lowpass.to_host()
     print("  firwin(33, 0.2) centre tap =", coefficients[taps // 2])
 
     # Route one: the direct convolution, one launch of dot products.
     var signal_a = two_tones(ctx)
-    var kernel_a = firwin[dtype, taps]([0.2], ctx=ctx)
-    var direct = convolve[dtype, n, taps, mode=valid](signal_a, kernel_a)
+    var kernel_a = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
+    var direct = convolve[mode=valid](signal_a, kernel_a)
 
     # Route two: the same answer through three transforms. Which one is
     # faster is a measurement, not a rule -- `bench_signal.mojo` runs the
     # sweep and `docs/performance.md` reports where they cross.
     var signal_b = two_tones(ctx)
-    var kernel_b = firwin[dtype, taps]([0.2], ctx=ctx)
-    var transformed = fftconvolve[dtype, n, taps, mode=valid](
-        signal_b, kernel_b
-    )
+    var kernel_b = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
+    var transformed = fftconvolve[mode=valid](signal_b, kernel_b)
 
     var d = direct.to_host()
     var t = transformed.to_host()
@@ -126,9 +124,9 @@ def main() raises:
 
     # lfilter is the recurrence form of the same FIR, `a = [1]`.
     var signal_c = two_tones(ctx)
-    var kernel_c = firwin[dtype, taps]([0.2], ctx=ctx)
+    var kernel_c = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
     var unity = Static[dtype, 1](ctx, [Scalar[dtype](1)])
-    var filtered = lfilter[dtype, taps, 1, n](kernel_c, unity, signal_c)
+    var filtered = lfilter(kernel_c, unity, signal_c)
     var f = filtered.to_host()
     print("  lfilter(b, [1], x)[512] =", f[512])
 
@@ -137,7 +135,7 @@ def main() raises:
     print("-----------------------------------")
 
     # butter(4, 0.1) -- fourth order, cutoff at 50 Hz.
-    var design = butter[dtype, 4](0.1, ctx=ctx)
+    var design = butter[dtype=dtype, order=4](0.1, ctx=ctx)
     var b_host = design.b.to_host()
     var a_host = design.a.to_host()
     print("  butter(4, 0.1)")
@@ -146,7 +144,7 @@ def main() raises:
     # freqz reports the response those coefficients actually have.
     var b_for_response = Static[dtype, 5](ctx, design.b.to_host())
     var a_for_response = Static[dtype, 5](ctx, design.a.to_host())
-    var response = freqz[dtype, 5, 5, 8](b_for_response, a_for_response)
+    var response = freqz[worN=8](b_for_response, a_for_response)
     # `FrequencyResponse` carries the complex `H` as two real tensors, the
     # answer a `dtype`-monomorphic tensor forces and the one `eigvals` and
     # `numax.fft` give to the same constraint.
@@ -162,7 +160,7 @@ def main() raises:
     var signal_d = two_tones(ctx)
     var b_again = Static[dtype, 5](ctx, design.b.to_host())
     var a_again = Static[dtype, 5](ctx, design.a.to_host())
-    var zero_phase = filtfilt[dtype, 5, 5, n](b_again, a_again, signal_d)
+    var zero_phase = filtfilt(b_again, a_again, signal_d)
     var z = zero_phase.to_host()
     print("  filtfilt(b, a, x)[512] =", z[512])
 
@@ -171,11 +169,11 @@ def main() raises:
     print("-------------------------------")
 
     var signal_e = two_tones(ctx)
-    var median_filtered = medfilt[dtype, n, 5](signal_e)
+    var median_filtered = medfilt[kernel_size=5](signal_e)
     print("  medfilt(x, 5)[512]        =", median_filtered.to_host()[512])
 
     var signal_f = two_tones(ctx)
-    var smoothed = savgol_filter[dtype, n, 11, 3](signal_f)
+    var smoothed = savgol_filter[window_length=11, polyorder=3](signal_f)
     print("  savgol_filter(x, 11, 3)[512] =", smoothed.to_host()[512])
     print("    a least-squares cubic per window, one launch over the lot")
 
@@ -187,7 +185,7 @@ def main() raises:
     # average the periodograms. 1024 samples at nperseg=256 is seven
     # half-overlapping frames, transformed as one batch.
     var signal_g = two_tones(ctx)
-    var estimate = welch[dtype, n, 256](signal_g, fs=fs)
+    var estimate = welch[nperseg=256](signal_g, fs=fs)
     var power = estimate.power.to_host()
     var frequencies = estimate.frequencies.to_host()
     var loudest = 0

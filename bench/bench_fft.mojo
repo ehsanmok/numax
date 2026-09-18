@@ -78,7 +78,7 @@ def bench_transforms[n: Int](ctx: DeviceContext) raises where n > 0:
     comptime keep_bins = n // 2 + 1
     var real = _values[n]()
     var imag = List[Scalar[dtype]](length=n, fill=Scalar[dtype](0))
-    var spectrum = rfft[dtype, n](Static[dtype, n](ctx, real.copy()))
+    var spectrum = rfft(Static[dtype, n](ctx, real.copy()))
     var half_re = spectrum[0].to_host()
     var half_im = spectrum[1].to_host()
 
@@ -89,7 +89,7 @@ def bench_transforms[n: Int](ctx: DeviceContext) raises where n > 0:
         keep(y.buffer.unsafe_ptr())
 
     def forward() raises {mut real, mut imag, var ctx}:
-        var out = fft[dtype, n](
+        var out = fft(
             (
                 Static[dtype, n](ctx, real.copy()),
                 Static[dtype, n](ctx, imag.copy()),
@@ -98,11 +98,11 @@ def bench_transforms[n: Int](ctx: DeviceContext) raises where n > 0:
         keep(out[0].buffer.unsafe_ptr())
 
     def real_forward() raises {mut real, var ctx}:
-        var out = rfft[dtype, n](Static[dtype, n](ctx, real.copy()))
+        var out = rfft(Static[dtype, n](ctx, real.copy()))
         keep(out[0].buffer.unsafe_ptr())
 
     def real_inverse() raises {mut half_re, mut half_im, var ctx}:
-        var out = irfft[dtype, keep_bins, False, n](
+        var out = irfft[gpu=False, n=n](
             (
                 Static[dtype, keep_bins](ctx, half_re.copy()),
                 Static[dtype, keep_bins](ctx, half_im.copy()),
@@ -166,7 +166,7 @@ def bench_fft2[
         keep(y.buffer.unsafe_ptr())
 
     def plane() raises {mut real, mut imag, var ctx}:
-        var out = fft2[dtype, rows, cols](
+        var out = fft2(
             (
                 Static[dtype, rows, cols](ctx, real.copy()),
                 Static[dtype, rows, cols](ctx, imag.copy()),

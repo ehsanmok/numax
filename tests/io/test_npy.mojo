@@ -281,7 +281,7 @@ def test_load_dyn_takes_the_shape_from_the_file() raises:
 
     var path = String(_TMP, "_infer.npy")
     numpy.save(xs, path)
-    var loaded = numpy.load_dyn[DType.float32, 2](path, ctx=ctx)
+    var loaded = numpy.load_dyn[dtype=DType.float32, rank=2](path, ctx=ctx)
 
     assert_equal(loaded.dim_at(0), 2)
     assert_equal(loaded.dim_at(1), 3)
@@ -299,7 +299,7 @@ def test_load_dyn_raises_on_a_rank_the_file_does_not_have() raises:
 
     var raised = False
     try:
-        _ = numpy.load_dyn[DType.float32, 2](path, ctx=ctx)
+        _ = numpy.load_dyn[dtype=DType.float32, rank=2](path, ctx=ctx)
     except:
         raised = True
     assert_true(raised)

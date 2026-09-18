@@ -59,7 +59,8 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static, arange, zeros
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.array import _canonical, Static, arange, zeros
 from ..core.ops import subtract
 from ..fft.fft import Spectrum, fft, ifft
 from ..linalg.blas import dot
@@ -128,6 +129,31 @@ def _loose[
     recurrences use it, each over a buffer they own.
     """
     return rebind[Pointer[Scalar[dtype], MutAnyOrigin]](p)
+
+
+def _read_ptr[
+    dtype: DType, T: TensorLike
+](x: T, mut staged: List[Scalar[dtype]]) raises -> Pointer[
+    Scalar[dtype], MutAnyOrigin
+]:
+    """A host pointer to `x`'s elements, without a copy where none is needed.
+
+    On a CPU context the storage itself is host memory and the pointer is
+    the tensor's own; the `mut` cast adds nothing the recurrence uses, it
+    only reads. Off the host the elements are staged into `staged`, which
+    the caller keeps alive for as long as the pointer is used. This is what
+    `map_to_host` gave the old `Tensor`-typed signature for free; a
+    `TensorLike` has no buffer to map, and copying a million-sample
+    recording to filter it is a cost the old spelling did not pay.
+    """
+    if x.on_host():
+        return (
+            x.view_as[dtype]()
+            .ptr.unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutAnyOrigin]()
+        )
+    staged = x.to_host[dtype]()
+    return _loose(staged.unsafe_ptr())
 
 
 def _recurrence[
@@ -213,11 +239,24 @@ def _zi_host[
 
 
 def lfilter[
-    dtype: DType, nb: Int, na: Int, n: Int
-](
-    mut b: Static[dtype, nb], mut a: Static[dtype, na], mut x: Static[dtype, n]
-) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and nb > 0 and na > 0 and n > 0
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+](b: A, a: B, x: C) raises -> Static[A.dtype, dim[C, 0]] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and dim[C, 0] > 0
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
 ):
     """Apply the difference equation `a[0] y[i] = sum_j b[j] x[i-j] - sum_j
     a[j] y[i-j]` to `x`, from rest. `scipy.signal.lfilter(b, a, x)`.
@@ -232,36 +271,52 @@ def lfilter[
     is sequential. It is host-side without being *off*-tensor, though --
     the pass reads `x` and writes the result through the mapping
     `numax.core.array`'s own `to_host`/`copy_from_host` use, so nothing is
-    copied into a `List` on the way in or out. Arithmetic is at `dtype`,
+    copied into a `List` on the way in or out. Arithmetic is at `A.dtype`,
     which is also where SciPy computes it.
     `numax.signal.array.lfilter` is the tier-1 form that runs per SIMD lane
     inside a kernel.
     """
-    var norm = _normalized(b.to_host(), a.to_host())
-    var state = List[Scalar[dtype]](length=max(len(norm[0]) - 1, 1), fill=0)
-    var out = Static[dtype, n]._uninitialized(x.context())
+    comptime na = dim[B, 0]
+    comptime n = dim[C, 0]
+    var norm = _normalized(b.to_host(), a.to_host[A.dtype]())
+    var state = List[Scalar[A.dtype]](length=max(len(norm[0]) - 1, 1), fill=0)
+    var out = Static[A.dtype, n]._uninitialized(x.context())
     # `_uninitialized` is sound here because the loop below writes every one
     # of the `n` elements before anything reads them, and the mapping flushes
     # on scope exit -- `copy_from_host` is the same write, through a `List`.
-    with x.buffer.map_to_host() as src:
-        with out.buffer.map_to_host() as dst:
-            _recurrence(
-                norm[0],
-                norm[1],
-                state,
-                _loose(src.unsafe_ptr()),
-                _loose(dst.unsafe_ptr()),
-                n,
-            )
+    var staged = List[Scalar[A.dtype]]()
+    var src = _read_ptr[A.dtype](x, staged)
+    with out.buffer.map_to_host() as dst:
+        _recurrence(
+            norm[0],
+            norm[1],
+            state,
+            src,
+            _loose(dst.unsafe_ptr()),
+            n,
+        )
     return out^
 
 
 def lfilter_zi[
-    dtype: DType, nb: Int, na: Int
-](mut b: Static[dtype, nb], mut a: Static[dtype, na]) raises -> Static[
-    dtype, (nb if nb > na else na) - 1
+    A: TensorLike,
+    B: TensorLike,
+](b: A, a: B) raises -> Static[
+    A.dtype, (dim[A, 0] if dim[A, 0] > dim[B, 0] else dim[B, 0]) - 1
 ] where (
-    dtype.is_floating_point() and nb > 0 and na > 0 and (nb > 1 or na > 1)
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and (dim[A, 0] > 1 or dim[B, 0] > 1)
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and is_row_major[A]
+    and is_row_major[B]
 ):
     """The initial state at which `lfilter` responds to a unit step with no
     transient. `scipy.signal.lfilter_zi(b, a)`.
@@ -271,22 +326,36 @@ def lfilter_zi[
     normalizing by `a[0]`. Scale it by the first sample of the signal to
     start a filter "already settled", which is what `filtfilt` does.
     Raises when `sum(a) == 0`, a pole on the unit circle. Computed at
-    `dtype`, like the recurrence it feeds.
+    `A.dtype`, like the recurrence it feeds.
     """
-    var norm = _normalized(b.to_host(), a.to_host())
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
+    var norm = _normalized(b.to_host(), a.to_host[A.dtype]())
     var zi = _zi_host(norm[0], norm[1])
-    return Static[dtype, (nb if nb > na else na) - 1](b.context(), zi^)
+    return Static[A.dtype, (nb if nb > na else na) - 1](b.context(), zi^)
 
 
 def filtfilt[
-    dtype: DType, nb: Int, na: Int, n: Int
-](
-    mut b: Static[dtype, nb],
-    mut a: Static[dtype, na],
-    mut x: Static[dtype, n],
-    padlen: Optional[Int] = None,
-) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and nb > 0 and na > 0 and n > 0
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+](b: A, a: B, x: C, padlen: Optional[Int] = None) raises -> Static[
+    A.dtype, dim[C, 0]
+] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and dim[C, 0] > 0
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
 ):
     """Forward-backward filtering: `lfilter` forwards, then backwards over
     the result, so the phase response cancels and the magnitude response
@@ -305,9 +374,12 @@ def filtfilt[
     backward pass runs in place over the same buffer walking from the end,
     so no reversed copy is ever built. The extension is the only allocation,
     and its length is a run-time `n + 2 padlen`, which is why it is a
-    `List[Scalar[dtype]]` rather than a `Static`.
+    `List[Scalar[A.dtype]]` rather than a `Static`.
     """
-    var norm = _normalized(b.to_host(), a.to_host())
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
+    comptime n = dim[C, 0]
+    var norm = _normalized(b.to_host(), a.to_host[A.dtype]())
     var edge = padlen.value() if padlen else 3 * max(nb, na)
     if n <= edge:
         raise Error(
@@ -315,21 +387,22 @@ def filtfilt[
         )
 
     # Odd extension: `2 x[0] - x[edge..1]`, `x`, `2 x[n-1] - x[n-2..n-1-edge]`.
-    var ext = List[Scalar[dtype]](capacity=n + 2 * edge)
-    with x.buffer.map_to_host() as src:
-        var first = src[0]
-        var last = src[n - 1]
-        for i in range(edge):
-            ext.append(2 * first - src[edge - i])
-        for i in range(n):
-            ext.append(src[i])
-        for i in range(edge):
-            ext.append(2 * last - src[n - 2 - i])
+    var ext = List[Scalar[A.dtype]](capacity=n + 2 * edge)
+    var staged = List[Scalar[A.dtype]]()
+    var src = _read_ptr[A.dtype](x, staged)
+    var first = src[unsafe_offset=0]
+    var last = src[unsafe_offset=n - 1]
+    for i in range(edge):
+        ext.append(2 * first - src[unsafe_offset=edge - i])
+    for i in range(n):
+        ext.append(src[unsafe_offset=i])
+    for i in range(edge):
+        ext.append(2 * last - src[unsafe_offset=n - 2 - i])
     var m = len(ext)
 
     var zi = _zi_host(norm[0], norm[1])
     var order = len(zi)
-    var state = List[Scalar[dtype]](length=max(order, 1), fill=0)
+    var state = List[Scalar[A.dtype]](length=max(order, 1), fill=0)
     for k in range(order):
         state[k] = zi[k] * ext[0]
     var forward = _loose(ext.unsafe_ptr())
@@ -344,7 +417,7 @@ def filtfilt[
     var backward = _loose(ext.unsafe_ptr())
     _recurrence(norm[0], norm[1], state, backward, backward, m, True)
 
-    var out = Static[dtype, n]._uninitialized(x.context())
+    var out = Static[A.dtype, n]._uninitialized(x.context())
     with out.buffer.map_to_host() as dst:
         for i in range(n):
             dst[i] = ext[edge + i]
@@ -352,11 +425,16 @@ def filtfilt[
 
 
 def sosfilt[
-    dtype: DType, sections: Int, n: Int
-](
-    mut sos: Static[dtype, sections, 6], mut x: Static[dtype, n]
-) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and sections > 0 and n > 0
+    A: TensorLike,
+    B: TensorLike,
+](sos: A, x: B) raises -> Static[A.dtype, dim[B, 0]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 0 and dim[B, 0] > 0)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == 6
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
 ):
     """Filter `x` through a cascade of second-order sections, from rest.
     `scipy.signal.sosfilt(sos, x)`.
@@ -373,22 +451,25 @@ def sosfilt[
     and each section filters that buffer in place, so `sections` passes
     cost one allocation rather than `sections` intermediate signals.
     """
+    comptime sections = dim[A, 0]
+    comptime n = dim[B, 0]
     var table = sos.to_host()
-    var out = Static[dtype, n]._uninitialized(x.context())
-    with x.buffer.map_to_host() as src:
-        with out.buffer.map_to_host() as dst:
-            for i in range(n):
-                dst[i] = src[i]
-            var buffer = _loose(dst.unsafe_ptr())
-            for s in range(sections):
-                var b = List[Scalar[dtype]](capacity=3)
-                var a = List[Scalar[dtype]](capacity=3)
-                for k in range(3):
-                    b.append(table[s * 6 + k])
-                    a.append(table[s * 6 + 3 + k])
-                var norm = _normalized(b^, a^)
-                var state = List[Scalar[dtype]](length=2, fill=0)
-                _recurrence(norm[0], norm[1], state, buffer, buffer, n)
+    var out = Static[A.dtype, n]._uninitialized(x.context())
+    var staged = List[Scalar[A.dtype]]()
+    var src = _read_ptr[A.dtype](x, staged)
+    with out.buffer.map_to_host() as dst:
+        for i in range(n):
+            dst[i] = src[unsafe_offset=i]
+        var buffer = _loose(dst.unsafe_ptr())
+        for s in range(sections):
+            var b = List[Scalar[A.dtype]](capacity=3)
+            var a = List[Scalar[A.dtype]](capacity=3)
+            for k in range(3):
+                b.append(table[s * 6 + k])
+                a.append(table[s * 6 + 3 + k])
+            var norm = _normalized(b^, a^)
+            var state = List[Scalar[A.dtype]](length=2, fill=0)
+            _recurrence(norm[0], norm[1], state, buffer, buffer, n)
     return out^
 
 
@@ -398,9 +479,13 @@ def sosfilt[
 
 
 def medfilt[
-    dtype: DType, n: Int, kernel_size: Int = 3, gpu: Bool = False
-](mut x: Static[dtype, n]) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and n > 0 and kernel_size > 0
+    T: TensorLike,
+    kernel_size: Int = 3,
+    gpu: Bool = False,
+](x: T) raises -> Static[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0 and kernel_size > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The running median over a window of `kernel_size` samples, zero
     padded at both ends. `scipy.signal.medfilt(x, kernel_size)`.
@@ -411,21 +496,22 @@ def medfilt[
     cleverer. `kernel_size` is a compile-time parameter because the
     register array's length is; SciPy requires it odd and so does this.
     """
+    comptime n = dim[T, 0]
     comptime assert kernel_size % 2 == 1, "medfilt: kernel_size must be odd"
     comptime half = kernel_size // 2
     var ctx = x.context()
-    var out = Static[dtype, n]._uninitialized(ctx)
+    var out = Static[T.dtype, n]._uninitialized(ctx)
     var xs = x.view()
     var ys = out.view()
 
     @always_inline
     def lane[w: Int, alignment: Int = 1](coord: Coord) {var xs, var ys}:
         var i = coord_to_index_list(coord)[0]
-        var window = Array[Scalar[dtype], kernel_size](fill=0)
+        var window = Array[Scalar[T.dtype], kernel_size](fill=0)
         for j in range(kernel_size):
             var src = i - half + j
             window[j] = xs[Coord(src)] if (src >= 0 and src < n) else Scalar[
-                dtype
+                T.dtype
             ](0)
         # Insertion sort; `kernel_size` is small and compile-time.
         for j in range(1, kernel_size):
@@ -445,10 +531,16 @@ def medfilt[
 
 
 def detrend[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut x: Static[dtype, n], type: StaticString = "linear") raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and n > 0):
+    T: TensorLike,
+    gpu: Bool = False,
+](x: T, type: StaticString = "linear") raises -> Static[
+    T.dtype, dim[T, 0]
+] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
+):
     """`x` with its mean (`type="constant"`) or its least-squares line
     (`type="linear"`, the default) removed. `scipy.signal.detrend(x,
     type=type)`.
@@ -457,6 +549,7 @@ def detrend[
     index: two reductions (`mean`, and `dot` against the index) and one
     launch to subtract, all device-resident. An unknown `type` raises.
     """
+    comptime n = dim[T, 0]
     if not (type == "linear" or type == "constant"):
         raise Error(
             "detrend: unknown type '",
@@ -466,27 +559,27 @@ def detrend[
     var ctx = x.context()
     var mean_y = Float64(mean[gpu=gpu](x))
     if type == "constant":
-        return subtract(x, Scalar[dtype](mean_y))
+        return subtract(_canonical[n](x), Scalar[T.dtype](mean_y))
 
-    var index = arange[n, dtype](ctx=ctx)
+    var index = arange[n, T.dtype](ctx=ctx)
     var mean_i = Float64(n - 1) / 2.0
     var sxx = Float64(n) * (Float64(n) * Float64(n) - 1.0) / 12.0
     var sxy = Float64(dot[gpu=gpu](index, x)) - Float64(n) * mean_i * mean_y
     var slope = sxy / sxx if sxx > 0 else 0.0
     var intercept = mean_y - slope * mean_i
 
-    var out = Static[dtype, n]._uninitialized(ctx)
+    var out = Static[T.dtype, n]._uninitialized(ctx)
     var xs = x.view()
     var ys = out.view()
-    var m = Scalar[dtype](slope)
-    var c = Scalar[dtype](intercept)
+    var m = Scalar[T.dtype](slope)
+    var c = Scalar[T.dtype](intercept)
 
     @always_inline
     def remove[
         w: Int, alignment: Int = 1
     ](coord: Coord) {var xs, var ys, var m, var c}:
         var i = coord_to_index_list(coord)[0]
-        ys.store[1](Coord(i), xs[Coord(i)] - (c + m * Scalar[dtype](i)))
+        ys.store[1](Coord(i), xs[Coord(i)] - (c + m * Scalar[T.dtype](i)))
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
         remove, Coord(n), ctx
@@ -566,24 +659,27 @@ def _polyval_derivative(
 
 
 def savgol_filter[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     window_length: Int,
     polyorder: Int,
     deriv: Int = 0,
     gpu: Bool = False,
 ](
-    mut x: Static[dtype, n],
+    x: T,
     delta: Float64 = 1.0,
     mode: StaticString = "interp",
     cval: Float64 = 0.0,
-) raises -> Static[dtype, n] where (
-    dtype.is_floating_point()
-    and n > 0
-    and window_length > 0
-    and polyorder >= 0
-    and polyorder < window_length
-    and deriv >= 0
+) raises -> Static[T.dtype, dim[T, 0]] where (
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] > 0
+        and window_length > 0
+        and polyorder >= 0
+        and polyorder < window_length
+        and deriv >= 0
+    )
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The Savitzky-Golay filter: at each sample, the `deriv`-th derivative
     of the degree-`polyorder` polynomial fitted by least squares to the
@@ -602,6 +698,7 @@ def savgol_filter[
     assert`, since the `where` prover cannot evaluate `%`), `polyorder`
     less than it, and for `"interp"` no longer than the signal.
     """
+    comptime n = dim[T, 0]
     if not (
         mode == "interp"
         or mode == "nearest"
@@ -654,7 +751,7 @@ def savgol_filter[
             total += unit[k] * v
             v *= positions[j]
         coefficients.append(total * scale)
-    var taps = _upload[dtype, window_length](ctx, coefficients)
+    var taps = _upload[dtype=T.dtype, n=window_length](ctx, coefficients)
 
     # `"interp"`: the edge values from SciPy's polynomial fits to the first
     # and last `window_length` samples, uploaded for the edge lanes to read.
@@ -692,9 +789,11 @@ def savgol_filter[
                 )
                 * inv_delta
             )
-    var edges = _upload[dtype, 2 * half if half > 0 else 1](ctx, edge_values)
+    var edges = _upload[dtype=T.dtype, n=2 * half if half > 0 else 1](
+        ctx, edge_values
+    )
 
-    var out = Static[dtype, n]._uninitialized(ctx)
+    var out = Static[T.dtype, n]._uninitialized(ctx)
     var xs_view = x.view()
     var cs = taps.view()
     var es = edges.view()
@@ -705,7 +804,7 @@ def savgol_filter[
             2 if mode == "mirror" else (3 if mode == "wrap" else 4)
         )
     )
-    var fill = Scalar[dtype](cval)
+    var fill = Scalar[T.dtype](cval)
 
     @always_inline
     def lane[
@@ -714,16 +813,16 @@ def savgol_filter[
         var xs_view, var cs, var es, var ys, var mode_code, var fill
     }:
         var i = coord_to_index_list(coord)[0]
-        var value: Scalar[dtype]
+        var value: Scalar[T.dtype]
         if mode_code == 0 and i < half:
             value = es[Coord(i)]
         elif mode_code == 0 and i >= n - half:
             value = es[Coord(half + i - (n - half))]
         else:
-            var total = Scalar[dtype](0)
+            var total = Scalar[T.dtype](0)
             for j in range(window_length):
                 var src = i - half + j
-                var sample: Scalar[dtype]
+                var sample: Scalar[T.dtype]
                 if src >= 0 and src < n:
                     sample = xs_view[Coord(src)]
                 elif mode_code == 1:
@@ -754,9 +853,13 @@ def savgol_filter[
 
 
 def resample[
-    dtype: DType, n: Int, num: Int, gpu: Bool = False
-](mut x: Static[dtype, n]) raises -> Static[dtype, num] where (
-    dtype.is_floating_point() and n > 0 and num > 0
+    T: TensorLike,
+    num: Int,
+    gpu: Bool = False,
+](x: T) raises -> Static[T.dtype, num] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0 and num > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """`x` resampled to `num` samples by the Fourier method: transform,
     keep or zero-pad the spectrum to `num` bins, transform back.
@@ -773,10 +876,11 @@ def resample[
     which is `O(n)` against their `O(n log n)`; the spelling
     `numax.linalg.solve_circulant` uses.
     """
+    comptime n = dim[T, 0]
     var ctx = x.context()
-    var spectrum = fft[dtype, n, gpu](
-        Spectrum[dtype, n](
-            Static[dtype, n](ctx, x.to_host()), zeros[dtype, n](ctx)
+    var spectrum = fft[gpu=gpu](
+        Spectrum[T.dtype, n](
+            Static[T.dtype, n](ctx, x.to_host()), zeros[T.dtype, n](ctx)
         )
     )
     var re = _as_float64(spectrum[0].to_host())
@@ -808,12 +912,13 @@ def resample[
         yre[k] *= gain
         yim[k] *= gain
 
-    var back = ifft[dtype, num, gpu](
-        Spectrum[dtype, num](
-            _upload[dtype, num](ctx, yre), _upload[dtype, num](ctx, yim)
+    var back = ifft[gpu=gpu](
+        Spectrum[T.dtype, num](
+            _upload[dtype=T.dtype, n=num](ctx, yre),
+            _upload[dtype=T.dtype, n=num](ctx, yim),
         )
     )
-    var out = Static[dtype, num](ctx, back[0].to_host())
+    var out = Static[T.dtype, num](ctx, back[0].to_host())
     _ = back^
     return out^
 
@@ -883,7 +988,9 @@ def firwin[
 
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var win = _as_float64(
-        get_window[dtype, numtaps](window, fftbins=False, ctx=device).to_host()
+        get_window[dtype=dtype, n=numtaps](
+            window, fftbins=False, ctx=device
+        ).to_host()
     )
     for i in range(numtaps):
         taps[i] *= win[i]
@@ -899,13 +1006,17 @@ def firwin[
             total += taps[i] * _cos(_PI * (Float64(i) - alpha) * centre)
         for i in range(numtaps):
             taps[i] /= total
-    return _upload[dtype, numtaps](device, taps)
+    return _upload[dtype=dtype, n=numtaps](device, taps)
 
 
 def decimate[
-    dtype: DType, n: Int, q: Int, numtaps: Int = 20 * q + 1
-](mut x: Static[dtype, n]) raises -> Static[dtype, (n + q - 1) // q] where (
-    dtype.is_floating_point() and n > 0 and q >= 2 and numtaps > 0
+    T: TensorLike,
+    q: Int,
+    numtaps: Int = 20 * q + 1,
+](x: T) raises -> Static[T.dtype, (dim[T, 0] + q - 1) // q] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0 and q >= 2 and numtaps > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """Downsample `x` by the integer factor `q`, low-passing first.
     `scipy.signal.decimate(x, q, ftype="fir", zero_phase=True)`.
@@ -925,18 +1036,19 @@ def decimate[
     `filtfilt` over an order-8 IIR at `zero_phase=True` runs the recurrence
     twice and its transient handling has more ways to go wrong, where a
     symmetric FIR is exactly linear phase by construction. A caller wanting
-    the IIR spelling composes it: `cheby1[dtype, 8](0.8 / q, ...)` then
+    the IIR spelling composes it: `cheby1[dtype=T.dtype, order=8](0.8 / q, ...)` then
     `filtfilt` then the stride.
 
     **Tier 2**, since `filtfilt` is.
     """
+    comptime n = dim[T, 0]
     var ctx = x.context()
     var cutoff = List[Float64](capacity=1)
     cutoff.append(1.0 / Float64(q))
-    var taps = firwin[dtype, numtaps](cutoff^, True, ctx=ctx)
-    var unit = List[Scalar[dtype]](capacity=1)
-    unit.append(Scalar[dtype](1))
-    var denominator = Static[dtype, 1](ctx, unit^)
+    var taps = firwin[dtype=T.dtype, numtaps=numtaps](cutoff^, True, ctx=ctx)
+    var unit = List[Scalar[T.dtype]](capacity=1)
+    unit.append(Scalar[T.dtype](1))
+    var denominator = Static[T.dtype, 1](ctx, unit^)
 
     # SciPy's own padlen for this call, `3 * (len(b) // 2)`, rather than
     # `filtfilt`'s default `3 * max(len(a), len(b))`. The smaller pad is
@@ -947,7 +1059,7 @@ def decimate[
     var host = smoothed.to_host()
 
     comptime out_n = (n + q - 1) // q
-    var values = List[Scalar[dtype]](capacity=out_n)
+    var values = List[Scalar[T.dtype]](capacity=out_n)
     for i in range(out_n):
         values.append(host[i * q])
-    return Static[dtype, out_n](ctx, values^)
+    return Static[T.dtype, out_n](ctx, values^)

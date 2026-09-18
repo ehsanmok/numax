@@ -55,6 +55,7 @@ without changing the answer.
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 from ..fft.fft import Spectrum, _rfft, irfft, next_fast_len
 
@@ -89,21 +90,33 @@ def _offset(m: Int, k: Int, mode: Int) -> Int:
 
 
 def _direct[
-    dtype: DType, m: Int, k: Int, mode: Int, gpu: Bool, reverse: Bool
-](mut a: Static[dtype, m], mut b: Static[dtype, k]) raises -> Static[
-    dtype, _out_len(m, k, mode)
-]:
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int,
+    gpu: Bool,
+    reverse: Bool,
+](a: A, b: B) raises -> Static[
+    A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
+] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The direct sum, one lane per output: `out[o] = sum_j a[j] *
     b[i - j]` over the overlap at `i = o + offset`, with `b` read
     backwards when `reverse` -- which is what turns it into
     `correlate`. The loop bounds are integer arithmetic on the lane
     index, so the kernel has no data-dependent branch."""
+    comptime m = dim[A, 0]
+    comptime k = dim[B, 0]
     comptime out_n = _out_len(m, k, mode)
     comptime offset = _offset(m, k, mode)
     var ctx = a.context()
-    var out = Static[dtype, out_n]._uninitialized(ctx)
+    var out = Static[A.dtype, out_n]._uninitialized(ctx)
     var xs = a.view()
-    var taps = b.view()
+    var taps = b.view_as[A.dtype]()
     var ys = out.view()
 
     @always_inline
@@ -114,7 +127,7 @@ def _direct[
         var i = o + offset
         var lo = 0 if i < k else i - k + 1
         var hi = i if i < m else m - 1
-        var total = Scalar[dtype](0)
+        var total = Scalar[A.dtype](0)
         for j in range(lo, hi + 1):
             comptime if reverse:
                 total += xs[Coord(j)] * taps[Coord(k - 1 - i + j)]
@@ -130,14 +143,24 @@ def _direct[
 
 
 def convolve[
-    dtype: DType, m: Int, k: Int, mode: Int = full, gpu: Bool = False
-](mut a: Static[dtype, m], mut b: Static[dtype, k]) raises -> Static[
-    dtype, _out_len(m, k, mode)
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int = full,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[
+    A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
 ] where (
-    dtype.is_floating_point()
-    and m > 0
-    and k > 0
-    and (mode == full or mode == same or mode == valid)
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and (mode == full or mode == same or mode == valid)
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
 ):
     """The linear convolution of `a` and `b`. `numpy.convolve(a, b, mode)`.
 
@@ -150,18 +173,30 @@ def convolve[
     the transform route for a long kernel. Both inputs are borrowed, since
     the same taps are usually applied to many signals.
     """
-    return _direct[dtype, m, k, mode, gpu, False](a, b)
+    comptime m = dim[A, 0]
+    comptime k = dim[B, 0]
+    return _direct[mode=mode, gpu=gpu, reverse=False](a, b)
 
 
 def correlate[
-    dtype: DType, m: Int, k: Int, mode: Int = full, gpu: Bool = False
-](mut a: Static[dtype, m], mut b: Static[dtype, k]) raises -> Static[
-    dtype, _out_len(m, k, mode)
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int = full,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[
+    A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
 ] where (
-    dtype.is_floating_point()
-    and m > 0
-    and k > 0
-    and (mode == full or mode == same or mode == valid)
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and (mode == full or mode == same or mode == valid)
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
 ):
     """The cross-correlation of `a` and `b`. `numpy.correlate(a, b, mode)`,
     and `scipy.signal.correlate` for real input.
@@ -171,18 +206,30 @@ def correlate[
     result sits at index `k - 1`, not `0` -- NumPy's convention, and the
     one thing about correlation a caller has to know.
     """
-    return _direct[dtype, m, k, mode, gpu, True](a, b)
+    comptime m = dim[A, 0]
+    comptime k = dim[B, 0]
+    return _direct[mode=mode, gpu=gpu, reverse=True](a, b)
 
 
 def fftconvolve[
-    dtype: DType, m: Int, k: Int, mode: Int = full, gpu: Bool = False
-](mut a: Static[dtype, m], mut b: Static[dtype, k]) raises -> Static[
-    dtype, _out_len(m, k, mode)
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int = full,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[
+    A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
 ] where (
-    dtype.is_floating_point()
-    and m > 0
-    and k > 0
-    and (mode == full or mode == same or mode == valid)
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and (mode == full or mode == same or mode == valid)
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
 ):
     """`convolve` by the transform route: zero-pad both inputs to
     `next_fast_len(m + k - 1)`, multiply their `rfft`s, `irfft`, and take
@@ -197,16 +244,18 @@ def fftconvolve[
     direct sum is `O(m k)`, so this is the one to call when `k` is long.
     Agrees with `convolve` to rounding, which the tests check.
     """
+    comptime m = dim[A, 0]
+    comptime k = dim[B, 0]
     comptime out_n = _out_len(m, k, mode)
     comptime offset = _offset(m, k, mode)
     comptime n = next_fast_len(m + k - 1)
     comptime keep = n // 2 + 1
     var ctx = a.context()
 
-    var padded_a = Static[dtype, n]._uninitialized(ctx)
-    var padded_b = Static[dtype, n]._uninitialized(ctx)
+    var padded_a = Static[A.dtype, n]._uninitialized(ctx)
+    var padded_b = Static[A.dtype, n]._uninitialized(ctx)
     var xs = a.view()
-    var taps = b.view()
+    var taps = b.view_as[A.dtype]()
     # `pad` captures views of the two padded buffers, and the buffers are
     # consumed by `_rfft` right after the launch; a tracked origin would
     # hold them past that point, so erase it. The launch has completed by
@@ -219,17 +268,17 @@ def fftconvolve[
         w: Int, alignment: Int = 1
     ](coord: Coord) {var xs, var taps, var pa, var pb}:
         var i = coord_to_index_list(coord)[0]
-        pa.store[1](Coord(i), xs[Coord(i)] if i < m else Scalar[dtype](0))
-        pb.store[1](Coord(i), taps[Coord(i)] if i < k else Scalar[dtype](0))
+        pa.store[1](Coord(i), xs[Coord(i)] if i < m else Scalar[A.dtype](0))
+        pb.store[1](Coord(i), taps[Coord(i)] if i < k else Scalar[A.dtype](0))
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
         pad, Coord(n), ctx
     )
 
-    var spectrum_a = _rfft[dtype, n, gpu](padded_a^)
-    var spectrum_b = _rfft[dtype, n, gpu](padded_b^)
-    var product_re = Static[dtype, keep]._uninitialized(ctx)
-    var product_im = Static[dtype, keep]._uninitialized(ctx)
+    var spectrum_a = _rfft[gpu=gpu](padded_a^)
+    var spectrum_b = _rfft[gpu=gpu](padded_b^)
+    var product_re = Static[A.dtype, keep]._uninitialized(ctx)
+    var product_im = Static[A.dtype, keep]._uninitialized(ctx)
     # The two halves of a `Spectrum` share the tuple's origin, so their
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
@@ -256,10 +305,10 @@ def fftconvolve[
     _ = spectrum_a^
     _ = spectrum_b^
 
-    var product: Spectrum[dtype, keep] = (product_re^, product_im^)
-    var circular = irfft[dtype, keep, gpu, n](product^)
+    var product: Spectrum[A.dtype, keep] = (product_re^, product_im^)
+    var circular = irfft[gpu=gpu, n=n](product^)
 
-    var out = Static[dtype, out_n]._uninitialized(ctx)
+    var out = Static[A.dtype, out_n]._uninitialized(ctx)
     var src = circular.view()
     var dst = out.view()
 
@@ -277,14 +326,24 @@ def fftconvolve[
 
 
 def oaconvolve[
-    dtype: DType, m: Int, k: Int, mode: Int = full, gpu: Bool = False
-](mut a: Static[dtype, m], mut b: Static[dtype, k]) raises -> Static[
-    dtype, _out_len(m, k, mode)
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int = full,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[
+    A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
 ] where (
-    dtype.is_floating_point()
-    and m > 0
-    and k > 0
-    and (mode == full or mode == same or mode == valid)
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and (mode == full or mode == same or mode == valid)
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
 ):
     """`convolve` by overlap-add. `scipy.signal.oaconvolve(a, b, mode)`.
 
@@ -303,4 +362,6 @@ def oaconvolve[
     length stops fitting comfortably in memory. Until then the answers
     agree and only the peak footprint differs.
     """
-    return fftconvolve[dtype, m, k, mode, gpu](a, b)
+    comptime m = dim[A, 0]
+    comptime k = dim[B, 0]
+    return fftconvolve[mode=mode, gpu=gpu](a, b)

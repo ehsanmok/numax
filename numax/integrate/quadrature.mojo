@@ -29,35 +29,36 @@ split `numax.stats` uses and is a follow-up rather than a decision.
 
 from layout.tile_layout import TensorLayout
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, Tensor
 
 
 def _spacings[
-    dtype: DType, XLayout: TensorLayout
-](x: Tensor[dtype, XLayout], n: Int) raises -> List[Scalar[dtype]]:
+    T: TensorLike,
+](x: T, n: Int) raises -> List[Scalar[T.dtype]]:
     """`x[i+1] - x[i]`, checking `x` has as many points as `y`."""
     if x.size() != n:
         raise Error(
             "integrate: x has ", x.size(), " points for ", n, " samples"
         )
     var xs = x.to_host()
-    var h = List[Scalar[dtype]](capacity=n - 1)
+    var h = List[Scalar[T.dtype]](capacity=n - 1)
     for i in range(n - 1):
         h.append(xs[i + 1] - xs[i])
     return h^
 
 
 def trapezoid[
-    dtype: DType, LayoutType: TensorLayout
-](y: Tensor[dtype, LayoutType], dx: Scalar[dtype] = 1) raises -> Scalar[
-    dtype
-] where (dtype.is_floating_point() and LayoutType.rank == 1):
+    T: TensorLike
+](y: T, dx: Scalar[T.dtype] = 1) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 1
+):
     """The trapezoid rule over samples `y` spaced `dx` apart.
     `scipy.integrate.trapezoid(y, dx=dx)`."""
     var ys = y.to_host()
     var n = len(ys)
     if n < 2:
-        return Scalar[dtype](0)
+        return Scalar[T.dtype](0)
     var total = (ys[0] + ys[n - 1]) / 2
     for i in range(1, n - 1):
         total += ys[i]
@@ -65,20 +66,18 @@ def trapezoid[
 
 
 def trapezoid[
-    dtype: DType, LayoutType: TensorLayout, XLayout: TensorLayout
-](y: Tensor[dtype, LayoutType], x: Tensor[dtype, XLayout]) raises -> Scalar[
-    dtype
-] where (
-    dtype.is_floating_point() and LayoutType.rank == 1 and XLayout.rank == 1
+    T: TensorLike, XLayout: TensorLayout
+](y: T, x: Tensor[T.dtype, XLayout]) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 1 and XLayout.rank == 1
 ):
     """The trapezoid rule over samples `y` at the points `x`, which need
     not be evenly spaced. `scipy.integrate.trapezoid(y, x)`."""
     var ys = y.to_host()
     var n = len(ys)
     if n < 2:
-        return Scalar[dtype](0)
+        return Scalar[T.dtype](0)
     var h = _spacings(x, n)
-    var total = Scalar[dtype](0)
+    var total = Scalar[T.dtype](0)
     for i in range(n - 1):
         total += h[i] * (ys[i] + ys[i + 1]) / 2
     return total
@@ -124,37 +123,40 @@ def _simpson_general[
 
 
 def simpson[
-    dtype: DType, LayoutType: TensorLayout
-](y: Tensor[dtype, LayoutType], dx: Scalar[dtype] = 1) raises -> Scalar[
-    dtype
-] where (dtype.is_floating_point() and LayoutType.rank == 1):
+    T: TensorLike
+](y: T, dx: Scalar[T.dtype] = 1) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 1
+):
     """Composite Simpson's rule over samples `y` spaced `dx` apart.
     `scipy.integrate.simpson(y, dx=dx)`, even sample counts included."""
     var ys = y.to_host()
-    var h = List[Scalar[dtype]](length=max(len(ys) - 1, 0), fill=dx)
+    var h = List[Scalar[T.dtype]](length=max(len(ys) - 1, 0), fill=dx)
     return _simpson_general(ys, h)
 
 
 def simpson[
-    dtype: DType, LayoutType: TensorLayout, XLayout: TensorLayout
-](y: Tensor[dtype, LayoutType], x: Tensor[dtype, XLayout]) raises -> Scalar[
-    dtype
-] where (
-    dtype.is_floating_point() and LayoutType.rank == 1 and XLayout.rank == 1
+    T: TensorLike, XLayout: TensorLayout
+](y: T, x: Tensor[T.dtype, XLayout]) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 1 and XLayout.rank == 1
 ):
     """Composite Simpson's rule over samples `y` at the points `x`.
     `scipy.integrate.simpson(y, x)`."""
     var ys = y.to_host()
     if len(ys) < 2:
-        return Scalar[dtype](0)
+        return Scalar[T.dtype](0)
     return _simpson_general(ys, _spacings(x, len(ys)))
 
 
 def cumulative_trapezoid[
-    dtype: DType, n: Int, initial: Bool = False
-](y: Static[dtype, n], dx: Scalar[dtype] = 1) raises -> Static[
-    dtype, n if initial else n - 1
-] where (dtype.is_floating_point() and n >= 2):
+    T: TensorLike,
+    initial: Bool = False,
+](y: T, dx: Scalar[T.dtype] = 1) raises -> Static[
+    T.dtype, dim[T, 0] if initial else dim[T, 0] - 1
+] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 2)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """The running trapezoid integral of `y` at spacing `dx`.
     `scipy.integrate.cumulative_trapezoid(y, dx=dx)`.
 
@@ -164,33 +166,42 @@ def cumulative_trapezoid[
     compile-time flag rather than an argument because it changes the
     result's length, which is part of the type.
     """
+    comptime n = dim[T, 0]
     var ys = y.to_host()
     comptime m = n if initial else n - 1
-    var out = List[Scalar[dtype]](capacity=m)
-    var running = Scalar[dtype](0)
+    var out = List[Scalar[T.dtype]](capacity=m)
+    var running = Scalar[T.dtype](0)
     comptime if initial:
         out.append(running)
     for i in range(n - 1):
         running += dx * (ys[i] + ys[i + 1]) / 2
         out.append(running)
-    return Static[dtype, m](y.context(), out^)
+    return Static[T.dtype, m](y.context(), out^)
 
 
 def cumulative_trapezoid[
-    dtype: DType, n: Int, XLayout: TensorLayout, initial: Bool = False
-](y: Static[dtype, n], x: Tensor[dtype, XLayout]) raises -> Static[
-    dtype, n if initial else n - 1
-] where (dtype.is_floating_point() and n >= 2 and XLayout.rank == 1):
+    A: TensorLike,
+    B: TensorLike,
+    initial: Bool = False,
+](y: A, x: B) raises -> Static[
+    A.dtype, dim[A, 0] if initial else dim[A, 0] - 1
+] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= 2 and B.LayoutType.rank == 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+):
     """The running trapezoid integral of `y` at the points `x`.
     `scipy.integrate.cumulative_trapezoid(y, x)`."""
+    comptime n = dim[A, 0]
     var ys = y.to_host()
     var h = _spacings(x, n)
     comptime m = n if initial else n - 1
-    var out = List[Scalar[dtype]](capacity=m)
-    var running = Scalar[dtype](0)
+    var out = List[Scalar[A.dtype]](capacity=m)
+    var running = Scalar[A.dtype](0)
     comptime if initial:
         out.append(running)
     for i in range(n - 1):
-        running += h[i] * (ys[i] + ys[i + 1]) / 2
+        running += h[i].cast[A.dtype]() * (ys[i] + ys[i + 1]) / 2
         out.append(running)
-    return Static[dtype, m](y.context(), out^)
+    return Static[A.dtype, m](y.context(), out^)

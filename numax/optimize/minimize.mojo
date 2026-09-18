@@ -81,6 +81,7 @@ stays in `numax.optimize.array`. General constraints are out of scope.
 
 from max.gpu.host import DeviceContext
 
+from ..core.tensorlike import TensorLike, dim
 from ..core.array import Static, eye
 from ..core.ops import add, multiply
 from ..linalg.blas import matvec, outer
@@ -127,7 +128,11 @@ struct TensorMinimizeResult[dtype: DType, n_vars: Int](Movable):
         self.converged = converged
 
 
-def _to_list[dtype: DType, n: Int](t: Static[dtype, n]) raises -> List[Float64]:
+def _to_list[
+    T: TensorLike
+](t: T) raises -> List[Float64] where (
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
+):
     """A device vector read back as host `Float64`s.
 
     The drivers keep their vectors on the host; this is the one direction
@@ -135,6 +140,7 @@ def _to_list[dtype: DType, n: Int](t: Static[dtype, n]) raises -> List[Float64]:
     `O(n^2)` the device does for `"bfgs"` and the caller's own evaluations
     for either method.
     """
+    comptime n = dim[T, 0]
     var host = t.to_host()
     var out = List[Float64](capacity=n)
     for i in range(n):
@@ -169,7 +175,7 @@ def _slope_along[
         trial[i] = x[i] + alpha * direction[i]
     var point = _as_tensor[dtype, n](trial, ctx)
     value = Float64(f(point, ctx))
-    var grad = _to_list[dtype, n](jac(point, ctx))
+    var grad = _to_list(jac(point, ctx))
     var slope = 0.0
     for i in range(n):
         slope += grad[i] * direction[i]
@@ -295,7 +301,7 @@ def _bfgs_update[
     var y = _as_tensor[dtype, n](y_host, ctx)
 
     var hy = matvec[gpu=gpu](h, y)
-    var hy_host = _to_list[dtype, n](hy)
+    var hy_host = _to_list(hy)
 
     var yhy = 0.0
     for i in range(n):
@@ -608,7 +614,7 @@ def _powell[
     through a host round trip. `scipy.optimize`'s `_minimize_powell`
     carries the same `+ 1e-20`, and for the same reason."""
     var ctx = x0.context()
-    var x = _to_list[dtype, n_vars](x0)
+    var x = _to_list(x0)
     if bounded:
         _clamp(x, lower, upper, n_vars)
     var f_x = Float64(f(_as_tensor[dtype, n_vars](x, ctx), ctx))
@@ -693,20 +699,23 @@ def _powell[
 
 
 def minimize[
-    dtype: DType,
-    n_vars: Int,
-    f: def(Static[dtype, n_vars], DeviceContext) raises thin -> Scalar[dtype],
-    jac: def(Static[dtype, n_vars], DeviceContext) raises thin -> Static[
-        dtype, n_vars
-    ] = _no_jac[dtype, n_vars],
+    T: TensorLike,
+    f: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Scalar[
+        T.dtype
+    ],
+    jac: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, dim[T, 0]
+    ] = _no_jac[T.dtype, dim[T, 0]],
     method: StaticString = "bfgs",
     gpu: Bool = False,
     memory: Int = 10,
 ](
-    x0: Static[dtype, n_vars],
-    tol: Optional[Float64] = None,
-    max_iter: Optional[Int] = None,
-) raises -> TensorMinimizeResult[dtype, n_vars] where dtype.is_floating_point():
+    x0: T, tol: Optional[Float64] = None, max_iter: Optional[Int] = None
+) raises -> TensorMinimizeResult[T.dtype, dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """Minimize `f` from `x0`. `scipy.optimize.minimize` over `Tensor`.
 
     | `method` | Stores | Reach for it when |
@@ -737,10 +746,13 @@ def minimize[
     rather than raising. See `minimize` in `numax.optimize.array` for why an
     unrecognized `method` raises rather than failing to compile.
     """
+    comptime dtype = T.dtype
+    comptime n_vars = dim[T, 0]
     var empty = List[Float64]()
+    var start = Static[dtype, n_vars](x0.context(), x0.to_host())
     comptime if method == "bfgs" or method == "cg" or method == "l-bfgs":
         return _descend[dtype, n_vars, f, jac, method, gpu, memory](
-            x0,
+            start,
             tol.value() if tol else 1e-8,
             max_iter.value() if max_iter else 200,
             empty,
@@ -749,7 +761,7 @@ def minimize[
         )
     elif method == "powell":
         return _powell[dtype, n_vars, f](
-            x0,
+            start,
             tol.value() if tol else 1e-10,
             max_iter.value() if max_iter else 200,
             empty,
@@ -768,22 +780,37 @@ def minimize[
 
 
 def minimize[
-    dtype: DType,
-    n_vars: Int,
-    f: def(Static[dtype, n_vars], DeviceContext) raises thin -> Scalar[dtype],
-    jac: def(Static[dtype, n_vars], DeviceContext) raises thin -> Static[
-        dtype, n_vars
-    ] = _no_jac[dtype, n_vars],
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+    f: def(Static[A.dtype, dim[A, 0]], DeviceContext) raises thin -> Scalar[
+        A.dtype
+    ],
+    jac: def(Static[A.dtype, dim[A, 0]], DeviceContext) raises thin -> Static[
+        A.dtype, dim[A, 0]
+    ] = _no_jac[A.dtype, dim[A, 0]],
     method: StaticString = "l-bfgs",
     gpu: Bool = False,
     memory: Int = 10,
 ](
-    x0: Static[dtype, n_vars],
-    lower: Static[dtype, n_vars],
-    upper: Static[dtype, n_vars],
+    x0: A,
+    lower: B,
+    upper: C,
     tol: Optional[Float64] = None,
     max_iter: Optional[Int] = None,
-) raises -> TensorMinimizeResult[dtype, n_vars] where dtype.is_floating_point():
+) raises -> TensorMinimizeResult[A.dtype, dim[A, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
+    and dim[C, 0] == dim[A, 0]
+):
     """Minimize `f` over the box `lower <= x <= upper`.
     `scipy.optimize.minimize(..., bounds=...)` over `Tensor`, by
     projection; the module docstring's *Bounds* section has the method and
@@ -791,11 +818,14 @@ def minimize[
     `"l-bfgs"` here as SciPy does with bounds; `tol` is on the projected
     gradient (or, for `"powell"`, the relative decrease).
     """
-    var lo = _to_list[dtype, n_vars](lower)
-    var hi = _to_list[dtype, n_vars](upper)
+    comptime dtype = A.dtype
+    comptime n_vars = dim[A, 0]
+    var lo = _to_list(lower)
+    var hi = _to_list(upper)
+    var start = Static[dtype, n_vars](x0.context(), x0.to_host())
     comptime if method == "bfgs" or method == "cg" or method == "l-bfgs":
         return _descend[dtype, n_vars, f, jac, method, gpu, memory](
-            x0,
+            start,
             tol.value() if tol else 1e-8,
             max_iter.value() if max_iter else 200,
             lo,
@@ -804,7 +834,7 @@ def minimize[
         )
     elif method == "powell":
         return _powell[dtype, n_vars, f](
-            x0,
+            start,
             tol.value() if tol else 1e-10,
             max_iter.value() if max_iter else 200,
             lo,
@@ -849,12 +879,12 @@ def _descend[
     """
     var ctx = x0.context()
 
-    var x = _to_list[dtype, n_vars](x0)
+    var x = _to_list(x0)
     if bounded:
         _clamp(x, lower, upper, n_vars)
     var point = _as_tensor[dtype, n_vars](x, ctx)
     var f_x = Float64(f(point, ctx))
-    var grad = _to_list[dtype, n_vars](jac(point, ctx))
+    var grad = _to_list(jac(point, ctx))
     var grad_norm = _projected_gradient_norm(
         x, grad, lower, upper, n_vars, bounded
     )
@@ -905,7 +935,7 @@ def _descend[
         comptime if method == "bfgs":
             # p = -H g, on the device.
             var g = _as_tensor[dtype, n_vars](reduced, ctx)
-            var hg = _to_list[dtype, n_vars](matvec[gpu=gpu](h, g))
+            var hg = _to_list(matvec[gpu=gpu](h, g))
             for i in range(n_vars):
                 direction[i] = -hg[i]
         elif method == "l-bfgs":
@@ -1014,7 +1044,7 @@ def _descend[
             )
 
         var moved = _as_tensor[dtype, n_vars](candidate, ctx)
-        var grad_new = _to_list[dtype, n_vars](jac(moved, ctx))
+        var grad_new = _to_list(jac(moved, ctx))
 
         var s = List[Float64](capacity=n_vars)
         var y = List[Float64](capacity=n_vars)

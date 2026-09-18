@@ -31,6 +31,7 @@ from std.math import sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
+from ..core.tensorlike import TensorLike, dim
 from ..core.array import Static
 from ..linalg.basic import solve
 
@@ -70,25 +71,28 @@ def _squared_norm(values: List[Float64], n: Int) -> Float64:
 
 
 def root[
-    dtype: DType,
-    n: Int,
-    f: def(Static[dtype, n], DeviceContext) raises thin -> Static[dtype, n],
-    jac: def(Static[dtype, n], DeviceContext) raises thin -> Static[
-        dtype, n, n
+    T: TensorLike,
+    f: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, dim[T, 0]
+    ],
+    jac: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, dim[T, 0], dim[T, 0]
     ],
     method: StaticString = "newton",
     gpu: Bool = False,
 ](
-    x0: Static[dtype, n],
-    tol: Optional[Float64] = None,
-    max_iter: Optional[Int] = None,
-) raises -> TensorRootResult[dtype, n] where (
-    dtype.is_floating_point()
-    and n >= 1
-    # `least_squares` restates its own clauses and the prover does not carry
-    # a caller's into a callee's parameter list, so they are spelled here.
-    and n >= n
-    and n + n >= n
+    x0: T, tol: Optional[Float64] = None, max_iter: Optional[Int] = None
+) raises -> TensorRootResult[T.dtype, dim[T, 0]] where (
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= 1
+        # `least_squares` restates its own clauses and the prover does not carry
+        # a caller's into a callee's parameter list, so they are spelled here.
+        and dim[T, 0] >= dim[T, 0]
+        and dim[T, 0] + dim[T, 0] >= dim[T, 0]
+    )
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """Solve `f(x) = 0` for a vector `x` from `x0`. `scipy.optimize.root`
     over `Tensor`; the module docstring has the two methods.
@@ -101,24 +105,29 @@ def root[
     reached. `x0` is borrowed rather than consumed, for the reason
     `numax.optimize.common` gives.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var ctx = x0.context()
+    var start = Static[dtype, n](ctx, x0.to_host())
     var tolerance = tol.value() if tol else 1e-10
     var limit = max_iter.value() if max_iter else 100
 
     comptime if method == "lm":
-        var fit = least_squares[dtype, n, n, f, jac, gpu](x0, tolerance, limit)
+        var fit = least_squares[n_resid=n, residuals=f, jacobian=jac, gpu=gpu](
+            start, tolerance, limit
+        )
         var at = f(fit.x, ctx)
-        var norm = _infinity_norm(_to_list[dtype, n](at), n)
+        var norm = _infinity_norm(_to_list(at), n)
         # `TensorFitResult` is `Movable` and cannot be taken apart field by
         # field, so the solution is re-staged from its host copy: `O(n)`.
-        var solution = _as_tensor[dtype, n](_to_list[dtype, n](fit.x), ctx)
+        var solution = _as_tensor[dtype, n](_to_list(fit.x), ctx)
         return TensorRootResult[dtype, n](
             solution^, norm, fit.iterations, norm < tolerance
         )
     elif method == "newton":
-        var x = _to_list[dtype, n](x0)
+        var x = _to_list(start)
         var point = _as_tensor[dtype, n](x, ctx)
-        var residual = _to_list[dtype, n](f(point, ctx))
+        var residual = _to_list(f(point, ctx))
         var norm = _infinity_norm(residual, n)
         for iteration in range(limit):
             if norm < tolerance:
@@ -131,7 +140,7 @@ def root[
             for i in range(n):
                 negated.append(-residual[i])
             var rhs = _as_tensor[dtype, n](negated, ctx)
-            var direction = _to_list[dtype, n](solve[gpu=gpu](jacobian, rhs))
+            var direction = _to_list(solve[gpu=gpu](jacobian, rhs))
 
             # Backtrack on `||F||^2` until the step is a real decrease.
             var current = _squared_norm(residual, n)
@@ -143,7 +152,7 @@ def root[
                 for i in range(n):
                     candidate[i] = x[i] + step * direction[i]
                 var trial = _as_tensor[dtype, n](candidate, ctx)
-                next_residual = _to_list[dtype, n](f(trial, ctx))
+                next_residual = _to_list(f(trial, ctx))
                 if (
                     _squared_norm(next_residual, n)
                     <= (1 - 2e-4 * step) * current

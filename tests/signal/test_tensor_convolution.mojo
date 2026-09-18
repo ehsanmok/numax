@@ -12,6 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Static
+from numax.core.tensorlike import View
 from numax.signal import (
     bartlett,
     blackman,
@@ -148,7 +149,7 @@ def test_windows_match_scipy_symmetric() raises:
     """`scipy.signal.windows.<name>(8)`, `sym=True`: the ends of Hann,
     Blackman and Bartlett are zero and the window is mirror-symmetric."""
     _assert_close(
-        hann[dtype, 8](),
+        hann[dtype=dtype, n=8](),
         [
             0.0,
             0.18825509907063326,
@@ -161,7 +162,7 @@ def test_windows_match_scipy_symmetric() raises:
         ],
     )
     _assert_close(
-        hamming[dtype, 8](),
+        hamming[dtype=dtype, n=8](),
         [
             0.08000000000000007,
             0.25319469114498266,
@@ -174,7 +175,7 @@ def test_windows_match_scipy_symmetric() raises:
         ],
     )
     _assert_close(
-        blackman[dtype, 8](),
+        blackman[dtype=dtype, n=8](),
         [
             0.0,
             0.09045342435412808,
@@ -188,7 +189,7 @@ def test_windows_match_scipy_symmetric() raises:
         atol=1e-15,
     )
     _assert_close(
-        bartlett[dtype, 8](),
+        bartlett[dtype=dtype, n=8](),
         [
             0.0,
             0.2857142857142857,
@@ -200,14 +201,14 @@ def test_windows_match_scipy_symmetric() raises:
             0.0,
         ],
     )
-    _assert_close(boxcar[dtype, 4](), [1.0, 1.0, 1.0, 1.0])
+    _assert_close(boxcar[dtype=dtype, n=4](), [1.0, 1.0, 1.0, 1.0])
 
 
 def test_windows_match_scipy_periodic() raises:
     """`scipy.signal.get_window(name, 8)`, periodic: the peak is exactly
     `1` at `i = n/2` and the last sample is not the first's mirror."""
     _assert_close(
-        hann[dtype, 8](sym=False),
+        hann[dtype=dtype, n=8](sym=False),
         [
             0.0,
             0.14644660940672627,
@@ -220,7 +221,7 @@ def test_windows_match_scipy_periodic() raises:
         ],
     )
     _assert_close(
-        get_window[dtype, 8]("hamming"),
+        get_window[dtype=dtype, n=8]("hamming"),
         [
             0.08000000000000007,
             0.21473088065418822,
@@ -233,11 +234,11 @@ def test_windows_match_scipy_periodic() raises:
         ],
     )
     _assert_close(
-        get_window[dtype, 8]("bartlett"),
+        get_window[dtype=dtype, n=8]("bartlett"),
         [0.0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25],
     )
     _assert_close(
-        get_window[dtype, 8]("blackman"),
+        get_window[dtype=dtype, n=8]("blackman"),
         [
             0.0,
             0.06644660940672624,
@@ -256,7 +257,7 @@ def test_kaiser_matches_scipy() raises:
     """`kaiser(8, 14)` symmetric and `get_window(("kaiser", 5), 8)`
     periodic -- `I_0` by its series against SciPy's."""
     _assert_close(
-        kaiser[dtype, 8](14.0),
+        kaiser[dtype=dtype, n=8](14.0),
         [
             7.726866835270368e-06,
             0.017964073497790785,
@@ -270,7 +271,7 @@ def test_kaiser_matches_scipy() raises:
         atol=1e-14,
     )
     _assert_close(
-        get_window[dtype, 8]("kaiser", beta=5.0),
+        get_window[dtype=dtype, n=8]("kaiser", beta=5.0),
         [
             0.036710892271286676,
             0.23054433409868888,
@@ -288,16 +289,26 @@ def test_kaiser_matches_scipy() raises:
 def test_get_window_names_the_factories() raises:
     """`get_window(name, n, fftbins=False)` is the symmetric factory of that
     name; an unknown name raises."""
-    var named = get_window[dtype, 8]("hann", fftbins=False).to_host()
-    var direct = hann[dtype, 8]().to_host()
+    var named = get_window[dtype=dtype, n=8]("hann", fftbins=False).to_host()
+    var direct = hann[dtype=dtype, n=8]().to_host()
     for i in range(8):
         assert_almost_equal(Float64(named[i]), Float64(direct[i]), atol=1e-15)
     var raised = False
     try:
-        _ = get_window[dtype, 8]("tukey")
+        _ = get_window[dtype=dtype, n=8]("tukey")
     except:
         raised = True
     assert_true(raised)
+
+
+def test_convolve_accepts_views_of_both_operands() raises:
+    """A `View` is the same argument as the tensor it borrows."""
+    var a = _from[7](_a())
+    var b = _from[3](_b())
+    var want = convolve(a, b).to_host()
+    var got = convolve(View(a.view()), View(b.view())).to_host()
+    for i in range(9):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]))
 
 
 def main() raises:

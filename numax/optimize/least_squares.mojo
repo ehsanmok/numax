@@ -60,6 +60,7 @@ from std.math import sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
+from ..core.tensorlike import TensorLike, dim
 from ..core.array import Static
 from ..linalg.qr import lstsq
 
@@ -154,28 +155,29 @@ def _cost_of(residual: List[Float64], count: Int) -> Float64:
 
 
 def least_squares[
-    dtype: DType,
-    n_params: Int,
+    T: TensorLike,
     n_resid: Int,
     residuals: def(
-        Static[dtype, n_params], DeviceContext
-    ) raises thin -> Static[dtype, n_resid],
-    jacobian: def(Static[dtype, n_params], DeviceContext) raises thin -> Static[
-        dtype, n_resid, n_params
-    ],
+        Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, n_resid],
+    jacobian: def(
+        Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, n_resid, dim[T, 0]],
     gpu: Bool = False,
     block: Int = 16,
-](
-    x0: Static[dtype, n_params],
-    tol: Float64 = 1e-10,
-    max_iter: Int = 100,
-) raises -> TensorFitResult[dtype, n_params] where (
-    dtype.is_floating_point()
-    and n_resid >= n_params
-    and n_params >= 1
-    # `_damped_step` restates this for `lstsq`; the solver does not carry a
-    # caller's clause into a callee's own parameter list.
-    and n_resid + n_params >= n_params
+](x0: T, tol: Float64 = 1e-10, max_iter: Int = 100) raises -> TensorFitResult[
+    T.dtype, dim[T, 0]
+] where (
+    (
+        T.dtype.is_floating_point()
+        and n_resid >= dim[T, 0]
+        and dim[T, 0] >= 1
+        # `_damped_step` restates this for `lstsq`; the solver does not carry a
+        # caller's clause into a callee's own parameter list.
+        and n_resid + dim[T, 0] >= dim[T, 0]
+    )
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """Minimize `sum(residuals(x)**2) / 2` by Levenberg-Marquardt.
     `scipy.optimize.least_squares` over `Tensor`.
@@ -201,6 +203,8 @@ def least_squares[
     The module docstring says why the Jacobian is an argument here when the
     `Array` tier's `least_squares` takes none, and when to prefer which.
     """
+    comptime dtype = T.dtype
+    comptime n_params = dim[T, 0]
     var ctx = x0.context()
     var start = x0.to_host()
     var current = List[Float64](capacity=n_params)
@@ -283,28 +287,35 @@ def least_squares[
 
 
 def curve_fit[
-    dtype: DType,
-    n_params: Int,
-    n_points: Int,
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
     model: def(
-        Static[dtype, n_points], Static[dtype, n_params], DeviceContext
-    ) raises thin -> Static[dtype, n_points],
+        Static[A.dtype, dim[A, 0]], Static[A.dtype, dim[C, 0]], DeviceContext
+    ) raises thin -> Static[A.dtype, dim[A, 0]],
     model_jacobian: def(
-        Static[dtype, n_points], Static[dtype, n_params], DeviceContext
-    ) raises thin -> Static[dtype, n_points, n_params],
+        Static[A.dtype, dim[A, 0]], Static[A.dtype, dim[C, 0]], DeviceContext
+    ) raises thin -> Static[A.dtype, dim[A, 0], dim[C, 0]],
     gpu: Bool = False,
     block: Int = 16,
 ](
-    xdata: Static[dtype, n_points],
-    ydata: Static[dtype, n_points],
-    p0: Static[dtype, n_params],
-    tol: Float64 = 1e-10,
-    max_iter: Int = 100,
-) raises -> TensorFitResult[dtype, n_params] where (
-    dtype.is_floating_point()
-    and n_points >= n_params
-    and n_params >= 1
-    and n_points + n_params >= n_params
+    xdata: A, ydata: B, p0: C, tol: Float64 = 1e-10, max_iter: Int = 100
+) raises -> TensorFitResult[A.dtype, dim[C, 0]] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] >= dim[C, 0]
+        and dim[C, 0] >= 1
+        and dim[A, 0] + dim[C, 0] >= dim[C, 0]
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
 ):
     """Fit `model(xdata, params)` to `ydata` by least squares.
     `scipy.optimize.curve_fit` over `Tensor`, first return value.
@@ -321,9 +332,13 @@ def curve_fit[
     cannot reach run-time data through one. Here the data is an argument to
     the fit and the model never has to close over it.
     """
+    comptime dtype = A.dtype
+    comptime n_points = dim[A, 0]
+    comptime n_params = dim[C, 0]
     var ctx = p0.context()
     var start = p0.to_host()
-    var observed = ydata.to_host()
+    var observed = ydata.to_host[dtype]()
+    var xdata_c = Static[dtype, n_points](ctx, xdata.to_host[dtype]())
     var current = List[Float64](capacity=n_params)
     for j in range(n_params):
         current.append(Float64(start[j]))
@@ -334,8 +349,8 @@ def curve_fit[
 
     for iteration in range(max_iter):
         var point = _as_tensor[dtype, n_params](current, ctx)
-        var predicted = model(xdata, point, ctx).to_host()
-        var j_host = model_jacobian(xdata, point, ctx).to_host()
+        var predicted = model(xdata_c, point, ctx).to_host()
+        var j_host = model_jacobian(xdata_c, point, ctx).to_host()
 
         var residual = List[Float64](capacity=n_points)
         for k in range(n_points):
@@ -373,7 +388,7 @@ def curve_fit[
                 candidate.append(current[j] + step[j])
 
             var trial_point = _as_tensor[dtype, n_params](candidate, ctx)
-            var trial_p = model(xdata, trial_point, ctx).to_host()
+            var trial_p = model(xdata_c, trial_point, ctx).to_host()
             var trial = List[Float64](capacity=n_points)
             for k in range(n_points):
                 trial.append(Float64(trial_p[k]) - Float64(observed[k]))

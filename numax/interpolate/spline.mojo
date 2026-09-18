@@ -59,6 +59,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.utils.numerics import nan as _nan
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 from ..linalg.banded import solve_banded
 from .interp import _interval
@@ -150,11 +151,19 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         )
 
     def __call__[
-        m: Int, nu: Int = 0, gpu: Bool = False
-    ](mut self, mut points: Static[Self.dtype, m]) raises -> Static[
-        Self.dtype, m
-    ] where (
-        Self.dtype.is_floating_point() and Self.n >= 2 and m > 0 and nu >= 0
+        T: TensorLike,
+        nu: Int = 0,
+        gpu: Bool = False,
+    ](mut self, points: T) raises -> Static[Self.dtype, dim[T, 0]] where (
+        (
+            Self.dtype.is_floating_point()
+            and Self.n >= 2
+            and dim[T, 0] > 0
+            and nu >= 0
+        )
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
     ):
         """The spline, or its `nu`-th derivative, at every point.
         `PPoly.__call__(x, nu)`.
@@ -163,11 +172,12 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         to the end intervals when extrapolating) and evaluates the local
         cubic by Horner. `nu` past 3 is identically zero.
         """
+        comptime m = dim[T, 0]
         var ctx = points.context()
         var out = Static[Self.dtype, m]._uninitialized(ctx)
         var knots = self.x.view()
         var coef = self.c.view()
-        var ps = points.view()
+        var ps = points.view_as[Self.dtype]()
         var ys = out.view()
         var extrapolate = self.extrapolate
 
@@ -429,14 +439,23 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
         )
 
     def __call__[
-        m: Int, nu: Int = 0, gpu: Bool = False
-    ](mut self, mut points: Static[Self.dtype, m]) raises -> Static[
-        Self.dtype, m
-    ] where (
-        Self.dtype.is_floating_point() and Self.n >= 2 and m > 0 and nu >= 0
+        T: TensorLike,
+        nu: Int = 0,
+        gpu: Bool = False,
+    ](mut self, points: T) raises -> Static[Self.dtype, dim[T, 0]] where (
+        (
+            Self.dtype.is_floating_point()
+            and Self.n >= 2
+            and dim[T, 0] > 0
+            and nu >= 0
+        )
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
     ):
         """The spline, or its `nu`-th derivative, at every point."""
-        return self.spline.__call__[m, nu, gpu](points)
+        comptime m = dim[T, 0]
+        return self.spline.__call__[nu=nu, gpu=gpu](points)
 
     def integrate(
         mut self, a: Scalar[Self.dtype], b: Scalar[Self.dtype]
@@ -504,14 +523,23 @@ struct PchipInterpolator[dtype: DType, n: Int](Movable):
         )
 
     def __call__[
-        m: Int, nu: Int = 0, gpu: Bool = False
-    ](mut self, mut points: Static[Self.dtype, m]) raises -> Static[
-        Self.dtype, m
-    ] where (
-        Self.dtype.is_floating_point() and Self.n >= 2 and m > 0 and nu >= 0
+        T: TensorLike,
+        nu: Int = 0,
+        gpu: Bool = False,
+    ](mut self, points: T) raises -> Static[Self.dtype, dim[T, 0]] where (
+        (
+            Self.dtype.is_floating_point()
+            and Self.n >= 2
+            and dim[T, 0] > 0
+            and nu >= 0
+        )
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
     ):
         """The interpolant, or its `nu`-th derivative, at every point."""
-        return self.spline.__call__[m, nu, gpu](points)
+        comptime m = dim[T, 0]
+        return self.spline.__call__[nu=nu, gpu=gpu](points)
 
     def integrate(
         mut self, a: Scalar[Self.dtype], b: Scalar[Self.dtype]
@@ -595,15 +623,24 @@ struct Akima1DInterpolator[dtype: DType, n: Int](Movable):
         )
 
     def __call__[
-        m: Int, nu: Int = 0, gpu: Bool = False
-    ](mut self, mut points: Static[Self.dtype, m]) raises -> Static[
-        Self.dtype, m
-    ] where (
-        Self.dtype.is_floating_point() and Self.n >= 2 and m > 0 and nu >= 0
+        T: TensorLike,
+        nu: Int = 0,
+        gpu: Bool = False,
+    ](mut self, points: T) raises -> Static[Self.dtype, dim[T, 0]] where (
+        (
+            Self.dtype.is_floating_point()
+            and Self.n >= 2
+            and dim[T, 0] > 0
+            and nu >= 0
+        )
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
     ):
         """The interpolant, or its `nu`-th derivative, at every point;
         NaN outside the knots unless built with `extrapolate=True`."""
-        return self.spline.__call__[m, nu, gpu](points)
+        comptime m = dim[T, 0]
+        return self.spline.__call__[nu=nu, gpu=gpu](points)
 
     def integrate(
         mut self, a: Scalar[Self.dtype], b: Scalar[Self.dtype]

@@ -11,17 +11,23 @@ distance sort. MAX has nothing for this; **extend**.
 
 from std.builtin.sort import sort as _sort
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 
 
 def find_peaks[
-    dtype: DType, n: Int
+    T: TensorLike,
 ](
-    mut x: Static[dtype, n],
+    x: T,
     height: Optional[Float64] = None,
     threshold: Optional[Float64] = None,
     distance: Optional[Int] = None,
-) raises -> List[Int] where (dtype.is_floating_point() and n > 0):
+) raises -> List[Int] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
+):
     """The indices of the local maxima of `x`, ascending, filtered by
     SciPy's conditions. `scipy.signal.find_peaks(x, height, threshold,
     distance)`, first return value.
@@ -34,6 +40,7 @@ def find_peaks[
     higher one first -- SciPy's greedy order, so the same peaks survive.
     `prominence`, `width` and `plateau_size` are not provided.
     """
+    comptime n = dim[T, 0]
     var xs = x.to_host()
     var peaks = List[Int]()
     var i = 1
@@ -97,9 +104,11 @@ def find_peaks[
 
 
 def peak_prominences[
-    dtype: DType, n: Int
-](mut x: Static[dtype, n], peaks: List[Int]) raises -> List[Float64] where (
-    dtype.is_floating_point() and n > 0
+    T: TensorLike,
+](x: T, peaks: List[Int]) raises -> List[Float64] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The topographic prominence of each peak in `peaks`.
     `scipy.signal.peak_prominences(x, peaks)`, first return value.
@@ -123,6 +132,7 @@ def peak_prominences[
     provided -- ask for them when a caller needs the saddle positions
     rather than the heights.
     """
+    comptime n = dim[T, 0]
     var xs = x.to_host()
     var out = List[Float64](capacity=len(peaks))
     for p in range(len(peaks)):

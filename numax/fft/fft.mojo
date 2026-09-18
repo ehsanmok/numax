@@ -122,6 +122,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.collections import Array
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, Tensor, zeros
 
 comptime _TWO_PI = 6.283185307179586
@@ -216,10 +217,10 @@ def next_fast_len(n: Int) -> Int:
 
 
 def _as_matrix[
-    dtype: DType, rows: Int, cols: Int, LayoutType: TensorLayout
-](mut t: Tensor[dtype, LayoutType]) -> _Lanes[
-    dtype, type_of(row_major[rows, cols]())
-]:
+    T: TensorLike,
+    rows: Int,
+    cols: Int,
+](t: T) -> _Lanes[T.dtype, type_of(row_major[rows, cols]())]:
     """`t`'s storage seen as a `rows x cols` row-major matrix, with no copy.
 
     The tensor's elements are contiguous and row-major, so a rank-2 layout
@@ -230,8 +231,9 @@ def _as_matrix[
 
     Valid only while `t` is alive, like `view()`; the origin is erased.
     """
-    var v: _Lanes[dtype, type_of(row_major[rows, cols]())] = TileTensor(
-        t.view().ptr_at_offset(Coord(0)), row_major[rows, cols]()
+    var v: _Lanes[T.dtype, type_of(row_major[rows, cols]())] = TileTensor(
+        t.view().ptr.unsafe_mut_cast[True]().unsafe_origin_cast[MutAnyOrigin](),
+        row_major[rows, cols](),
     )
     return v
 
@@ -579,11 +581,11 @@ def _bluestein[
     # `H = fft(h)`, once per call.
     var big_h_re = Static[dtype, m]._uninitialized(ctx)
     var big_h_im = Static[dtype, m]._uninitialized(ctx)
-    _radix2[dtype, 1, m, gpu, False](
-        _as_matrix[dtype, 1, m](h_re),
-        _as_matrix[dtype, 1, m](h_im),
-        _as_matrix[dtype, 1, m](big_h_re),
-        _as_matrix[dtype, 1, m](big_h_im),
+    _radix2[dtype=dtype, batch=1, n=m, gpu=gpu, inverse=False](
+        _as_matrix[rows=1, cols=m](h_re),
+        _as_matrix[rows=1, cols=m](h_im),
+        _as_matrix[rows=1, cols=m](big_h_re),
+        _as_matrix[rows=1, cols=m](big_h_im),
         ctx,
     )
 
@@ -623,11 +625,11 @@ def _bluestein[
     # `a`'s buffers, which are free once `A` exists.
     var big_re = Static[dtype, batch, m]._uninitialized(ctx)
     var big_im = Static[dtype, batch, m]._uninitialized(ctx)
-    _radix2[dtype, batch, m, gpu, False](
-        _as_matrix[dtype, batch, m](a_re),
-        _as_matrix[dtype, batch, m](a_im),
-        _as_matrix[dtype, batch, m](big_re),
-        _as_matrix[dtype, batch, m](big_im),
+    _radix2[dtype=dtype, batch=batch, n=m, gpu=gpu, inverse=False](
+        _as_matrix[rows=batch, cols=m](a_re),
+        _as_matrix[rows=batch, cols=m](a_im),
+        _as_matrix[rows=batch, cols=m](big_re),
+        _as_matrix[rows=batch, cols=m](big_im),
         ctx,
     )
     var bre = big_re.view()
@@ -651,11 +653,11 @@ def _bluestein[
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
         multiply, Coord(batch, m), ctx
     )
-    _radix2[dtype, batch, m, gpu, True](
-        _as_matrix[dtype, batch, m](big_re),
-        _as_matrix[dtype, batch, m](big_im),
-        _as_matrix[dtype, batch, m](a_re),
-        _as_matrix[dtype, batch, m](a_im),
+    _radix2[dtype=dtype, batch=batch, n=m, gpu=gpu, inverse=True](
+        _as_matrix[rows=batch, cols=m](big_re),
+        _as_matrix[rows=batch, cols=m](big_im),
+        _as_matrix[rows=batch, cols=m](a_re),
+        _as_matrix[rows=batch, cols=m](a_im),
         ctx,
     )
 
@@ -715,11 +717,11 @@ def _dft[
     place the algorithm is chosen, from `n` at compile time: radix-2 at a
     power of two, Bluestein otherwise. Every public transform comes here."""
     comptime if _is_power_of_two(n):
-        _radix2[dtype, batch, n, gpu, inverse](
+        _radix2[dtype=dtype, batch=batch, n=n, gpu=gpu, inverse=inverse](
             src_re, src_im, dst_re, dst_im, ctx
         )
     else:
-        _bluestein[dtype, batch, n, gpu, inverse](
+        _bluestein[dtype=dtype, batch=batch, n=n, gpu=gpu, inverse=inverse](
             src_re, src_im, dst_re, dst_im, ctx
         )
 
@@ -731,11 +733,11 @@ def _dft1[
     var ctx = x[0].context()
     var re = Static[dtype, n]._uninitialized(ctx)
     var im = Static[dtype, n]._uninitialized(ctx)
-    _dft[dtype, 1, n, gpu, inverse](
-        _as_matrix[dtype, 1, n](x[0]),
-        _as_matrix[dtype, 1, n](x[1]),
-        _as_matrix[dtype, 1, n](re),
-        _as_matrix[dtype, 1, n](im),
+    _dft[dtype=dtype, batch=1, n=n, gpu=gpu, inverse=inverse](
+        _as_matrix[rows=1, cols=n](x[0]),
+        _as_matrix[rows=1, cols=n](x[1]),
+        _as_matrix[rows=1, cols=n](re),
+        _as_matrix[rows=1, cols=n](im),
         ctx,
     )
     _ = x^
@@ -750,20 +752,20 @@ def _dft2[
     var ctx = x[0].context()
     var mid_re = Static[dtype, rows, cols]._uninitialized(ctx)
     var mid_im = Static[dtype, rows, cols]._uninitialized(ctx)
-    _dft[dtype, rows, cols, gpu, inverse](
-        _as_matrix[dtype, rows, cols](x[0]),
-        _as_matrix[dtype, rows, cols](x[1]),
-        _as_matrix[dtype, rows, cols](mid_re),
-        _as_matrix[dtype, rows, cols](mid_im),
+    _dft[dtype=dtype, batch=rows, n=cols, gpu=gpu, inverse=inverse](
+        _as_matrix[rows=rows, cols=cols](x[0]),
+        _as_matrix[rows=rows, cols=cols](x[1]),
+        _as_matrix[rows=rows, cols=cols](mid_re),
+        _as_matrix[rows=rows, cols=cols](mid_im),
         ctx,
     )
     var re = Static[dtype, rows, cols]._uninitialized(ctx)
     var im = Static[dtype, rows, cols]._uninitialized(ctx)
-    _dft[dtype, cols, rows, gpu, inverse](
-        _as_matrix[dtype, rows, cols](mid_re).transpose(),
-        _as_matrix[dtype, rows, cols](mid_im).transpose(),
-        _as_matrix[dtype, rows, cols](re).transpose(),
-        _as_matrix[dtype, rows, cols](im).transpose(),
+    _dft[dtype=dtype, batch=cols, n=rows, gpu=gpu, inverse=inverse](
+        _as_matrix[rows=rows, cols=cols](mid_re).transpose(),
+        _as_matrix[rows=rows, cols=cols](mid_im).transpose(),
+        _as_matrix[rows=rows, cols=cols](re).transpose(),
+        _as_matrix[rows=rows, cols=cols](im).transpose(),
         ctx,
     )
     _ = x^
@@ -790,7 +792,7 @@ def fft[
     `numax.fft.array.fft` is the sibling that differentiates and runs inside
     a kernel body, at register-resident sizes.
     """
-    return _dft1[dtype, n, gpu, False](x^)
+    return _dft1[gpu=gpu, inverse=False](x^)
 
 
 def ifft[
@@ -804,7 +806,7 @@ def ifft[
     The forward engine with the twiddle angles negated and a scaling pass,
     so `ifft(fft(x))` returns `x` to rounding.
     """
-    return _dft1[dtype, n, gpu, True](x^)
+    return _dft1[gpu=gpu, inverse=True](x^)
 
 
 def rfft[
@@ -826,7 +828,7 @@ def rfft[
     this tier is for. Specializing it is a later commit, not a missing
     feature.
     """
-    return _rfft[dtype, n, gpu](x^)
+    return _rfft[gpu=gpu](x^)
 
 
 def _rfft[
@@ -838,7 +840,7 @@ def _rfft[
     comptime keep = n // 2 + 1
     var ctx = x.context()
     var imag = zeros[dtype, n](ctx)
-    var full = _dft1[dtype, n, gpu, False]((x^, imag^))
+    var full = _dft1[gpu=gpu, inverse=False]((x^, imag^))
 
     var re = Static[dtype, keep]._uninitialized(ctx)
     var im = Static[dtype, keep]._uninitialized(ctx)
@@ -930,11 +932,11 @@ def irfft[
 
     var re = Static[dtype, n]._uninitialized(ctx)
     var im = Static[dtype, n]._uninitialized(ctx)
-    _dft[dtype, 1, n, gpu, True](
-        _as_matrix[dtype, 1, n](full_re),
-        _as_matrix[dtype, 1, n](full_im),
-        _as_matrix[dtype, 1, n](re),
-        _as_matrix[dtype, 1, n](im),
+    _dft[dtype=dtype, batch=1, n=n, gpu=gpu, inverse=True](
+        _as_matrix[rows=1, cols=n](full_re),
+        _as_matrix[rows=1, cols=n](full_im),
+        _as_matrix[rows=1, cols=n](re),
+        _as_matrix[rows=1, cols=n](im),
         ctx,
     )
 
@@ -964,7 +966,7 @@ def fft2[
     costs a second twiddle table and nothing else. Either extent may be any
     length; each axis picks radix-2 or Bluestein on its own.
     """
-    return _dft2[dtype, rows, cols, gpu, False](x^)
+    return _dft2[gpu=gpu, inverse=False](x^)
 
 
 def ifft2[
@@ -979,7 +981,7 @@ def ifft2[
     `1/extent` and the two compose to the full normalization, so
     `ifft2(fft2(x))` returns `x` to rounding.
     """
-    return _dft2[dtype, rows, cols, gpu, True](x^)
+    return _dft2[gpu=gpu, inverse=True](x^)
 
 
 def rfft2[
@@ -1003,11 +1005,11 @@ def rfft2[
 
     var full_re = Static[dtype, rows, cols]._uninitialized(ctx)
     var full_im = Static[dtype, rows, cols]._uninitialized(ctx)
-    _dft[dtype, rows, cols, gpu, False](
-        _as_matrix[dtype, rows, cols](x),
-        _as_matrix[dtype, rows, cols](imag),
-        _as_matrix[dtype, rows, cols](full_re),
-        _as_matrix[dtype, rows, cols](full_im),
+    _dft[dtype=dtype, batch=rows, n=cols, gpu=gpu, inverse=False](
+        _as_matrix[rows=rows, cols=cols](x),
+        _as_matrix[rows=rows, cols=cols](imag),
+        _as_matrix[rows=rows, cols=cols](full_re),
+        _as_matrix[rows=rows, cols=cols](full_im),
         ctx,
     )
 
@@ -1033,11 +1035,11 @@ def rfft2[
 
     var re = Static[dtype, rows, keep]._uninitialized(ctx)
     var im = Static[dtype, rows, keep]._uninitialized(ctx)
-    _dft[dtype, keep, rows, gpu, False](
-        _as_matrix[dtype, rows, keep](half_re).transpose(),
-        _as_matrix[dtype, rows, keep](half_im).transpose(),
-        _as_matrix[dtype, rows, keep](re).transpose(),
-        _as_matrix[dtype, rows, keep](im).transpose(),
+    _dft[dtype=dtype, batch=keep, n=rows, gpu=gpu, inverse=False](
+        _as_matrix[rows=rows, cols=keep](half_re).transpose(),
+        _as_matrix[rows=rows, cols=keep](half_im).transpose(),
+        _as_matrix[rows=rows, cols=keep](re).transpose(),
+        _as_matrix[rows=rows, cols=keep](im).transpose(),
         ctx,
     )
 
@@ -1118,7 +1120,7 @@ def fftshift[
     lands at `(k + n // 2) % n`, so for odd `n` this and `ifftshift` are
     different rotations and only `ifftshift` undoes it.
     """
-    return _rolled[dtype, n, gpu](x^, (n + 1) // 2)
+    return _rolled[gpu=gpu](x^, (n + 1) // 2)
 
 
 def fftshift[
@@ -1128,9 +1130,7 @@ def fftshift[
 ):
     """`fftshift` over both axes of a matrix -- NumPy's default for a 2-D
     input, so `fftshift(fft2(image))` puts DC at the centre pixel."""
-    return _rolled2[dtype, rows, cols, gpu](
-        x^, (rows + 1) // 2, (cols + 1) // 2
-    )
+    return _rolled2[gpu=gpu](x^, (rows + 1) // 2, (cols + 1) // 2)
 
 
 def ifftshift[
@@ -1142,7 +1142,7 @@ def ifftshift[
     For even `n` the same rotation as `fftshift`; for odd `n` it is the
     other one, which is why both names exist.
     """
-    return _rolled[dtype, n, gpu](x^, n // 2)
+    return _rolled[gpu=gpu](x^, n // 2)
 
 
 def ifftshift[
@@ -1151,7 +1151,7 @@ def ifftshift[
     rows > 0 and cols > 0
 ):
     """`ifftshift` over both axes of a matrix."""
-    return _rolled2[dtype, rows, cols, gpu](x^, rows // 2, cols // 2)
+    return _rolled2[gpu=gpu](x^, rows // 2, cols // 2)
 
 
 def fftfreq[

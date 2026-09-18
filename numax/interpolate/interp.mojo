@@ -50,6 +50,7 @@ from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout
 from max.algorithm.functional import elementwise
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, vander
 from ..linalg.eigen import Eigenvalues, eigvals
 from ..linalg.qr import lstsq
@@ -63,7 +64,7 @@ comptime _View[dtype: DType, LayoutType: TensorLayout] = TileTensor[
 @always_inline
 def _interval[
     dtype: DType, LayoutType: TensorLayout
-](knots: _View[dtype, LayoutType], n: Int, x: Scalar[dtype]) -> Int:
+](knots: TileTensor[dtype, LayoutType, _], n: Int, x: Scalar[dtype]) -> Int:
     """The `i` in `[0, n - 2]` with `knots[i] <= x < knots[i + 1]`, clamped
     to the end intervals for an `x` outside the knots.
 
@@ -83,15 +84,27 @@ def _interval[
 
 
 def interp[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+    gpu: Bool = False,
 ](
-    mut x: Static[dtype, m],
-    mut xp: Static[dtype, n],
-    mut fp: Static[dtype, n],
-    left: Optional[Scalar[dtype]] = None,
-    right: Optional[Scalar[dtype]] = None,
-) raises -> Static[dtype, m] where (
-    dtype.is_floating_point() and m > 0 and n > 0
+    x: A,
+    xp: B,
+    fp: C,
+    left: Optional[Scalar[A.dtype]] = None,
+    right: Optional[Scalar[A.dtype]] = None,
+) raises -> Static[A.dtype, dim[A, 0]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 0 and dim[B, 0] > 0)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
+    and dim[C, 0] == dim[B, 0]
 ):
     """One-dimensional linear interpolation of the samples `(xp, fp)` at the
     points `x`. `numpy.interp(x, xp, fp, left, right)`.
@@ -109,16 +122,18 @@ def interp[
     small enough for registers is a spline's or a polynomial's, not a
     lookup table's.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[B, 0]
     var ctx = x.context()
-    var out = Static[dtype, m]._uninitialized(ctx)
+    var out = Static[A.dtype, m]._uninitialized(ctx)
     var xs = x.view()
-    var knots = xp.view()
-    var values = fp.view()
+    var knots = xp.view_as[A.dtype]()
+    var values = fp.view_as[A.dtype]()
     var ys = out.view()
     var has_left = Bool(left)
-    var left_value = left.value() if left else Scalar[dtype](0)
+    var left_value = left.value() if left else Scalar[A.dtype](0)
     var has_right = Bool(right)
-    var right_value = right.value() if right else Scalar[dtype](0)
+    var right_value = right.value() if right else Scalar[A.dtype](0)
 
     @always_inline
     def lookup[
@@ -135,7 +150,7 @@ def interp[
     }:
         var q = coord_to_index_list(coord)[0]
         var at = xs[Coord(q)]
-        var y: Scalar[dtype]
+        var y: Scalar[A.dtype]
         if at < knots[Coord(0)]:
             y = left_value if has_left else values[Coord(0)]
         elif at > knots[Coord(n - 1)]:
@@ -149,7 +164,7 @@ def interp[
             # `x1 == x0` only at `n == 1`, where the clamps above have
             # already answered; the guard keeps the lane finite regardless.
             var span = x1 - x0
-            var t = (at - x0) / span if span != 0 else Scalar[dtype](0)
+            var t = (at - x0) / span if span != 0 else Scalar[A.dtype](0)
             y = y0 + t * (y1 - y0)
         ys.store[1](Coord(q), y)
 
@@ -161,10 +176,17 @@ def interp[
 
 
 def horner[
-    dtype: DType, k: Int, m: Int, gpu: Bool = False
-](mut coefficients: Static[dtype, k], mut x: Static[dtype, m]) raises -> Static[
-    dtype, m
-] where (dtype.is_floating_point() and k > 0 and m > 0):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](coefficients: A, x: B) raises -> Static[A.dtype, dim[B, 0]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 0 and dim[B, 0] > 0)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The polynomial with ascending `coefficients` (`coefficients[i]`
     multiplies `x^i`) evaluated at every point of `x`.
     `numpy.polynomial.polynomial.polyval(x, c)`.
@@ -176,10 +198,12 @@ def horner[
     `polynomial` package's, not the descending order of the legacy
     `numpy.polyval`.
     """
+    comptime k = dim[A, 0]
+    comptime m = dim[B, 0]
     var ctx = x.context()
-    var out = Static[dtype, m]._uninitialized(ctx)
+    var out = Static[A.dtype, m]._uninitialized(ctx)
     var cs = coefficients.view()
-    var xs = x.view()
+    var xs = x.view_as[A.dtype]()
     var ys = out.view()
 
     @always_inline
@@ -201,10 +225,17 @@ def horner[
 
 
 def polyval[
-    dtype: DType, k: Int, m: Int, gpu: Bool = False
-](mut p: Static[dtype, k], mut x: Static[dtype, m]) raises -> Static[
-    dtype, m
-] where (dtype.is_floating_point() and k > 0 and m > 0):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](p: A, x: B) raises -> Static[A.dtype, dim[B, 0]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 0 and dim[B, 0] > 0)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The polynomial with **descending** coefficients `p` evaluated at
     every point of `x`. `numpy.polyval`.
 
@@ -217,10 +248,12 @@ def polyval[
 
     One `elementwise` launch of Horner's rule per lane, as `horner`'s is.
     """
+    comptime k = dim[A, 0]
+    comptime m = dim[B, 0]
     var ctx = x.context()
-    var out = Static[dtype, m]._uninitialized(ctx)
+    var out = Static[A.dtype, m]._uninitialized(ctx)
     var cs = p.view()
-    var xs = x.view()
+    var xs = x.view_as[A.dtype]()
     var ys = out.view()
 
     @always_inline
@@ -242,9 +275,11 @@ def polyval[
 
 
 def polyder[
-    dtype: DType, k: Int
-](p: Static[dtype, k]) raises -> Static[dtype, k - 1] where (
-    dtype.is_floating_point() and k >= 2
+    T: TensorLike,
+](p: T) raises -> Static[T.dtype, dim[T, 0] - 1] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 2)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The derivative of the polynomial with descending coefficients `p`.
     `numpy.polyder`.
@@ -263,20 +298,25 @@ def polyder[
 
     Host-side: `k` coefficient multiplies, which is not work worth a launch.
     """
+    comptime k = dim[T, 0]
     var source = p.to_host()
-    var values = List[Scalar[dtype]](capacity=k - 1)
+    var values = List[Scalar[T.dtype]](capacity=k - 1)
     for i in range(k - 1):
         # Descending: p[i] multiplies x ** (k - 1 - i), whose derivative
         # is (k - 1 - i) * x ** (k - 2 - i).
-        values.append(source[i] * Scalar[dtype](k - 1 - i))
-    return Static[dtype, k - 1](p.context(), values^)
+        values.append(source[i] * Scalar[T.dtype](k - 1 - i))
+    return Static[T.dtype, k - 1](p.context(), values^)
 
 
 def polyint[
-    dtype: DType, k: Int
-](p: Static[dtype, k], constant: Scalar[dtype] = 0) raises -> Static[
-    dtype, k + 1
-] where (dtype.is_floating_point() and k >= 1):
+    T: TensorLike,
+](p: T, constant: Scalar[T.dtype] = 0) raises -> Static[
+    T.dtype, dim[T, 0] + 1
+] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """The antiderivative of the polynomial with descending coefficients
     `p`, with integration constant `constant`. `numpy.polyint`.
 
@@ -284,18 +324,22 @@ def polyint[
     because that is the `x ** 0` position in descending order. The inverse
     of `polyder` up to that constant: `polyder(polyint(p))` is `p`.
     """
+    comptime k = dim[T, 0]
     var source = p.to_host()
-    var values = List[Scalar[dtype]](capacity=k + 1)
+    var values = List[Scalar[T.dtype]](capacity=k + 1)
     for i in range(k):
-        values.append(source[i] / Scalar[dtype](k - i))
+        values.append(source[i] / Scalar[T.dtype](k - i))
     values.append(constant)
-    return Static[dtype, k + 1](p.context(), values^)
+    return Static[T.dtype, k + 1](p.context(), values^)
 
 
 def roots[
-    dtype: DType, k: Int, gpu: Bool = False
-](mut p: Static[dtype, k]) raises -> Eigenvalues[dtype, k - 1] where (
-    dtype.is_floating_point() and k >= 2
+    T: TensorLike,
+    gpu: Bool = False,
+](p: T) raises -> Eigenvalues[T.dtype, dim[T, 0] - 1] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 2)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The roots of the polynomial with descending coefficients `p`, real
     and complex. `numpy.roots`.
@@ -307,7 +351,7 @@ def roots[
     for, not a new algorithm.
 
     The result is an `Eigenvalues` -- a real tensor and an imaginary one --
-    for the reason that struct records: a `dtype`-monomorphic `Tensor`
+    for the reason that struct records: a `T.dtype`-monomorphic `Tensor`
     cannot hold a complex value. A real root has `im == 0` exactly.
 
     `p[0]` must be nonzero; `companion` divides by it and its docstring
@@ -323,10 +367,19 @@ def roots[
 
 
 def polyfit[
-    dtype: DType, n: Int, deg: Int, gpu: Bool = False
-](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
-    dtype, deg + 1
-] where (dtype.is_floating_point() and n >= deg + 1 and deg + 1 >= 1):
+    A: TensorLike,
+    B: TensorLike,
+    deg: Int,
+    gpu: Bool = False,
+](x: A, y: B) raises -> Static[A.dtype, deg + 1] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= deg + 1 and deg + 1 >= 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """The degree-`deg` least-squares polynomial fit of `y` against `x`, as
     **descending** coefficients. `numpy.polyfit`.
 
@@ -347,5 +400,6 @@ def polyfit[
     minimum-norm answer for a rank-deficient fit spells
     `lstsq[method="svd"]` on `vander(x, deg + 1)` directly.
     """
+    comptime n = dim[A, 0]
     var design = vander[cols=deg + 1](x)
     return lstsq[gpu=gpu](design, y)

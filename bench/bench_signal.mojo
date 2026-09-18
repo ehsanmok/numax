@@ -89,11 +89,11 @@ def bench_convolution[
     var h = _kernel[k](ctx)
 
     def direct() raises {mut x, mut h}:
-        var y = convolve[dtype, m, k](x, h)
+        var y = convolve(x, h)
         keep(y.buffer.unsafe_ptr())
 
     def transform() raises {mut x, mut h}:
-        var y = fftconvolve[dtype, m, k](x, h)
+        var y = fftconvolve(x, h)
         keep(y.buffer.unsafe_ptr())
 
     var direct_ns = (
@@ -111,8 +111,8 @@ def bench_convolution[
         * 1e9
     )
 
-    var a = convolve[dtype, m, k](x, h).to_host()
-    var b = fftconvolve[dtype, m, k](x, h).to_host()
+    var a = convolve(x, h).to_host()
+    var b = fftconvolve(x, h).to_host()
     var worst = Float64(0)
     for i in range(m + k - 1):
         var diff = abs(Float64(a[i]) - Float64(b[i]))
@@ -127,11 +127,11 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
 
     # `lfilter` with a 32-tap lowpass FIR: `a = [1]`.
     comptime taps = 32
-    var fir = firwin[dtype, taps]([0.2], ctx=ctx)
+    var fir = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
     var one = Static[dtype, 1](ctx, [Scalar[dtype](1)])
 
     def fir_work() raises {mut fir, mut one, mut x}:
-        var y = lfilter[dtype, taps, 1, n](fir, one, x)
+        var y = lfilter(fir, one, x)
         keep(y.buffer.unsafe_ptr())
 
     var fir_ns = (
@@ -145,10 +145,10 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
     _row("lfilter fir32", n, taps, fir_ns, 0.0)
 
     # `filtfilt` with a fourth-order Butterworth lowpass at 0.1 Nyquist.
-    var tf = butter[dtype, 4](0.1, ctx=ctx)
+    var tf = butter[dtype=dtype, order=4](0.1, ctx=ctx)
 
     def iir_work() raises {mut tf, mut x}:
-        var y = filtfilt[dtype, 5, 5, n](tf.b, tf.a, x)
+        var y = filtfilt(tf.b, tf.a, x)
         keep(y.buffer.unsafe_ptr())
 
     var iir_ns = (
@@ -162,7 +162,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
     _row("filtfilt butter4", n, 4, iir_ns, 0.0)
 
     def med_work() raises {mut x}:
-        var y = medfilt[dtype, n, 5](x)
+        var y = medfilt[kernel_size=5](x)
         keep(y.buffer.unsafe_ptr())
 
     var med_ns = (
@@ -176,7 +176,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
     _row("medfilt", n, 5, med_ns, 0.0)
 
     def sg_work() raises {mut x}:
-        var y = savgol_filter[dtype, n, 11, 3](x)
+        var y = savgol_filter[window_length=11, polyorder=3](x)
         keep(y.buffer.unsafe_ptr())
 
     var sg_ns = (
@@ -188,7 +188,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
     _row("savgol_filter w11 p3", n, 11, sg_ns, 0.0)
 
     def welch_work() raises {mut x}:
-        var p = welch[dtype, n, 256](x)
+        var p = welch[nperseg=256](x)
         keep(p.power.buffer.unsafe_ptr())
 
     var welch_ns = (

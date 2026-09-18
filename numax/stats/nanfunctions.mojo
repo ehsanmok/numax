@@ -49,7 +49,9 @@ def _filled[
     var mask = isnan(xs)
     var value = full_like(xs, fill)
     # `select`'s same-layout form wants both branches at one type, and a
-    # generic `T` is not `Tensor[T.dtype, T.LayoutType]` to the checker.
+    # generic `T` is not `Tensor[T.dtype, T.LayoutType]` to the checker,
+    # and a borrowed `xs` cannot become a `View`; the copy is one host pass
+    # in a path that walks the host anyway.
     return select(mask, value, copy(xs))
 
 

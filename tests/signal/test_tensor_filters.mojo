@@ -755,7 +755,7 @@ def test_firwin_matches_scipy() raises:
     three-edge multiband, an even-length lowpass and a Hann-windowed
     design, each against `scipy.signal.firwin`."""
     _assert_close(
-        firwin[dtype, 7]([0.3]),
+        firwin[dtype=dtype, numtaps=7]([0.3]),
         [
             0.003296613269668359,
             0.058973232008108376,
@@ -767,7 +767,7 @@ def test_firwin_matches_scipy() raises:
         ],
     )
     _assert_close(
-        firwin[dtype, 7]([0.3], pass_zero=False),
+        firwin[dtype=dtype, numtaps=7]([0.3], pass_zero=False),
         [
             -0.0026022584415487677,
             -0.04655189379673665,
@@ -779,7 +779,7 @@ def test_firwin_matches_scipy() raises:
         ],
     )
     _assert_close(
-        firwin[dtype, 7]([0.2, 0.5], pass_zero=False),
+        firwin[dtype=dtype, numtaps=7]([0.2, 0.5], pass_zero=False),
         [
             -0.034530147819915404,
             -0.09783581770694454,
@@ -791,7 +791,7 @@ def test_firwin_matches_scipy() raises:
         ],
     )
     _assert_close(
-        firwin[dtype, 7]([0.2, 0.5]),
+        firwin[dtype=dtype, numtaps=7]([0.2, 0.5]),
         [
             0.026501880312347494,
             0.07508896702824608,
@@ -803,7 +803,7 @@ def test_firwin_matches_scipy() raises:
         ],
     )
     _assert_close(
-        firwin[dtype, 9]([0.2, 0.4, 0.6]),
+        firwin[dtype=dtype, numtaps=9]([0.2, 0.4, 0.6]),
         [
             0.020850557642848235,
             0.02850267684338193,
@@ -817,7 +817,7 @@ def test_firwin_matches_scipy() raises:
         ],
     )
     _assert_close(
-        firwin[dtype, 8]([0.3]),
+        firwin[dtype=dtype, numtaps=8]([0.3]),
         [
             -0.001316875432556324,
             0.02637484405478644,
@@ -830,7 +830,7 @@ def test_firwin_matches_scipy() raises:
         ],
     )
     _assert_close(
-        firwin[dtype, 7]([0.3], window="hann"),
+        firwin[dtype=dtype, numtaps=7]([0.3], window="hann"),
         [
             0.0,
             0.04966316431031117,
@@ -843,7 +843,7 @@ def test_firwin_matches_scipy() raises:
     )
     var raised = False
     try:
-        _ = firwin[dtype, 8]([0.3], pass_zero=False)
+        _ = firwin[dtype=dtype, numtaps=8]([0.3], pass_zero=False)
     except:
         raised = True
     assert_true(raised)

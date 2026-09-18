@@ -313,6 +313,8 @@ runs MAX's GPU kernels.
 
 ## `numax.optimize`
 
+The `Tensor` tier takes `x0` (and `curve_fit`'s data) through the `TensorLike` bound, so a `View` starts a minimization; the callbacks still receive an owned `Static`, since that is what a user writes them against. `minimize[f=f, jac=jac](x0)` infers everything else from the tensor and the callbacks.
+
 Two tiers, one import each. `numax.optimize` is the `Tensor` one and holds
 the nonlinear fits; `numax.optimize.array` holds everything that works on a
 handful of scalars, split in turn by whether the iteration count is known up
@@ -387,6 +389,8 @@ through to a different algorithm.
 
 ## `numax.integrate`
 
+`solve_ivp`, `rk4_system`, `dopri5` and `dopri5_step` take their state through the `TensorLike` bound and copy it once into the owned `Static` the callback receives; `trapezoid`, `simpson` and `cumulative_trapezoid` take samples the same way.
+
 | Surface | Tier | Where |
 |---|---|---|
 | `trapezoid`, `simpson`, `cumulative_trapezoid` over sampled `Tensor`s — `trapezoid(y, dx)`, `simpson(y, x)`, exactly `scipy.integrate`'s signatures, SciPy's even-count Simpson correction included | 2 | [`integrate/quadrature.mojo`](../numax/integrate/quadrature.mojo) |
@@ -407,6 +411,8 @@ run one per GPU thread with solution sensitivities from the same integrator.
 > [`ode.mojo`](../examples/advanced/ode.mojo)
 
 ## `numax.interpolate`
+
+The `Tensor` tier takes its nodes, coefficients and query points through the `TensorLike` bound, by borrow, so `interp(View(...), xp, fp)` is one `interp`.
 
 Two tiers, one import each, on the `numax.linalg` pattern. MAX has no
 interpolation at arbitrary points — its `nn.resize_*` kernels resample a
@@ -438,6 +444,8 @@ at `Dual` carries derivatives with respect to whatever the knots or the
 interval depend on.
 
 ## `numax.fft`
+
+The transforms that *consume* their argument (`fft`, `rfft`, `irfft`, `fftshift`, `dct` and their siblings, all spelled `var x`) still take an owned `Tensor` or `Spectrum`: they reuse its storage and hand it back, which a borrowed `View` has no storage to give. Their `[dtype, n]` parameters are inferred from the argument as before.
 
 Radix-2 Cooley-Tukey at a power of two; over `Tensor`, Bluestein's chirp-z
 at every other length, so the `Tensor` tier takes any `n > 0` and the
@@ -482,6 +490,8 @@ arithmetic over `FloatLike`, so `fft` at `Complex[Dual[Plain]]` returns the
 transform and its derivative with no adjoint rule written anywhere.
 
 ## `numax.signal`
+
+Every routine takes its signals through the `TensorLike` bound, by borrow, with the filter taps and the signal as separate conformers, so `lfilter(b, a, View(...))` filters a sub-block of a recording in place of a copy.
 
 Two tiers, one import each, on the `numax.linalg` pattern. MAX ships the
 neural-network convolution (`nn.conv`: NHWC, channels and filters,
@@ -550,6 +560,8 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 > [`random_ensemble.mojo`](../examples/intermediate/random_ensemble.mojo)
 
 ## `numax.io`
+
+`nmx.save` and `numpy.save` take any `TensorLike`, so a `View` of a sub-block writes as a file of that block's shape.
 
 | Surface | Where |
 |---|---|

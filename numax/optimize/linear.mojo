@@ -36,7 +36,8 @@ from std.math import sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static, transpose
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.array import _canonical, Static, transpose
 from ..linalg.blas import matmul, matvec
 
 from .common import _as_tensor
@@ -198,33 +199,49 @@ def _box_qp(
 
 
 def _normal_equations[
-    dtype: DType, m: Int, n: Int, gpu: Bool
-](mut a: Static[dtype, m, n], mut b: Static[dtype, m]) raises -> Tuple[
-    List[Float64], List[Float64]
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool,
+](a: A, b: B) raises -> Tuple[List[Float64], List[Float64]] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """`(A^T A, A^T b)` formed on the device and read back."""
+    comptime n = dim[A, 1]
     var at = transpose[gpu=gpu](a)
     var at_again = transpose[gpu=gpu](a)
     var gram = matmul[gpu=gpu](at, a)
-    var rhs = matvec[gpu=gpu](at_again, b)
+    var rhs = matvec[gpu=gpu](at_again, _canonical[dim[A, 0]](b))
     var g_host = gram.to_host()
     var g = List[Float64](capacity=n * n)
     for i in range(n * n):
         g.append(Float64(g_host[i]))
-    return (g^, _to_list[dtype, n](rhs))
+    return (g^, _to_list(rhs))
 
 
 def _residual_norm[
-    dtype: DType, m: Int, n: Int, gpu: Bool
-](
-    mut a: Static[dtype, m, n],
-    mut b: Static[dtype, m],
-    x: List[Float64],
-    ctx: DeviceContext,
-) raises -> Float64:
-    var xs = _as_tensor[dtype, n](x, ctx)
-    var ax = _to_list[dtype, m](matvec[gpu=gpu](a, xs))
-    var bh = _to_list[dtype, m](b)
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool,
+](a: A, b: B, x: List[Float64], ctx: DeviceContext) raises -> Float64 where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and is_row_major[A]
+    and is_row_major[B]
+):
+    comptime m = dim[A, 0]
+    comptime n = dim[A, 1]
+    var xs = _as_tensor[A.dtype, n](x, ctx)
+    var ax = _to_list(matvec[gpu=gpu](a, xs))
+    var bh = _to_list(b)
     var total = 0.0
     for i in range(m):
         var d = ax[i] - bh[i]
@@ -233,16 +250,34 @@ def _residual_norm[
 
 
 def lsq_linear[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+    D: TensorLike,
+    gpu: Bool = False,
 ](
-    mut a: Static[dtype, m, n],
-    mut b: Static[dtype, m],
-    lower: Static[dtype, n],
-    upper: Static[dtype, n],
+    a: A,
+    b: B,
+    lower: C,
+    upper: D,
     tol: Optional[Float64] = None,
     max_iter: Optional[Int] = None,
-) raises -> TensorLinearResult[dtype, n] where (
-    dtype.is_floating_point() and m >= 1 and n >= 1
+) raises -> TensorLinearResult[A.dtype, dim[A, 1]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= 1 and dim[A, 1] >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
+    and dim[C, 0] == dim[A, 1]
+    and D.dtype == A.dtype
+    and D.LayoutType.rank == 1
+    and D.LayoutType.all_dims_known
+    and dim[D, 0] == dim[A, 1]
 ):
     """`min ||A x - b||` over `lower <= x <= upper`, elementwise.
     `scipy.optimize.lsq_linear(A, b, bounds=(lower, upper))`.
@@ -252,10 +287,12 @@ def lsq_linear[
     to `50 n`. Infinite bounds are ordinary entries -- pass a large value
     for an unbounded side, or `numax.linalg.lstsq` for no bounds at all.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[A, 1]
     var ctx = a.context()
-    var normal = _normal_equations[dtype, m, n, gpu](a, b)
-    var lo = _to_list[dtype, n](lower)
-    var hi = _to_list[dtype, n](upper)
+    var normal = _normal_equations[gpu=gpu](a, b)
+    var lo = _to_list(lower)
+    var hi = _to_list(upper)
     var start = List[Float64](length=n, fill=0.0)
     var solved = _box_qp(
         normal[0],
@@ -267,21 +304,28 @@ def lsq_linear[
         tol.value() if tol else 1e-10,
         max_iter.value() if max_iter else 50 * n,
     )
-    var norm = _residual_norm[dtype, m, n, gpu](a, b, solved[0], ctx)
-    return TensorLinearResult[dtype, n](
-        _as_tensor[dtype, n](solved[0], ctx), norm, solved[1], solved[2]
+    var norm = _residual_norm[gpu=gpu](
+        _canonical[m, n](a), _canonical[m](b), solved[0], ctx
+    )
+    return TensorLinearResult[A.dtype, n](
+        _as_tensor[A.dtype, n](solved[0], ctx), norm, solved[1], solved[2]
     )
 
 
 def nnls[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
 ](
-    mut a: Static[dtype, m, n],
-    mut b: Static[dtype, m],
-    tol: Optional[Float64] = None,
-    max_iter: Optional[Int] = None,
-) raises -> TensorLinearResult[dtype, n] where (
-    dtype.is_floating_point() and m >= 1 and n >= 1
+    a: A, b: B, tol: Optional[Float64] = None, max_iter: Optional[Int] = None
+) raises -> TensorLinearResult[A.dtype, dim[A, 1]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= 1 and dim[A, 1] >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
 ):
     """`min ||A x - b||` over `x >= 0`. `scipy.optimize.nnls(A, b)`, whose
     `(x, rnorm)` pair is `.x` and `.residual_norm` here.
@@ -289,8 +333,10 @@ def nnls[
     `lsq_linear` with the box `[0, inf)`; the module docstring has the
     algorithm and the comparison with Lawson-Hanson.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[A, 1]
     var ctx = a.context()
-    var normal = _normal_equations[dtype, m, n, gpu](a, b)
+    var normal = _normal_equations[gpu=gpu](a, b)
     var lo = List[Float64](length=n, fill=0.0)
     var hi = List[Float64](length=n, fill=1e300)
     var start = List[Float64](length=n, fill=0.0)
@@ -304,7 +350,9 @@ def nnls[
         tol.value() if tol else 1e-10,
         max_iter.value() if max_iter else 50 * n,
     )
-    var norm = _residual_norm[dtype, m, n, gpu](a, b, solved[0], ctx)
-    return TensorLinearResult[dtype, n](
-        _as_tensor[dtype, n](solved[0], ctx), norm, solved[1], solved[2]
+    var norm = _residual_norm[gpu=gpu](
+        _canonical[m, n](a), _canonical[m](b), solved[0], ctx
+    )
+    return TensorLinearResult[A.dtype, n](
+        _as_tensor[A.dtype, n](solved[0], ctx), norm, solved[1], solved[2]
     )

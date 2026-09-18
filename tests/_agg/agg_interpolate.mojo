@@ -138,6 +138,9 @@ from test_tensor_interp import (
 from test_tensor_interp import (
     test_polyfit_at_degree_one_is_a_straight_line as test_tensor_interp__test_polyfit_at_degree_one_is_a_straight_line,
 )
+from test_tensor_interp import (
+    test_interp_accepts_views as test_tensor_interp__test_interp_accepts_views,
+)
 from test_tensor_spline import (
     test_not_a_knot_spline_matches_scipy as test_tensor_spline__test_not_a_knot_spline_matches_scipy,
 )
@@ -253,6 +256,7 @@ def main() raises:
     suite.test[
         test_tensor_interp__test_polyfit_at_degree_one_is_a_straight_line
     ]()
+    suite.test[test_tensor_interp__test_interp_accepts_views]()
     # tests/interpolate/test_tensor_spline.mojo
     suite.test[test_tensor_spline__test_not_a_knot_spline_matches_scipy]()
     suite.test[test_tensor_spline__test_natural_spline_matches_scipy]()

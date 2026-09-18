@@ -53,7 +53,8 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static, zeros
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.array import _canonical, Static, zeros
 from ..fft.fft import Spectrum, _as_matrix, _dft, fft, ifft, irfft
 from .windows import get_window
 
@@ -73,18 +74,20 @@ def _padded_length(n: Int, nperseg: Int, step: Int) -> Int:
 
 
 def _framed[
-    dtype: DType,
-    n: Int,
-    nperseg: Int,
+    A: TensorLike,
+    B: TensorLike,
     step: Int,
     frames: Int,
     gpu: Bool,
-](
-    mut x: Static[dtype, n],
-    mut window: Static[dtype, nperseg],
-    offset: Int,
-    detrend: Bool,
-) raises -> Spectrum[dtype, frames, nperseg]:
+](x: A, window: B, offset: Int, detrend: Bool) raises -> Spectrum[
+    A.dtype, frames, dim[B, 0]
+] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """Frame, detrend and window, then transform every frame: the spectrum
     of segment `f` in row `f`.
 
@@ -93,9 +96,11 @@ def _framed[
     Detrending needs each frame's mean before the frame is written, so it
     is one launch over the frames ahead of the launch over the elements.
     """
+    comptime n = dim[A, 0]
+    comptime nperseg = dim[B, 0]
     var ctx = x.context()
     var xs = x.view()
-    var means = Static[dtype, frames]._uninitialized(ctx)
+    var means = Static[A.dtype, frames]._uninitialized(ctx)
     var ms = means.view()
     var shift = offset
 
@@ -104,23 +109,23 @@ def _framed[
         w: Int, alignment: Int = 1
     ](coord: Coord) {var xs, var ms, var shift}:
         var f = coord_to_index_list(coord)[0]
-        var total = Scalar[dtype](0)
+        var total = Scalar[A.dtype](0)
         for j in range(nperseg):
             var src = f * step + j - shift
             if src >= 0 and src < n:
                 total += xs[Coord(src)]
-        ms.store[1](Coord(f), total / Scalar[dtype](nperseg))
+        ms.store[1](Coord(f), total / Scalar[A.dtype](nperseg))
 
     if detrend:
         elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
             frame_mean, Coord(frames), ctx
         )
 
-    var re = Static[dtype, frames, nperseg]._uninitialized(ctx)
-    var im = Static[dtype, frames, nperseg]._uninitialized(ctx)
+    var re = Static[A.dtype, frames, nperseg]._uninitialized(ctx)
+    var im = Static[A.dtype, frames, nperseg]._uninitialized(ctx)
     var rs = re.view()
     var ims = im.view()
-    var ws = window.view()
+    var ws = window.view_as[A.dtype]()
     var remove_mean = detrend
 
     @always_inline
@@ -133,25 +138,25 @@ def _framed[
         var f = idx[0]
         var j = idx[1]
         var src = f * step + j - shift
-        var sample = Scalar[dtype](0)
+        var sample = Scalar[A.dtype](0)
         if src >= 0 and src < n:
             sample = xs[Coord(src)]
         if remove_mean:
             sample -= ms[Coord(f)]
         rs.store[1](Coord(f, j), sample * ws[Coord(j)])
-        ims.store[1](Coord(f, j), Scalar[dtype](0))
+        ims.store[1](Coord(f, j), Scalar[A.dtype](0))
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
         gather, Coord(frames, nperseg), ctx
     )
 
-    var out_re = Static[dtype, frames, nperseg]._uninitialized(ctx)
-    var out_im = Static[dtype, frames, nperseg]._uninitialized(ctx)
-    _dft[dtype, frames, nperseg, gpu, False](
-        _as_matrix[dtype, frames, nperseg](re),
-        _as_matrix[dtype, frames, nperseg](im),
-        _as_matrix[dtype, frames, nperseg](out_re),
-        _as_matrix[dtype, frames, nperseg](out_im),
+    var out_re = Static[A.dtype, frames, nperseg]._uninitialized(ctx)
+    var out_im = Static[A.dtype, frames, nperseg]._uninitialized(ctx)
+    _dft[dtype=A.dtype, batch=frames, n=nperseg, gpu=gpu, inverse=False](
+        _as_matrix[rows=frames, cols=nperseg](re),
+        _as_matrix[rows=frames, cols=nperseg](im),
+        _as_matrix[rows=frames, cols=nperseg](out_re),
+        _as_matrix[rows=frames, cols=nperseg](out_im),
         ctx,
     )
     _ = means^
@@ -174,9 +179,12 @@ def _one_sided_factor(k: Int, nperseg: Int) -> Int:
 
 
 def _window_sums[
-    dtype: DType, nperseg: Int
-](mut window: Static[dtype, nperseg]) raises -> Tuple[Float64, Float64]:
+    T: TensorLike,
+](window: T) raises -> Tuple[Float64, Float64] where (
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known and is_row_major[T]
+):
     """`sum(w)` and `sum(w^2)`, the two normalizations."""
+    comptime nperseg = dim[T, 0]
     var ws = window.to_host()
     var total = 0.0
     var squares = 0.0
@@ -309,14 +317,18 @@ def _averaged_power[
 
 
 def periodogram[
-    dtype: DType, n: Int, gpu: Bool = False
+    T: TensorLike,
+    gpu: Bool = False,
 ](
-    mut x: Static[dtype, n],
+    x: T,
     fs: Float64 = 1.0,
     window: StaticString = "boxcar",
     scaling: StaticString = "density",
-) raises -> Periodogram[dtype, n // 2 + 1] where (
-    dtype.is_floating_point() and n > 1 and n > 0
+) raises -> Periodogram[T.dtype, dim[T, 0] // 2 + 1] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 1 and dim[T, 0] > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
 ):
     """The power spectral density of `x` from one transform of the whole
     signal, mean removed, windowed by `window` (a rectangle by default).
@@ -329,6 +341,7 @@ def periodogram[
     and the most variance, which averaging over frames trades the other
     way.
     """
+    comptime n = dim[T, 0]
     if not (scaling == "density" or scaling == "spectrum"):
         raise Error(
             "periodogram: unknown scaling '",
@@ -336,32 +349,38 @@ def periodogram[
             "'; expected 'density' or 'spectrum'",
         )
     var ctx = x.context()
-    var win = get_window[dtype, n](window, ctx=ctx)
+    var win = get_window[dtype=T.dtype, n=n](window, ctx=ctx)
     var sums = _window_sums(win)
     var scale = 1.0 / (fs * sums[1]) if scaling == "density" else 1.0 / (
         sums[0] * sums[0]
     )
-    var spectra = _framed[dtype, n, n, 1, 1, gpu](x, win, 0, True)
-    var power = _averaged_power[dtype, 1, n, gpu](spectra^, scale)
-    return Periodogram[dtype, n // 2 + 1](
-        _frequencies[dtype, n](ctx, fs), power^
+    var spectra = _framed[step=1, frames=1, gpu=gpu](x, win, 0, True)
+    var power = _averaged_power[gpu=gpu](spectra^, scale)
+    return Periodogram[T.dtype, n // 2 + 1](
+        _frequencies[dtype=T.dtype, nperseg=n](ctx, fs), power^
     )
 
 
 def welch[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     nperseg: Int,
     noverlap: Int = nperseg // 2,
     gpu: Bool = False,
 ](
-    mut x: Static[dtype, n],
+    x: T,
     fs: Float64 = 1.0,
     window: StaticString = "hann",
     detrend: Bool = True,
     scaling: StaticString = "density",
-) raises -> Periodogram[dtype, nperseg // 2 + 1] where (
-    dtype.is_floating_point() and n >= nperseg and nperseg > 1 and nperseg > 0
+) raises -> Periodogram[T.dtype, nperseg // 2 + 1] where (
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= nperseg
+        and nperseg > 1
+        and nperseg > 0
+    )
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """Welch's power spectral density: the signal in `nperseg`-long frames
     overlapping by `noverlap`, each mean-removed (`detrend`), windowed and
@@ -374,6 +393,7 @@ def welch[
     on the lane engine; `noverlap` is a parameter because the frame count
     shapes the work. `scaling` as for `periodogram`.
     """
+    comptime n = dim[T, 0]
     if not (scaling == "density" or scaling == "spectrum"):
         raise Error(
             "welch: unknown scaling '",
@@ -386,36 +406,40 @@ def welch[
     comptime step = nperseg - noverlap
     comptime frames = _frame_count(n, nperseg, noverlap)
     var ctx = x.context()
-    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var win = get_window[dtype=T.dtype, n=nperseg](window, ctx=ctx)
     var sums = _window_sums(win)
     var scale = 1.0 / (fs * sums[1]) if scaling == "density" else 1.0 / (
         sums[0] * sums[0]
     )
-    var spectra = _framed[dtype, n, nperseg, step, frames, gpu](
-        x, win, 0, detrend
-    )
-    var power = _averaged_power[dtype, frames, nperseg, gpu](spectra^, scale)
-    return Periodogram[dtype, nperseg // 2 + 1](
-        _frequencies[dtype, nperseg](ctx, fs), power^
+    var spectra = _framed[step=step, frames=frames, gpu=gpu](x, win, 0, detrend)
+    var power = _averaged_power[gpu=gpu](spectra^, scale)
+    return Periodogram[T.dtype, nperseg // 2 + 1](
+        _frequencies[dtype=T.dtype, nperseg=nperseg](ctx, fs), power^
     )
 
 
 def spectrogram[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     nperseg: Int,
     noverlap: Int = nperseg // 8,
     gpu: Bool = False,
 ](
-    mut x: Static[dtype, n],
+    x: T,
     fs: Float64 = 1.0,
     window: StaticString = "hann",
     detrend: Bool = True,
     scaling: StaticString = "density",
 ) raises -> Spectrogram[
-    dtype, nperseg // 2 + 1, _frame_count(n, nperseg, noverlap)
+    T.dtype, nperseg // 2 + 1, _frame_count(dim[T, 0], nperseg, noverlap)
 ] where (
-    dtype.is_floating_point() and n >= nperseg and nperseg > 1 and nperseg > 0
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= nperseg
+        and nperseg > 1
+        and nperseg > 0
+    )
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The power spectral density of every frame, unaveraged: `welch`'s
     frames laid out in time. `scipy.signal.spectrogram(x, fs, window,
@@ -427,6 +451,7 @@ def spectrogram[
     window is a Tukey taper this module does not have -- pass `"hann"` (the
     default here) or any `get_window` name.
     """
+    comptime n = dim[T, 0]
     if not (scaling == "density" or scaling == "spectrum"):
         raise Error(
             "spectrogram: unknown scaling '",
@@ -440,16 +465,14 @@ def spectrogram[
     comptime frames = _frame_count(n, nperseg, noverlap)
     comptime keep = nperseg // 2 + 1
     var ctx = x.context()
-    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var win = get_window[dtype=T.dtype, n=nperseg](window, ctx=ctx)
     var sums = _window_sums(win)
     var scale = 1.0 / (fs * sums[1]) if scaling == "density" else 1.0 / (
         sums[0] * sums[0]
     )
-    var spectra = _framed[dtype, n, nperseg, step, frames, gpu](
-        x, win, 0, detrend
-    )
+    var spectra = _framed[step=step, frames=frames, gpu=gpu](x, win, 0, detrend)
 
-    var power = Static[dtype, keep, frames]._uninitialized(ctx)
+    var power = Static[T.dtype, keep, frames]._uninitialized(ctx)
     # The two halves of a `Spectrum` share the tuple's origin, so their
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
@@ -457,7 +480,7 @@ def spectrogram[
     var re = spectra[0].view().as_unsafe_any_origin()
     var im = spectra[1].view().as_unsafe_any_origin()
     var ps = power.view()
-    var factor = Scalar[dtype](scale)
+    var factor = Scalar[T.dtype](scale)
 
     @always_inline
     def lane[
@@ -468,7 +491,7 @@ def spectrogram[
         var f = idx[1]
         var a = re[Coord(f, k)]
         var b = im[Coord(f, k)]
-        var doubled = Scalar[dtype](_one_sided_factor(k, nperseg))
+        var doubled = Scalar[T.dtype](_one_sided_factor(k, nperseg))
         ps.store[1](Coord(k, f), (a * a + b * b) * factor * doubled)
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
@@ -476,29 +499,38 @@ def spectrogram[
     )
     ctx.synchronize()
     _ = spectra^
-    return Spectrogram[dtype, keep, frames](
-        _frequencies[dtype, nperseg](ctx, fs),
-        _times[dtype, frames](ctx, Float64(nperseg // 2), step, fs),
+    return Spectrogram[T.dtype, keep, frames](
+        _frequencies[dtype=T.dtype, nperseg=nperseg](ctx, fs),
+        _times[dtype=T.dtype, frames=frames](
+            ctx, Float64(nperseg // 2), step, fs
+        ),
         power^,
     )
 
 
 def stft[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     nperseg: Int,
     noverlap: Int = nperseg // 2,
     gpu: Bool = False,
-](
-    mut x: Static[dtype, n], fs: Float64 = 1.0, window: StaticString = "hann"
-) raises -> STFT[
-    dtype,
+](x: T, fs: Float64 = 1.0, window: StaticString = "hann") raises -> STFT[
+    T.dtype,
     nperseg // 2 + 1,
     _frame_count(
-        _padded_length(n, nperseg, nperseg - noverlap), nperseg, noverlap
+        _padded_length(dim[T, 0], nperseg, nperseg - noverlap),
+        nperseg,
+        noverlap,
     ),
 ] where (
-    dtype.is_floating_point() and n >= 1 and nperseg > 1 and nperseg > 0
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= 1
+        and nperseg > 1
+        and nperseg > 0
+    )
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
 ):
     """The short-time Fourier transform: the complex one-sided spectrum of
     every frame, in `(frequencies, times)` orientation.
@@ -512,6 +544,7 @@ def stft[
     time of frame `f` is `f * step / fs`. Every frame is one row of one
     batched transform.
     """
+    comptime n = dim[T, 0]
     comptime assert (
         noverlap >= 0 and noverlap < nperseg
     ), "noverlap must lie in [0, nperseg)"
@@ -520,14 +553,14 @@ def stft[
     comptime frames = _frame_count(extended, nperseg, noverlap)
     comptime keep = nperseg // 2 + 1
     var ctx = x.context()
-    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var win = get_window[dtype=T.dtype, n=nperseg](window, ctx=ctx)
     var sums = _window_sums(win)
-    var spectra = _framed[dtype, n, nperseg, step, frames, gpu](
+    var spectra = _framed[step=step, frames=frames, gpu=gpu](
         x, win, nperseg // 2, False
     )
 
-    var real = Static[dtype, keep, frames]._uninitialized(ctx)
-    var imag = Static[dtype, keep, frames]._uninitialized(ctx)
+    var real = Static[T.dtype, keep, frames]._uninitialized(ctx)
+    var imag = Static[T.dtype, keep, frames]._uninitialized(ctx)
     # The two halves of a `Spectrum` share the tuple's origin, so their
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
@@ -536,7 +569,7 @@ def stft[
     var im = spectra[1].view().as_unsafe_any_origin()
     var rs = real.view()
     var ims = imag.view()
-    var factor = Scalar[dtype](1.0 / sums[0])
+    var factor = Scalar[T.dtype](1.0 / sums[0])
 
     @always_inline
     def lane[
@@ -553,9 +586,9 @@ def stft[
     )
     ctx.synchronize()
     _ = spectra^
-    return STFT[dtype, keep, frames](
-        _frequencies[dtype, nperseg](ctx, fs),
-        _times[dtype, frames](ctx, 0.0, step, fs),
+    return STFT[T.dtype, keep, frames](
+        _frequencies[dtype=T.dtype, nperseg=nperseg](ctx, fs),
+        _times[dtype=T.dtype, frames=frames](ctx, 0.0, step, fs),
         real^,
         imag^,
     )
@@ -587,20 +620,31 @@ struct CrossSpectrum[dtype: DType, keep: Int](Movable):
 
 
 def csd[
-    dtype: DType,
-    n: Int,
+    A: TensorLike,
+    B: TensorLike,
     nperseg: Int,
     noverlap: Int = nperseg // 2,
     gpu: Bool = False,
 ](
-    mut x: Static[dtype, n],
-    mut y: Static[dtype, n],
+    x: A,
+    y: B,
     fs: Float64 = 1.0,
     window: StaticString = "hann",
     detrend: Bool = True,
     scaling: StaticString = "density",
-) raises -> CrossSpectrum[dtype, nperseg // 2 + 1] where (
-    dtype.is_floating_point() and n >= nperseg and nperseg > 1 and nperseg > 0
+) raises -> CrossSpectrum[A.dtype, nperseg // 2 + 1] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] >= nperseg
+        and nperseg > 1
+        and nperseg > 0
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
 ):
     """The cross power spectral density of `x` and `y` by Welch's method.
     `scipy.signal.csd(x, y, fs, window, nperseg, noverlap, detrend,
@@ -615,6 +659,7 @@ def csd[
     SciPy broadcasts unequal lengths by truncating; that silent truncation
     is worth not having.
     """
+    comptime n = dim[A, 0]
     if not (scaling == "density" or scaling == "spectrum"):
         raise Error(
             "csd: unknown scaling '",
@@ -627,21 +672,23 @@ def csd[
     comptime step = nperseg - noverlap
     comptime frames = _frame_count(n, nperseg, noverlap)
     var ctx = x.context()
-    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var win = get_window[dtype=A.dtype, n=nperseg](window, ctx=ctx)
     var sums = _window_sums(win)
     var scale = 1.0 / (fs * sums[1]) if scaling == "density" else 1.0 / (
         sums[0] * sums[0]
     )
     comptime keep = nperseg // 2 + 1
-    var xf = _framed[dtype, n, nperseg, step, frames, gpu](x, win, 0, detrend)
-    var yf = _framed[dtype, n, nperseg, step, frames, gpu](y, win, 0, detrend)
+    var xf = _framed[step=step, frames=frames, gpu=gpu](x, win, 0, detrend)
+    var yf = _framed[step=step, frames=frames, gpu=gpu](
+        _canonical[n, dtype=A.dtype](y), win, 0, detrend
+    )
 
     # `scale * mean_f X[f, k] conj(Y[f, k])`, one lane per bin. Inline
     # rather than a helper returning a `Spectrum`: moving one tensor out of
     # a `Tuple` element is not something Mojo 1.0 allows, and the two
     # destinations have to be built here anyway.
-    var out_re = Static[dtype, keep]._uninitialized(ctx)
-    var out_im = Static[dtype, keep]._uninitialized(ctx)
+    var out_re = Static[A.dtype, keep]._uninitialized(ctx)
+    var out_im = Static[A.dtype, keep]._uninitialized(ctx)
     # The two halves of a `Spectrum` share the tuple's origin, so their
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
@@ -652,7 +699,7 @@ def csd[
     var yi = yf[1].view().as_unsafe_any_origin()
     var rs = out_re.view()
     var ims = out_im.view()
-    var factor = Scalar[dtype](scale / Float64(frames))
+    var factor = Scalar[A.dtype](scale / Float64(frames))
 
     @always_inline
     def lane[
@@ -661,8 +708,8 @@ def csd[
         var xr, var xi, var yr, var yi, var rs, var ims, var factor
     }:
         var k = coord_to_index_list(coord)[0]
-        var acc_re = Scalar[dtype](0)
-        var acc_im = Scalar[dtype](0)
+        var acc_re = Scalar[A.dtype](0)
+        var acc_im = Scalar[A.dtype](0)
         for f in range(frames):
             var a = xr[Coord(f, k)]
             var b = xi[Coord(f, k)]
@@ -671,7 +718,7 @@ def csd[
             # (a + bi) * conj(c + di) = (ac + bd) + (bc - ad)i
             acc_re += a * c + b * d
             acc_im += b * c - a * d
-        var doubled = Scalar[dtype](_one_sided_factor(k, nperseg))
+        var doubled = Scalar[A.dtype](_one_sided_factor(k, nperseg))
         rs.store[1](Coord(k), acc_re * factor * doubled)
         ims.store[1](Coord(k), acc_im * factor * doubled)
 
@@ -681,25 +728,36 @@ def csd[
     ctx.synchronize()
     _ = xf^
     _ = yf^
-    return CrossSpectrum[dtype, keep](
-        _frequencies[dtype, nperseg](ctx, fs), out_re^, out_im^
+    return CrossSpectrum[A.dtype, keep](
+        _frequencies[dtype=A.dtype, nperseg=nperseg](ctx, fs), out_re^, out_im^
     )
 
 
 def coherence[
-    dtype: DType,
-    n: Int,
+    A: TensorLike,
+    B: TensorLike,
     nperseg: Int,
     noverlap: Int = nperseg // 2,
     gpu: Bool = False,
 ](
-    mut x: Static[dtype, n],
-    mut y: Static[dtype, n],
+    x: A,
+    y: B,
     fs: Float64 = 1.0,
     window: StaticString = "hann",
     detrend: Bool = True,
-) raises -> Periodogram[dtype, nperseg // 2 + 1] where (
-    dtype.is_floating_point() and n >= nperseg and nperseg > 1 and nperseg > 0
+) raises -> Periodogram[A.dtype, nperseg // 2 + 1] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] >= nperseg
+        and nperseg > 1
+        and nperseg > 0
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
 ):
     """The magnitude-squared coherence of `x` and `y`:
     `|Pxy|^2 / (Pxx Pyy)`, in `[0, 1]`. `scipy.signal.coherence(x, y, fs,
@@ -722,6 +780,7 @@ def coherence[
     single periodogram the ratio is an identity, not an estimate -- so
     `nperseg` well below `n` is the point, as it is in SciPy.
     """
+    comptime n = dim[A, 0]
     comptime assert (
         noverlap >= 0 and noverlap < nperseg
     ), "noverlap must lie in [0, nperseg)"
@@ -729,14 +788,16 @@ def coherence[
     comptime step = nperseg - noverlap
     comptime frames = _frame_count(n, nperseg, noverlap)
     var ctx = x.context()
-    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var win = get_window[dtype=A.dtype, n=nperseg](window, ctx=ctx)
 
     # Two framings, not four: all three spectra come out of one lane pass,
     # since the ratio needs them at the same bin at the same time anyway.
-    var xf = _framed[dtype, n, nperseg, step, frames, gpu](x, win, 0, detrend)
-    var yf = _framed[dtype, n, nperseg, step, frames, gpu](y, win, 0, detrend)
+    var xf = _framed[step=step, frames=frames, gpu=gpu](x, win, 0, detrend)
+    var yf = _framed[step=step, frames=frames, gpu=gpu](
+        _canonical[n, dtype=A.dtype](y), win, 0, detrend
+    )
 
-    var out = Static[dtype, keep]._uninitialized(ctx)
+    var out = Static[A.dtype, keep]._uninitialized(ctx)
     # The two halves of a `Spectrum` share the tuple's origin, so their
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
@@ -752,10 +813,10 @@ def coherence[
         w: Int, alignment: Int = 1
     ](coord: Coord) {var xr, var xi, var yr, var yi, var cs}:
         var k = coord_to_index_list(coord)[0]
-        var cross_re = Scalar[dtype](0)
-        var cross_im = Scalar[dtype](0)
-        var pxx = Scalar[dtype](0)
-        var pyy = Scalar[dtype](0)
+        var cross_re = Scalar[A.dtype](0)
+        var cross_im = Scalar[A.dtype](0)
+        var pxx = Scalar[A.dtype](0)
+        var pyy = Scalar[A.dtype](0)
         for f in range(frames):
             var a = xr[Coord(f, k)]
             var b = xi[Coord(f, k)]
@@ -771,8 +832,8 @@ def coherence[
         var denominator = pxx * pyy
         # A bin with no power in either signal has no coherence to report;
         # SciPy leaves a NaN there, and zero is the reading that composes.
-        var value = Scalar[dtype](0)
-        if denominator > Scalar[dtype](0):
+        var value = Scalar[A.dtype](0)
+        if denominator > Scalar[A.dtype](0):
             value = numerator / denominator
         cs.store[1](Coord(k), value)
 
@@ -783,7 +844,9 @@ def coherence[
     _ = xf^
     _ = yf^
 
-    return Periodogram[dtype, keep](_frequencies[dtype, nperseg](ctx, fs), out^)
+    return Periodogram[A.dtype, keep](
+        _frequencies[dtype=A.dtype, nperseg=nperseg](ctx, fs), out^
+    )
 
 
 def istft[
@@ -828,7 +891,7 @@ def istft[
     **Tier 2.**
 
     **`nperseg` and `noverlap` are explicit parameters**, so a round trip
-    reads `istft[nperseg=8, noverlap=4](stft[dtype, n, 8](x))`. They are
+    reads `istft[nperseg=8, noverlap=4](stft[nperseg=8](x))`. They are
     not defaulted from `keep`, and that is forced rather than chosen: the
     `keep` a caller receives is `stft`'s *unevaluated* `nperseg // 2 + 1`,
     and the `where` prover cannot fold `//` any more than it can fold `%`,
@@ -857,7 +920,7 @@ def istft[
     comptime out_n = padded - 2 * trim
 
     var ctx = spectra.frequencies.context()
-    var win = get_window[dtype, nperseg](window, ctx=ctx)
+    var win = get_window[dtype=dtype, n=nperseg](window, ctx=ctx)
     var sums = _window_sums(win)
     var taps = win.to_host()
 
@@ -879,7 +942,7 @@ def istft[
             Static[dtype, keep](ctx, col_re^),
             Static[dtype, keep](ctx, col_im^),
         )
-        var frame = irfft[dtype, keep, gpu, nperseg](column^).to_host()
+        var frame = irfft[gpu=gpu, n=nperseg](column^).to_host()
 
         var base = f * step
         for j in range(nperseg):
@@ -898,9 +961,12 @@ def istft[
 
 
 def hilbert[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut x: Static[dtype, n]) raises -> Spectrum[dtype, n] where (
-    dtype.is_floating_point() and n > 0
+    T: TensorLike,
+    gpu: Bool = False,
+](x: T) raises -> Spectrum[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The analytic signal of `x`: real part `x`, imaginary part its
     Hilbert transform. `scipy.signal.hilbert(x)`, as a real/imaginary pair.
@@ -911,10 +977,11 @@ def hilbert[
     pair's magnitude and the instantaneous phase its angle, which is what
     the analytic signal is for.
     """
+    comptime n = dim[T, 0]
     var ctx = x.context()
-    var spectrum = fft[dtype, n, gpu](
-        Spectrum[dtype, n](
-            Static[dtype, n](ctx, x.to_host()), zeros[dtype, n](ctx)
+    var spectrum = fft[gpu=gpu](
+        Spectrum[T.dtype, n](
+            Static[T.dtype, n](ctx, x.to_host()), zeros[T.dtype, n](ctx)
         )
     )
     # The two halves of a `Spectrum` share the tuple's origin, so their
@@ -927,11 +994,11 @@ def hilbert[
     @always_inline
     def weight[w: Int, alignment: Int = 1](coord: Coord) {var re, var im}:
         var k = coord_to_index_list(coord)[0]
-        var h = Scalar[dtype](0)
+        var h = Scalar[T.dtype](0)
         if k == 0 or (n % 2 == 0 and k == n // 2):
-            h = Scalar[dtype](1)
+            h = Scalar[T.dtype](1)
         elif k < (n + 1) // 2:
-            h = Scalar[dtype](2)
+            h = Scalar[T.dtype](2)
         re.store[1](Coord(k), re[Coord(k)] * h)
         im.store[1](Coord(k), im[Coord(k)] * h)
 
@@ -939,4 +1006,4 @@ def hilbert[
         weight, Coord(n), ctx
     )
     ctx.synchronize()
-    return ifft[dtype, n, gpu](spectrum^)
+    return ifft[gpu=gpu](spectrum^)

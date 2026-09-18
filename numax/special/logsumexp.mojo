@@ -37,6 +37,7 @@ from layout.tile_tensor import DefaultEngine
 from max.gpu.host import DeviceContext
 from std.utils import IndexList
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 from ..core.numeric import FloatLike, max_of
 
@@ -58,9 +59,13 @@ def logsumexp[T: FloatLike, n: Int](xs: Array[T, n]) -> T where n > 0:
 
 
 def logsumexp[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut xs: Static[dtype, n]) raises -> Scalar[dtype] where (
-    dtype.is_floating_point() and n > 0
+    T: TensorLike,
+    gpu: Bool = False,
+](xs: T) raises -> Scalar[T.dtype] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
 ):
     """`log(sum(exp(xs)))` over every element of a `Tensor`, stably, on
     its own device. `scipy.special.logsumexp(a)`.
@@ -70,19 +75,20 @@ def logsumexp[
     read once, no `exp(x)` is ever materialized, and only the scalar
     returns. Tier 2; the `Array` overload is the tier-1 sibling.
     """
+    comptime n = dim[T, 0]
     comptime target = "gpu" if gpu else "cpu"
     comptime simd_width = rowwise.pick_simd_width[
-        OnlineLogSumExp[dtype, 1], target, 64, dtype
+        OnlineLogSumExp[T.dtype, 1], target, 64, T.dtype
     ]()
     var ctx = xs.context()
-    var out = Static[dtype, 1](ctx)
+    var out = Static[T.dtype, 1](ctx)
     var src = xs.view()
     var dst = out.view()
 
     @always_inline
     def identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: RowCoord[1]) -> SIMD[dtype, w]:
+    ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) -> SIMD[T.dtype, w]:
         return tile
 
     @always_inline
@@ -92,13 +98,13 @@ def logsumexp[
         @always_inline
         def load[
             width: Int, alignment: Int
-        ](idx: RowCoord[1]) {var src} -> SIMD[dtype, width]:
+        ](idx: RowCoord[1]) {var src} -> SIMD[T.dtype, width]:
             return src.load[width](idx.coord)
 
-        var row = rowwise.Row[params, dtype, dtype, 0, 1, is_cached=False](
+        var row = rowwise.Row[params, T.dtype, T.dtype, 0, 1, is_cached=False](
             row_coords, n, c, load
         )
-        var state = row.reduce[OnlineLogSumExp[dtype, params.simd_width]](
+        var state = row.reduce[OnlineLogSumExp[T.dtype, params.simd_width]](
             identity, load
         )
         var value = state.m[0] + _log(state.l[0])

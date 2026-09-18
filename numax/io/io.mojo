@@ -36,6 +36,7 @@ from std.sys.info import size_of
 from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, Tensor, _context
 
 
@@ -67,19 +68,18 @@ struct nmx:
     """
 
     @staticmethod
-    def save[
-        dtype: DType, LayoutType: TensorLayout
-    ](a: Tensor[dtype, LayoutType], path: String) raises:
+    def save[T: TensorLike](a: T, path: String) raises:
         """Write `a` to `path` in `numax`'s own binary tensor format.
 
         See this module's own docstring for the format and for why this isn't
         NumPy's `.npy`.
         """
+        comptime LayoutType = T.LayoutType
         comptime rank = LayoutType.rank
         var header = List[UInt8]()
         for c in _MAGIC.as_bytes():
             header.append(c)
-        var dtype_name = String(dtype).as_bytes()
+        var dtype_name = String(T.dtype).as_bytes()
         header.append(UInt8(len(dtype_name)))
         for c in dtype_name:
             header.append(c)
@@ -90,7 +90,7 @@ struct nmx:
         var f = open(path, "w")
         f.write_bytes(Span(header))
 
-        var nbytes = a.size() * size_of[Scalar[dtype]]()
+        var nbytes = a.size() * size_of[Scalar[T.dtype]]()
         var values = a.to_host()
         var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
         var payload = Span[UInt8, origin_of(values)](

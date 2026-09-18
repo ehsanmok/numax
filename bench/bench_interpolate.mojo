@@ -101,7 +101,7 @@ def bench_interp[
     var x = _queries[m](ctx)
 
     def work() raises {mut x, mut xp, mut fp}:
-        var y = interp[dtype, m, n](x, xp, fp)
+        var y = interp(x, xp, fp)
         keep(y.buffer.unsafe_ptr())
 
     var ns = (
@@ -110,7 +110,7 @@ def bench_interp[
         ).mean()
         * 1e9
     )
-    var y = interp[dtype, m, n](x, xp, fp)
+    var y = interp(x, xp, fp)
     _row("interp", n, m, ns, _worst[m, _square](y, x))
 
 

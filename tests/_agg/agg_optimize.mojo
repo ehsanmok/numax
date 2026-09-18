@@ -321,6 +321,9 @@ from test_tensor_minimize import (
 from test_tensor_minimize import (
     test_an_unknown_method_raises as test_tensor_minimize__test_an_unknown_method_raises,
 )
+from test_tensor_minimize import (
+    test_minimize_starts_from_a_view as test_tensor_minimize__test_minimize_starts_from_a_view,
+)
 from test_tensor_optimize import (
     test_lbfgs_reaches_the_rosenbrock_minimum as test_tensor_optimize__test_lbfgs_reaches_the_rosenbrock_minimum,
 )
@@ -550,6 +553,7 @@ def main() raises:
         test_tensor_minimize__test_a_tight_iteration_cap_reports_failure
     ]()
     suite.test[test_tensor_minimize__test_an_unknown_method_raises]()
+    suite.test[test_tensor_minimize__test_minimize_starts_from_a_view]()
     # tests/optimize/test_tensor_optimize.mojo
     suite.test[
         test_tensor_optimize__test_lbfgs_reaches_the_rosenbrock_minimum

@@ -29,7 +29,8 @@ polynomial fitting or evaluation of its own.
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
-from ..core.array import Static
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.array import _canonical, Static
 from ..linalg.qr import lstsq
 
 
@@ -67,11 +68,18 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
 
     @staticmethod
     def fit[
-        m: Int, gpu: Bool = False
-    ](
-        mut x: Static[Self.dtype, m], mut y: Static[Self.dtype, m]
-    ) raises -> Self where (
-        Self.dtype.is_floating_point() and Self.n >= 1 and m >= Self.n
+        A: TensorLike,
+        B: TensorLike,
+        gpu: Bool = False,
+    ](x: A, y: B) raises -> Self where (
+        (Self.dtype.is_floating_point() and Self.n >= 1 and dim[A, 0] >= Self.n)
+        and A.dtype == Self.dtype
+        and A.LayoutType.rank == 1
+        and A.LayoutType.all_dims_known
+        and B.dtype == Self.dtype
+        and B.LayoutType.rank == 1
+        and B.LayoutType.all_dims_known
+        and dim[B, 0] == dim[A, 0]
     ):
         """The least-squares Chebyshev fit of degree `n - 1` to the samples
         `(x, y)`. `Chebyshev.fit(x, y, deg=n-1)`, with NumPy's default
@@ -83,7 +91,8 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
         the normal equations'. `m >= n` samples, as any least-squares fit
         needs; `m == n` interpolates.
         """
-        var xs = x.to_host()
+        comptime m = dim[A, 0]
+        var xs = x.to_host[Self.dtype]()
         var lo = Float64(xs[0])
         var hi = Float64(xs[0])
         for i in range(1, m):
@@ -114,10 +123,14 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
         )
 
     def __call__[
-        m: Int, gpu: Bool = False
-    ](mut self, mut points: Static[Self.dtype, m]) raises -> Static[
-        Self.dtype, m
-    ] where (Self.dtype.is_floating_point() and Self.n >= 1 and m > 0):
+        T: TensorLike,
+        gpu: Bool = False,
+    ](mut self, points: T) raises -> Static[Self.dtype, dim[T, 0]] where (
+        (Self.dtype.is_floating_point() and Self.n >= 1 and dim[T, 0] > 0)
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
+    ):
         """The series at every point, by Clenshaw's recurrence.
 
         Each lane maps its point onto `[-1, 1]` and folds the recurrence
@@ -125,16 +138,22 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
         the numerically stable way to evaluate this basis, and `O(n)` per
         point.
         """
-        return _clenshaw[Self.dtype, Self.n, m, gpu](
-            self.coefficients, points, self.a, self.b
-        )
+        comptime m = dim[T, 0]
+        return _clenshaw[gpu=gpu](self.coefficients, points, self.a, self.b)
 
 
 def chebval[
-    dtype: DType, n: Int, m: Int, gpu: Bool = False
-](mut x: Static[dtype, m], mut c: Static[dtype, n]) raises -> Static[
-    dtype, m
-] where (dtype.is_floating_point() and n >= 1 and m > 0):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](x: A, c: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    (A.dtype.is_floating_point() and dim[B, 0] >= 1 and dim[A, 0] > 0)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The Chebyshev series with coefficients `c` at every point of `x`,
     on the natural domain `[-1, 1]`. `numpy.polynomial.chebyshev.chebval(x,
     c)`, argument order included.
@@ -143,25 +162,37 @@ def chebval[
     `a = -1`, `b = 1`, and a point outside `[-1, 1]` evaluates the
     polynomial there rather than being rejected -- NumPy's behaviour too.
     """
-    return _clenshaw[dtype, n, m, gpu](
-        c, x, Scalar[dtype](-1), Scalar[dtype](1)
+    comptime m = dim[A, 0]
+    comptime n = dim[B, 0]
+    return _clenshaw[gpu=gpu](
+        _canonical[n, dtype=A.dtype](c),
+        x,
+        Scalar[A.dtype](-1),
+        Scalar[A.dtype](1),
     )
 
 
 def _clenshaw[
-    dtype: DType, n: Int, m: Int, gpu: Bool
-](
-    mut c: Static[dtype, n],
-    mut x: Static[dtype, m],
-    a: Scalar[dtype],
-    b: Scalar[dtype],
-) raises -> Static[dtype, m]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool,
+](c: A, x: B, a: Scalar[A.dtype], b: Scalar[A.dtype]) raises -> Static[
+    A.dtype, dim[B, 0]
+] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """One launch: `sum_k c[k] T_k(u)` at `u = (2x - a - b) / (b - a)`,
     Clenshaw from the top coefficient down."""
+    comptime n = dim[A, 0]
+    comptime m = dim[B, 0]
     var ctx = x.context()
-    var out = Static[dtype, m]._uninitialized(ctx)
+    var out = Static[A.dtype, m]._uninitialized(ctx)
     var cs = c.view()
-    var xs = x.view()
+    var xs = x.view_as[A.dtype]()
     var ys = out.view()
     var lo = a
     var hi = b
@@ -173,8 +204,8 @@ def _clenshaw[
         var q = coord_to_index_list(coord)[0]
         var u = (2 * xs[Coord(q)] - lo - hi) / (hi - lo)
         var two_u = 2 * u
-        var d = Scalar[dtype](0)
-        var dd = Scalar[dtype](0)
+        var d = Scalar[A.dtype](0)
+        var dd = Scalar[A.dtype](0)
         for step in range(1, n):
             var k = n - step
             var saved = d

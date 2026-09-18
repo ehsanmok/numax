@@ -52,6 +52,7 @@ from ..core.numeric import FloatLike
 from ..core.plain import Plain
 from .array.ode import dopri5_step
 from .ode import dopri5_step as _tensor_dopri5_step
+from ..core.tensorlike import TensorLike, dim
 from ..core.array import Static, copy
 from max.gpu.host import DeviceContext
 from .array.quadrature import (
@@ -416,20 +417,23 @@ struct TensorIVPResult[dtype: DType, n: Int](
 
 
 def solve_ivp[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     f: def(
-        Scalar[dtype], Static[dtype, n], DeviceContext
-    ) raises thin -> Static[dtype, n],
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
     gpu: Bool = False,
 ](
     t0: Float64,
-    mut y0: Static[dtype, n],
+    y0: T,
     t1: Float64,
     rtol: Float64 = 1e-8,
     atol: Float64 = 1e-10,
     max_steps: Int = 10000,
-) raises -> TensorIVPResult[dtype, n] where dtype.is_floating_point():
+) raises -> TensorIVPResult[T.dtype, dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """Integrate the system from `t0` to `t1` with adaptive step control.
     The `Tensor` form of `solve_ivp`, and the same controller: Dormand-Prince
     5(4) steps, accepted when the error ratio is at most one, the next step
@@ -442,13 +446,17 @@ def solve_ivp[
     Reading those two vectors back each step is the one host round trip in
     the loop, and the decision it feeds is what makes this tier 2.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     if t0 == t1:
-        return TensorIVPResult[dtype, n](t0, copy(y0), 0, 0, True)
+        return TensorIVPResult[dtype, n](
+            t0, Static[dtype, n](y0.context(), y0.to_host()), 0, 0, True
+        )
 
     var direction = 1.0 if t1 > t0 else -1.0
     var span = abs(t1 - t0)
     var t = t0
-    var y = copy(y0)
+    var y = Static[dtype, n](y0.context(), y0.to_host())
     var h = direction * span / 100.0
     var accepted = 0
     var rejected = 0
@@ -459,7 +467,7 @@ def solve_ivp[
         if abs(h) > abs(t1 - t):
             h = t1 - t
 
-        var stepped = _tensor_dopri5_step[dtype, n, f, gpu](t, y, h)
+        var stepped = _tensor_dopri5_step[f=f, gpu=gpu](t, y, h)
         var ratio = _max_abs_ratio(y, stepped.y, stepped.y_hat, rtol, atol)
 
         if ratio <= 1.0:

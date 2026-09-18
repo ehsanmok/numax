@@ -263,11 +263,11 @@ def _trig[
 
     var big_re = Static[dtype, m]._uninitialized(ctx)
     var big_im = Static[dtype, m]._uninitialized(ctx)
-    _dft[dtype, 1, m, gpu, False](
-        _as_matrix[dtype, 1, m](u_re),
-        _as_matrix[dtype, 1, m](u_im),
-        _as_matrix[dtype, 1, m](big_re),
-        _as_matrix[dtype, 1, m](big_im),
+    _dft[dtype=dtype, batch=1, n=m, gpu=gpu, inverse=False](
+        _as_matrix[rows=1, cols=m](u_re),
+        _as_matrix[rows=1, cols=m](u_im),
+        _as_matrix[rows=1, cols=m](big_re),
+        _as_matrix[rows=1, cols=m](big_im),
         ctx,
     )
 
@@ -337,7 +337,7 @@ def dct[
     One complex DFT plus two `elementwise` passes; the module docstring has
     the reduction and the tables.
     """
-    return _trig[dtype, n, gpu, True, type, norm, False](x^)
+    return _trig[gpu=gpu, cosine=True, type=type, norm=norm, inverse=False](x^)
 
 
 def idct[
@@ -361,7 +361,7 @@ def idct[
     under `"ortho"` nothing further is needed -- so `idct(dct(x))` is `x`
     to rounding for every type and every `norm`.
     """
-    return _trig[dtype, n, gpu, True, type, norm, True](x^)
+    return _trig[gpu=gpu, cosine=True, type=type, norm=norm, inverse=True](x^)
 
 
 def dst[
@@ -385,7 +385,7 @@ def dst[
     `norm` as for `dct`. Type I is the one whose DFT is `2(N+1)` long;
     every other type's is `2N`.
     """
-    return _trig[dtype, n, gpu, False, type, norm, False](x^)
+    return _trig[gpu=gpu, cosine=False, type=type, norm=norm, inverse=False](x^)
 
 
 def idst[
@@ -400,4 +400,4 @@ def idst[
     """The inverse of `dst` of the same `type` and `norm`. `scipy.fft.idst`.
     The same type pairing and scale placement as `idct`, with `1/(2(N+1))`
     for type I."""
-    return _trig[dtype, n, gpu, False, type, norm, True](x^)
+    return _trig[gpu=gpu, cosine=False, type=type, norm=norm, inverse=True](x^)

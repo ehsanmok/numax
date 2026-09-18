@@ -182,7 +182,7 @@ def test_rfft_is_the_half_spectrum_of_fft() raises:
 def test_fftfreq_matches_numpy() raises:
     """`numpy.fft.fftfreq(8)` -- the second half is negative, which is the
     convention `fftshift` exists to reorder."""
-    var got = fftfreq[dtype, 8]().to_host()
+    var got = fftfreq[dtype=dtype, n=8]().to_host()
     var want: List[Float64] = [
         0.0,
         0.125,
@@ -200,8 +200,8 @@ def test_fftfreq_matches_numpy() raises:
 def test_fftfreq_scales_by_the_sample_spacing() raises:
     """The grid is `k / (n * spacing)`, so halving the spacing doubles every
     frequency."""
-    var unit = fftfreq[dtype, 8]().to_host()
-    var dense = fftfreq[dtype, 8](0.5).to_host()
+    var unit = fftfreq[dtype=dtype, n=8]().to_host()
+    var dense = fftfreq[dtype=dtype, n=8](0.5).to_host()
     for i in range(8):
         assert_almost_equal(
             Float64(dense[i]), 2.0 * Float64(unit[i]), atol=1e-15
@@ -211,7 +211,7 @@ def test_fftfreq_scales_by_the_sample_spacing() raises:
 def test_rfftfreq_is_non_negative() raises:
     """`numpy.fft.rfftfreq(8)` -- `n/2 + 1 == 5` bins, none of them
     negative, which is the grid `rfft`'s half spectrum sits on."""
-    var got = rfftfreq[dtype, 8]().to_host()
+    var got = rfftfreq[dtype=dtype, n=8]().to_host()
     assert_equal(len(got), 5)
     for i in range(5):
         assert_almost_equal(Float64(got[i]), Float64(i) / 8.0, atol=1e-15)
@@ -280,13 +280,13 @@ def test_irfft_of_a_dc_spike_is_constant() raises:
 def test_fftshift_centres_fftfreq() raises:
     """`fftshift(fftfreq(8))` is the monotone grid `-0.5 .. 0.375`, the
     canonical use, and `ifftshift` puts it back."""
-    var centred = fftshift(fftfreq[dtype, 8]()).to_host()
+    var centred = fftshift(fftfreq[dtype=dtype, n=8]()).to_host()
     var expected = [-0.5, -0.375, -0.25, -0.125, 0.0, 0.125, 0.25, 0.375]
     for i in range(8):
         assert_almost_equal(Float64(centred[i]), expected[i], atol=1e-15)
 
-    var restored = ifftshift(fftshift(fftfreq[dtype, 8]())).to_host()
-    var grid = fftfreq[dtype, 8]().to_host()
+    var restored = ifftshift(fftshift(fftfreq[dtype=dtype, n=8]())).to_host()
+    var grid = fftfreq[dtype=dtype, n=8]().to_host()
     for i in range(8):
         assert_almost_equal(Float64(restored[i]), Float64(grid[i]), atol=1e-15)
 
@@ -729,11 +729,11 @@ def test_bluestein_agrees_with_radix2_at_a_power_of_two() raises:
     var src_im = _from[16](im_values)
     var out_re = zeros[dtype, 16](ctx)
     var out_im = zeros[dtype, 16](ctx)
-    _bluestein[dtype, 1, 16, False, False](
-        _as_matrix[dtype, 1, 16](src_re),
-        _as_matrix[dtype, 1, 16](src_im),
-        _as_matrix[dtype, 1, 16](out_re),
-        _as_matrix[dtype, 1, 16](out_im),
+    _bluestein[dtype=dtype, batch=1, n=16, gpu=False, inverse=False](
+        _as_matrix[rows=1, cols=16](src_re),
+        _as_matrix[rows=1, cols=16](src_im),
+        _as_matrix[rows=1, cols=16](out_re),
+        _as_matrix[rows=1, cols=16](out_im),
         ctx,
     )
     var bre = out_re.to_host()
@@ -857,11 +857,11 @@ def _check_lanes[batch: Int, n: Int]() raises where batch > 0 and n > 0:
     var src_im = zeros[dtype, batch, n](ctx)
     var out_re = Static[dtype, batch, n]._uninitialized(ctx)
     var out_im = Static[dtype, batch, n]._uninitialized(ctx)
-    _dft[dtype, batch, n, False, False](
-        _as_matrix[dtype, batch, n](src_re),
-        _as_matrix[dtype, batch, n](src_im),
-        _as_matrix[dtype, batch, n](out_re),
-        _as_matrix[dtype, batch, n](out_im),
+    _dft[dtype=dtype, batch=batch, n=n, gpu=False, inverse=False](
+        _as_matrix[rows=batch, cols=n](src_re),
+        _as_matrix[rows=batch, cols=n](src_im),
+        _as_matrix[rows=batch, cols=n](out_re),
+        _as_matrix[rows=batch, cols=n](out_im),
         ctx,
     )
     var got_re = out_re.to_host()
@@ -919,7 +919,7 @@ def _check_real_round_trip[n: Int]() raises where n > 0:
         assert_almost_equal(Float64(hre[k]), Float64(fre[k]), atol=1e-10)
         assert_almost_equal(Float64(him[k]), Float64(fim[k]), atol=1e-10)
 
-    var back = irfft[dtype, n // 2 + 1, False, n](rfft(_from[n](values)))
+    var back = irfft[gpu=False, n=n](rfft(_from[n](values)))
     var got = back.to_host()
     for i in range(n):
         assert_almost_equal(Float64(got[i]), values[i], atol=1e-10)

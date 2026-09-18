@@ -72,6 +72,7 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 
 comptime _PI = 3.141592653589793
@@ -799,7 +800,7 @@ def butter[
     `wn` must lie in `(0, 1)`.
     """
     _check_edge("butter", btype, wn)
-    return _to_transfer_function[dtype, order](
+    return _to_transfer_function[dtype=dtype, order=order](
         _design(_buttap(order), wn, 0.0, btype), ctx
     )
 
@@ -822,7 +823,7 @@ def butter[
     overload rather than a `btype` on the one above.
     """
     _check_band("butter", btype, wn)
-    return _to_transfer_function[dtype, 2 * order](
+    return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_buttap(order), wn[0], wn[1], btype), ctx
     )
 
@@ -846,7 +847,7 @@ def cheby1[
     positive; `"lowpass"` or `"highpass"` here, a pair for the band forms.
     """
     _check_edge("cheby1", btype, wn)
-    return _to_transfer_function[dtype, order](
+    return _to_transfer_function[dtype=dtype, order=order](
         _design(_cheb1ap(order, rp), wn, 0.0, btype), ctx
     )
 
@@ -864,7 +865,7 @@ def cheby1[
     """A digital Chebyshev type I bandpass or bandstop filter at order
     `2 * order`. `scipy.signal.cheby1(order, rp, (low, high), btype)`."""
     _check_band("cheby1", btype, wn)
-    return _to_transfer_function[dtype, 2 * order](
+    return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_cheb1ap(order, rp), wn[0], wn[1], btype), ctx
     )
 
@@ -888,7 +889,7 @@ def cheby2[
     `(1 + z)^order`; an odd order has one fewer zero than pole.
     """
     _check_edge("cheby2", btype, wn)
-    return _to_transfer_function[dtype, order](
+    return _to_transfer_function[dtype=dtype, order=order](
         _design(_cheb2ap(order, rs), wn, 0.0, btype), ctx
     )
 
@@ -906,7 +907,7 @@ def cheby2[
     """A digital Chebyshev type II bandpass or bandstop filter at order
     `2 * order`. `scipy.signal.cheby2(order, rs, (low, high), btype)`."""
     _check_band("cheby2", btype, wn)
-    return _to_transfer_function[dtype, 2 * order](
+    return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_cheb2ap(order, rs), wn[0], wn[1], btype), ctx
     )
 
@@ -931,7 +932,7 @@ def ellip[
     Raises when `rp` and `rs` cannot both be met at any order.
     """
     _check_edge("ellip", btype, wn)
-    return _to_transfer_function[dtype, order](
+    return _to_transfer_function[dtype=dtype, order=order](
         _design(_ellipap(order, rp, rs), wn, 0.0, btype), ctx
     )
 
@@ -950,7 +951,7 @@ def ellip[
     """A digital elliptic bandpass or bandstop filter at order
     `2 * order`. `scipy.signal.ellip(order, rp, rs, (low, high), btype)`."""
     _check_band("ellip", btype, wn)
-    return _to_transfer_function[dtype, 2 * order](
+    return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_ellipap(order, rp, rs), wn[0], wn[1], btype), ctx
     )
 
@@ -981,7 +982,7 @@ def iirfilter[
     than a failure.
     """
     _check_edge("iirfilter", btype, wn)
-    return _to_transfer_function[dtype, order](
+    return _to_transfer_function[dtype=dtype, order=order](
         _design(_prototype(ftype, order, rp, rs), wn, 0.0, btype), ctx
     )
 
@@ -1002,17 +1003,28 @@ def iirfilter[
     `2 * order`. `scipy.signal.iirfilter(order, (low, high), rp, rs,
     btype, ftype=...)`."""
     _check_band("iirfilter", btype, wn)
-    return _to_transfer_function[dtype, 2 * order](
+    return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_prototype(ftype, order, rp, rs), wn[0], wn[1], btype), ctx
     )
 
 
 def freqz[
-    dtype: DType, nb: Int, na: Int, worN: Int = 512, gpu: Bool = False
-](
-    mut b: Static[dtype, nb], mut a: Static[dtype, na]
-) raises -> FrequencyResponse[dtype, worN] where (
-    dtype.is_floating_point() and nb > 0 and na > 0 and worN > 0
+    A: TensorLike,
+    B: TensorLike,
+    worN: Int = 512,
+    gpu: Bool = False,
+](b: A, a: B) raises -> FrequencyResponse[A.dtype, worN] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and worN > 0
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
 ):
     """The frequency response `H(e^{jw}) = B(e^{jw}) / A(e^{jw})` of the
     filter `(b, a)` at `worN` frequencies evenly spaced over `[0, pi)`.
@@ -1022,16 +1034,18 @@ def freqz[
     `e^{-jw}`, then one complex division. `worN` is a parameter because it
     shapes the result; SciPy's default of 512 is kept.
     """
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
     var ctx = b.context()
-    var w = List[Scalar[dtype]](capacity=worN)
+    var w = List[Scalar[A.dtype]](capacity=worN)
     for k in range(worN):
-        w.append(Scalar[dtype](_PI * Float64(k) / Float64(worN)))
-    var grid = Static[dtype, worN](ctx, w^)
-    var real = Static[dtype, worN]._uninitialized(ctx)
-    var imag = Static[dtype, worN]._uninitialized(ctx)
+        w.append(Scalar[A.dtype](_PI * Float64(k) / Float64(worN)))
+    var grid = Static[A.dtype, worN](ctx, w^)
+    var real = Static[A.dtype, worN]._uninitialized(ctx)
+    var imag = Static[A.dtype, worN]._uninitialized(ctx)
     var ws = grid.view()
     var bs = b.view()
-    var az = a.view()
+    var az = a.view_as[A.dtype]()
     var rs = real.view()
     var ims = imag.view()
 
@@ -1045,14 +1059,14 @@ def freqz[
         var er = _cos(angle)
         var ei = -_sin(angle)
         var nr = bs[Coord(nb - 1)]
-        var ni = Scalar[dtype](0)
+        var ni = Scalar[A.dtype](0)
         for step in range(1, nb):
             var tr = nr * er - ni * ei
             var ti = nr * ei + ni * er
             nr = tr + bs[Coord(nb - 1 - step)]
             ni = ti
         var dr = az[Coord(na - 1)]
-        var di = Scalar[dtype](0)
+        var di = Scalar[A.dtype](0)
         for step in range(1, na):
             var tr = dr * er - di * ei
             var ti = dr * ei + di * er
@@ -1066,7 +1080,7 @@ def freqz[
         lane, Coord(worN), ctx
     )
     ctx.synchronize()
-    return FrequencyResponse[dtype, worN](grid^, real^, imag^)
+    return FrequencyResponse[A.dtype, worN](grid^, real^, imag^)
 
 
 def zpk2tf[
@@ -1105,7 +1119,7 @@ def zpk2tf[
     """
     var b = _expand_roots(zeros_re, zeros_im, np, gain)
     var a = _expand_roots(poles_re, poles_im, np, 1.0)
-    return _to_transfer_function[dtype, np]((b^, a^), ctx)
+    return _to_transfer_function[dtype=dtype, order=np]((b^, a^), ctx)
 
 
 def _expand_roots(

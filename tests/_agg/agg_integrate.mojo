@@ -261,6 +261,9 @@ from test_tensor_quadrature import (
 from test_tensor_quadrature import (
     test_a_mismatched_x_raises as test_tensor_quadrature__test_a_mismatched_x_raises,
 )
+from test_tensor_quadrature import (
+    test_trapezoid_accepts_a_view as test_tensor_quadrature__test_trapezoid_accepts_a_view,
+)
 
 
 def main() raises:
@@ -434,4 +437,5 @@ def main() raises:
         test_tensor_quadrature__test_cumulative_trapezoid_at_non_uniform_points_matches_scipy
     ]()
     suite.test[test_tensor_quadrature__test_a_mismatched_x_raises]()
+    suite.test[test_tensor_quadrature__test_trapezoid_accepts_a_view]()
     suite^.run()

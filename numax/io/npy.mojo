@@ -49,6 +49,7 @@ from std.sys.info import size_of
 from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout, row_major
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Dynamic, Static, Tensor, _context, _dyn_shape_from
 
 
@@ -113,15 +114,14 @@ def _descr[dtype: DType]() -> String:
         return ""
 
 
-def _shape_literal[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) -> String:
+def _shape_literal[T: TensorLike](a: T) -> String:
     """`a`'s shape as Python's tuple literal: `(3,)` at rank 1, `(2, 3)`
     above.
 
     The rank-1 trailing comma is not cosmetic: `(3)` is an `int` in Python,
     not a tuple, and `numpy.load` evaluates this text.
     """
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var out = String("(")
 
@@ -201,7 +201,7 @@ def _read_npy[
         )
     )
 
-    comptime expected_descr = _descr[dtype]()
+    comptime expected_descr = _descr[dtype=dtype]()
     if expected_descr == "":
         raise Error(
             String(
@@ -270,28 +270,26 @@ struct numpy:
     """
 
     @staticmethod
-    def save[
-        dtype: DType, LayoutType: TensorLayout
-    ](a: Tensor[dtype, LayoutType], path: String) raises:
+    def save[T: TensorLike](a: T, path: String) raises:
         """Write `a` to `path` as a NumPy `.npy` file (format version 1.0).
 
         The bytes are what `numpy.save` would have written for the same array,
-        so `numpy.load(path)` returns it with the right dtype and shape and no
+        so `numpy.load(path)` returns it with the right T.dtype and shape and no
         conversion in between. The payload comes out through
         `Tensor.to_host()`, so the file is the same whichever device the tensor
         lives on.
 
-        Raises if `dtype` has no NumPy equivalent (`bfloat16`, the float8
+        Raises if `T.dtype` has no NumPy equivalent (`bfloat16`, the float8
         formats).
         """
-        comptime descr = _descr[dtype]()
+        comptime descr = _descr[T.dtype]()
         var shape = _shape_literal(a)
         if descr == "":
             raise Error(
                 String(
                     "numax.io.numpy.save: ",
-                    dtype,
-                    " has no NumPy dtype, so it has no .npy representation",
+                    T.dtype,
+                    " has no NumPy T.dtype, so it has no .npy representation",
                 )
             )
 
@@ -327,7 +325,7 @@ struct numpy:
         var f = open(path, "w")
         f.write_bytes(Span(out))
 
-        var nbytes = a.size() * size_of[Scalar[dtype]]()
+        var nbytes = a.size() * size_of[Scalar[T.dtype]]()
         var values = a.to_host()
         var byte_ptr = values.unsafe_ptr().unsafe_bitcast[UInt8]()
         var payload = Span[UInt8, origin_of(values)](
@@ -354,7 +352,7 @@ struct numpy:
         the file does not name one.
         """
         var file_dims = List[Int]()
-        var values = _read_npy[dtype](path, file_dims)
+        var values = _read_npy[dtype=dtype](path, file_dims)
         comptime rank = dims.__len__()
         if len(file_dims) != rank:
             raise Error(
@@ -390,7 +388,7 @@ struct numpy:
         even when its extents are not. A file of a different rank raises.
         """
         var file_dims = List[Int]()
-        var values = _read_npy[dtype](path, file_dims)
+        var values = _read_npy[dtype=dtype](path, file_dims)
         if len(file_dims) != rank:
             raise Error(
                 String(

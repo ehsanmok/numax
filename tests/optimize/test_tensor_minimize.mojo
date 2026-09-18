@@ -26,6 +26,7 @@ from max.gpu.host import DeviceContext
 
 from numax import FloatLike
 from numax.core.array import Static
+from numax.core.tensorlike import View
 from numax.optimize import TensorMinimizeResult, minimize
 from numax.optimize.array import minimize as array_minimize
 
@@ -93,7 +94,7 @@ def _bowl_start(ctx: DeviceContext) raises -> Static[dtype, 3]:
 def test_bfgs_minimizes_rosenbrock() raises:
     var ctx = DeviceContext(api="cpu")
     var start = _rosenbrock_start(ctx)
-    var result = minimize[dtype, 2, _rosenbrock, _rosenbrock_jac](start)
+    var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac](start)
 
     assert_true(result.converged)
     var got = result.x.to_host()
@@ -105,7 +106,7 @@ def test_cg_minimizes_rosenbrock() raises:
     var ctx = DeviceContext(api="cpu")
     var start = _rosenbrock_start(ctx)
     var result = minimize[
-        dtype, 2, _rosenbrock, _rosenbrock_jac, method="cg", gpu=False
+        f=_rosenbrock, jac=_rosenbrock_jac, method="cg", gpu=False
     ](start)
 
     assert_true(result.converged)
@@ -117,7 +118,7 @@ def test_cg_minimizes_rosenbrock() raises:
 def test_bfgs_minimizes_a_quadratic_bowl() raises:
     var ctx = DeviceContext(api="cpu")
     var start = _bowl_start(ctx)
-    var result = minimize[dtype, 3, _bowl, _bowl_jac](start)
+    var result = minimize[f=_bowl, jac=_bowl_jac](start)
 
     assert_true(result.converged)
     var got = result.x.to_host()
@@ -129,7 +130,7 @@ def test_bfgs_minimizes_a_quadratic_bowl() raises:
 def test_cg_minimizes_a_quadratic_bowl() raises:
     var ctx = DeviceContext(api="cpu")
     var start = _bowl_start(ctx)
-    var result = minimize[dtype, 3, _bowl, _bowl_jac, method="cg"](start)
+    var result = minimize[f=_bowl, jac=_bowl_jac, method="cg"](start)
 
     assert_true(result.converged)
     var got = result.x.to_host()
@@ -141,7 +142,7 @@ def test_cg_minimizes_a_quadratic_bowl() raises:
 def test_starting_at_the_minimum_converges_immediately() raises:
     var ctx = DeviceContext(api="cpu")
     var start = Static[dtype, 3](ctx, [1.0, -2.0, 3.0])
-    var result = minimize[dtype, 3, _bowl, _bowl_jac](start)
+    var result = minimize[f=_bowl, jac=_bowl_jac](start)
 
     assert_true(result.converged)
     assert_equal(result.iterations, 0)
@@ -152,7 +153,7 @@ def test_the_two_tiers_agree() raises:
     handed the same derivative as `jac`. Same algorithm, same answer."""
     var ctx = DeviceContext(api="cpu")
     var start = _rosenbrock_start(ctx)
-    var tensor_side = minimize[dtype, 2, _rosenbrock, _rosenbrock_jac](start)
+    var tensor_side = minimize[f=_rosenbrock, jac=_rosenbrock_jac](start)
 
     var array_start = Array[Float64, 2](fill=0)
     array_start[0] = -1.2
@@ -173,7 +174,7 @@ def test_the_context_survives_a_whole_run() raises:
     rather than fail an assertion."""
     var ctx = DeviceContext(api="cpu")
     var start = _bowl_start(ctx)
-    var result = minimize[dtype, 3, _bowl, _bowl_jac](start, max_iter=150)
+    var result = minimize[f=_bowl, jac=_bowl_jac](start, max_iter=150)
 
     assert_true(result.converged)
     # `start` must still be usable: the run borrowed it and consumed
@@ -185,7 +186,7 @@ def test_the_context_survives_a_whole_run() raises:
 def test_grad_norm_is_the_quantity_that_converged() raises:
     var ctx = DeviceContext(api="cpu")
     var start = _bowl_start(ctx)
-    var result = minimize[dtype, 3, _bowl, _bowl_jac](start)
+    var result = minimize[f=_bowl, jac=_bowl_jac](start)
     assert_true(result.converged)
     assert_true(result.grad_norm < 1e-8)
 
@@ -193,9 +194,7 @@ def test_grad_norm_is_the_quantity_that_converged() raises:
 def test_a_tight_iteration_cap_reports_failure() raises:
     var ctx = DeviceContext(api="cpu")
     var start = _rosenbrock_start(ctx)
-    var result = minimize[dtype, 2, _rosenbrock, _rosenbrock_jac](
-        start, max_iter=2
-    )
+    var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac](start, max_iter=2)
     assert_true(not result.converged)
     assert_true(result.iterations <= 2)
 
@@ -205,14 +204,26 @@ def test_an_unknown_method_raises() raises:
     var start = _rosenbrock_start(ctx)
     var raised = False
     try:
-        _ = minimize[
-            dtype, 2, _rosenbrock, _rosenbrock_jac, method="nelder-mead"
-        ](start)
+        _ = minimize[f=_rosenbrock, jac=_rosenbrock_jac, method="nelder-mead"](
+            start
+        )
     except e:
         raised = True
         assert_true("unknown method" in String(e))
         assert_true("Array-tier only" in String(e))
     assert_true(raised)
+
+
+def test_minimize_starts_from_a_view() raises:
+    """`x0` through the `TensorLike` bound: the callbacks still see an
+    owned `Static`, and the answer is the one the tensor start gives."""
+    var start = Static[dtype, 2](DeviceContext(api="cpu"), [-1.2, 1.0])
+    var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac](
+        View(start.view())
+    )
+    var x = result.x.to_host()
+    assert_almost_equal(Float64(x[0]), 1.0, atol=1e-5)
+    assert_almost_equal(Float64(x[1]), 1.0, atol=1e-5)
 
 
 def main() raises:

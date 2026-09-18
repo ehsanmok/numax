@@ -72,9 +72,9 @@ def _vec[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
 
 def test_lbfgs_reaches_the_rosenbrock_minimum() raises:
     var x0 = _vec[2]([-1.2, 1.0])
-    var result = minimize[
-        dtype, 2, _rosenbrock, _rosenbrock_jac, method="l-bfgs"
-    ](x0, max_iter=500)
+    var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac, method="l-bfgs"](
+        x0, max_iter=500
+    )
     assert_true(result.converged)
     var x = result.x.to_host()
     assert_almost_equal(Float64(x[0]), 1.0, atol=1e-6)
@@ -85,12 +85,10 @@ def test_lbfgs_reaches_the_rosenbrock_minimum() raises:
 def test_lbfgs_agrees_with_bfgs_on_a_quadratic() raises:
     var x0 = _vec[3]([0.0, 0.0, 0.0])
     var x1 = _vec[3]([0.0, 0.0, 0.0])
-    var limited = minimize[dtype, 3, _bowl, _bowl_jac, method="l-bfgs"](
+    var limited = minimize[f=_bowl, jac=_bowl_jac, method="l-bfgs"](
         x0, tol=1e-12
     )
-    var full = minimize[dtype, 3, _bowl, _bowl_jac, method="bfgs"](
-        x1, tol=1e-12
-    )
+    var full = minimize[f=_bowl, jac=_bowl_jac, method="bfgs"](x1, tol=1e-12)
     assert_true(limited.converged)
     assert_true(full.converged)
     var a = limited.x.to_host()
@@ -108,9 +106,9 @@ def test_bounded_minimize_stops_on_the_active_bound() raises:
     var lower = _vec[2]([-2.0, -2.0])
     var upper = _vec[2]([0.5, 2.0])
     var x0 = _vec[2]([0.0, 0.0])
-    var result = minimize[
-        dtype, 2, _rosenbrock, _rosenbrock_jac, method="l-bfgs"
-    ](x0, lower, upper, max_iter=500)
+    var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac, method="l-bfgs"](
+        x0, lower, upper, max_iter=500
+    )
     assert_true(result.converged)
     var x = result.x.to_host()
     assert_almost_equal(Float64(x[0]), 0.5, atol=1e-8)
@@ -119,9 +117,9 @@ def test_bounded_minimize_stops_on_the_active_bound() raises:
     var x1 = _vec[2]([0.0, 0.0])
     var lower2 = _vec[2]([-2.0, -2.0])
     var upper2 = _vec[2]([0.5, 2.0])
-    var with_bfgs = minimize[
-        dtype, 2, _rosenbrock, _rosenbrock_jac, method="bfgs"
-    ](x1, lower2, upper2, max_iter=500)
+    var with_bfgs = minimize[f=_rosenbrock, jac=_rosenbrock_jac, method="bfgs"](
+        x1, lower2, upper2, max_iter=500
+    )
     var y = with_bfgs.x.to_host()
     assert_almost_equal(Float64(y[0]), 0.5, atol=1e-8)
     assert_almost_equal(Float64(y[1]), 0.25, atol=1e-6)
@@ -129,7 +127,7 @@ def test_bounded_minimize_stops_on_the_active_bound() raises:
 
 def test_powell_needs_no_gradient_and_finds_the_minimum() raises:
     var x0 = _vec[2]([-1.2, 1.0])
-    var result = minimize[dtype, 2, _rosenbrock, method="powell"](
+    var result = minimize[f=_rosenbrock, method="powell"](
         x0, tol=1e-14, max_iter=500
     )
     var x = result.x.to_host()
@@ -138,7 +136,7 @@ def test_powell_needs_no_gradient_and_finds_the_minimum() raises:
     assert_true(result.converged)
 
     var b0 = _vec[3]([5.0, 5.0, 5.0])
-    var bowl = minimize[dtype, 3, _bowl, method="powell"](b0, tol=1e-14)
+    var bowl = minimize[f=_bowl, method="powell"](b0, tol=1e-14)
     var y = bowl.x.to_host()
     assert_almost_equal(Float64(y[0]), 1.0, atol=1e-7)
     assert_almost_equal(Float64(y[1]), -2.0, atol=1e-7)
@@ -155,7 +153,7 @@ def test_powell_needs_no_gradient_and_finds_the_minimum() raises:
 def test_a_gradient_method_without_jac_raises() raises:
     var x0 = _vec[2]([0.0, 0.0])
     with assert_raises(contains="needs a gradient"):
-        _ = minimize[dtype, 2, _rosenbrock, method="bfgs"](x0)
+        _ = minimize[f=_rosenbrock, method="bfgs"](x0)
 
 
 def _system(p: Static[dtype, 2], ctx: DeviceContext) raises -> Static[dtype, 2]:
@@ -186,14 +184,14 @@ def _system_jac(
 
 def test_root_by_newton_and_lm_both_find_scipys_root() raises:
     var x0 = _vec[2]([-1.0, -1.0])
-    var newton = root[dtype, 2, _system, _system_jac](x0)
+    var newton = root[f=_system, jac=_system_jac](x0)
     assert_true(newton.converged)
     assert_true(newton.residual_norm < 1e-10)
     var x = newton.x.to_host()
     assert_almost_equal(Float64(x[0]), -1.8162640688245402, atol=1e-9)
     assert_almost_equal(Float64(x[1]), 0.837367799891148, atol=1e-9)
     var x1 = _vec[2]([-1.0, -1.0])
-    var lm = root[dtype, 2, _system, _system_jac, method="lm"](x1)
+    var lm = root[f=_system, jac=_system_jac, method="lm"](x1)
     assert_true(lm.residual_norm < 1e-8)
     var y = lm.x.to_host()
     assert_almost_equal(Float64(y[0]), -1.8162640688245402, atol=1e-7)

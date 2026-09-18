@@ -34,6 +34,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.sys.info import simd_width_of
 
+from ..core.tensorlike import TensorLike, dim
 from ..core.array import Static, copy
 
 from .array.ode import (
@@ -107,16 +108,17 @@ def _axpy_into[
 
 
 def rk4_system[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     f: def(
-        Scalar[dtype], Static[dtype, n], DeviceContext
-    ) raises thin -> Static[dtype, n],
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
     num_steps: Int = 100,
     gpu: Bool = False,
-](t0: Float64, mut y0: Static[dtype, n], t1: Float64) raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and num_steps >= 1):
+](t0: Float64, y0: T, t1: Float64) raises -> Static[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and num_steps >= 1)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """Integrate the `n`-component system `dy/dt = f(t, y)` from `t0` to
     `t1` in `num_steps` classical fourth-order Runge-Kutta steps, the
     state a `Tensor`. The `Tensor` form of `numax.integrate.array.rk4_system`.
@@ -124,9 +126,11 @@ def rk4_system[
     `t1 < t0` integrates backwards; the step is `(t1 - t0) / num_steps` and
     nothing here assumes its sign.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var ctx = y0.context()
     var h = (t1 - t0) / Float64(num_steps)
-    var y = copy(y0)
+    var y = Static[dtype, n](ctx, y0.to_host())
 
     for step in range(num_steps):
         var t = t0 + Float64(step) * h
@@ -184,15 +188,18 @@ struct TensorStep[dtype: DType, n: Int](
 
 
 def dopri5_step[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     f: def(
-        Scalar[dtype], Static[dtype, n], DeviceContext
-    ) raises thin -> Static[dtype, n],
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
     gpu: Bool = False,
-](t: Float64, mut y: Static[dtype, n], h: Float64) raises -> TensorStep[
-    dtype, n
-] where dtype.is_floating_point():
+](t: Float64, y_in: T, h: Float64) raises -> TensorStep[
+    T.dtype, dim[T, 0]
+] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """One Dormand-Prince 5(4) step of the system, returning both
     embedded solutions. The `Tensor` form of
     `numax.integrate.array.dopri5_step`, from the same tableau.
@@ -200,7 +207,10 @@ def dopri5_step[
     Public but low-level: `dopri5` drives it at a fixed step and
     `solve_ivp` with adaptive control, so the tableau lives in one place.
     """
-    var ctx = y.context()
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    var ctx = y_in.context()
+    var y = Static[dtype, n](ctx, y_in.to_host())
     var hs = Scalar[dtype](h)
 
     var k1 = f(Scalar[dtype](t), y, ctx)
@@ -256,23 +266,27 @@ def dopri5_step[
 
 
 def dopri5[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     f: def(
-        Scalar[dtype], Static[dtype, n], DeviceContext
-    ) raises thin -> Static[dtype, n],
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
     num_steps: Int = 100,
     gpu: Bool = False,
-](t0: Float64, mut y0: Static[dtype, n], t1: Float64) raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and num_steps >= 1):
+](t0: Float64, y0: T, t1: Float64) raises -> Static[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and num_steps >= 1)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """Integrate the system with fixed-step Dormand-Prince 5(4). The
     `Tensor` form of `numax.integrate.array.dopri5`: fifth order for seven
     stages per step, against `rk4_system`'s fourth for four."""
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var h = (t1 - t0) / Float64(num_steps)
-    var y = copy(y0)
+    var ctx = y0.context()
+    var y = Static[dtype, n](ctx, y0.to_host())
     for step in range(num_steps):
         var t = t0 + Float64(step) * h
-        var stepped = dopri5_step[dtype, n, f, gpu](t, y, h)
+        var stepped = dopri5_step[f=f, gpu=gpu](t, y, h)
         y = copy(stepped.y)
     return y^

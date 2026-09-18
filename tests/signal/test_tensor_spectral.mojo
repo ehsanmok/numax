@@ -310,12 +310,12 @@ def test_find_peaks_matches_scipy() raises:
 def test_butter_matches_scipy() raises:
     """`butter(2, 0.3)` and `butter(4, 0.2, "highpass")`: the `(b, a)` SciPy
     designs, through the same prototype, warp and bilinear transform."""
-    var low = butter[dtype, 2](0.3)
+    var low = butter[dtype=dtype, order=2](0.3)
     _assert_close(
         low.b, [0.13110643991662593, 0.26221287983325187, 0.13110643991662593]
     )
     _assert_close(low.a, [1.0, -0.7477891782585034, 0.27221493792500717])
-    var high = butter[dtype, 4](0.2, "highpass")
+    var high = butter[dtype=dtype, order=4](0.2, "highpass")
     _assert_close(
         high.b,
         [
@@ -340,7 +340,7 @@ def test_butter_matches_scipy() raises:
     # band forms double the order and so live on the pair overload.
     var raised = False
     try:
-        var band = butter[dtype, 2](0.3, "bandpass")
+        var band = butter[dtype=dtype, order=2](0.3, "bandpass")
         _ = band^
     except:
         raised = True
@@ -352,7 +352,7 @@ def test_butter_band_forms_match_scipy() raises:
     `(low, high)` pair is a separate overload returning
     `TransferFunction[dtype, 2 * order]`. Values from
     `scipy.signal.butter(order, (low, high), btype)`."""
-    var bp = butter[dtype, 2]((0.2, 0.5), "bandpass")
+    var bp = butter[dtype=dtype, order=2]((0.2, 0.5), "bandpass")
     _assert_close(
         bp.b,
         [
@@ -376,7 +376,7 @@ def test_butter_band_forms_match_scipy() raises:
         atol=1e-9,
     )
 
-    var bs = butter[dtype, 2]((0.2, 0.5), "bandstop")
+    var bs = butter[dtype=dtype, order=2]((0.2, 0.5), "bandstop")
     _assert_close(
         bs.b,
         [
@@ -400,7 +400,7 @@ def test_butter_band_forms_match_scipy() raises:
         atol=1e-9,
     )
 
-    var wide = butter[dtype, 3]((0.25, 0.6), "bandpass")
+    var wide = butter[dtype=dtype, order=3]((0.25, 0.6), "bandpass")
     _assert_close(
         wide.b,
         [
@@ -432,7 +432,7 @@ def test_butter_band_forms_match_scipy() raises:
     # than a silent lowpass at the first edge.
     var raised = False
     try:
-        var wrong = butter[dtype, 2]((0.2, 0.5), "lowpass")
+        var wrong = butter[dtype=dtype, order=2]((0.2, 0.5), "lowpass")
         _ = wrong^
     except:
         raised = True
@@ -443,7 +443,7 @@ def test_cheby1_matches_scipy() raises:
     """`cheby1(order, rp, wn, btype)`: Butterworth's circle squashed onto
     an ellipse, `rp` dB of equiripple in the passband and no finite
     zeros."""
-    var low = cheby1[dtype, 3](1.0, 0.3)
+    var low = cheby1[dtype=dtype, order=3](1.0, 0.3)
     _assert_close(
         low.b,
         [
@@ -460,7 +460,7 @@ def test_cheby1_matches_scipy() raises:
         atol=1e-9,
     )
 
-    var high = cheby1[dtype, 4](0.5, 0.25, "highpass")
+    var high = cheby1[dtype=dtype, order=4](0.5, 0.25, "highpass")
     _assert_close(
         high.b,
         [
@@ -484,7 +484,7 @@ def test_cheby1_matches_scipy() raises:
         atol=1e-9,
     )
 
-    var band = cheby1[dtype, 2](1.0, (0.2, 0.5), "bandpass")
+    var band = cheby1[dtype=dtype, order=2](1.0, (0.2, 0.5), "bandpass")
     _assert_close(
         band.b,
         [
@@ -514,7 +514,7 @@ def test_cheby2_matches_scipy() raises:
     equiripple stopband held down by finite zeros -- so `b` is not a
     scaled `(1 + z)^order` the way type I's is, and an odd order carries
     one fewer zero than pole."""
-    var odd = cheby2[dtype, 3](40.0, 0.3)
+    var odd = cheby2[dtype=dtype, order=3](40.0, 0.3)
     _assert_close(
         odd.b,
         [
@@ -531,7 +531,7 @@ def test_cheby2_matches_scipy() raises:
         atol=1e-9,
     )
 
-    var even = cheby2[dtype, 4](30.0, 0.4)
+    var even = cheby2[dtype=dtype, order=4](30.0, 0.4)
     _assert_close(
         even.b,
         [
@@ -555,7 +555,7 @@ def test_cheby2_matches_scipy() raises:
         atol=1e-9,
     )
 
-    var stop = cheby2[dtype, 2](30.0, (0.2, 0.5), "bandstop")
+    var stop = cheby2[dtype=dtype, order=2](30.0, (0.2, 0.5), "bandstop")
     _assert_close(
         stop.b,
         [
@@ -586,7 +586,7 @@ def test_ellip_matches_scipy() raises:
     arithmetic-geometric mean's `K(m)`. Routing them through the tier-1
     `elliptic_k` instead lands these coefficients `1e-8` from SciPy rather
     than `4e-13`, which is what `design.mojo`'s docstring records."""
-    var odd = ellip[dtype, 3](1.0, 40.0, 0.3)
+    var odd = ellip[dtype=dtype, order=3](1.0, 40.0, 0.3)
     _assert_close(
         odd.b,
         [
@@ -603,7 +603,7 @@ def test_ellip_matches_scipy() raises:
         atol=1e-9,
     )
 
-    var even = ellip[dtype, 4](0.5, 50.0, 0.25)
+    var even = ellip[dtype=dtype, order=4](0.5, 50.0, 0.25)
     _assert_close(
         even.b,
         [
@@ -627,7 +627,7 @@ def test_ellip_matches_scipy() raises:
         atol=1e-9,
     )
 
-    var band = ellip[dtype, 2](1.0, 40.0, (0.2, 0.5), "bandpass")
+    var band = ellip[dtype=dtype, order=2](1.0, 40.0, (0.2, 0.5), "bandpass")
     _assert_close(
         band.b,
         [
@@ -656,8 +656,8 @@ def test_iirfilter_dispatches_on_ftype_and_refuses_an_unknown_one() raises:
     """The named-`ftype` front door only chooses the prototype, so it has
     to give the family's own answer; and a typo raises rather than
     silently designing a different filter."""
-    var via_name = iirfilter[dtype, 2](0.3, ftype="butter")
-    var direct = butter[dtype, 2](0.3)
+    var via_name = iirfilter[dtype=dtype, order=2](0.3, ftype="butter")
+    var direct = butter[dtype=dtype, order=2](0.3)
     var named_b = via_name.b.to_host()
     var direct_b = direct.b.to_host()
     for i in range(3):
@@ -665,7 +665,7 @@ def test_iirfilter_dispatches_on_ftype_and_refuses_an_unknown_one() raises:
             Float64(named_b[i]), Float64(direct_b[i]), atol=1e-15
         )
 
-    var cheb = iirfilter[dtype, 3](0.3, rp=1.0, ftype="cheby1")
+    var cheb = iirfilter[dtype=dtype, order=3](0.3, rp=1.0, ftype="cheby1")
     _assert_close(
         cheb.b,
         [
@@ -677,7 +677,7 @@ def test_iirfilter_dispatches_on_ftype_and_refuses_an_unknown_one() raises:
         atol=1e-9,
     )
 
-    var band = iirfilter[dtype, 2](
+    var band = iirfilter[dtype=dtype, order=2](
         (0.2, 0.5), rp=1.0, rs=40.0, btype="bandpass", ftype="ellip"
     )
     _assert_close(
@@ -694,7 +694,7 @@ def test_iirfilter_dispatches_on_ftype_and_refuses_an_unknown_one() raises:
 
     var raised = False
     try:
-        var bad = iirfilter[dtype, 2](0.3, ftype="besel")
+        var bad = iirfilter[dtype=dtype, order=2](0.3, ftype="besel")
         _ = bad^
     except:
         raised = True
@@ -729,18 +729,18 @@ def test_the_ripple_and_attenuation_arguments_are_honored() raises:
     filter that came back has them: a `cheby1` passband never drops more
     than `rp` below unity, a `cheby2` stopband never rises above `-rs`,
     and an `ellip` does both."""
-    var c1 = cheby1[dtype, 5](1.0, 0.3)
+    var c1 = cheby1[dtype=dtype, order=5](1.0, 0.3)
     for w in [0.02, 0.1, 0.2, 0.28]:
         var db = _response_db(c1.b, c1.a, w)
         assert_true(db <= 1e-9)
         assert_true(db >= -1.0 - 1e-9)
 
-    var c2 = cheby2[dtype, 5](40.0, 0.3)
+    var c2 = cheby2[dtype=dtype, order=5](40.0, 0.3)
     assert_almost_equal(_response_db(c2.b, c2.a, 0.0), 0.0, atol=1e-9)
     for w in [0.35, 0.5, 0.7, 0.9]:
         assert_true(_response_db(c2.b, c2.a, w) <= -40.0 + 1e-9)
 
-    var el = ellip[dtype, 5](1.0, 40.0, 0.3)
+    var el = ellip[dtype=dtype, order=5](1.0, 40.0, 0.3)
     for w in [0.02, 0.1, 0.2, 0.28]:
         var db = _response_db(el.b, el.a, w)
         assert_true(db <= 1e-9)
@@ -790,13 +790,13 @@ def test_freqz_matches_scipy() raises:
 def test_butter_feeds_freqz_with_unit_gain_at_dc() raises:
     """A lowpass design passes DC exactly and a highpass blocks it: the
     design and the response agree with each other, not only with SciPy."""
-    var low = butter[dtype, 3](0.4)
+    var low = butter[dtype=dtype, order=3](0.4)
     var response = freqz[worN=4](low.b, low.a)
     var re = response.real.to_host()
     var im = response.imag.to_host()
     assert_almost_equal(Float64(re[0]), 1.0, atol=1e-12)
     assert_almost_equal(Float64(im[0]), 0.0, atol=1e-12)
-    var high = butter[dtype, 3](0.4, "highpass")
+    var high = butter[dtype=dtype, order=3](0.4, "highpass")
     var blocked = freqz[worN=4](high.b, high.a).real.to_host()
     assert_almost_equal(Float64(blocked[0]), 0.0, atol=1e-12)
 
@@ -811,10 +811,10 @@ def test_csd_of_a_signal_with_itself_is_its_welch_psd() raises:
     is Pxx, with an imaginary part that cancels exactly."""
     var x = _from[16](_x())
     var y = _from[16](_x())
-    var cross = csd[dtype, 16, 8](x, y, 4.0)
+    var cross = csd[nperseg=8](x, y, 4.0)
 
     var x2 = _from[16](_x())
-    var direct = welch[dtype, 16, 8](x2, 4.0)
+    var direct = welch[nperseg=8](x2, 4.0)
 
     var cr = cross.real.to_host()
     var ci = cross.imag.to_host()
@@ -854,7 +854,7 @@ def test_csd_is_conjugate_symmetric_in_its_arguments() raises:
             0.25,
         ]
     )
-    var forward = csd[dtype, 16, 8](x, y, 4.0)
+    var forward = csd[nperseg=8](x, y, 4.0)
 
     var x2 = _from[16](_x())
     var y2 = _from[16](
@@ -877,7 +877,7 @@ def test_csd_is_conjugate_symmetric_in_its_arguments() raises:
             0.25,
         ]
     )
-    var backward = csd[dtype, 16, 8](y2, x2, 4.0)
+    var backward = csd[nperseg=8](y2, x2, 4.0)
 
     var fr = forward.real.to_host()
     var fi = forward.imag.to_host()
@@ -910,7 +910,7 @@ def test_coherence_lies_in_the_unit_interval() raises:
             0.25,
         ]
     )
-    var got = coherence[dtype, 16, 8](x, y, 4.0)
+    var got = coherence[nperseg=8](x, y, 4.0)
     var values = got.power.to_host()
     for k in range(5):
         assert_true(Float64(values[k]) >= -1e-12, "coherence below zero")
@@ -922,7 +922,7 @@ def test_coherence_of_a_signal_with_itself_is_one() raises:
     possible linear relationship -- reads as one at every bin."""
     var x = _from[16](_x())
     var y = _from[16](_x())
-    var got = coherence[dtype, 16, 8](x, y, 4.0)
+    var got = coherence[nperseg=8](x, y, 4.0)
     var values = got.power.to_host()
     for k in range(5):
         assert_almost_equal(Float64(values[k]), 1.0, atol=1e-12)
@@ -936,7 +936,7 @@ def test_coherence_of_a_scaled_copy_is_also_one() raises:
         scaled.append(raw[i] * -2.5)
     var x = _from[16](_x())
     var y = _from[16](scaled^)
-    var got = coherence[dtype, 16, 8](x, y, 4.0)
+    var got = coherence[nperseg=8](x, y, 4.0)
     var values = got.power.to_host()
     for k in range(5):
         assert_almost_equal(Float64(values[k]), 1.0, atol=1e-12)
@@ -945,7 +945,7 @@ def test_coherence_of_a_scaled_copy_is_also_one() raises:
 def test_istft_inverts_stft() raises:
     """The round trip recovers the signal over its own length."""
     var x = _from[16](_x())
-    var spectra = stft[dtype, 16, 8](x, 4.0)
+    var spectra = stft[nperseg=8](x, 4.0)
     var back = istft[nperseg=8, noverlap=4](spectra)
     var got = back.to_host()
     var want = _x()
@@ -955,7 +955,7 @@ def test_istft_inverts_stft() raises:
 
 def test_istft_output_covers_at_least_the_original_length() raises:
     var x = _from[16](_x())
-    var spectra = stft[dtype, 16, 8](x, 4.0)
+    var spectra = stft[nperseg=8](x, 4.0)
     var back = istft[nperseg=8, noverlap=4](spectra)
     assert_true(
         back.num_elements >= 16, "istft should cover the original signal"
@@ -1028,7 +1028,7 @@ def test_decimate_keeps_a_slow_signal_and_shortens_it() raises:
     for i in range(n):
         values.append(2.0)
     var x = _from[n](values^)
-    var got = decimate[dtype, n, 2](x)
+    var got = decimate[q=2](x)
     assert_equal(got.num_elements, 128)
     var host = got.to_host()
     for i in range(128):
@@ -1044,7 +1044,7 @@ def test_decimate_attenuates_a_signal_above_the_new_nyquist() raises:
     for i in range(n):
         values.append(1.0 if i % 2 == 0 else -1.0)
     var x = _from[n](values^)
-    var got = decimate[dtype, n, 2](x).to_host()
+    var got = decimate[q=2](x).to_host()
     # Away from the edges the passband is clean, so the tone is gone.
     for i in range(32, 96):
         assert_true(
@@ -1067,7 +1067,7 @@ def test_zpk2tf_expands_a_real_root_pair() raises:
     pi.append(0.0)
     pi.append(0.0)
 
-    var tf = zpk2tf[dtype, 1, 2](zr^, zi^, pr^, pi^, 2.0)
+    var tf = zpk2tf[dtype=dtype, nz=1, np=2](zr^, zi^, pr^, pi^, 2.0)
     var b = tf.b.to_host()
     var a = tf.a.to_host()
     assert_almost_equal(Float64(b[0]), 2.0, atol=1e-12)
@@ -1090,7 +1090,7 @@ def test_zpk2tf_of_a_conjugate_pair_is_real() raises:
     pi.append(0.5)
     pi.append(-0.5)
 
-    var tf = zpk2tf[dtype, 0, 2](zr^, zi^, pr^, pi^, 1.0)
+    var tf = zpk2tf[dtype=dtype, nz=0, np=2](zr^, zi^, pr^, pi^, 1.0)
     var a = tf.a.to_host()
     assert_almost_equal(Float64(a[0]), 1.0, atol=1e-12)
     assert_almost_equal(Float64(a[1]), -1.0, atol=1e-12)

@@ -129,6 +129,9 @@ from test_tensor_convolution import (
 from test_tensor_convolution import (
     test_get_window_names_the_factories as test_tensor_convolution__test_get_window_names_the_factories,
 )
+from test_tensor_convolution import (
+    test_convolve_accepts_views_of_both_operands as test_tensor_convolution__test_convolve_accepts_views_of_both_operands,
+)
 from test_tensor_filters import (
     test_lfilter_matches_scipy as test_tensor_filters__test_lfilter_matches_scipy,
 )
@@ -326,6 +329,9 @@ def main() raises:
     suite.test[test_tensor_convolution__test_windows_match_scipy_periodic]()
     suite.test[test_tensor_convolution__test_kaiser_matches_scipy]()
     suite.test[test_tensor_convolution__test_get_window_names_the_factories]()
+    suite.test[
+        test_tensor_convolution__test_convolve_accepts_views_of_both_operands
+    ]()
     # tests/signal/test_tensor_filters.mojo
     suite.test[test_tensor_filters__test_lfilter_matches_scipy]()
     suite.test[

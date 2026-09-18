@@ -94,7 +94,9 @@ def test_least_squares_recovers_an_exact_exponential_fit() raises:
     `(1, 1)`, so the damping loop has to do real work."""
     var ctx = _cpu()
     var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
-    var fit = least_squares[dtype, 2, 4, _exp_residuals, _exp_jacobian](p0)
+    var fit = least_squares[
+        n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
+    ](p0)
 
     assert_true(fit.converged)
     var got = fit.x.to_host()
@@ -109,9 +111,9 @@ def test_least_squares_solves_a_linear_fit() raises:
     away from the solution and the damping loop would stall."""
     var ctx = _cpu()
     var p0 = Static[dtype, 2](ctx, [0.0, 0.0])
-    var fit = least_squares[dtype, 2, 4, _linear_residuals, _linear_jacobian](
-        p0
-    )
+    var fit = least_squares[
+        n_resid=4, residuals=_linear_residuals, jacobian=_linear_jacobian
+    ](p0)
 
     assert_true(fit.converged)
     var got = fit.x.to_host()
@@ -124,7 +126,9 @@ def test_least_squares_starting_at_the_solution_converges_immediately() raises:
     the answer must report zero iterations rather than taking one."""
     var ctx = _cpu()
     var p0 = Static[dtype, 2](ctx, [2.0, 0.5])
-    var fit = least_squares[dtype, 2, 4, _exp_residuals, _exp_jacobian](p0)
+    var fit = least_squares[
+        n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
+    ](p0)
 
     assert_true(fit.converged)
     assert_almost_equal(Float64(fit.iterations), 0.0, atol=0.0)
@@ -136,9 +140,9 @@ def test_least_squares_reports_failure_rather_than_raising() raises:
     success."""
     var ctx = _cpu()
     var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
-    var fit = least_squares[dtype, 2, 4, _exp_residuals, _exp_jacobian](
-        p0, 1e-10, 1
-    )
+    var fit = least_squares[
+        n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
+    ](p0, 1e-10, 1)
     assert_true(not fit.converged)
     assert_true(fit.grad_norm > 0.0)
 
@@ -183,12 +187,14 @@ def test_curve_fit_matches_least_squares_on_the_same_problem() raises:
         ctx, [_sample_y(0), _sample_y(1), _sample_y(2), _sample_y(3)]
     )
     var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
-    var fitted = curve_fit[dtype, 2, 4, _model, _model_jacobian](
+    var fitted = curve_fit[model=_model, model_jacobian=_model_jacobian](
         xdata, ydata, p0
     )
 
     var q0 = Static[dtype, 2](ctx, [1.0, 1.0])
-    var direct = least_squares[dtype, 2, 4, _exp_residuals, _exp_jacobian](q0)
+    var direct = least_squares[
+        n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
+    ](q0)
 
     assert_true(fitted.converged)
     var a = fitted.x.to_host()
@@ -215,9 +221,9 @@ def test_the_two_tiers_agree() raises:
     cross-check on the Jacobian this tier has to be given."""
     var ctx = _cpu()
     var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
-    var tensor_fit = least_squares[dtype, 2, 4, _exp_residuals, _exp_jacobian](
-        p0
-    )
+    var tensor_fit = least_squares[
+        n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
+    ](p0)
 
     var start = Array[Float64, 2](fill=0.0)
     start[0] = 1.0

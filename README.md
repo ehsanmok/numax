@@ -490,12 +490,12 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.interpolate.PchipInterpolator` / `Akima1DInterpolator` | same names, plus `CubicHermiteSpline` | the shape-preserving siblings, same evaluation surface |
 | `np.interp`, `scipy.interpolate.RegularGridInterpolator` | `interp`, `RegularGridInterpolator` | `interp` is a vectorized `searchsorted` and a gather, one launch each |
 | `scipy.optimize.root_scalar` / `minimize` | `root_scalar[f](bracket=(a, b))` / `minimize[n, f](x0)` | over `Array`, no `jac`, `fprime` or `fprime2` anywhere — every derivative comes from `Dual` or `Gradient` |
-| `minimize` over a large vector | `minimize[dtype, n, f, jac](x0)` from `numax.optimize` | the `Tensor` tier, which takes `jac` because a tensor cannot hold a `Gradient`. `bfgs`, `l-bfgs`, `cg` and `powell`; limited memory is the one to reach for when a dense inverse Hessian will not fit |
+| `minimize` over a large vector | `minimize[f=f, jac=jac](x0)` from `numax.optimize` | the `Tensor` tier, which takes `jac` because a tensor cannot hold a `Gradient`. `bfgs`, `l-bfgs`, `cg` and `powell`; limited memory is the one to reach for when a dense inverse Hessian will not fit |
 | `minimize(method="L-BFGS-B", bounds=...)` | `minimize[...](x0, lower, upper)` | projected gradient on the free set; `powell` needs no `jac` at all |
 | `scipy.optimize.nnls`, `lsq_linear` | `nnls(A, b)`, `lsq_linear(A, b, lo, hi)` | one box-constrained QP, the normal equations formed on the device and the active set settled on the host |
 | `scipy.optimize.minimize_scalar` | `minimize_scalar[f]()` | `brent`, `golden`, `bounded`; a bracket is a direction, bounds are a constraint |
 | `minimize(method="Nelder-Mead")` / `"CG"` | `minimize[n, f, method="nelder-mead"]` / `method="cg"` | SciPy's own method spelling; `bfgs`, `cg` and `nelder_mead` are also callable by name |
-| `scipy.optimize.root` | `root[n, f](x0)` over `Array`, `root[dtype, n, f, jac](x0)` over `Tensor` | `newton` and `lm`; check `residual_norm`, not only `converged`, since a system with no root still has points where `\|\|F\|\|` stops falling |
+| `scipy.optimize.root` | `root[n, f](x0)` over `Array`, `root[f=f, jac=jac](x0)` over `Tensor` | `newton` and `lm`; check `residual_norm`, not only `converged`, since a system with no root still has points where `\|\|F\|\|` stops falling |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
 | `np.fft.fft`, `np.fft.rfft`, `np.fft.irfft` | `fft`, `rfft`, `irfft` | **any length** over `Tensor`: radix-2 and radix-4 at a power of two, Bluestein's chirp-z otherwise. `numax.fft` is the `Tensor` tier, a real/imaginary pair through a few fused device launches per axis; `numax.fft.array` is `Array[Complex[T], n]`, differentiates, and stays power-of-two |
