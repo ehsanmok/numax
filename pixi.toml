@@ -42,8 +42,40 @@ version = "0.1.0"
 backend = { name = "pixi-build-rattler-build", version = ">=0.4" }
 
 [dependencies]
-mojo = "==1.0.0"
-max = "==26.5"
+# `max-core`, not `max`. numax is a pure Mojo library: it needs the kernel
+# packages (`linalg`, `nn`, `algorithm`, `layout`, `max.gpu.host`,
+# `max.algorithm`) and nothing Python-facing. `max-core` is exactly that,
+# where the `max` metapackage adds the Python API on top -- cpython 3.14,
+# click, rich, psutil, ~1,500 files a Mojo consumer never imports. Dropping
+# it takes the default environment from 66 packages to 55, measured both
+# ways.
+#
+# `mojo` stays, and is not redundant even though `max-core` already pulls
+# `mojo-compiler` (which is where `bin/mojo` lives). The metapackage is
+# what carries the *toolchain*: `mblack`, without which `mojo format`
+# fails with "unable to resolve Mojo formatter in PATH", and
+# `llvm-symbolizer`, which CI points `LLVM_SYMBOLIZER_PATH` at so a
+# transient runtime crash names a function instead of eight raw addresses.
+# Both were verified absent with `max-core` alone.
+#
+# The mojo range is wider than the max pin on purpose, and `max-core`
+# narrows it anyway: `max-core ==26.5` depends on `mojo-compiler ==1.0.0`,
+# so 1.0.0 is what solves today. The range says numax's source is expected
+# to keep compiling across the 1.x line, and the ceiling is the major
+# version, where the language itself may break `def`/`where`/`comptime`.
+max-core = "==26.5"
+mojo = ">=1.0.0,<2.0.0"
+# Not a library dependency, and here so that it stops being an invisible
+# one. `examples/intermediate/npy_to_cholesky.mojo` calls real NumPy
+# through `std.python` -- `np.save`, then `numax.io.numpy.load`, then the
+# factor back out for NumPy to reload -- because the point of that example
+# is proving the `.npy` round trip against the real thing rather than
+# against numax's own writer. numpy used to arrive as a transitive
+# dependency of `max`, so dropping `max` broke it with "No module named
+# 'numpy'". Nothing under `numax/` imports it: `numax.io.numpy` parses the
+# format itself, which is what `pixi run examples-cpu` exercises on every
+# other example.
+numpy = ">=1.18"
 
 # Cross-language baselines for bench/{numpy,mlx,torch,thermite}/ -- kept as
 # separate features/environments, not the default one, so `pixi install`

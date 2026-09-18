@@ -184,8 +184,9 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
 - **ROCm numbers.** ROCm is reached because `linalg.matmul` dispatches it
   and numax names no architecture; nothing on any page is an AMD
   measurement.
-- **Stability.** Young and experimental, pinned to `mojo ==1.0.0` and
-  `max ==26.5`; APIs may change.
+- **Stability.** Young and experimental; APIs may change. Requires
+  `max-core ==26.5` and `mojo >=1.0.0,<2.0.0`, and was surveyed against
+  `max 26.5`.
 
 ## Where to read next
 

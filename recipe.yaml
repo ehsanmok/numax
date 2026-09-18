@@ -8,9 +8,13 @@
 # embeds the exact compiler version it was built with and refuses to load
 # against any other version (``Mojo package is incompatible``), which
 # tightly couples the published .conda artifact to one Mojo release. Source
-# distribution has no ABI-locked binary content at all -- the ``run: mojo
-# == ...`` pin below is what tells solvers which compiler to install, and
-# it's a one-line bump here rather than a rebuild.
+# distribution has no ABI-locked binary content at all -- the ``run: mojo``
+# constraint below is what tells solvers which compiler to install, and it's
+# a one-line change here rather than a rebuild. Because nothing is ABI
+# locked, that constraint is a *range*: the upper bound is Mojo's major
+# version, where the language itself may break, and ``max`` has no upper
+# bound because a newer kernel library adds entry points rather than
+# removing them.
 #
 # numax has no FFI shim and no C++ build step (unlike json's simdjson
 # wrapper), so this recipe is just a copy -- no ${{ compiler(...) }}
@@ -34,8 +38,14 @@ build:
 
 requirements:
   run:
-    - mojo ==1.0.0
-    - max ==26.5
+    # `max-core`, not `max`: numax imports the Mojo kernel packages and
+    # nothing from the Python API, and `max-core` brings the compiler with
+    # it (`max-core -> mojo-compiler`, which is where `bin/mojo` lives).
+    # `mojo` is here for the toolchain a consumer building against numax
+    # wants anyway -- the formatter and the LSP server -- and because this
+    # pair is the combination numax's own CI gate runs against.
+    - max-core ==26.5
+    - mojo >=1.0.0,<2.0.0
 
 about:
   homepage: https://github.com/ehsanmok/numax
