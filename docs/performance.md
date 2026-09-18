@@ -320,11 +320,11 @@ reaches is how much of its work went to MAX.
 
 | op | numax | SciPy (LAPACK + OpenBLAS) | numax / SciPy |
 |---|---|---|---|
-| `matmul` (ceiling) | 656 | 833 | 0.79 |
-| `cholesky` | 15.4 | 99.5 | 0.15 |
-| `lu_factor` | 17.2 | 43.9 | 0.39 |
-| `solve` | 17.0 | 52.6 | 0.32 |
-| `qr_factor` | 3.9 at the default block, 8.3 at `block=4` | 12.4 | 0.31-0.67 |
+| `matmul` (ceiling) | 776 | 833 | 0.93 |
+| `cholesky` | 22.2 | 99.5 | 0.22 |
+| `lu_factor` | 20.1 | 43.9 | 0.46 |
+| `solve` | 20.4 | 52.6 | 0.39 |
+| `qr_factor` | 4.4 at the default block, 9.6 at `block=4` | 12.4 | 0.36-0.77 |
 
 **GPU -- NVIDIA A10G (Ampere).** Same counts, `n = 1024` except `qr`,
 which is `n = 512`:
@@ -332,20 +332,37 @@ which is `n = 512`:
 | op | numax | PyTorch (cuSOLVER) | CuPy (cuSOLVER) |
 |---|---|---|---|
 | `matmul` (ceiling) | 20,459 | 15,342 | 14,995 |
-| `cholesky` | 51.0 | 595.0 | 349.9 |
+| `cholesky` | 44.6 | 595.0 | 349.9 |
 | `lu_factor` | 30.6 | 282.9 | 266.8 |
 | `solve` | 28.1 | 257.6 | 257.9 |
 | `qr` (n=512) | 8.4 | 80.0 | 79.1 |
 
+**Re-verified under `max-core 26.6` / `mojo 1.1` (`08a161e`), same EPYC
+7R32 + A10G box.** Every CPU row above rose 14-44% from the session this
+table first recorded -- `matmul`'s own ceiling went 656 to 776 GFLOP/s,
+and `cholesky`, `lu_factor`, `solve` and `qr_factor` all improved by more
+than that, so the panel side gained on top of the GEMM. The GPU table
+holds for every op except `cholesky`, which dropped from 51.0 to
+**44.6 GFLOP/s** (-12.5%, reproduced across two runs) while its own
+ceiling (20,447-20,496 across two runs, unchanged from 20,459) and its
+three siblings -- `lu_factor`, `solve`, `qr`, which share its
+panel-then-GEMM shape -- all sit within a percent of their prior figures.
+The regression is isolated to `cholesky`'s own panel or trailing update,
+not the panel pattern generally, and has not been root-caused; a
+`parallelize` signature change in the same bump
+(`08a161e`'s commit body) is the leading suspect but that call is
+host-only and `cholesky`'s GPU panel does not run through it, so this is
+still open.
+
 Three things to read out of those, in order of how much they matter:
 
-1. **The GEMM is not the problem.** MAX's `matmul` reaches 79% of
-   OpenBLAS on CPU and *beats* cuBLAS's FP32 path on the A10G -- 20.5
+1. **The GEMM is not the problem.** MAX's `matmul` reaches 79% (now 93%)
+   of OpenBLAS on CPU and *beats* cuBLAS's FP32 path on the A10G -- 20.5
    against 15.3 TFLOP/s. It is also less accurate on the same product
    (max residual 8.4 against cuBLAS FP32's 3.4, where cuBLAS with TF32
    enabled gives 18.2 at 25.2 TFLOP/s), so MAX's `float32` GEMM sits
    between the two vendor paths on both axes. Either way, a factorization
-   at 51 GFLOP/s on a device whose GEMM does 20,000 is not being held back
+   at 45 GFLOP/s on a device whose GEMM does 20,000 is not being held back
    by the multiply.
 2. **The gap is the panel and the launch count.** Every block step is a
    single-block panel kernel -- one SM on the GPU, effectively serial on
@@ -376,7 +393,7 @@ move. At `n = 67M` (256 MiB, past this box's L3 either way):
 | `dot` | 70.6 | 27.9 | 298.9 | 503.9 | 244.9 |
 | `nrm2` | 71.1 | 13.9 | 169.2 | 495.9 | 163.5 |
 | `asum` | 67.4 | 48.5 | 169.1 | 161.2 | 163.5 |
-| `axpy` | 25.3 | 78.3 | 342.4 | 475.8 | 292.8 |
+| `axpy` | 57.9 | 78.3 | 444.0 | 475.8 | 292.8 |
 
 The reductions on CPU beat OpenBLAS's own level-1 routines by 1.4-5x,
 which is the clearest single payoff of routing them through MAX's
@@ -385,7 +402,13 @@ which is the clearest single payoff of routing them through MAX's
 
 `axpy` is the exception and the reason is its signature, not its kernel:
 it returns a new vector rather than updating `y` in place, so every call
-allocates and first-touches 256 MiB. Measured directly at `n = 16M`: the
+allocates and first-touches 256 MiB. Re-verified under `max-core 26.6` /
+`mojo 1.1`: `axpy` rose from 25.3 to 57.9 GB/s on the CPU and 342.4 to
+444.0 on the A10G, while `dot`/`nrm2`/`asum` held within a couple percent
+on both -- closing more than half its old gap to OpenBLAS's in-place
+`saxpy`. The ms breakdown below predates this run and was not re-split;
+the direction is consistent with the allocation path getting cheaper
+rather than the reduction itself. Measured directly at `n = 16M`: the
 whole call is 8.5 ms, the `elementwise` pass alone is 4.3 ms and the
 zeroed allocation alone is 4.7 ms. Half the time is the allocation, which
 is why OpenBLAS's in-place `saxpy` is ahead on CPU. Reuse the result

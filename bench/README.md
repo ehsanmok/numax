@@ -586,21 +586,33 @@ CPU:
 
 | op | numax | SciPy (LAPACK + OpenBLAS) |
 |---|---|---|
-| `matmul` (ceiling) | 656 | 833 |
-| `cholesky` | 15.4 | 99.5 |
-| `lu_factor` | 17.2 | 43.9 |
-| `solve` | 17.0 | 52.6 |
-| `qr` | 3.9 (`block=16`), 8.3 (`block=4`) | 12.4 |
+| `matmul` (ceiling) | 776 | 833 |
+| `cholesky` | 22.2 | 99.5 |
+| `lu_factor` | 20.1 | 43.9 |
+| `solve` | 20.4 | 52.6 |
+| `qr` | 4.4 (`block=16`), 9.6 (`block=4`) | 12.4 |
 
 A10G:
 
 | op | numax | PyTorch | CuPy |
 |---|---|---|---|
 | `matmul` (ceiling) | 20,459 | 15,342 | 14,995 |
-| `cholesky` | 51.0 | 595.0 | 349.9 |
+| `cholesky` | 44.6 | 595.0 | 349.9 |
 | `lu_factor` | 30.6 | 282.9 | 266.8 |
 | `solve` | 28.1 | 257.6 | 257.9 |
 | `qr` (n=512) | 8.4 | 80.0 | 79.1 |
+
+**Re-verified under `max-core 26.6` / `mojo 1.1` (`08a161e`), same EPYC
+7R32 + A10G box.** Every CPU row rose 14-44% from the session above --
+`matmul`'s own ceiling went 656 to 776 GFLOP/s, and the four
+factorizations improved by more than that, so the panel side gained on
+top of the GEMM. The A10G table holds for every op except `cholesky`,
+which dropped 51.0 to **44.6 GFLOP/s** (-12.5%, reproduced twice) while
+its own ceiling (20,447-20,496 across two runs) and its three siblings --
+which share its panel-then-GEMM shape -- sit within a percent of their
+prior figures. Isolated to `cholesky`'s own panel or trailing update, not
+root-caused; see `docs/performance.md`'s "Dense linalg" section for the
+full note.
 
 **MAX's GEMM is not what is slow.** It reaches 79% of OpenBLAS on the CPU
 and beats cuBLAS's FP32 path on the A10G -- 20.5 against 15.3 TFLOP/s. It
@@ -636,7 +648,7 @@ this box's L3 on either processor:
 | `dot` | 70.6 | 27.9 | 298.9 | 503.9 | 244.9 |
 | `nrm2` | 71.1 | 13.9 | 169.2 | 495.9 | 163.5 |
 | `asum` | 67.4 | 48.5 | 169.1 | 161.2 | 163.5 |
-| `axpy` | 25.3 | 78.3 | 342.4 | 475.8 | 292.8 |
+| `axpy` | 57.9 | 78.3 | 444.0 | 475.8 | 292.8 |
 
 The reductions beat OpenBLAS's own level-1 routines on CPU by 1.4-5x,
 which is the single clearest payoff of routing them through MAX's
@@ -646,7 +658,12 @@ PyTorch.
 
 `axpy` is the exception, and its signature is the reason rather than its
 kernel: it returns a new vector instead of updating `y` in place, so every
-call allocates and first-touches its result. Measured at `n = 16M`: the
+call allocates and first-touches its result. Re-verified under
+`max-core 26.6`/`mojo 1.1`: `axpy` rose from 25.3 to 57.9 GB/s on the CPU
+and 342.4 to 444.0 on the A10G, `dot`/`nrm2`/`asum` holding within a
+couple percent on both, closing more than half its old gap to OpenBLAS's
+in-place `saxpy`. The ms breakdown below predates this run. Measured at
+`n = 16M`: the
 whole call is 8.5 ms, the `elementwise` pass alone is 4.3 ms, and the
 zeroed allocation alone is 4.7 ms. Half the call is allocation, which is
 why OpenBLAS's in-place `saxpy` is ahead. Reuse the result on a hot path.
