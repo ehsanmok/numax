@@ -41,6 +41,7 @@ than implying.
 
 from layout.tile_layout import TensorLayout
 
+from .tensorlike import TensorLike, is_row_major
 from .array import Dynamic, Tensor
 from ._drive import (
     _BroadcastRank,
@@ -97,102 +98,97 @@ def _pow_op[
 
 
 def add[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`a + b`, elementwise. `numpy.add`."""
-    return binary[dtype, LayoutType, op=_add_op[dtype, _], gpu=gpu, name="add"](
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_add_op[dtype, _], gpu=gpu, name="add"](a, b)
+
+
+def add[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
+    """`a + b` with a scalar `b`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary_scalar[T, op=_add_op[dtype, _], gpu=gpu, name="add"](a, b)
+
+
+def subtract[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
+    """`a - b`, elementwise. `numpy.subtract`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_sub_op[dtype, _], gpu=gpu, name="subtract"](a, b)
+
+
+def subtract[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
+    """`a - b` with a scalar `b`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary_scalar[T, op=_sub_op[dtype, _], gpu=gpu, name="subtract"](
         a, b
     )
 
 
-def add[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
-    """`a + b` with a scalar `b`."""
-    return binary_scalar[
-        dtype, LayoutType, op=_add_op[dtype, _], gpu=gpu, name="add"
-    ](a, b)
-
-
-def subtract[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
-    """`a - b`, elementwise. `numpy.subtract`."""
-    return binary[
-        dtype, LayoutType, op=_sub_op[dtype, _], gpu=gpu, name="subtract"
-    ](a, b)
-
-
-def subtract[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
-    """`a - b` with a scalar `b`."""
-    return binary_scalar[
-        dtype, LayoutType, op=_sub_op[dtype, _], gpu=gpu, name="subtract"
-    ](a, b)
-
-
 def multiply[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`a * b`, elementwise. `numpy.multiply`."""
-    return binary[
-        dtype, LayoutType, op=_mul_op[dtype, _], gpu=gpu, name="multiply"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_mul_op[dtype, _], gpu=gpu, name="multiply"](a, b)
 
 
 def multiply[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
     """`a * b` with a scalar `b`."""
-    return binary_scalar[
-        dtype, LayoutType, op=_mul_op[dtype, _], gpu=gpu, name="multiply"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary_scalar[T, op=_mul_op[dtype, _], gpu=gpu, name="multiply"](
+        a, b
+    )
 
 
 def divide[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`a / b`, elementwise. `numpy.divide`."""
-    return binary[
-        dtype, LayoutType, op=_div_op[dtype, _], gpu=gpu, name="divide"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_div_op[dtype, _], gpu=gpu, name="divide"](a, b)
 
 
 def divide[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
     """`a / b` with a scalar `b`."""
-    return binary_scalar[
-        dtype, LayoutType, op=_div_op[dtype, _], gpu=gpu, name="divide"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary_scalar[T, op=_div_op[dtype, _], gpu=gpu, name="divide"](a, b)
 
 
 def floor_divide[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`a // b`, elementwise. `numpy.floor_divide`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return binary[
-        dtype,
-        LayoutType,
+        T,
         op=_floordiv_op[dtype, _],
         gpu=gpu,
         name="floor_divide",
@@ -200,36 +196,34 @@ def floor_divide[
 
 
 def mod[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`a % b`, elementwise. `numpy.mod`."""
-    return binary[dtype, LayoutType, op=_mod_op[dtype, _], gpu=gpu, name="mod"](
-        a, b
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_mod_op[dtype, _], gpu=gpu, name="mod"](a, b)
 
 
 def power[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """`a ** b`, elementwise. `numpy.power`."""
-    return binary[
-        dtype, LayoutType, op=_pow_op[dtype, _], gpu=gpu, name="power"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_pow_op[dtype, _], gpu=gpu, name="power"](a, b)
 
 
 def power[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """`a ** b` with a scalar exponent."""
-    return binary_scalar[
-        dtype, LayoutType, op=_pow_op[dtype, _], gpu=gpu, name="power"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary_scalar[T, op=_pow_op[dtype, _], gpu=gpu, name="power"](a, b)
 
 
 # The broadcasting forms, at two shapes NumPy would broadcast. The result is
@@ -238,74 +232,83 @@ def power[
 
 
 def add[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a + b` at two broadcastable shapes. `numpy.add`."""
-    return broadcast_binary[
-        dtype, ALayout, BLayout, op=_add_op[dtype, _], gpu=gpu, name="add"
-    ](a, b)
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[A, B, op=_add_op[dtype, _], gpu=gpu, name="add"](
+        a, b
+    )
 
 
 def subtract[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a - b` at two broadcastable shapes. `numpy.subtract`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype, ALayout, BLayout, op=_sub_op[dtype, _], gpu=gpu, name="subtract"
+        A, B, op=_sub_op[dtype, _], gpu=gpu, name="subtract"
     ](a, b)
 
 
 def multiply[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a * b` at two broadcastable shapes. `numpy.multiply`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype, ALayout, BLayout, op=_mul_op[dtype, _], gpu=gpu, name="multiply"
+        A, B, op=_mul_op[dtype, _], gpu=gpu, name="multiply"
     ](a, b)
 
 
 def divide[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a / b` at two broadcastable shapes. `numpy.divide`."""
-    return broadcast_binary[
-        dtype, ALayout, BLayout, op=_div_op[dtype, _], gpu=gpu, name="divide"
-    ](a, b)
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[A, B, op=_div_op[dtype, _], gpu=gpu, name="divide"](
+        a, b
+    )
 
 
 def floor_divide[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a // b` at two broadcastable shapes. `numpy.floor_divide`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_floordiv_op[dtype, _],
         gpu=gpu,
         name="floor_divide",
@@ -313,31 +316,40 @@ def floor_divide[
 
 
 def mod[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a % b` at two broadcastable shapes. `numpy.mod`."""
-    return broadcast_binary[
-        dtype, ALayout, BLayout, op=_mod_op[dtype, _], gpu=gpu, name="mod"
-    ](a, b)
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[A, B, op=_mod_op[dtype, _], gpu=gpu, name="mod"](
+        a, b
+    )
 
 
 def power[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
     """`a ** b` at two broadcastable shapes. `numpy.power`."""
-    return broadcast_binary[
-        dtype, ALayout, BLayout, op=_pow_op[dtype, _], gpu=gpu, name="power"
-    ](a, b)
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[A, B, op=_pow_op[dtype, _], gpu=gpu, name="power"](
+        a, b
+    )
 
 
 def _negative_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -345,12 +357,12 @@ def _negative_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
 
 
 def negative[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`-a`, elementwise. `numpy.negative`."""
-    return unary[
-        dtype, LayoutType, op=_negative_op[dtype, _], gpu=gpu, name="negative"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_negative_op[dtype, _], gpu=gpu, name="negative"](a)
 
 
 def _cast_op[
@@ -360,8 +372,8 @@ def _cast_op[
 
 
 def astype[
-    target: DType, dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[target, LayoutType]:
+    target: DType, T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[target, T.LayoutType] where is_row_major[T]:
     """`a` converted to `target`, elementwise. `numpy.astype`.
 
     Explicit, because numax has no dtype promotion: a binary operation
@@ -373,10 +385,11 @@ def astype[
     The one routine here whose result dtype differs from its input's, so
     it goes through `_drive.unary_to` rather than `unary`.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        dtype,
+        T,
         target,
-        LayoutType,
         op=_cast_op[target, dtype, _],
         gpu=gpu,
         name="astype",
@@ -390,16 +403,16 @@ def _invert_op[
 
 
 def invert[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_integral():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_integral()
+):
     """Bitwise NOT, elementwise. `numpy.invert`.
 
     Integral dtypes only. The boolean form is
     `numax.core.logic.logical_not`, which is a different operation on a
     different type rather than the same one spelled twice.
     """
-    return unary[
-        dtype, LayoutType, op=_invert_op[dtype, _], gpu=gpu, name="invert"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_invert_op[dtype, _], gpu=gpu, name="invert"](a)

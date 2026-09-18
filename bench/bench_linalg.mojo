@@ -503,7 +503,7 @@ def bench_svd[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
     var f = svd[dtype, n, n](a)
     var d = _diag[n](ctx, f.s)
     var ud = matmul[dtype, n, n, n](f.u, d)
-    var vt = transpose[dtype, n, n](f.v)
+    var vt = transpose(f.v)
     var back = matmul[dtype, n, n, n](ud, vt)
     var flops = 14.0 * Float64(n) ** 3 + 8.0 * Float64(n) ** 3
     _row("svd", n, ns, flops, _max_abs_diff[n, _general_entry](back))
@@ -549,7 +549,7 @@ def bench_schur[n: Int](ctx: DeviceContext) raises:
     )
     var f = schur[dtype, n](a)
     var zt = matmul[dtype, n, n, n](f.z, f.t)
-    var z_t = transpose[dtype, n, n](f.z)
+    var z_t = transpose(f.z)
     var back = matmul[dtype, n, n, n](zt, z_t)
     _row(
         "schur",

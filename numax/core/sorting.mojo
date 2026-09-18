@@ -70,6 +70,7 @@ from std.collections import Array
 
 from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout, row_major
+from .tensorlike import TensorLike, dim, is_row_major
 from .array import (
     Dynamic,
     Static,
@@ -86,10 +87,10 @@ from .array import (
 
 
 def sort[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Static[
-    dtype, LayoutType.static_product
-] where LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Static[
+    T.dtype, T.LayoutType.static_product
+] where T.LayoutType.all_dims_known:
     """A sorted rank-1 copy of `a`, ascending. `numpy.sort(a, axis=None)`.
 
     Stable, because `std.builtin.sort` is; for a plain numeric sort that
@@ -103,6 +104,8 @@ def sort[
     The overload below takes a tensor whose extents are run-time values
     and returns one, so `sort(extract(mask, a))` works.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime n = LayoutType.static_product
     var values = a.to_host()
     _std_sort(values)
@@ -110,10 +113,8 @@ def sort[
 
 
 def sort[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, 1
-] where not LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 1] where not T.LayoutType.all_dims_known:
     """A sorted rank-1 copy of `a`, ascending, for a run-time shape.
 
     Same sort as the overload above; the result's length is a run-time
@@ -124,9 +125,7 @@ def sort[
     return asarray(values^, a.context())
 
 
-def argsort[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> List[Int]:
+def argsort[T: TensorLike](a: T) raises -> List[Int]:
     """The flat indices that would sort `a`, ascending.
     `numpy.argsort(a, axis=None)`.
 
@@ -167,8 +166,10 @@ def argsort[
 
 
 def searchsorted[
-    dtype: DType, n: Int
-](sorted_values: Static[dtype, n], value: Scalar[dtype]) raises -> Int:
+    T: TensorLike,
+](sorted_values: T, value: Scalar[T.dtype]) raises -> Int where (
+    T.rank == 1 and T.LayoutType.all_dims_known
+):
     """The index where `value` would be inserted to keep `sorted_values`
     ascending. `numpy.searchsorted(a, v, side="left")`.
 
@@ -185,6 +186,7 @@ def searchsorted[
     number of them, which is what makes this tier 2 rather than something
     that could live in a kernel.
     """
+    comptime n = dim[T, 0]
     var values = sorted_values.to_host()
     var lo = 0
     var hi = n
@@ -198,14 +200,12 @@ def searchsorted[
 
 
 def searchsorted[
-    dtype: DType,
-    SortedLayout: TensorLayout,
-    QueryLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     right: Bool = False,
-](
-    sorted_values: Tensor[dtype, SortedLayout],
-    values: Tensor[dtype, QueryLayout],
-) raises -> Dynamic[DType.int64, 1]:
+](sorted_values: A, values: B) raises -> Dynamic[DType.int64, 1] where (
+    B.dtype == A.dtype
+):
     """One insertion index per element of `values`.
     `numpy.searchsorted(a, v)`.
 
@@ -226,7 +226,7 @@ def searchsorted[
     overload. MAX ships no `searchsorted`, so this is numax's own.
     """
     var haystack = sorted_values.to_host()
-    var needles = values.to_host()
+    var needles = values.to_host[A.dtype]()
     var n = len(haystack)
     var out = List[Scalar[DType.int64]](length=len(needles), fill=0)
     for q in range(len(needles)):
@@ -252,16 +252,13 @@ def searchsorted[
 
 
 def take[
-    dtype: DType,
-    LayoutType: TensorLayout,
+    T: TensorLike,
     IndexLayout: TensorLayout,
     axis: Int,
     gpu: Bool = False,
-](
-    a: Tensor[dtype, LayoutType], indices: Tensor[DType.int64, IndexLayout]
-) raises -> Dynamic[dtype, LayoutType.rank] where (
-    axis >= 0 and axis < LayoutType.rank and IndexLayout.rank == 1
-):
+](a: T, indices: Tensor[DType.int64, IndexLayout]) raises -> Dynamic[
+    T.dtype, T.LayoutType.rank
+] where (axis >= 0 and axis < T.LayoutType.rank and IndexLayout.rank == 1):
     """The slices of `a` at `indices` along `axis`.
     `numpy.take(a, indices, axis=k)`.
 
@@ -280,6 +277,8 @@ def take[
     shape numax passes; the flat `List[Int]` overload above is the one for
     an already-flat selection.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var count = indices.size()
     var length = a.dim_at(axis)
@@ -317,11 +316,13 @@ def take[
 
 
 def take_along_axis[
-    dtype: DType, LayoutType: TensorLayout, IndexLayout: TensorLayout, axis: Int
-](
-    a: Tensor[dtype, LayoutType], indices: Tensor[DType.int64, IndexLayout]
-) raises -> Dynamic[dtype, LayoutType.rank] where (
-    axis >= 0 and axis < LayoutType.rank and IndexLayout.rank == LayoutType.rank
+    T: TensorLike, IndexLayout: TensorLayout, axis: Int
+](a: T, indices: Tensor[DType.int64, IndexLayout]) raises -> Dynamic[
+    T.dtype, T.LayoutType.rank
+] where (
+    axis >= 0
+    and axis < T.LayoutType.rank
+    and IndexLayout.rank == T.LayoutType.rank
 ):
     """One element of `a` per entry of `indices`, indexed along `axis`.
     `numpy.take_along_axis`.
@@ -336,6 +337,8 @@ def take_along_axis[
     `gather`) and takes a `DeviceContext`. The result has `indices`'s
     shape, which is that operator's contract and NumPy's too.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var length = a.dim_at(axis)
     var index_values = indices.to_host()
@@ -381,9 +384,7 @@ def take_along_axis[
     )
 
 
-def unique[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 1]:
+def unique[T: TensorLike](a: T) raises -> Dynamic[T.dtype, 1]:
     """The sorted distinct values of `a`. `numpy.unique`.
 
     Right-sized: the result holds exactly as many elements as there are
@@ -404,9 +405,7 @@ def unique[
     return asarray(values^, a.context())
 
 
-def count_nonzero[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Int:
+def count_nonzero[T: TensorLike](a: T) raises -> Int:
     """How many elements of `a` are not zero. `numpy.count_nonzero`.
 
     `-0.0` counts as zero (it compares equal to `0.0`), matching NumPy.
@@ -421,9 +420,7 @@ def count_nonzero[
     return total
 
 
-def any_nonzero[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Bool:
+def any_nonzero[T: TensorLike](a: T) raises -> Bool:
     """Whether any element is nonzero. `numpy.any`.
 
     Named `any_nonzero` rather than `any` because `any` is a Mojo builtin;
@@ -441,9 +438,7 @@ def any_nonzero[
     return False
 
 
-def all_nonzero[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Bool:
+def all_nonzero[T: TensorLike](a: T) raises -> Bool:
     """Whether every element is nonzero. `numpy.all`, named for the same
     reason as `any_nonzero`. Short-circuits on the first zero."""
     var n = a.size()
@@ -454,9 +449,7 @@ def all_nonzero[
     return True
 
 
-def nonzero[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> List[Int]:
+def nonzero[T: TensorLike](a: T) raises -> List[Int]:
     """The flat indices of the nonzero elements, ascending.
     `numpy.flatnonzero`.
 
@@ -474,9 +467,7 @@ def nonzero[
     return indices^
 
 
-def argwhere[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[DType.int64, 2]:
+def argwhere[T: TensorLike](a: T) raises -> Dynamic[DType.int64, 2]:
     """The coordinates of the nonzero elements, one row each.
     `numpy.argwhere`.
 
@@ -489,6 +480,7 @@ def argwhere[
     Right-sized: the row count depends on the data, which is what a
     run-time-shaped tensor is for.
     """
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var extents = List[Int](capacity=rank)
     for d in range(rank):
@@ -519,12 +511,8 @@ def argwhere[
 
 
 def put[
-    dtype: DType, LayoutType: TensorLayout
-](
-    mut a: Tensor[dtype, LayoutType],
-    indices: List[Int],
-    values: List[Scalar[dtype]],
-) raises:
+    T: TensorLike
+](mut a: T, indices: List[Int], values: List[Scalar[T.dtype]],) raises:
     """Write `values` into `a` at the flat `indices`. `numpy.put`.
 
     In place and returning nothing, unlike everything else in this module,
@@ -565,10 +553,10 @@ def put[
 
 
 def extract[
-    dtype: DType, LayoutType: TensorLayout
-](
-    condition: Tensor[DType.bool, LayoutType], a: Tensor[dtype, LayoutType]
-) raises -> Dynamic[dtype, 1]:
+    C: TensorLike, T: TensorLike
+](condition: C, a: T) raises -> Dynamic[T.dtype, 1] where (
+    C.dtype == DType.bool and C.LayoutType == T.LayoutType
+):
     """The elements of `a` where `condition` is nonzero. `numpy.extract`,
     which is what `a[mask]` means in NumPy.
 
@@ -581,6 +569,7 @@ def extract[
     mask with `numax.core.ops.astype[DType.bool]`, which is
     nonzero-means-true and is the one place that rule now lives.
     """
+    comptime dtype = T.dtype
     var n = a.size()
     var mask = condition.to_host()
     var values = a.to_host()
@@ -592,10 +581,11 @@ def extract[
 
 
 def compress[
-    dtype: DType, CondLayout: TensorLayout, LayoutType: TensorLayout
-](
-    condition: Tensor[DType.bool, CondLayout], a: Tensor[dtype, LayoutType]
-) raises -> Dynamic[dtype, 1] where (CondLayout.rank == 1):
+    A: TensorLike,
+    B: TensorLike,
+](condition: A, a: B) raises -> Dynamic[B.dtype, 1] where (
+    A.LayoutType.rank == 1 and A.dtype == DType.bool
+):
     """The flat elements of `a` where the rank-1 `condition` is true.
     `numpy.compress` with no `axis`.
 
@@ -606,6 +596,7 @@ def compress[
     raising, which is NumPy's rule and the reason both names exist. A
     condition longer than `a` is the error case and raises.
     """
+    comptime dtype = B.dtype
     var n = a.size()
     var m = condition.size()
     if m > n:
@@ -626,10 +617,10 @@ def compress[
 
 
 def partition[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], kth: Int) raises -> Static[
-    dtype, LayoutType.static_product
-] where LayoutType.all_dims_known:
+    T: TensorLike
+](a: T, kth: Int) raises -> Static[
+    T.dtype, T.LayoutType.static_product
+] where T.LayoutType.all_dims_known:
     """A rank-1 copy of `a` with the `kth` element in its sorted position,
     everything smaller before it and everything larger after.
     `numpy.partition(a, kth, axis=None)`.
@@ -656,10 +647,10 @@ def partition[
 
 
 def partition[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], kth: Int) raises -> Dynamic[
-    dtype, 1
-] where not LayoutType.all_dims_known:
+    T: TensorLike
+](a: T, kth: Int) raises -> Dynamic[
+    T.dtype, 1
+] where not T.LayoutType.all_dims_known:
     """`numpy.partition` for a run-time shape. See the overload above,
     including why it sorts."""
     if kth < 0 or kth >= a.size():
@@ -673,9 +664,7 @@ def partition[
     return sort(a)
 
 
-def argpartition[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], kth: Int) raises -> List[Int]:
+def argpartition[T: TensorLike](a: T, kth: Int) raises -> List[Int]:
     """The flat indices that would partition `a` about `kth`.
     `numpy.argpartition(a, kth, axis=None)`.
 
@@ -694,9 +683,7 @@ def argpartition[
     return argsort(a)
 
 
-def take[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], indices: List[Int]) raises -> Dynamic[dtype, 1]:
+def take[T: TensorLike](a: T, indices: List[Int]) raises -> Dynamic[T.dtype, 1]:
     """The elements of `a` at `indices`, in the order given. `numpy.take`.
 
     The consumer for the index lists `nonzero` and `argsort` return, which
@@ -708,6 +695,7 @@ def take[
     Out of range raises rather than wrapping, since a silent wrap turns an
     indexing bug into wrong numbers.
     """
+    comptime dtype = T.dtype
     var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=len(indices))
@@ -722,12 +710,10 @@ def take[
 
 
 def select[
-    dtype: DType, LayoutType: TensorLayout
-](
-    condition: Tensor[DType.bool, LayoutType],
-    x: Tensor[dtype, LayoutType],
-    y: Tensor[dtype, LayoutType],
-) raises -> Tensor[dtype, LayoutType]:
+    C: TensorLike, T: TensorLike
+](condition: C, x: T, y: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    C.dtype == DType.bool and C.LayoutType == T.LayoutType
+):
     """Elementwise select: `x` where `condition` is true, `y` elsewhere.
     `numpy.where(cond, x, y)`.
 
@@ -752,6 +738,8 @@ def select[
     version reads more clearly at `Plain`. Reach for
     `numax.core.numeric.blend` when the selection has to happen inside a kernel.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     var n = x.size()
     var mask = condition.to_host()
     var x_values = x.to_host()
@@ -759,24 +747,23 @@ def select[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = x_values[i] if mask[i] else y_values[i]
-    return Tensor[dtype, LayoutType](x.context(), condition.layout, out^)
+    return Tensor[dtype, LayoutType](x.context(), x.view().layout, out^)
 
 
 def select[
-    dtype: DType,
-    CLayout: TensorLayout,
-    XLayout: TensorLayout,
-    YLayout: TensorLayout,
-](
-    condition: Tensor[DType.bool, CLayout],
-    x: Tensor[dtype, XLayout],
-    y: Tensor[dtype, YLayout],
-) raises -> Dynamic[
-    dtype,
-    CLayout.rank if (
-        CLayout.rank > XLayout.rank and CLayout.rank > YLayout.rank
-    ) else (XLayout.rank if XLayout.rank > YLayout.rank else YLayout.rank),
-]:
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+](condition: A, x: B, y: C) raises -> Dynamic[
+    B.dtype,
+    A.LayoutType.rank if (
+        A.LayoutType.rank > B.LayoutType.rank
+        and A.LayoutType.rank > C.LayoutType.rank
+    ) else (
+        B.LayoutType.rank if B.LayoutType.rank
+        > C.LayoutType.rank else C.LayoutType.rank
+    ),
+] where (A.dtype == DType.bool and C.dtype == B.dtype):
     """`select` over three shapes NumPy would broadcast.
 
     `numpy.where` broadcasts all three of its arguments, which is what makes
@@ -791,6 +778,10 @@ def select[
     zero strides rather than materializing any operand, and the result is a
     `Dynamic` because the extents are computed at run time.
     """
+    comptime dtype = B.dtype
+    comptime CLayout = A.LayoutType
+    comptime XLayout = B.LayoutType
+    comptime YLayout = C.LayoutType
     comptime rank = CLayout.rank if (
         CLayout.rank > XLayout.rank and CLayout.rank > YLayout.rank
     ) else (XLayout.rank if XLayout.rank > YLayout.rank else YLayout.rank)
@@ -810,7 +801,7 @@ def select[
 
     var mask = condition.to_host()
     var x_values = x.to_host()
-    var y_values = y.to_host()
+    var y_values = y.to_host[B.dtype]()
     var out = List[Scalar[dtype]](length=count, fill=0)
     for flat in range(count):
         var rem = flat
@@ -832,16 +823,15 @@ def select[
 
 
 def _top_k_into[
-    dtype: DType,
-    SrcLayout: TensorLayout,
-    DstLayout: TensorLayout,
-    IdxLayout: TensorLayout,
+    T: TensorLike,
+    ValuesLayout: TensorLayout,
+    IndicesLayout: TensorLayout,
     largest: Bool,
     gpu: Bool,
 ](
-    mut a: Tensor[dtype, SrcLayout],
-    mut values: Tensor[dtype, DstLayout],
-    mut indices: Tensor[DType.int64, IdxLayout],
+    a: T,
+    mut values: Tensor[T.dtype, ValuesLayout],
+    mut indices: Tensor[DType.int64, IndicesLayout],
     k: Int,
     axis: Int,
     sorted: Bool,
@@ -865,14 +855,15 @@ def _top_k_into[
 
 
 def top_k[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     k: Int,
     largest: Bool = True,
     gpu: Bool = False,
-](mut a: Static[dtype, n], sorted: Bool = True) raises -> Tuple[
-    Static[dtype, k], Static[DType.int64, k]
-] where (k > 0 and k <= n):
+](a: T, sorted: Bool = True) raises -> Tuple[
+    Static[T.dtype, k], Static[DType.int64, k]
+] where (
+    k > 0 and k <= dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
+):
     """The `k` largest elements of `a` and where they came from.
     `numpy.argpartition` paired with its values, or `torch.topk`.
 
@@ -884,23 +875,24 @@ def top_k[
     real device path: `gpu=True` runs MAX's GPU kernel over the tensor where
     it already lives, with no host copy in either direction.
     """
+    comptime dtype = T.dtype
     var ctx = a.context()
     var values = Static[dtype, k]._uninitialized(ctx)
     var indices = Static[DType.int64, k]._uninitialized(ctx)
-    _top_k_into[dtype, _, _, _, largest, gpu](a, values, indices, k, 0, sorted)
+    _top_k_into[largest=largest, gpu=gpu](a, values, indices, k, 0, sorted)
     return (values^, indices^)
 
 
 def top_k[
-    dtype: DType,
-    rows: Int,
-    cols: Int,
+    T: TensorLike,
     k: Int,
     largest: Bool = True,
     gpu: Bool = False,
-](mut a: Static[dtype, rows, cols], sorted: Bool = True) raises -> Tuple[
-    Static[dtype, rows, k], Static[DType.int64, rows, k]
-] where (k > 0 and k <= cols):
+](a: T, sorted: Bool = True) raises -> Tuple[
+    Static[T.dtype, dim[T, 0], k], Static[DType.int64, dim[T, 0], k]
+] where (
+    k > 0 and k <= dim[T, 1] and T.rank == 2 and T.LayoutType.all_dims_known
+):
     """The `k` largest elements of each **row** of `a`, and their columns.
     `torch.topk(a, k, dim=-1)`.
 
@@ -910,8 +902,10 @@ def top_k[
     takes an axis, so routing it flat would be numax throwing away a
     capability MAX already has.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
     var ctx = a.context()
     var values = Static[dtype, rows, k]._uninitialized(ctx)
     var indices = Static[DType.int64, rows, k]._uninitialized(ctx)
-    _top_k_into[dtype, _, _, _, largest, gpu](a, values, indices, k, 1, sorted)
+    _top_k_into[largest=largest, gpu=gpu](a, values, indices, k, 1, sorted)
     return (values^, indices^)

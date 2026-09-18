@@ -119,7 +119,8 @@ from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 from nn.cumsum import cumsum as _nn_cumsum
 
 from ..core.array import Dynamic, Static, Tensor, _dyn_shape_from
-from ..core._drive import _check_device, _dense, _flat, _notice
+from ..core.tensorlike import is_row_major
+from ..core._drive import _check_device, _dense, _flat_unchecked, _notice
 from ..core.ops import (
     multiply as _multiply,
     power as _power,
@@ -461,7 +462,7 @@ def _reduce_whole[
         return tile
 
     reduce_all[monoid=monoid, target=_target[gpu]()](
-        _flat(xs), out.view(), identity, xs.size(), Optional(ctx)
+        _flat_unchecked(xs), out.view(), identity, xs.size(), Optional(ctx)
     )
     return out.to_host()[0]
 
@@ -797,7 +798,7 @@ def argmax[
         var out = TileTensor(out_storage, row_major[1]())
         _nn_argmax(flat, 0, out)
         return Int(out[0])
-    return argmax_all[dtype, _target[gpu]()](_flat(xs), xs.context())
+    return argmax_all[dtype, _target[gpu]()](_flat_unchecked(xs), xs.context())
 
 
 def argmin[
@@ -814,7 +815,7 @@ def argmin[
         var out = TileTensor(out_storage, row_major[1]())
         _nn_argmin(flat, 0, out)
         return Int(out[0])
-    return argmin_all[dtype, _target[gpu]()](_flat(xs), xs.context())
+    return argmin_all[dtype, _target[gpu]()](_flat_unchecked(xs), xs.context())
 
 
 def _argn_axis[
@@ -1073,7 +1074,9 @@ def average[
     dtype: DType, LayoutType: TensorLayout
 ](
     mut xs: Tensor[dtype, LayoutType], weights: Tensor[dtype, LayoutType]
-) raises -> SIMD[dtype, 1] where dtype.is_floating_point():
+) raises -> SIMD[dtype, 1] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The weighted mean `sum(w x) / sum(w)`. `numpy.average(a, weights=w)`.
 
     Two reductions and one elementwise product, host-side as those are; a
@@ -1095,7 +1098,9 @@ def moment[
     mut xs: Tensor[dtype, LayoutType],
     order: Int,
     center: Optional[Float64] = None,
-) raises -> SIMD[dtype, 1] where dtype.is_floating_point():
+) raises -> SIMD[dtype, 1] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The `order`-th moment of `xs` about `center`, the mean by default:
     `mean((x - c) ** order)`. `scipy.stats.moment(a, order, center=c)`.
 

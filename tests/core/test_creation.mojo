@@ -135,7 +135,7 @@ def test_tril_and_triu_partition_the_matrix() raises:
 
 def test_vander_has_decreasing_powers() raises:
     var x = _t[3]([1.0, 2.0, 3.0])
-    var v = vander[dtype, 3, 3](x)
+    var v = vander[cols=3](x)
     assert_equal(v.num_elements, 9)
     var values = v.to_host()
     # row for 2.0 is [4, 2, 1]

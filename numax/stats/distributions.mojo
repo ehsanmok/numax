@@ -124,7 +124,7 @@ from layout.tile_layout import TensorLayout
 
 from ..core._drive import (
     _check_device,
-    _flat,
+    _flat_unchecked,
     _flat_out,
     _launch,
     _notice,
@@ -207,7 +207,7 @@ def _over1[
 
     var ctx = x.context()
     var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.layout)
-    var xs = _flat(x)
+    var xs = _flat_unchecked(x)
     var ys = _flat_out(out)
 
     @always_inline
@@ -242,7 +242,7 @@ def _over2[
 
     var ctx = x.context()
     var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.layout)
-    var xs = _flat(x)
+    var xs = _flat_unchecked(x)
     var ys = _flat_out(out)
 
     @always_inline

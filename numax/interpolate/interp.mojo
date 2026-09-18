@@ -347,5 +347,5 @@ def polyfit[
     minimum-norm answer for a rank-deficient fit spells
     `lstsq[method="svd"]` on `vander(x, deg + 1)` directly.
     """
-    var design = vander[dtype, n, deg + 1](x)
+    var design = vander[cols=deg + 1](x)
     return lstsq[dtype, n, deg + 1, gpu](design, y)

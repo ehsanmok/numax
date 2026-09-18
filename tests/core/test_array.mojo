@@ -229,7 +229,7 @@ def test_transpose_default_is_the_host_path() raises:
             counter += 1
 
     var implicit = transpose(m)
-    var explicit = transpose[dtype, 2, 3, False](m)
+    var explicit = transpose[gpu=False](m)
     var iv = implicit.view()
     var ev = explicit.view()
     for r in range(3):

@@ -82,7 +82,13 @@ from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 
 from ..core.array import Static, Tensor
-from ..core._drive import _check_device, _dense, _flat, _notice, _target
+from ..core._drive import (
+    _check_device,
+    _dense,
+    _flat_unchecked,
+    _notice,
+    _target,
+)
 from ..core.plain import Plain
 from .distributions import norm, t
 from .statistics import mean as _mean_axis
@@ -176,8 +182,8 @@ def _stack_rows[
     var ctx = x.context()
     var out = Static[dtype, 2, n]._uninitialized(ctx)
     var ov = out.view()
-    var xs = _flat(x)
-    var ys = _flat(y)
+    var xs = _flat_unchecked(x)
+    var ys = _flat_unchecked(y)
     var top: _Row[dtype] = TileTensor(
         ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(n))
     )
@@ -215,7 +221,7 @@ def _centered[
     var means = _mean_axis[axis=1, gpu=gpu](m)
     var out = Static[dtype, rows, n]._uninitialized(ctx)
     var src = _dense(m)
-    var avg = _flat(means)
+    var avg = _flat_unchecked(means)
     var dst = out.view()
 
     @always_inline

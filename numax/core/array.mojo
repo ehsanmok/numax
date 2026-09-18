@@ -161,7 +161,7 @@ from .dual import Dual
 from .gradient import Gradient
 from .numeric import FloatLike
 from .plain import Plain
-from .tensorlike import TensorLike
+from .tensorlike import TensorLike, dim, is_row_major
 from .ops import (
     add as _add,
     divide as _divide,
@@ -428,6 +428,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         return self.buffer.context()
 
+    def on_host(self) -> Bool:
+        """`host_addressable`, as the `TensorLike` method."""
+        return self.host_addressable
+
     def size(self) -> Int:
         """The element count, read from the layout.
 
@@ -617,18 +621,20 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             self.host_addressable,
         )
 
-    def to_host(self) raises -> List[Scalar[Self.dtype]]:
+    def to_host[dtype: DType = Self.dtype](self) raises -> List[Scalar[dtype]]:
         """A host copy of every element, row-major.
 
         The bulk read path, and the only one that costs a single mapping
         regardless of device -- see this module's docstring for why
-        `DeviceBuffer.unsafe_ptr()` alone is not a safe substitute.
+        `DeviceBuffer.unsafe_ptr()` alone is not a safe substitute. `dtype`
+        is the `TensorLike` escape for a two-conformer body and defaults to
+        this tensor's own; the cast is the identity there.
         """
         var n = self.size()
-        var out = List[Scalar[Self.dtype]](capacity=n)
+        var out = List[Scalar[dtype]](capacity=n)
         with self.buffer.map_to_host() as host:
             for i in range(n):
-                out.append(host[i])
+                out.append(host[i].cast[dtype]())
         return out^
 
     def __getitem__(self, i: Int) raises -> Scalar[Self.dtype]:
@@ -717,9 +723,11 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     # Forward to `numax.core.ops` at `gpu=False`: an operator has no
     # parameter list to write `[gpu=True]` in, so `a + b` on a device
     # tensor takes the host walk and prints one `stderr` line naming
-    # `add[gpu=True]`.
+    # `add[gpu=True]`. Each carries `where is_row_major[Self]` because the
+    # routine it forwards to flattens, and a generic `Self` cannot prove
+    # that on its own; at a concrete shape the clause is immediate.
 
-    def __add__(self, other: Self) raises -> Self:
+    def __add__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a + b`, elementwise. Forwards to `numax.core.ops.add`.
 
         On a GPU-context tensor this runs on the host and says so on
@@ -728,11 +736,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         return _add(self, other)
 
-    def __add__(self, other: Scalar[Self.dtype]) raises -> Self:
+    def __add__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Self where is_row_major[Self]:
         """`a + b` with a scalar `b`. Host-side; see `__add__` above."""
         return _add(self, other)
 
-    def __sub__(self, other: Self) raises -> Self:
+    def __sub__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a - b`, elementwise. Forwards to `numax.core.ops.subtract`.
 
         Host-side on a GPU-context tensor, with the notice `__add__`
@@ -740,11 +750,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         return _subtract(self, other)
 
-    def __sub__(self, other: Scalar[Self.dtype]) raises -> Self:
+    def __sub__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Self where is_row_major[Self]:
         """`a - b` with a scalar `b`. Host-side; see `__add__` above."""
         return _subtract(self, other)
 
-    def __mul__(self, other: Self) raises -> Self:
+    def __mul__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a * b`, elementwise. Forwards to `numax.core.ops.multiply`.
 
         Host-side on a GPU-context tensor, with the notice `__add__`
@@ -752,11 +764,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         return _multiply(self, other)
 
-    def __mul__(self, other: Scalar[Self.dtype]) raises -> Self:
+    def __mul__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Self where is_row_major[Self]:
         """`a * b` with a scalar `b`. Host-side; see `__add__` above."""
         return _multiply(self, other)
 
-    def __truediv__(self, other: Self) raises -> Self:
+    def __truediv__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a / b`, elementwise. Forwards to `numax.core.ops.divide`.
 
         Host-side on a GPU-context tensor, with the notice `__add__`
@@ -764,11 +778,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         return _divide(self, other)
 
-    def __truediv__(self, other: Scalar[Self.dtype]) raises -> Self:
+    def __truediv__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Self where is_row_major[Self]:
         """`a / b` with a scalar `b`. Host-side; see `__add__` above."""
         return _divide(self, other)
 
-    def __neg__(self) raises -> Self:
+    def __neg__(self) raises -> Self where is_row_major[Self]:
         """`-a`, elementwise. Forwards to `numax.core.ops.negative`.
 
         Host-side on a GPU-context tensor, with the notice `__add__`
@@ -1068,42 +1084,42 @@ def arange[
     return Static[dtype, num](_context(ctx), values^)
 
 
-def zeros_like[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+def zeros_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new zero-filled tensor with `a`'s dtype, shape and device."""
-    return Tensor[dtype, LayoutType](a.context(), a.layout)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return Tensor[dtype, LayoutType](a.context(), a.view().layout)
 
 
-def ones_like[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+def ones_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new one-filled tensor with `a`'s dtype, shape and device."""
+    comptime dtype = T.dtype
     return full_like(a, 1)
 
 
 def full_like[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], fill_value: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike
+](a: T, fill_value: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new `fill_value`-filled tensor with `a`'s dtype, shape and device."""
+    comptime dtype = T.dtype
     return _filled(zeros_like(a), fill_value)
 
 
-def empty_like[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+def empty_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new tensor with `a`'s dtype, shape and device; see `empty`'s own
     docstring for why this zero-initializes rather than leaving memory
     uninitialized.
     """
+    comptime dtype = T.dtype
     return zeros_like(a)
 
 
 def transpose[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Static[dtype, rows, cols]) raises -> Static[dtype, cols, rows]:
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 1], dim[T, 0]] where (
+    T.rank == 2 and T.LayoutType.all_dims_known
+):
     """An owned-copy transpose of a 2D tensor, on `a`'s own device.
 
     On the host the permutation is `linalg.transpose` -- MAX's own kernel.
@@ -1126,20 +1142,20 @@ def transpose[
     shared-memory tiled one, and is what should be replaced by MAX's
     kernel once that kernel runs on a device.
 
-    Takes `a` mutably even though it only reads it: `view()` hands back a
-    `TileTensor` that can write, and a mutable view cannot be built from an
-    immutable binding -- the compiler enforces that, so an immutable
-    `transpose` would have to copy the source first. Callers hold their
-    tensors in `var` bindings anyway, so `transpose(m)` reads the same
-    either way.
+    Takes `a` by borrow: `view()` follows the binding's mutability, so a
+    read-only routine reads through a read-only tile and a temporary is a
+    fine argument.
 
     Distinct from `TileTensor.transpose()`, which returns a zero-copy view
     with every axis reversed over the *same* memory -- this allocates a new
     buffer, for when the result needs its own storage (e.g. to outlive the
     source, or to feed something that wants a plain `Tensor`).
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
     var ctx = a.context()
-    var result = Static[dtype, cols, rows](ctx)
+    var result = Static[T.dtype, cols, rows](ctx)
     var src = a.view()
     var dst = result.view()
 
@@ -1163,10 +1179,8 @@ def transpose[
 
 
 def transpose[
-    dtype: DType, LayoutType: TensorLayout
-](mut a: Tensor[dtype, LayoutType], *axes: Int) raises -> Dynamic[
-    dtype, LayoutType.rank
-]:
+    T: TensorLike
+](a: T, *axes: Int) raises -> Dynamic[T.dtype, T.LayoutType.rank]:
     """`a` with its axes permuted by `axes`. `numpy.transpose(a, axes)`.
 
     `axes` is a permutation of `0 .. rank - 1`: the result's axis `d` is
@@ -1181,6 +1195,7 @@ def transpose[
     and an `elementwise` gather at a run-time permutation would have to
     address through strides the kernel cannot see.
     """
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     if len(axes) != rank:
         raise Error(
@@ -1206,16 +1221,15 @@ def transpose[
 
 
 def swapaxes[
-    dtype: DType, LayoutType: TensorLayout
-](mut a: Tensor[dtype, LayoutType], axis1: Int, axis2: Int) raises -> Dynamic[
-    dtype, LayoutType.rank
-]:
+    T: TensorLike
+](a: T, axis1: Int, axis2: Int) raises -> Dynamic[T.dtype, T.LayoutType.rank]:
     """`a` with `axis1` and `axis2` exchanged. `numpy.swapaxes`.
 
     The two-axis case of `transpose`, which is what most callers of a
     permutation actually want and which they would otherwise spell as a
     full list with two entries out of order.
     """
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var first = axis1 + rank if axis1 < 0 else axis1
     var second = axis2 + rank if axis2 < 0 else axis2
@@ -1231,16 +1245,17 @@ def swapaxes[
 
 
 def moveaxis[
-    dtype: DType, LayoutType: TensorLayout
-](
-    mut a: Tensor[dtype, LayoutType], source: Int, destination: Int
-) raises -> Dynamic[dtype, LayoutType.rank]:
+    T: TensorLike
+](a: T, source: Int, destination: Int) raises -> Dynamic[
+    T.dtype, T.LayoutType.rank
+]:
     """`a` with axis `source` moved to position `destination`, the rest
     keeping their order. `numpy.moveaxis`.
 
     Not `swapaxes`: moving axis 0 to position 2 of a rank-3 tensor gives
     the order `(1, 2, 0)`, where swapping them would give `(2, 1, 0)`.
     """
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var src = source + rank if source < 0 else source
     var dst = destination + rank if destination < 0 else destination
@@ -1256,14 +1271,14 @@ def moveaxis[
 
 
 def _transpose_by[
-    dtype: DType, LayoutType: TensorLayout
-](mut a: Tensor[dtype, LayoutType], order: List[Int]) raises -> Dynamic[
-    dtype, LayoutType.rank
-]:
+    T: TensorLike
+](a: T, order: List[Int]) raises -> Dynamic[T.dtype, T.LayoutType.rank]:
     """`transpose` for a permutation already held in a list, which is what
     `swapaxes` and `moveaxis` build. Same delegation to `linalg.transpose`,
     no validation -- the caller constructed the permutation rather than
     receiving it."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var out_extents = List[Int](capacity=rank)
     for d in range(rank):
@@ -1279,24 +1294,32 @@ def _transpose_by[
 
 
 def squeeze[
-    dtype: DType, n: Int
-](a: Static[dtype, 1, n]) raises -> Static[dtype, n]:
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 1]] where (
+    T.rank == 2 and T.LayoutType.all_dims_known and dim[T, 0] == 1
+):
     """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
+    comptime dtype = T.dtype
+    comptime n = dim[T, 1]
     return Static[dtype, n](a.context(), a.to_host())
 
 
 def squeeze[
-    dtype: DType, n: Int
-](a: Static[dtype, n, 1]) raises -> Static[dtype, n]:
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
+    T.rank == 2 and T.LayoutType.all_dims_known and dim[T, 1] == 1
+):
     """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     return Static[dtype, n](a.context(), a.to_host())
 
 
 def squeeze[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, LayoutType.rank - 1
-] where (axis >= 0 and axis < LayoutType.rank and LayoutType.rank > 1):
+    T: TensorLike, axis: Int
+](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    axis >= 0 and axis < T.LayoutType.rank and T.LayoutType.rank > 1
+):
     """`a` with the size-1 axis at `axis` dropped. `numpy.squeeze(a, axis=k)`.
 
     The inverse of `expand_dims`, and the general form of the two fixed
@@ -1308,6 +1331,8 @@ def squeeze[
 
     Row-major order is unchanged -- only the shape is.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     if a.dim_at(axis) != 1:
         raise Error(
@@ -1328,10 +1353,8 @@ def squeeze[
 
 
 def atleast_1d[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 1] where (
-    LayoutType.rank == 1
-):
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 1] where T.LayoutType.rank == 1:
     """`a` unchanged, as a rank-1 tensor. `numpy.atleast_1d`.
 
     numax has no rank-0 tensor, so this is the identity at the only rank it
@@ -1343,10 +1366,8 @@ def atleast_1d[
 
 
 def atleast_2d[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 2] where (
-    LayoutType.rank == 1
-):
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 2] where T.LayoutType.rank == 1:
     """`a` as a `(1, n)` row. `numpy.atleast_2d` at rank 1.
 
     NumPy promotes a rank-1 array to a *row*, not a column -- which is the
@@ -1354,6 +1375,7 @@ def atleast_2d[
     and is worth stating, since the opposite choice is equally plausible.
     `expand_dims[axis=1]` is the column.
     """
+    comptime dtype = T.dtype
     var extents = List[Int](capacity=2)
     extents.append(1)
     extents.append(a.size())
@@ -1363,11 +1385,13 @@ def atleast_2d[
 
 
 def atleast_2d[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, LayoutType.rank
-] where (LayoutType.rank >= 2):
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
+    T.LayoutType.rank >= 2
+):
     """`a` unchanged, at rank 2 or above. `numpy.atleast_2d`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var extents = List[Int](capacity=rank)
     for d in range(rank):
@@ -1378,10 +1402,8 @@ def atleast_2d[
 
 
 def atleast_3d[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 3] where (
-    LayoutType.rank == 1
-):
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 3] where T.LayoutType.rank == 1:
     """`a` as a `(1, n, 1)`. `numpy.atleast_3d` at rank 1.
 
     The shape is NumPy's and is worth stating because it is not the one
@@ -1390,6 +1412,7 @@ def atleast_3d[
     which is what this does, so the two compose. A `(n, 1, 1)` would be
     the other plausible reading and is not it.
     """
+    comptime dtype = T.dtype
     var extents = List[Int](capacity=3)
     extents.append(1)
     extents.append(a.size())
@@ -1400,16 +1423,15 @@ def atleast_3d[
 
 
 def atleast_3d[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[dtype, 3] where (
-    LayoutType.rank == 2
-):
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 3] where T.LayoutType.rank == 2:
     """`a` as a `(rows, cols, 1)`. `numpy.atleast_3d` at rank 2.
 
     A trailing axis rather than a leading one, again NumPy's rule: a
     matrix of values becomes a matrix of length-1 pixels, which is the
     convention image code depends on.
     """
+    comptime dtype = T.dtype
     var extents = List[Int](capacity=3)
     extents.append(a.dim_at(0))
     extents.append(a.dim_at(1))
@@ -1420,11 +1442,13 @@ def atleast_3d[
 
 
 def atleast_3d[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, LayoutType.rank
-] where (LayoutType.rank >= 3):
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
+    T.LayoutType.rank >= 3
+):
     """`a` unchanged, at rank 3 or above. `numpy.atleast_3d`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var extents = List[Int](capacity=rank)
     for d in range(rank):
@@ -1435,8 +1459,16 @@ def atleast_3d[
 
 
 def stack[
-    dtype: DType, n: Int
-](a: Static[dtype, n], b: Static[dtype, n]) raises -> Static[dtype, 2, n]:
+    A: TensorLike,
+    B: TensorLike,
+](a: A, b: B) raises -> Static[A.dtype, 2, dim[A, 0]] where (
+    A.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """Stack two same-shaped rank-1 tensors along a new leading axis
     (`axis=0`): `ys[0, :] = a`, `ys[1, :] = b`.
 
@@ -1449,8 +1481,10 @@ def stack[
     at runtime. Two spellings of the same number is worse than two
     arguments.
     """
+    comptime dtype = A.dtype
+    comptime n = dim[A, 0]
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](capacity=2 * n)
     for i in range(n):
         values.append(a_values[i])
@@ -1460,9 +1494,11 @@ def stack[
 
 
 def reshape[
-    dtype: DType, n: Int, rows: Int, cols: Int
-](a: Static[dtype, n]) raises -> Static[dtype, rows, cols] where (
-    rows * cols == n
+    T: TensorLike,
+    rows: Int,
+    cols: Int,
+](a: T) raises -> Static[T.dtype, rows, cols] where (
+    rows * cols == dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
 ):
     """A rank-2 copy of a rank-1 tensor, in row-major order.
 
@@ -1479,22 +1515,28 @@ def reshape[
     same shape for the same kind of reason. `ravel` is the inverse, and the
     two compose into any reshape this module can express.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     return Static[dtype, rows, cols](a.context(), a.to_host())
 
 
 def reshape[
-    dtype: DType, n: Int, d0: Int, d1: Int, d2: Int
-](a: Static[dtype, n]) raises -> Static[dtype, d0, d1, d2] where (
-    d0 * d1 * d2 == n
+    T: TensorLike,
+    d0: Int,
+    d1: Int,
+    d2: Int,
+](a: T) raises -> Static[T.dtype, d0, d1, d2] where (
+    d0 * d1 * d2 == dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
 ):
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
+    comptime dtype = T.dtype
     return Static[dtype, d0, d1, d2](a.context(), a.to_host())
 
 
 def reshape_dyn[
-    dtype: DType, LayoutType: TensorLayout, rank: Int
-](a: Tensor[dtype, LayoutType], *extents: Int) raises -> Dynamic[dtype, rank]:
+    T: TensorLike, rank: Int
+](a: T, *extents: Int) raises -> Dynamic[T.dtype, rank]:
     """A copy of `a` at the given shape, in row-major order, at any rank.
 
     What the comptime `reshape` overloads above cannot do: the target shape
@@ -1507,6 +1549,7 @@ def reshape_dyn[
     shape is a constant: there the same check is a `where` clause and the
     mismatch is a compile error.
     """
+    comptime dtype = T.dtype
     var wanted = 1
     for i in range(rank):
         wanted *= extents[i]
@@ -1525,10 +1568,10 @@ def reshape_dyn[
 
 
 def slice[
-    dtype: DType, LayoutType: TensorLayout
-](
-    a: Tensor[dtype, LayoutType], starts: List[Int], stops: List[Int]
-) raises -> Dynamic[dtype, LayoutType.rank]:
+    T: TensorLike
+](a: T, starts: List[Int], stops: List[Int]) raises -> Dynamic[
+    T.dtype, T.LayoutType.rank
+]:
     """The sub-box `a[starts[0]:stops[0], starts[1]:stops[1], ...]`.
 
     Basic slicing, at any rank, with bounds read at run time -- so the
@@ -1545,6 +1588,8 @@ def slice[
     quietly producing an empty axis, since that is far more often a bug
     than an intent.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     if len(starts) != rank or len(stops) != rank:
         raise Error("slice: expected ", rank, " bounds per side")
@@ -1588,10 +1633,8 @@ def slice[
 
 
 def concatenate_dyn[
-    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, 1
-]:
+    A: TensorLike, B: TensorLike
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where A.dtype == B.dtype:
     """Join two tensors end to end as one flat tensor.
 
     The run-time-shaped `concatenate`: the two inputs need not have the
@@ -1600,17 +1643,15 @@ def concatenate_dyn[
     lengths are constants and the result's should be too.
     """
     var values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     for i in range(len(b_values)):
         values.append(b_values[i])
     return asarray(values^, a.context())
 
 
 def split_dyn[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], at: Int) raises -> Tuple[
-    Dynamic[dtype, 1], Dynamic[dtype, 1]
-]:
+    T: TensorLike
+](a: T, at: Int) raises -> Tuple[Dynamic[T.dtype, 1], Dynamic[T.dtype, 1]]:
     """Cut a tensor in two at a run-time index: elements `[0, at)` and
     `[at, size())`, both flat. The inverse of `concatenate_dyn`.
 
@@ -1618,6 +1659,7 @@ def split_dyn[
     of their types; here they are not, so the cut point is an ordinary
     argument and can be computed.
     """
+    comptime dtype = T.dtype
     var n = a.size()
     if at < 0 or at > n:
         raise Error(
@@ -1635,10 +1677,8 @@ def split_dyn[
 
 
 def stack_dyn[
-    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, 2
-]:
+    A: TensorLike, B: TensorLike
+](a: A, b: B) raises -> Dynamic[A.dtype, 2] where A.dtype == B.dtype:
     """Stack two same-length tensors along a new leading axis, flattening
     each: `(2, size)`.
 
@@ -1646,12 +1686,13 @@ def stack_dyn[
     1 with the same extent in their types, this takes any two layouts and
     checks the lengths agree at run time.
     """
+    comptime dtype = A.dtype
     if a.size() != b.size():
         raise Error(
             "stack_dyn: lengths ", a.size(), " and ", b.size(), " differ"
         )
     var values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     for i in range(len(b_values)):
         values.append(b_values[i])
     var result = Dynamic[dtype, 2](
@@ -1661,20 +1702,18 @@ def stack_dyn[
     return result^
 
 
-def _extents_of[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) -> List[Int]:
+def _extents_of[T: TensorLike](a: T) -> List[Int]:
     """`a`'s extents, axis by axis, as a rank-generic list."""
+    comptime LayoutType = T.LayoutType
     var out = List[Int](capacity=LayoutType.rank)
     comptime for d in range(LayoutType.rank):
         out.append(a.dim_at(d))
     return out^
 
 
-def _strides_of[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) -> List[Int]:
+def _strides_of[T: TensorLike](a: T) -> List[Int]:
     """`a`'s strides, axis by axis, as a rank-generic list."""
+    comptime LayoutType = T.LayoutType
     var out = List[Int](capacity=LayoutType.rank)
     comptime for d in range(LayoutType.rank):
         out.append(a.stride_at(d))
@@ -1730,8 +1769,8 @@ def _stretch_strides(
 
 
 def broadcast_to[
-    dtype: DType, LayoutType: TensorLayout, rank: Int
-](a: Tensor[dtype, LayoutType], *extents: Int) raises -> Dynamic[dtype, rank]:
+    T: TensorLike, rank: Int
+](a: T, *extents: Int) raises -> Dynamic[T.dtype, rank]:
     """`a` stretched to the given shape, following NumPy's rules.
 
     Shapes are aligned from the right; an axis of extent 1 repeats to fill
@@ -1745,6 +1784,8 @@ def broadcast_to[
     `broadcast_op_axis` is the route that avoids the copy where the
     broadcast only exists to be consumed by an elementwise op.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime src_rank = LayoutType.rank
     if rank < src_rank:
         raise Error(
@@ -1798,10 +1839,10 @@ def broadcast_to[
 
 
 def ravel[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Static[
-    dtype, LayoutType.static_product
-] where LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Static[
+    T.dtype, T.LayoutType.static_product
+] where T.LayoutType.all_dims_known:
     """A rank-1 copy in row-major order -- the inverse of `reshape`.
 
     `Tensor` owns its storage and Mojo will not let a field be moved out of
@@ -1812,14 +1853,14 @@ def ravel[
 
     The overload below flattens a tensor whose extents are run-time values.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return Static[dtype, LayoutType.static_product](a.context(), a.to_host())
 
 
 def ravel[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, 1
-] where not LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 1] where not T.LayoutType.all_dims_known:
     """A rank-1 copy in row-major order, for a run-time shape.
 
     Same copy as the overload above; the result's length is a run-time
@@ -1829,10 +1870,10 @@ def ravel[
 
 
 def flatten[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Static[
-    dtype, LayoutType.static_product
-] where LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Static[
+    T.dtype, T.LayoutType.static_product
+] where T.LayoutType.all_dims_known:
     """A rank-1 copy in row-major order. `numpy.flatten`.
 
     The same call as `ravel`. In NumPy the two differ in exactly one way --
@@ -1846,18 +1887,23 @@ def flatten[
 
 
 def flatten[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, 1
-] where not LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 1] where not T.LayoutType.all_dims_known:
     """A rank-1 copy in row-major order, for a run-time shape.
     `numpy.flatten`, and the same call as `ravel`."""
     return ravel(a)
 
 
 def concatenate[
-    dtype: DType, n: Int, m: Int
-](a: Static[dtype, n], b: Static[dtype, m]) raises -> Static[dtype, n + m]:
+    A: TensorLike,
+    B: TensorLike,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0] + dim[B, 0]] where (
+    A.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
 
     Rank-1 with the joined length in the type, since an axis-`k`
@@ -1874,8 +1920,11 @@ def concatenate[
     `origin_of(b.buffer)`), which only an unsafe origin cast erases. Two
     buffers, one memcpy each, is not worth that.
     """
+    comptime dtype = A.dtype
+    comptime n = dim[A, 0]
+    comptime m = dim[B, 0]
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](capacity=n + m)
     for i in range(n):
         values.append(a_values[i])
@@ -1885,10 +1934,13 @@ def concatenate[
 
 
 def split[
-    dtype: DType, n: Int, at: Int
-](a: Static[dtype, n]) raises -> Tuple[
-    Static[dtype, at], Static[dtype, n - at]
-] where (at >= 0 and at <= n):
+    T: TensorLike,
+    at: Int,
+](a: T) raises -> Tuple[
+    Static[T.dtype, at], Static[T.dtype, dim[T, 0] - at]
+] where (
+    at >= 0 and at <= dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
+):
     """Cut a rank-1 tensor in two at comptime index `at`: elements
     `[0, at)` and `[at, n)`. The inverse of `concatenate`.
 
@@ -1897,6 +1949,8 @@ def split[
     which a comptime-shaped tensor cannot express. One index, two outputs,
     is the part that survives that constraint.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var ctx = a.context()
     var values = a.to_host()
     var head = List[Scalar[dtype]](capacity=at)
@@ -1912,10 +1966,10 @@ def split[
 
 
 def array_split[
-    dtype: DType, LayoutType: TensorLayout, axis: Int = 0
-](a: Tensor[dtype, LayoutType], sections: Int) raises -> List[
-    Dynamic[dtype, LayoutType.rank]
-] where (axis >= 0 and axis < LayoutType.rank):
+    T: TensorLike, axis: Int = 0
+](a: T, sections: Int) raises -> List[
+    Dynamic[T.dtype, T.LayoutType.rank]
+] where (axis >= 0 and axis < T.LayoutType.rank):
     """`a` cut into `sections` parts along `axis`, as a list.
     `numpy.array_split`.
 
@@ -1932,6 +1986,8 @@ def array_split[
     entries and the rest get `n // sections`. `numpy.split` raises on an
     uneven division instead; this never does.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     if sections < 1:
         raise Error("array_split: sections must be at least 1, got ", sections)
@@ -2013,12 +2069,16 @@ def identity[
 
 
 def diag[
-    dtype: DType, n: Int
-](a: Static[dtype, n]) raises -> Static[dtype, n, n]:
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.rank == 1 and T.LayoutType.all_dims_known
+):
     """A square matrix with `a` on its main diagonal. `numpy.diag`.
 
     The vector-to-matrix direction only; `diagonal` is the inverse.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     var source = a.to_host()
     for i in range(n):
@@ -2027,9 +2087,13 @@ def diag[
 
 
 def diagonal[
-    dtype: DType, n: Int
-](a: Static[dtype, n, n]) raises -> Static[dtype, n]:
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
+    T.rank == 2 and T.LayoutType.all_dims_known and dim[T, 1] == dim[T, 0]
+):
     """The main diagonal of a square matrix. `numpy.diagonal`."""
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
@@ -2038,15 +2102,17 @@ def diagonal[
 
 
 def diagflat[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Static[
-    dtype, LayoutType.static_product, LayoutType.static_product
-] where LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Static[
+    T.dtype, T.LayoutType.static_product, T.LayoutType.static_product
+] where T.LayoutType.all_dims_known:
     """`a` flattened onto the diagonal of a square matrix.
     `numpy.diagflat`.
 
     The overload below takes a tensor whose extents are run-time values.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime n = LayoutType.static_product
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * n, fill=0)
@@ -2056,12 +2122,11 @@ def diagflat[
 
 
 def diagflat[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, 2
-] where not LayoutType.all_dims_known:
+    T: TensorLike
+](a: T) raises -> Dynamic[T.dtype, 2] where not T.LayoutType.all_dims_known:
     """`a` flattened onto the diagonal of a square matrix, for a run-time
     shape. `numpy.diagflat`."""
+    comptime dtype = T.dtype
     var source = a.to_host()
     var n = len(source)
     var values = List[Scalar[dtype]](length=n * n, fill=0)
@@ -2084,10 +2149,11 @@ def tri[
 
 
 def _band_part[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool
-](mut a: Static[dtype, rows, cols], lower: Int, upper: Int) raises -> Static[
-    dtype, rows, cols
-]:
+    T: TensorLike,
+    gpu: Bool,
+](a: T, lower: Int, upper: Int) raises -> Static[
+    T.dtype, dim[T, 0], dim[T, 1]
+] where (T.rank == 2 and T.LayoutType.all_dims_known):
     """`linalg.matrix_band_part` with the counts staged the way MAX wants.
 
     MAX reads `num_lower`, `num_upper` and `exclude` out of scalar tensors
@@ -2109,8 +2175,11 @@ def _band_part[
       (`imm src`). A borrow hands the kernel a host address for a
       structure the device cannot reach, and faults the same way.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
     var ctx = a.context()
-    var result = Static[dtype, rows, cols](ctx)
+    var result = Static[T.dtype, rows, cols](ctx)
     var counts = DeviceContext(api="cpu")
     var num_lower = Static[DType.int64, 1](counts, [Scalar[DType.int64](lower)])
     var num_upper = Static[DType.int64, 1](counts, [Scalar[DType.int64](upper)])
@@ -2120,7 +2189,7 @@ def _band_part[
 
     def read[
         width: Int, rank: Int
-    ](idx: IndexList[rank]) {var src} -> SIMD[dtype, width]:
+    ](idx: IndexList[rank]) {var src} -> SIMD[T.dtype, width]:
         return src.load[width](Coord(idx[0], idx[1]))
 
     _max_band_part[simd_width=1, target="gpu" if gpu else "cpu"](
@@ -2137,8 +2206,11 @@ def _band_part[
 
 
 def tril[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols]:
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
+    T.rank == 2 and T.LayoutType.all_dims_known
+):
     """`a` with everything above the diagonal zeroed. `numpy.tril` at `k=0`.
 
     The band is MAX's `matrix_band_part`, an elementwise kernel over the
@@ -2147,17 +2219,26 @@ def tril[
     triangle one element at a time, which also meant it could only do
     square matrices.
     """
-    return _band_part[dtype, rows, cols, gpu](a, -1, 0)
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
+    return _band_part[gpu=gpu](a, -1, 0)
 
 
 def triu[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
-](mut a: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols]:
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
+    T.rank == 2 and T.LayoutType.all_dims_known
+):
     """`a` with everything below the diagonal zeroed. `numpy.triu` at `k=0`.
 
     The mirror of `tril` and the same MAX kernel.
     """
-    return _band_part[dtype, rows, cols, gpu](a, 0, -1)
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
+    return _band_part[gpu=gpu](a, 0, -1)
 
 
 comptime pad_constant = 0
@@ -2172,19 +2253,18 @@ comptime pad_edge = 2
 
 
 def _pad_into[
-    dtype: DType,
-    SrcLayout: TensorLayout,
+    T: TensorLike,
     DstLayout: TensorLayout,
     rank: Int,
     mode: Int,
     gpu: Bool,
 ](
-    mut src: Tensor[dtype, SrcLayout],
-    mut dst: Tensor[dtype, DstLayout],
+    src: T,
+    mut dst: Tensor[T.dtype, DstLayout],
     var widths: Array[Int, 2 * rank],
     src_shape: IndexList[rank],
     dst_shape: IndexList[rank],
-    constant: Scalar[dtype],
+    constant: Scalar[T.dtype],
 ) raises:
     """The `nn` padding kernels, with the widths staged the way MAX wants.
 
@@ -2209,7 +2289,7 @@ def _pad_into[
         _max_pad_constant_gpu(
             dst.buffer.unsafe_ptr(),
             dst_shape,
-            src.buffer.unsafe_ptr(),
+            src.view().ptr.unsafe_origin_cast[MutAnyOrigin](),
             src_shape,
             pads._storage,
             constant,
@@ -2232,16 +2312,18 @@ def _pad_into[
 
 
 def pad[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     before: Int,
     after: Int,
     mode: Int = pad_constant,
     gpu: Bool = False,
-](mut a: Static[dtype, n], constant: Scalar[dtype] = 0) raises -> Static[
-    dtype, before + n + after
-] where (mode == pad_constant or mode == pad_reflect or mode == pad_edge) and (
-    mode == pad_constant or not gpu
+](a: T, constant: Scalar[T.dtype] = 0) raises -> Static[
+    T.dtype, before + dim[T, 0] + after
+] where (
+    (mode == pad_constant or mode == pad_reflect or mode == pad_edge)
+    and (mode == pad_constant or not gpu)
+    and T.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """`a` widened by `before` elements in front and `after` behind.
     `numpy.pad(a, (before, after), mode)` at rank 1.
@@ -2253,9 +2335,11 @@ def pad[
     padding kernel implements no other -- and the `where` clause above turns
     the other two into a compile error rather than a silent host fallback.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var out = Static[dtype, before + n + after]._uninitialized(a.context())
     var widths: Array[Int, 2] = [before, after]
-    _pad_into[dtype, _, _, 1, mode, gpu](
+    _pad_into[rank=1, mode=mode, gpu=gpu](
         a,
         out,
         widths^,
@@ -2267,21 +2351,20 @@ def pad[
 
 
 def pad[
-    dtype: DType,
-    rows: Int,
-    cols: Int,
+    T: TensorLike,
     top: Int,
     bottom: Int,
     left: Int,
     right: Int,
     mode: Int = pad_constant,
     gpu: Bool = False,
-](
-    mut a: Static[dtype, rows, cols], constant: Scalar[dtype] = 0
-) raises -> Static[dtype, top + rows + bottom, left + cols + right] where (
-    mode == pad_constant or mode == pad_reflect or mode == pad_edge
-) and (
-    mode == pad_constant or not gpu
+](a: T, constant: Scalar[T.dtype] = 0) raises -> Static[
+    T.dtype, top + dim[T, 0] + bottom, left + dim[T, 1] + right
+] where (
+    (mode == pad_constant or mode == pad_reflect or mode == pad_edge)
+    and (mode == pad_constant or not gpu)
+    and T.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """`a` widened by `top`/`bottom` rows and `left`/`right` columns.
     `numpy.pad(a, ((top, bottom), (left, right)), mode)` at rank 2.
@@ -2289,11 +2372,14 @@ def pad[
     The rank-1 form above documents why the widths are parameters and why
     `gpu=True` is constant-only.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
     comptime out_rows = top + rows + bottom
     comptime out_cols = left + cols + right
     var out = Static[dtype, out_rows, out_cols]._uninitialized(a.context())
     var widths: Array[Int, 4] = [top, bottom, left, right]
-    _pad_into[dtype, _, _, 2, mode, gpu](
+    _pad_into[rank=2, mode=mode, gpu=gpu](
         a,
         out,
         widths^,
@@ -2305,14 +2391,15 @@ def pad[
 
 
 def _matching_extents[
-    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout, axis: Int
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises:
+    A: TensorLike, B: TensorLike, axis: Int
+](a: A, b: B) raises where A.dtype == B.dtype:
     """Raise unless `a` and `b` agree on every extent but `axis`.
 
     The precondition both `concatenate` and `stack` need at an axis, and
     the one whose failure would otherwise be a silently wrong shape rather
     than an error.
     """
+    comptime ALayout = A.LayoutType
     comptime for d in range(ALayout.rank):
         if d != axis and a.dim_at(d) != b.dim_at(d):
             raise Error(
@@ -2328,10 +2415,13 @@ def _matching_extents[
 
 
 def concatenate[
-    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout, axis: Int
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, ALayout.rank
-] where (axis >= 0 and axis < ALayout.rank and ALayout.rank == BLayout.rank):
+    A: TensorLike, B: TensorLike, axis: Int
+](a: A, b: B) raises -> Dynamic[A.dtype, A.LayoutType.rank] where (
+    A.dtype == B.dtype
+    and axis >= 0
+    and axis < A.LayoutType.rank
+    and A.LayoutType.rank == B.LayoutType.rank
+):
     """Join `a` and `b` along `axis`. `numpy.concatenate((a, b), axis=k)`.
 
     Every extent but `axis` must agree; that one sums. The result is a
@@ -2344,6 +2434,8 @@ def concatenate[
     `StaticTuple`, so every input must share one layout *type* and one
     origin, and two separately owned buffers share neither.
     """
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
     comptime rank = ALayout.rank
     _matching_extents[axis=axis](a, b)
 
@@ -2357,7 +2449,7 @@ def concatenate[
         inner *= a.dim_at(d)
 
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var joined = a_len + b_len
     var out = List[Scalar[dtype]](length=outer * joined * inner, fill=0)
     for o in range(outer):
@@ -2381,10 +2473,13 @@ def concatenate[
 
 
 def stack[
-    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout, axis: Int
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, ALayout.rank + 1
-] where (axis >= 0 and axis <= ALayout.rank and ALayout.rank == BLayout.rank):
+    A: TensorLike, B: TensorLike, axis: Int
+](a: A, b: B) raises -> Dynamic[A.dtype, A.LayoutType.rank + 1] where (
+    A.dtype == B.dtype
+    and axis >= 0
+    and axis <= A.LayoutType.rank
+    and A.LayoutType.rank == B.LayoutType.rank
+):
     """Stack `a` and `b` along a *new* axis at position `axis`.
     `numpy.stack((a, b), axis=k)`.
 
@@ -2396,6 +2491,8 @@ def stack[
     Both inputs must have identical extents -- there is no axis for them to
     differ on.
     """
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
     comptime rank = ALayout.rank
     comptime for d in range(rank):
         if a.dim_at(d) != b.dim_at(d):
@@ -2416,7 +2513,7 @@ def stack[
         inner *= a.dim_at(d)
 
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var out = List[Scalar[dtype]](length=2 * outer * inner, fill=0)
     for o in range(outer):
         for i in range(inner):
@@ -2437,10 +2534,10 @@ def stack[
 
 
 def split[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](a: Tensor[dtype, LayoutType], at: Int) raises -> Tuple[
-    Dynamic[dtype, LayoutType.rank], Dynamic[dtype, LayoutType.rank]
-] where (axis >= 0 and axis < LayoutType.rank):
+    T: TensorLike, axis: Int
+](a: T, at: Int) raises -> Tuple[
+    Dynamic[T.dtype, T.LayoutType.rank], Dynamic[T.dtype, T.LayoutType.rank]
+] where (axis >= 0 and axis < T.LayoutType.rank):
     """Cut `a` in two along `axis` at index `at`: positions `[0, at)` and
     `[at, extent)`. The inverse of the `concatenate` above.
 
@@ -2451,6 +2548,8 @@ def split[
     Mojo 1.0 cannot destructure a `Tuple` of two `Tensor`s, so read the
     halves as `parts[0]` and `parts[1]`.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var length = a.dim_at(axis)
     if at < 0 or at > length:
@@ -2498,10 +2597,10 @@ def split[
 
 
 def expand_dims[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](a: Tensor[dtype, LayoutType]) raises -> Dynamic[
-    dtype, LayoutType.rank + 1
-] where (axis >= 0 and axis <= LayoutType.rank):
+    T: TensorLike, axis: Int
+](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank + 1] where (
+    axis >= 0 and axis <= T.LayoutType.rank
+):
     """`a` with a size-1 axis inserted at `axis`. `numpy.expand_dims`.
 
     The inverse of `squeeze`, and the cheapest way to line a vector up with
@@ -2513,6 +2612,8 @@ def expand_dims[
     for the reason every manipulation here copies: a view would borrow from
     a tensor this module does not own.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var extents = List[Int](capacity=rank + 1)
     for d in range(rank + 1):
@@ -2528,10 +2629,10 @@ def expand_dims[
 
 
 def roll[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](a: Tensor[dtype, LayoutType], shift: Int) raises -> Tensor[
-    dtype, LayoutType
-] where (axis >= 0 and axis < LayoutType.rank):
+    T: TensorLike, axis: Int
+](a: T, shift: Int) raises -> Tensor[T.dtype, T.LayoutType] where (
+    axis >= 0 and axis < T.LayoutType.rank
+):
     """`a` with its elements shifted cyclically by `shift` along `axis`.
     `numpy.roll(a, shift, axis=k)`.
 
@@ -2544,6 +2645,8 @@ def roll[
     so this is numax's own walk over the `outer`/`length`/`inner`
     decomposition.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var length = a.dim_at(axis)
     var outer = 1
@@ -2566,14 +2669,12 @@ def roll[
                 out[(o * length + to) * inner + i] = values[
                     (o * length + k) * inner + i
                 ]
-    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
 
 
 def tile[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType], *reps: Int) raises -> Dynamic[
-    dtype, LayoutType.rank
-]:
+    T: TensorLike
+](a: T, *reps: Int) raises -> Dynamic[T.dtype, T.LayoutType.rank]:
     """`a` repeated `reps[d]` times along each axis `d`. `numpy.tile`.
 
     The whole block repeats, so tiling a `(2, 3)` by `(2, 1)` gives a
@@ -2587,6 +2688,8 @@ def tile[
     `DeviceContext`. One limit is numax's: `reps` must give one count per
     axis, where `numpy.tile` prepends 1s for a shorter tuple.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     if len(reps) != rank:
         raise Error(
@@ -2622,10 +2725,10 @@ def tile[
 
 
 def repeat[
-    dtype: DType, LayoutType: TensorLayout, axis: Int
-](a: Tensor[dtype, LayoutType], count: Int) raises -> Dynamic[
-    dtype, LayoutType.rank
-] where (axis >= 0 and axis < LayoutType.rank):
+    T: TensorLike, axis: Int
+](a: T, count: Int) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
+    axis >= 0 and axis < T.LayoutType.rank
+):
     """Each element of `a` repeated `count` times along `axis`.
     `numpy.repeat(a, count, axis=k)`.
 
@@ -2639,6 +2742,8 @@ def repeat[
     extent is then a sum over a tensor the caller would also have to build,
     and no caller in numax needs it yet.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     if count < 1:
         raise Error("repeat: count ", count, " is not positive")
@@ -2670,12 +2775,15 @@ def repeat[
 
 
 def vander[
-    dtype: DType, n: Int, cols: Int
-](a: Static[dtype, n]) raises -> Static[
-    dtype, n, cols
-] where dtype.is_floating_point():
+    T: TensorLike,
+    cols: Int,
+](a: T) raises -> Static[T.dtype, dim[T, 0], cols] where (
+    T.dtype.is_floating_point() and T.rank == 1 and T.LayoutType.all_dims_known
+):
     """The Vandermonde matrix of `a`: `out[i, j] = a[i] ** (cols - 1 - j)`.
     `numpy.vander` with its default `increasing=False`."""
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * cols, fill=0)
     for r in range(n):
@@ -2687,14 +2795,24 @@ def vander[
 
 
 def meshgrid[
-    dtype: DType, n: Int, m: Int
-](x: Static[dtype, n], y: Static[dtype, m]) raises -> Tuple[
-    Static[dtype, m, n], Static[dtype, m, n]
-]:
+    A: TensorLike,
+    B: TensorLike,
+](x: A, y: B) raises -> Tuple[
+    Static[A.dtype, dim[B, 0], dim[A, 0]], Static[A.dtype, dim[B, 0], dim[A, 0]]
+] where (
+    A.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """Coordinate matrices from two coordinate vectors. `numpy.meshgrid`
     with its default `indexing="xy"`, so both outputs are `(m, n)`."""
+    comptime dtype = A.dtype
+    comptime n = dim[A, 0]
+    comptime m = dim[B, 0]
     var xs = x.to_host()
-    var ys = y.to_host()
+    var ys = y.to_host[A.dtype]()
     var xx = List[Scalar[dtype]](length=m * n, fill=0)
     var yy = List[Scalar[dtype]](length=m * n, fill=0)
     for r in range(m):
@@ -2708,8 +2826,14 @@ def meshgrid[
     )
 
 
-def flip[dtype: DType, n: Int](a: Static[dtype, n]) raises -> Static[dtype, n]:
+def flip[
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
+    T.rank == 1 and T.LayoutType.all_dims_known
+):
     """A rank-1 tensor reversed. `numpy.flip` at `axis=0`."""
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
@@ -2717,9 +2841,7 @@ def flip[dtype: DType, n: Int](a: Static[dtype, n]) raises -> Static[dtype, n]:
     return Static[dtype, n](a.context(), values^)
 
 
-def copy[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+def copy[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """An independent copy of `a`, on `a`'s device. `numpy.copy`.
 
     `Tensor` is `Movable` and not `Copyable` on purpose -- a tensor is a
@@ -2727,21 +2849,35 @@ def copy[
     that happens because a value was passed by value. This is that
     decision, spelled out.
     """
-    return Tensor[dtype, LayoutType](a.context(), a.layout, a.to_host())
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return Tensor[dtype, LayoutType](a.context(), a.view().layout, a.to_host())
 
 
 def vstack[
-    dtype: DType, rows_a: Int, rows_b: Int, cols: Int
-](
-    a: Static[dtype, rows_a, cols], b: Static[dtype, rows_b, cols]
-) raises -> Static[dtype, rows_a + rows_b, cols]:
+    A: TensorLike,
+    B: TensorLike,
+](a: A, b: B) raises -> Static[
+    A.dtype, dim[A, 0] + dim[B, 0], dim[A, 1]
+] where (
+    A.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 1] == dim[A, 1]
+):
     """Two matrices joined along their rows. `numpy.vstack`.
 
     Row-major storage makes this the concatenating direction: the two
     buffers go back to back with no interleaving.
     """
+    comptime dtype = A.dtype
+    comptime rows_a = dim[A, 0]
+    comptime cols = dim[A, 1]
+    comptime rows_b = dim[B, 0]
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](capacity=(rows_a + rows_b) * cols)
     for i in range(rows_a * cols):
         values.append(a_values[i])
@@ -2751,10 +2887,17 @@ def vstack[
 
 
 def dstack[
-    dtype: DType, rows: Int, cols: Int
-](a: Static[dtype, rows, cols], b: Static[dtype, rows, cols]) raises -> Static[
-    dtype, rows, cols, 2
-]:
+    A: TensorLike,
+    B: TensorLike,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 1], 2] where (
+    A.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and dim[B, 1] == dim[A, 1]
+):
     """Two matrices joined along a new third axis. `numpy.dstack`.
 
     The depth direction: `ys[r, c, 0]` is `a[r, c]` and `ys[r, c, 1]` is
@@ -2762,8 +2905,11 @@ def dstack[
     going back to back the way `vstack`'s do. Two inputs rather than a
     variadic pack, for the reason `stack` records.
     """
+    comptime dtype = A.dtype
+    comptime rows = dim[A, 0]
+    comptime cols = dim[A, 1]
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](length=rows * cols * 2, fill=0)
     for i in range(rows * cols):
         values[2 * i] = a_values[i]
@@ -2772,9 +2918,10 @@ def dstack[
 
 
 def rot90[
-    dtype: DType, rows: Int, cols: Int, k: Int = 1
-](a: Static[dtype, rows, cols]) raises -> Static[dtype, cols, rows] where (
-    k == 1 or k == 3
+    T: TensorLike,
+    k: Int = 1,
+](a: T) raises -> Static[T.dtype, dim[T, 1], dim[T, 0]] where (
+    k == 1 or k == 3 and T.rank == 2 and T.LayoutType.all_dims_known
 ):
     """A matrix rotated `90 * k` degrees counterclockwise, for an odd `k`.
     `numpy.rot90`.
@@ -2790,6 +2937,9 @@ def rot90[
     writing a literal writes the reduced one, and `k = 3` is the single
     clockwise turn that `k = -1` would mean there.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=rows * cols, fill=0)
     for r in range(rows):
@@ -2804,9 +2954,10 @@ def rot90[
 
 
 def rot90[
-    dtype: DType, rows: Int, cols: Int, k: Int = 1
-](a: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols] where (
-    k == 0 or k == 2
+    T: TensorLike,
+    k: Int = 1,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
+    k == 0 or k == 2 and T.rank == 2 and T.LayoutType.all_dims_known
 ):
     """A matrix rotated `90 * k` degrees counterclockwise, for an even `k`.
     `numpy.rot90`.
@@ -2816,6 +2967,9 @@ def rot90[
     above -- see it for why `k` is a parameter and why it must already be
     in `0 .. 3`.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime cols = dim[T, 1]
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=rows * cols, fill=0)
     for r in range(rows):
@@ -2830,13 +2984,25 @@ def rot90[
 
 
 def hstack[
-    dtype: DType, rows: Int, cols_a: Int, cols_b: Int
-](
-    a: Static[dtype, rows, cols_a], b: Static[dtype, rows, cols_b]
-) raises -> Static[dtype, rows, cols_a + cols_b]:
+    A: TensorLike,
+    B: TensorLike,
+](a: A, b: B) raises -> Static[
+    A.dtype, dim[A, 0], dim[A, 1] + dim[B, 1]
+] where (
+    A.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """Two matrices joined along their columns. `numpy.hstack`."""
+    comptime dtype = A.dtype
+    comptime rows = dim[A, 0]
+    comptime cols_a = dim[A, 1]
+    comptime cols_b = dim[B, 1]
     var a_values = a.to_host()
-    var b_values = b.to_host()
+    var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](length=rows * (cols_a + cols_b), fill=0)
     for r in range(rows):
         for c in range(cols_a):
@@ -2914,13 +3080,9 @@ def _format_axis[
 
 
 def _format_tensor[
-    dtype: DType, LayoutType: TensorLayout
-](
-    a: Tensor[dtype, LayoutType],
-    precision: Int,
-    threshold: Int,
-    edge_items: Int,
-) raises -> String:
+    T: TensorLike
+](a: T, precision: Int, threshold: Int, edge_items: Int,) raises -> String:
+    comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var extents = List[Int](capacity=rank)
     for d in range(rank):
@@ -2988,8 +3150,8 @@ def _format_one[dtype: DType](x: Scalar[dtype], precision: Int) -> String:
 
 
 def to_array[
-    T: FloatLike, dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> Array[T, LayoutType.static_product]:
+    T: FloatLike, X: TensorLike
+](a: X) raises -> Array[T, X.LayoutType.static_product]:
     """`a`'s elements as an `Array` of `T`, row-major.
 
     The lift into the conformer layer: `numax.linalg`'s matrices and
@@ -3010,6 +3172,7 @@ def to_array[
     is negative and an `Array` of negative length is rejected outright.
     Name the shape with `static_view` first.
     """
+    comptime LayoutType = X.LayoutType
     comptime n = LayoutType.static_product
     var values = a.to_host()
     var out = Array[T, n](fill=T.constant(0.0))

@@ -14,7 +14,19 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from layout import Coord, TileTensor
 
-from numax.core.array import Static, Tensor, arange, reshape, zeros, zeros_dyn
+from numax.core.array import (
+    Static,
+    Tensor,
+    arange,
+    reshape,
+    transpose,
+    zeros,
+    zeros_dyn,
+)
+from numax.core.elementwise import exp
+from numax.core.logic import greater
+from numax.core.ops import add, multiply
+from numax.core.sorting import extract, sort
 from numax.core.tensor import add_combine, map, reduce
 from numax.core.tensorlike import TensorLike, View, dim, is_row_major
 
@@ -113,6 +125,45 @@ def test_tensor_device_type_is_the_erased_view() raises:
         "a Tensor crosses the launch boundary as its MutAnyOrigin view",
     )
     assert_equal(T.get_type_name(), "Tensor[float64, rank=2]")
+
+
+def test_core_surface_accepts_a_view_and_agrees_with_the_tensor() raises:
+    # One routine, two conformers: the public surface takes either.
+    var a = arange[6, f64]()
+    var m = reshape[rows=2, cols=3](arange[6, f64]())
+    var v = View(a.view())
+    var vm = View(m.view())
+    var e_t = exp(a).to_host()
+    var e_v = exp(v).to_host()
+    for i in range(6):
+        assert_equal(e_t[i], e_v[i])
+    var s_t = add(a, a).to_host()
+    var s_v = add(v, v).to_host()
+    for i in range(6):
+        assert_equal(s_t[i], s_v[i])
+    var t_v = transpose(vm)
+    assert_equal(t_v[2, 1], 5.0)
+    assert_equal(sort(vm)[5], 5.0)
+    var mask = greater(a, multiply(a, 0.0))
+    assert_equal(extract(mask, v).size(), 5)
+
+
+def test_view_to_host_reads_a_strided_block_in_its_own_order() raises:
+    var m = reshape[rows=4, cols=4](arange[16, f64]())
+    var block = View(m.view().tile[2, 2](1, 1))
+    var got = block.to_host()
+    # Rows 2..3, columns 2..3 of the 4x4 arange: 10 11 / 14 15.
+    assert_equal(got[0], 10.0)
+    assert_equal(got[1], 11.0)
+    assert_equal(got[2], 14.0)
+    assert_equal(got[3], 15.0)
+    var values = List[Float64]()
+    for i in range(4):
+        values.append(Float64(-i))
+    block.copy_from_host(values)
+    assert_equal(m[2, 3], -1.0)
+    assert_equal(m[3, 2], -2.0)
+    assert_equal(m[0, 0], 0.0)
 
 
 def main() raises:

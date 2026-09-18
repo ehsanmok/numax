@@ -145,6 +145,17 @@ which on CUDA returns a *device* pointer that segfaults a host read.
 
 ## `numax.core` — arrays and the NumPy-named surface
 
+Every routine in this section takes its tensor arguments through the
+`TensorLike` bound, so a `View` over a sub-block of a tensor is accepted
+wherever a `Tensor` is, and only routines that write into their argument
+(`put`) take it `mut`. Extents that used to be explicit parameters are read
+from the argument's layout (`dim[T, i]`), so `transpose(m)` is the whole
+spelling and `transpose[dtype, 2, 3](m)` is no longer one; parameters a
+caller chooses (`reshape[rows=2, cols=3]`, `vander[cols=3]`, `pad[before=1,
+after=2]`, `top_k[k=3]`) stay, by keyword. A routine that flattens its
+argument carries `where is_row_major[T]` and refuses a strided block at
+compile time.
+
 | Area | Surface | Where |
 |---|---|---|
 | Creation | `zeros`, `ones`, `full`, `empty`, `eye`, `identity`, `arange`, `linspace`, `logspace`, `geomspace`, `meshgrid`, `copy`, and the `*_like` forms (`zeros_like`, `ones_like`, `full_like`, `empty_like`) — every one takes its `DeviceContext` last and optional, so `zeros[f32, 2, 3]()` allocates on the host and `zeros[f32, 2, 3](gpu)` on a device | [`core/array.mojo`](../numax/core/array.mojo), [`array_creation.mojo`](../examples/basic/array_creation.mojo) |

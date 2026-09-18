@@ -548,9 +548,8 @@ def _plus_op[w: Int](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
 def test_unary_to_changes_dtype() raises:
     var a = _t[4]([-1.7, 0.0, 2.9, 5.5])
     var got = unary_to[
-        dtype,
+        type_of(a),
         DType.int32,
-        type_of(a).LayoutType,
         op=_truncate_op,
         gpu=False,
         name="truncate",
@@ -565,9 +564,8 @@ def test_binary_to_writes_a_bool_result_everywhere() raises:
     var a = _t[4]([1.0, 2.0, 3.0, 4.0])
     var b = _t[4]([5.0, 6.0, 7.0, 8.0])
     var got = binary_to[
-        dtype,
+        type_of(a),
         DType.bool,
-        type_of(a).LayoutType,
         op=_greater_op,
         gpu=False,
         name="greater",
@@ -581,8 +579,7 @@ def test_binary_to_writes_a_bool_result_everywhere() raises:
 def test_binary_scalar_captures_its_operand() raises:
     var a = _t[3]([1.0, 2.0, 3.0])
     var got = binary_scalar[
-        dtype,
-        type_of(a).LayoutType,
+        type_of(a),
         op=_plus_op,
         gpu=False,
         name="add",
@@ -596,10 +593,9 @@ def test_broadcast_binary_to_stretches_a_row() raises:
     var a = _m2[2, 3]([1.0, 5.0, 3.0, 7.0, 2.0, 9.0])
     var row = _t[3]([4.0, 4.0, 4.0])
     var got = broadcast_binary_to[
-        dtype,
+        type_of(a),
+        type_of(row),
         DType.bool,
-        type_of(a).LayoutType,
-        type_of(row).LayoutType,
         op=_greater_op,
         gpu=False,
         name="greater",

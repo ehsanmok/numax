@@ -205,7 +205,7 @@ def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     )
 
     var lower = cholesky[dtype, n, True, block](a)
-    var upper = transpose[dtype, n, n, True](lower)
+    var upper = transpose[gpu=True](lower)
     var product = matmul[dtype, n, n, n, True](lower, upper).to_host()
     var worst = Float64(0)
     for i in range(n):

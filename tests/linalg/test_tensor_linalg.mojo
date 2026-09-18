@@ -1331,7 +1331,7 @@ def test_tensor_qr_q_has_orthonormal_columns() raises:
     var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
     var orthogonal = factorization.q()
 
-    var transposed = transpose[DType.float64, 6, 3](orthogonal)
+    var transposed = transpose(orthogonal)
     var gram = matmul(transposed, orthogonal).to_host()
     for i in range(3):
         for j in range(3):
@@ -1398,7 +1398,7 @@ def test_tensor_qr_apply_q_transpose_agrees_with_forming_q() raises:
     var applied = factorization.apply_q_transpose[2](b).to_host()
 
     var orthogonal = factorization.q()
-    var transposed = transpose[DType.float64, 6, 3](orthogonal)
+    var transposed = transpose(orthogonal)
     var b2 = Static[DType.float64, 6, 2](ctx, rhs.copy())
     var direct = matmul(transposed, b2).to_host()
 
@@ -1482,7 +1482,7 @@ def test_tensor_qr_with_a_ragged_last_panel_reconstructs_the_matrix() raises:
         assert_almost_equal(
             Float64(product[i]), Float64(entries[i]), atol=1e-10
         )
-    var transposed = transpose[DType.float64, m, n](orthogonal)
+    var transposed = transpose(orthogonal)
     var gram = matmul(transposed, orthogonal).to_host()
     for i in range(n):
         for j in range(n):

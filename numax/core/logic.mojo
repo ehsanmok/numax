@@ -49,6 +49,7 @@ from std.math import (
 from layout import Coord
 from layout.tile_layout import TensorLayout
 
+from .tensorlike import TensorLike, is_row_major
 from .array import Dynamic, Tensor
 from ._drive import (
     _BroadcastRank,
@@ -60,6 +61,7 @@ from ._drive import (
     _width,
     binary,
     binary_to,
+    broadcast_binary,
     broadcast_binary_to,
     unary_to,
 )
@@ -142,38 +144,40 @@ def _isneginf_op[
     return _std_isinf(x) & x.lt(0)
 
 
+# Spelled over a `dtype` parameter rather than `DType.bool` so they type
+# against a `T: TensorLike` whose `dtype` the `where` clause pins to bool:
+# the checker does not rewrite `T.dtype` into `DType.bool` from the clause.
 def _and_op[
-    w: Int
-](a: SIMD[DType.bool, w], b: SIMD[DType.bool, w]) -> SIMD[DType.bool, w]:
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return a & b
 
 
 def _or_op[
-    w: Int
-](a: SIMD[DType.bool, w], b: SIMD[DType.bool, w]) -> SIMD[DType.bool, w]:
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return a | b
 
 
 def _xor_op[
-    w: Int
-](a: SIMD[DType.bool, w], b: SIMD[DType.bool, w]) -> SIMD[DType.bool, w]:
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return a ^ b
 
 
-def _not_op[w: Int](x: SIMD[DType.bool, w]) -> SIMD[DType.bool, w]:
-    return ~x
+def _not_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[DType.bool, w]:
+    return (~x).cast[DType.bool]()
 
 
 def equal[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
     """`a == b`, elementwise. `numpy.equal`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return binary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_eq_op[dtype, _],
         gpu=gpu,
         name="equal",
@@ -181,15 +185,14 @@ def equal[
 
 
 def not_equal[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
     """`a != b`, elementwise. `numpy.not_equal`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return binary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_ne_op[dtype, _],
         gpu=gpu,
         name="not_equal",
@@ -197,26 +200,25 @@ def not_equal[
 
 
 def less[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
     """`a < b`, elementwise. `numpy.less`."""
-    return binary_to[
-        dtype, DType.bool, LayoutType, op=_lt_op[dtype, _], gpu=gpu, name="less"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary_to[T, DType.bool, op=_lt_op[dtype, _], gpu=gpu, name="less"](
+        a, b
+    )
 
 
 def less_equal[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
     """`a <= b`, elementwise. `numpy.less_equal`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return binary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_le_op[dtype, _],
         gpu=gpu,
         name="less_equal",
@@ -224,15 +226,14 @@ def less_equal[
 
 
 def greater[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
     """`a > b`, elementwise. `numpy.greater`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return binary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_gt_op[dtype, _],
         gpu=gpu,
         name="greater",
@@ -240,15 +241,14 @@ def greater[
 
 
 def greater_equal[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
     """`a >= b`, elementwise. `numpy.greater_equal`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return binary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_ge_op[dtype, _],
         gpu=gpu,
         name="greater_equal",
@@ -256,15 +256,16 @@ def greater_equal[
 
 
 def isnan[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Which elements are NaN. `numpy.isnan`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_isnan_op[dtype, _],
         gpu=gpu,
         name="isnan",
@@ -272,15 +273,16 @@ def isnan[
 
 
 def isinf[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Which elements are an infinity of either sign. `numpy.isinf`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_isinf_op[dtype, _],
         gpu=gpu,
         name="isinf",
@@ -288,15 +290,16 @@ def isinf[
 
 
 def isfinite[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Which elements are neither NaN nor infinite. `numpy.isfinite`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_isfinite_op[dtype, _],
         gpu=gpu,
         name="isfinite",
@@ -304,15 +307,16 @@ def isfinite[
 
 
 def isposinf[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Which elements are `+inf`. `numpy.isposinf`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_isposinf_op[dtype, _],
         gpu=gpu,
         name="isposinf",
@@ -320,15 +324,16 @@ def isposinf[
 
 
 def isneginf[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    DType.bool, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Which elements are `-inf`. `numpy.isneginf`."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        dtype,
+        T,
         DType.bool,
-        LayoutType,
         op=_isneginf_op[dtype, _],
         gpu=gpu,
         name="isneginf",
@@ -336,55 +341,48 @@ def isneginf[
 
 
 def logical_and[
-    LayoutType: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[DType.bool, LayoutType], b: Tensor[DType.bool, LayoutType]
-) raises -> Tensor[DType.bool, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    T.dtype == DType.bool and is_row_major[T]
+):
     """`a and b`, elementwise. `numpy.logical_and`."""
-    return binary[
-        DType.bool, LayoutType, op=_and_op, gpu=gpu, name="logical_and"
-    ](a, b)
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_and_op[T.dtype, _], gpu=gpu, name="logical_and"](a, b)
 
 
 def logical_or[
-    LayoutType: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[DType.bool, LayoutType], b: Tensor[DType.bool, LayoutType]
-) raises -> Tensor[DType.bool, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    T.dtype == DType.bool and is_row_major[T]
+):
     """`a or b`, elementwise. `numpy.logical_or`."""
-    return binary[
-        DType.bool, LayoutType, op=_or_op, gpu=gpu, name="logical_or"
-    ](a, b)
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_or_op[T.dtype, _], gpu=gpu, name="logical_or"](a, b)
 
 
 def logical_xor[
-    LayoutType: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[DType.bool, LayoutType], b: Tensor[DType.bool, LayoutType]
-) raises -> Tensor[DType.bool, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    T.dtype == DType.bool and is_row_major[T]
+):
     """`a xor b`, elementwise. `numpy.logical_xor`."""
-    return binary[
-        DType.bool, LayoutType, op=_xor_op, gpu=gpu, name="logical_xor"
-    ](a, b)
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_xor_op[T.dtype, _], gpu=gpu, name="logical_xor"](a, b)
 
 
 def logical_not[
-    LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[DType.bool, LayoutType]) raises -> Tensor[DType.bool, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
+    T.dtype == DType.bool and is_row_major[T]
+):
     """`not a`, elementwise. `numpy.logical_not`."""
+    comptime LayoutType = T.LayoutType
     return unary_to[
-        DType.bool,
-        DType.bool,
-        LayoutType,
-        op=_not_op,
-        gpu=gpu,
-        name="logical_not",
+        T, DType.bool, op=_not_op[T.dtype, _], gpu=gpu, name="logical_not"
     ](a)
 
 
-def all[
-    LayoutType: TensorLayout
-](a: Tensor[DType.bool, LayoutType]) raises -> Bool:
+def all[T: TensorLike](a: T) raises -> Bool where T.dtype == DType.bool:
     """Whether every element is true. `numpy.all`.
 
     A host read, and no `gpu` parameter: the answer is one `Bool`, so it has
@@ -402,9 +400,7 @@ def all[
     return True
 
 
-def any[
-    LayoutType: TensorLayout
-](a: Tensor[DType.bool, LayoutType]) raises -> Bool:
+def any[T: TensorLike](a: T) raises -> Bool where T.dtype == DType.bool:
     """Whether any element is true. `numpy.any`. A host read that
     short-circuits, tier 2 on the same terms as `all` above, and hiding the
     builtin `any` in an importing file the same way."""
@@ -416,13 +412,15 @@ def any[
 
 
 def isclose[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+    T: TensorLike, gpu: Bool = False
 ](
-    a: Tensor[dtype, LayoutType],
-    b: Tensor[dtype, LayoutType],
-    rtol: Scalar[dtype] = 1e-5,
-    atol: Scalar[dtype] = 1e-8,
-) raises -> Tensor[DType.bool, LayoutType] where dtype.is_floating_point():
+    a: T,
+    b: T,
+    rtol: Scalar[T.dtype] = 1e-5,
+    atol: Scalar[T.dtype] = 1e-8,
+) raises -> Tensor[DType.bool, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Which elements are within `atol + rtol * abs(b)`. `numpy.isclose`.
 
     Two run-time tolerances rather than a `thin` step's parameters, so this
@@ -430,6 +428,8 @@ def isclose[
     are captured by value at `Scalar[dtype]` and splatted to the launch
     width, which keeps a `Float64` out of a kernel Metal has no `double` in.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](a) or not _check_device[gpu=gpu](b):
         _notice[gpu]("isclose")
         var n = a.size()
@@ -439,10 +439,14 @@ def isclose[
         for i in range(n):
             var diff = abs(a_values[i] - b_values[i])
             walked[i] = diff <= atol + rtol * abs(b_values[i])
-        return Tensor[DType.bool, LayoutType](a.context(), a.layout, walked^)
+        return Tensor[DType.bool, LayoutType](
+            a.context(), a.view().layout, walked^
+        )
 
     var ctx = a.context()
-    var out = Tensor[DType.bool, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[DType.bool, LayoutType]._uninitialized(
+        ctx, a.view().layout
+    )
     var xs = _flat(a)
     var zs = _flat(b)
     var ys = _flat_out(out)
@@ -465,33 +469,37 @@ def isclose[
 
 
 def allclose[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+    T: TensorLike, gpu: Bool = False
 ](
-    a: Tensor[dtype, LayoutType],
-    b: Tensor[dtype, LayoutType],
-    rtol: Scalar[dtype] = 1e-5,
-    atol: Scalar[dtype] = 1e-8,
-) raises -> Bool where dtype.is_floating_point():
+    a: T,
+    b: T,
+    rtol: Scalar[T.dtype] = 1e-5,
+    atol: Scalar[T.dtype] = 1e-8,
+) raises -> Bool where (T.dtype.is_floating_point() and is_row_major[T]):
     """Whether every element is within tolerance. `numpy.allclose`.
 
     The comparison runs where `gpu` says; the fold back to one `Bool` is
     `all`'s host read.
     """
-    var close = isclose[dtype, LayoutType, gpu=gpu](a, b, rtol, atol)
-    return all[LayoutType](close)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    var close = isclose[T, gpu=gpu](a, b, rtol, atol)
+    return all(close)
 
 
 def array_equal[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Bool:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Bool where is_row_major[T]:
     """Whether every element is exactly equal. `numpy.array_equal`.
 
     Exact, so NaN compares unequal to itself and two tensors of NaN are not
     equal -- matching NumPy. The comparison runs where `gpu` says and the
     fold back to one `Bool` is `all`'s host read.
     """
-    var same = equal[dtype, LayoutType, gpu=gpu](a, b)
-    return all[LayoutType](same)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    var same = equal[T, gpu=gpu](a, b)
+    return all(same)
 
 
 # The broadcasting forms, matching `numax.core.ops` and
@@ -501,19 +509,20 @@ def array_equal[
 
 
 def equal[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    DType.bool, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a == b` at two broadcastable shapes. `numpy.equal`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary_to[
-        dtype,
+        A,
+        B,
         DType.bool,
-        ALayout,
-        BLayout,
         op=_eq_op[dtype, _],
         gpu=gpu,
         name="equal",
@@ -521,19 +530,20 @@ def equal[
 
 
 def not_equal[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    DType.bool, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a != b` at two broadcastable shapes. `numpy.not_equal`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary_to[
-        dtype,
+        A,
+        B,
         DType.bool,
-        ALayout,
-        BLayout,
         op=_ne_op[dtype, _],
         gpu=gpu,
         name="not_equal",
@@ -541,19 +551,20 @@ def not_equal[
 
 
 def less[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    DType.bool, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a < b` at two broadcastable shapes. `numpy.less`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary_to[
-        dtype,
+        A,
+        B,
         DType.bool,
-        ALayout,
-        BLayout,
         op=_lt_op[dtype, _],
         gpu=gpu,
         name="less",
@@ -561,19 +572,20 @@ def less[
 
 
 def less_equal[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    DType.bool, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a <= b` at two broadcastable shapes. `numpy.less_equal`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary_to[
-        dtype,
+        A,
+        B,
         DType.bool,
-        ALayout,
-        BLayout,
         op=_le_op[dtype, _],
         gpu=gpu,
         name="less_equal",
@@ -581,19 +593,20 @@ def less_equal[
 
 
 def greater[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    DType.bool, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a > b` at two broadcastable shapes. `numpy.greater`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary_to[
-        dtype,
+        A,
+        B,
         DType.bool,
-        ALayout,
-        BLayout,
         op=_gt_op[dtype, _],
         gpu=gpu,
         name="greater",
@@ -601,19 +614,20 @@ def greater[
 
 
 def greater_equal[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    DType.bool, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`a >= b` at two broadcastable shapes. `numpy.greater_equal`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary_to[
-        dtype,
+        A,
+        B,
         DType.bool,
-        ALayout,
-        BLayout,
         op=_ge_op[dtype, _],
         gpu=gpu,
         name="greater_equal",
@@ -621,51 +635,48 @@ def greater_equal[
 
 
 def logical_and[
-    ALayout: TensorLayout, BLayout: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[DType.bool, ALayout], b: Tensor[DType.bool, BLayout]
-) raises -> Dynamic[DType.bool, _BroadcastRank[ALayout, BLayout]]:
+    A: TensorLike, B: TensorLike, gpu: Bool = False
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == DType.bool
+    and B.dtype == DType.bool
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """`a and b` at two broadcastable shapes. `numpy.logical_and`."""
-    return broadcast_binary_to[
-        DType.bool,
-        DType.bool,
-        ALayout,
-        BLayout,
-        op=_and_op,
-        gpu=gpu,
-        name="logical_and",
+    return broadcast_binary[
+        A, B, op=_and_op[A.dtype, _], gpu=gpu, name="logical_and"
     ](a, b)
 
 
 def logical_or[
-    ALayout: TensorLayout, BLayout: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[DType.bool, ALayout], b: Tensor[DType.bool, BLayout]
-) raises -> Dynamic[DType.bool, _BroadcastRank[ALayout, BLayout]]:
+    A: TensorLike, B: TensorLike, gpu: Bool = False
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == DType.bool
+    and B.dtype == DType.bool
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """`a or b` at two broadcastable shapes. `numpy.logical_or`."""
-    return broadcast_binary_to[
-        DType.bool,
-        DType.bool,
-        ALayout,
-        BLayout,
-        op=_or_op,
-        gpu=gpu,
-        name="logical_or",
+    return broadcast_binary[
+        A, B, op=_or_op[A.dtype, _], gpu=gpu, name="logical_or"
     ](a, b)
 
 
 def logical_xor[
-    ALayout: TensorLayout, BLayout: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[DType.bool, ALayout], b: Tensor[DType.bool, BLayout]
-) raises -> Dynamic[DType.bool, _BroadcastRank[ALayout, BLayout]]:
+    A: TensorLike, B: TensorLike, gpu: Bool = False
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == DType.bool
+    and B.dtype == DType.bool
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """`a xor b` at two broadcastable shapes. `numpy.logical_xor`."""
-    return broadcast_binary_to[
-        DType.bool,
-        DType.bool,
-        ALayout,
-        BLayout,
-        op=_xor_op,
-        gpu=gpu,
-        name="logical_xor",
+    return broadcast_binary[
+        A, B, op=_xor_op[A.dtype, _], gpu=gpu, name="logical_xor"
     ](a, b)

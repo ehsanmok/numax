@@ -1379,6 +1379,12 @@ from test_tensorlike import (
 from test_tensorlike import (
     test_tensor_device_type_is_the_erased_view as test_tensorlike__test_tensor_device_type_is_the_erased_view,
 )
+from test_tensorlike import (
+    test_core_surface_accepts_a_view_and_agrees_with_the_tensor as test_tensorlike__test_core_surface_accepts_a_view_and_agrees_with_the_tensor,
+)
+from test_tensorlike import (
+    test_view_to_host_reads_a_strided_block_in_its_own_order as test_tensorlike__test_view_to_host_reads_a_strided_block_in_its_own_order,
+)
 
 
 def main() raises:
@@ -2141,4 +2147,10 @@ def main() raises:
     suite.test[test_tensorlike__test_view_without_a_context_is_a_host_view]()
     suite.test[test_tensorlike__test_is_row_major_refuses_a_strided_block]()
     suite.test[test_tensorlike__test_tensor_device_type_is_the_erased_view]()
+    suite.test[
+        test_tensorlike__test_core_surface_accepts_a_view_and_agrees_with_the_tensor
+    ]()
+    suite.test[
+        test_tensorlike__test_view_to_host_reads_a_strided_block_in_its_own_order
+    ]()
     suite^.run()

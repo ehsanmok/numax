@@ -59,6 +59,7 @@ from std.io import FileDescriptor
 from std.sys.info import simd_width_of
 from std.utils import IndexList
 
+from .tensorlike import TensorLike, is_row_major
 from .array import (
     Dynamic,
     Tensor,
@@ -115,26 +116,85 @@ comptime _FlatOut[dtype: DType] = TileTensor[
 """A writable flat view, for a destination the driver owns."""
 
 
+def _require_contiguous[T: TensorLike](a: T) raises:
+    """Raise unless `a`'s strides are the row-major ones, at run time.
+
+    `is_row_major[T]` settles this at compile time for a static layout. For
+    a run-time layout it only checks the stride *types*, which every layout
+    `numax` builds satisfies, so a `View` over a strided run-time tile
+    would slip through and be flattened wrong; this is the check that
+    stops it, O(rank) per launch.
+    """
+    comptime if T.LayoutType.all_dims_known:
+        return
+    var expected = 1
+    comptime for k in range(T.rank):
+        comptime d = T.rank - 1 - k
+        if a.dim_at(d) > 1 and a.stride_at(d) != expected:
+            raise Error(
+                "a strided view cannot be flattened: axis ",
+                d,
+                " has stride ",
+                a.stride_at(d),
+                ", expected ",
+                expected,
+            )
+        expected *= a.dim_at(d)
+
+
 def _flat[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> _FlatIn[dtype]:
+    T: TensorLike, *, dtype: DType = T.dtype
+](a: T) raises -> _FlatIn[dtype] where is_row_major[T]:
     """`a`'s elements as one rank-1 run-time view over the same storage.
 
     Valid for `Static` and `Dynamic` alike, which is what lets every driver
-    have one signature: the flattening is a layout built over the buffer
+    have one signature: the flattening is a layout built over the view's
     pointer rather than `coalesce()`, which would need every extent at
-    compile time.
+    compile time. Immutable, because `a` is borrowed here.
+
+    `dtype` is `T.dtype` unless a caller names it, which the two-operand
+    drivers do: with `a: A` and `b: B` under `where A.dtype == B.dtype`,
+    the checker still types `b`'s lanes as `Scalar[B.dtype]`, so the second
+    view is built at `A.dtype` through a same-width pointer bitcast.
     """
-    var v: _FlatIn[dtype] = TileTensor(a.buffer, row_major(Coord(a.size())))
-    return v
+    _require_contiguous(a)
+    var v = a.view()
+    return _FlatIn[dtype](
+        ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]().unsafe_origin_cast[
+            ImmutAnyOrigin
+        ](),
+        layout=row_major(Coord(a.size())),
+    )
 
 
-def _flat_out[
-    dtype: DType, LayoutType: TensorLayout
-](mut a: Tensor[dtype, LayoutType]) raises -> _FlatOut[dtype]:
-    """`_flat` for a destination, which the driver owns and may write."""
-    var v: _FlatOut[dtype] = TileTensor(a.buffer, row_major(Coord(a.size())))
-    return v
+def _flat_unchecked[T: TensorLike](a: T) raises -> _FlatIn[T.dtype]:
+    """`_flat` without the compile-time clause, for a caller generic over a
+    layout it cannot prove row-major but built row-major itself -- a
+    `Tensor` from a numax factory at a symbolic rank. The run-time check
+    still refuses a strided view; what is lost is only the compile-time
+    refusal."""
+    _require_contiguous(a)
+    var v = a.view()
+    return _FlatIn[T.dtype](
+        ptr=v.ptr.unsafe_origin_cast[ImmutAnyOrigin](),
+        layout=row_major(Coord(a.size())),
+    )
+
+
+def _flat_out[T: TensorLike](mut a: T) raises -> _FlatOut[T.dtype]:
+    """`_flat` for a destination, which the driver owns and may write.
+
+    No `is_row_major` clause: every destination is a tensor a driver just
+    allocated row-major, at a rank that is sometimes a symbolic
+    `_BroadcastRank` the prover cannot tabulate. The run-time check keeps
+    the guarantee.
+    """
+    _require_contiguous(a)
+    var v = a.view()
+    return _FlatOut[T.dtype](
+        ptr=v.ptr.unsafe_origin_cast[MutAnyOrigin](),
+        layout=row_major(Coord(a.size())),
+    )
 
 
 comptime _DenseIn[dtype: DType, LayoutType: TensorLayout] = TileTensor[
@@ -143,19 +203,19 @@ comptime _DenseIn[dtype: DType, LayoutType: TensorLayout] = TileTensor[
 """A read-only view at the tensor's own rank and layout."""
 
 
-def _dense[
-    dtype: DType, LayoutType: TensorLayout
-](a: Tensor[dtype, LayoutType]) raises -> _DenseIn[dtype, LayoutType]:
-    """`a`'s own layout as a read-only view, without borrowing `a` mutably.
+def _dense[T: TensorLike](a: T) raises -> _DenseIn[T.dtype, T.LayoutType]:
+    """`a`'s own layout as a read-only, origin-erased view.
 
-    `Tensor.view()` takes `mut self`, so a routine that only reads cannot
-    call it without making its own argument `mut` and turning away every
-    caller passing a temporary. This is the same construction over the
-    buffer, at the tensor's rank rather than `_flat`'s rank 1 -- what the
-    axis reductions want, since they need the extents.
+    The tracked `view()` already lets a borrowed argument be viewed; this
+    is the spelling for a kernel whose parameter is fixed at
+    `ImmutAnyOrigin`, at the tensor's rank rather than `_flat`'s rank 1 --
+    what the axis reductions want, since they need the extents. Strides
+    are kept, so a strided `View` reads correctly here.
     """
-    var v: _DenseIn[dtype, LayoutType] = TileTensor(a.buffer, a.layout)
-    return v
+    var v = a.view()
+    return _DenseIn[T.dtype, T.LayoutType](
+        ptr=v.ptr.unsafe_origin_cast[ImmutAnyOrigin](), layout=v.layout
+    )
 
 
 def _launch[
@@ -192,15 +252,13 @@ def _launch[
                 body[1](Coord(j))
 
 
-def _check_device[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool
-](a: Tensor[dtype, LayoutType]) -> Bool:
+def _check_device[T: TensorLike, gpu: Bool](a: T) -> Bool:
     """Whether `a`'s storage is where a `gpu`-targeted launch needs it.
 
     `host_addressable` is true exactly on a CPU context, so the launch and
     the residency agree when the two disagree as booleans.
     """
-    return gpu != a.host_addressable
+    return gpu != a.on_host()
 
 
 def _notice[gpu: Bool](name: StaticString):
@@ -239,80 +297,81 @@ def _notice[gpu: Bool](name: StaticString):
 
 
 def _host_walk_unary[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w],
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+    T: TensorLike,
+    op: def[w: Int](SIMD[T.dtype, w]) thin -> SIMD[T.dtype, w],
+](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i])
-    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
 
 
 def _host_walk_unary_to[
-    in_dtype: DType,
+    T: TensorLike,
     out_dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[in_dtype, w]) thin -> SIMD[out_dtype, w],
-](a: Tensor[in_dtype, LayoutType]) raises -> Tensor[out_dtype, LayoutType]:
+    op: def[w: Int](SIMD[T.dtype, w]) thin -> SIMD[out_dtype, w],
+](a: T) raises -> Tensor[out_dtype, T.LayoutType]:
+    comptime LayoutType = T.LayoutType
     var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i])
-    return Tensor[out_dtype, LayoutType](a.context(), a.layout, out^)
+    return Tensor[out_dtype, LayoutType](a.context(), a.view().layout, out^)
 
 
 def _host_walk_binary[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike,
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
+        T.dtype, w
+    ],
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType]:
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     var n = a.size()
     var a_values = a.to_host()
     var b_values = b.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](a_values[i], b_values[i])
-    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
 
 
 def _host_walk_binary_to[
-    in_dtype: DType,
+    T: TensorLike,
     out_dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[in_dtype, w], SIMD[in_dtype, w]) thin -> SIMD[
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
         out_dtype, w
     ],
-](
-    a: Tensor[in_dtype, LayoutType], b: Tensor[in_dtype, LayoutType]
-) raises -> Tensor[out_dtype, LayoutType]:
+](a: T, b: T) raises -> Tensor[out_dtype, T.LayoutType]:
+    comptime LayoutType = T.LayoutType
     var n = a.size()
     var a_values = a.to_host()
     var b_values = b.to_host()
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](a_values[i], b_values[i])
-    return Tensor[out_dtype, LayoutType](a.context(), a.layout, out^)
+    return Tensor[out_dtype, LayoutType](a.context(), a.view().layout, out^)
 
 
 def _host_walk_binary_scalar[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
-](a: Tensor[dtype, LayoutType], s: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike,
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
+        T.dtype, w
+    ],
+](a: T, s: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType]:
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     var n = a.size()
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i], s)
-    return Tensor[dtype, LayoutType](a.context(), a.layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
 
 
 comptime _BroadcastRank[
@@ -322,18 +381,20 @@ comptime _BroadcastRank[
 
 
 def _broadcast_plan[
-    dtype: DType, ALayout: TensorLayout, BLayout: TensorLayout
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Tuple[
-    IndexList[_BroadcastRank[ALayout, BLayout]],
-    IndexList[_BroadcastRank[ALayout, BLayout]],
-    IndexList[_BroadcastRank[ALayout, BLayout]],
-]:
+    A: TensorLike, B: TensorLike
+](a: A, b: B) raises -> Tuple[
+    IndexList[_BroadcastRank[A.LayoutType, B.LayoutType]],
+    IndexList[_BroadcastRank[A.LayoutType, B.LayoutType]],
+    IndexList[_BroadcastRank[A.LayoutType, B.LayoutType]],
+] where (A.dtype == B.dtype):
     """The result extents and each operand's strides against them.
 
     A stretched axis gets stride 0, so reading through these visits the same
     element for every position along it rather than materializing a copy.
     `IndexList` rather than `List` because a kernel body captures this.
     """
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime rank = _BroadcastRank[ALayout, BLayout]
     var a_extents = _extents_of(a)
     var b_extents = _extents_of(b)
@@ -364,13 +425,17 @@ def _broadcast_layout[
 
 
 def _host_walk_broadcast[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+    A: TensorLike,
+    B: TensorLike,
+    op: def[w: Int](SIMD[A.dtype, w], SIMD[A.dtype, w]) thin -> SIMD[
+        A.dtype, w
+    ],
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype):
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime rank = _BroadcastRank[ALayout, BLayout]
     var ext: IndexList[rank]
     var a_str: IndexList[rank]
@@ -394,7 +459,10 @@ def _host_walk_broadcast[
             rem //= ext[d]
             ai += c * a_str[d]
             bi += c * b_str[d]
-        out[flat] = op[1](a_values[ai], b_values[bi])
+        out[flat] = op[1](
+            a_values[ai],
+            rebind[Scalar[type_of(a_values[ai]).dtype]](b_values[bi]),
+        )
 
     var result = Dynamic[dtype, rank]._uninitialized(
         a.context(), _broadcast_layout(ext)
@@ -404,16 +472,17 @@ def _host_walk_broadcast[
 
 
 def _host_walk_broadcast_to[
-    in_dtype: DType,
+    A: TensorLike,
+    B: TensorLike,
     out_dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
-    op: def[w: Int](SIMD[in_dtype, w], SIMD[in_dtype, w]) thin -> SIMD[
+    op: def[w: Int](SIMD[A.dtype, w], SIMD[A.dtype, w]) thin -> SIMD[
         out_dtype, w
     ],
-](a: Tensor[in_dtype, ALayout], b: Tensor[in_dtype, BLayout]) raises -> Dynamic[
-    out_dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    out_dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype):
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime rank = _BroadcastRank[ALayout, BLayout]
     var ext: IndexList[rank]
     var a_str: IndexList[rank]
@@ -437,7 +506,10 @@ def _host_walk_broadcast_to[
             rem //= ext[d]
             ai += c * a_str[d]
             bi += c * b_str[d]
-        out[flat] = op[1](a_values[ai], b_values[bi])
+        out[flat] = op[1](
+            a_values[ai],
+            rebind[Scalar[type_of(a_values[ai]).dtype]](b_values[bi]),
+        )
 
     # `_uninitialized` rather than the zero-filling constructor: the copy
     # below writes every element, and at `DType.bool` the zero fill is the
@@ -453,19 +525,20 @@ def _host_walk_broadcast_to[
 
 
 def unary[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    T: TensorLike,
+    op: def[w: Int](SIMD[T.dtype, w]) thin -> SIMD[T.dtype, w],
     gpu: Bool,
     name: StaticString,
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`op` over every element of `a`, into a tensor of the same shape."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](a):
         _notice[gpu](name)
-        return _host_walk_unary[dtype, LayoutType, op](a)
+        return _host_walk_unary[T, op](a)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
@@ -478,20 +551,22 @@ def unary[
 
 
 def unary_to[
-    in_dtype: DType,
+    T: TensorLike,
     out_dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[in_dtype, w]) thin -> SIMD[out_dtype, w],
+    op: def[w: Int](SIMD[T.dtype, w]) thin -> SIMD[out_dtype, w],
     gpu: Bool,
     name: StaticString,
-](a: Tensor[in_dtype, LayoutType]) raises -> Tensor[out_dtype, LayoutType]:
+](a: T) raises -> Tensor[out_dtype, T.LayoutType] where is_row_major[T]:
     """`unary` where `op` changes dtype -- `astype`, and the predicates."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    comptime in_dtype = T.dtype
     if not _check_device[gpu=gpu](a):
         _notice[gpu](name)
-        return _host_walk_unary_to[in_dtype, out_dtype, LayoutType, op](a)
+        return _host_walk_unary_to[T, out_dtype, op](a)
 
     var ctx = a.context()
-    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.view().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
@@ -504,21 +579,22 @@ def unary_to[
 
 
 def binary[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    T: TensorLike,
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
+        T.dtype, w
+    ],
     gpu: Bool,
     name: StaticString,
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """`op` over `a` and `b` at one shape."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](a) or not _check_device[gpu=gpu](b):
         _notice[gpu](name)
-        return _host_walk_binary[dtype, LayoutType, op](a, b)
+        return _host_walk_binary[T, op](a, b)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
     var xs = _flat(a)
     var zs = _flat(b)
     var ys = _flat_out(out)
@@ -536,24 +612,24 @@ def binary[
 
 
 def binary_to[
-    in_dtype: DType,
+    T: TensorLike,
     out_dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[in_dtype, w], SIMD[in_dtype, w]) thin -> SIMD[
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
         out_dtype, w
     ],
     gpu: Bool,
     name: StaticString,
-](
-    a: Tensor[in_dtype, LayoutType], b: Tensor[in_dtype, LayoutType]
-) raises -> Tensor[out_dtype, LayoutType]:
+](a: T, b: T) raises -> Tensor[out_dtype, T.LayoutType] where is_row_major[T]:
     """`binary` where `op` changes dtype -- the comparisons."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    comptime in_dtype = T.dtype
     if not _check_device[gpu=gpu](a) or not _check_device[gpu=gpu](b):
         _notice[gpu](name)
-        return _host_walk_binary_to[in_dtype, out_dtype, LayoutType, op](a, b)
+        return _host_walk_binary_to[T, out_dtype, op](a, b)
 
     var ctx = a.context()
-    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.view().layout)
     var xs = _flat(a)
     var zs = _flat(b)
     var ys = _flat_out(out)
@@ -571,21 +647,24 @@ def binary_to[
 
 
 def binary_scalar[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    T: TensorLike,
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
+        T.dtype, w
+    ],
     gpu: Bool,
     name: StaticString,
-](a: Tensor[dtype, LayoutType], s: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-]:
+](a: T, s: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
     """`op` over `a` against one scalar, captured by the body."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](a):
         _notice[gpu](name)
-        return _host_walk_binary_scalar[dtype, LayoutType, op](a, s)
+        return _host_walk_binary_scalar[T, op](a, s)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
@@ -602,15 +681,16 @@ def binary_scalar[
 
 
 def broadcast_binary[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
-    op: def[w: Int](SIMD[dtype, w], SIMD[dtype, w]) thin -> SIMD[dtype, w],
+    A: TensorLike,
+    B: TensorLike,
+    op: def[w: Int](SIMD[A.dtype, w], SIMD[A.dtype, w]) thin -> SIMD[
+        A.dtype, w
+    ],
     gpu: Bool,
     name: StaticString,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`op` over two shapes NumPy would broadcast.
 
     One element per thread (`simd_width=1`): a stretched axis has stride 0,
@@ -621,10 +701,13 @@ def broadcast_binary[
     run-time `Int` widened to `Float64` is the recorded way to compile a
     kernel that only runs on the host.
     """
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime rank = _BroadcastRank[ALayout, BLayout]
     if not _check_device[gpu=gpu](a) or not _check_device[gpu=gpu](b):
         _notice[gpu](name)
-        return _host_walk_broadcast[dtype, ALayout, BLayout, op](a, b)
+        return _host_walk_broadcast[A, B, op](a, b)
 
     var ext: IndexList[rank]
     var a_str: IndexList[rank]
@@ -638,7 +721,7 @@ def broadcast_binary[
     var ctx = a.context()
     var out = Dynamic[dtype, rank]._uninitialized(ctx, _broadcast_layout(ext))
     var xs = _flat(a)
-    var zs = _flat(b)
+    var zs = _flat[dtype=dtype](b)
     var ys = _flat_out(out)
 
     @always_inline
@@ -667,25 +750,26 @@ def broadcast_binary[
 
 
 def broadcast_binary_to[
-    in_dtype: DType,
+    A: TensorLike,
+    B: TensorLike,
     out_dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
-    op: def[w: Int](SIMD[in_dtype, w], SIMD[in_dtype, w]) thin -> SIMD[
+    op: def[w: Int](SIMD[A.dtype, w], SIMD[A.dtype, w]) thin -> SIMD[
         out_dtype, w
     ],
     gpu: Bool,
     name: StaticString,
-](a: Tensor[in_dtype, ALayout], b: Tensor[in_dtype, BLayout]) raises -> Dynamic[
-    out_dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    out_dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """`broadcast_binary` where `op` changes dtype -- the comparisons."""
+    comptime dtype = A.dtype
+    comptime in_dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime rank = _BroadcastRank[ALayout, BLayout]
     if not _check_device[gpu=gpu](a) or not _check_device[gpu=gpu](b):
         _notice[gpu](name)
-        return _host_walk_broadcast_to[
-            in_dtype, out_dtype, ALayout, BLayout, op
-        ](a, b)
+        return _host_walk_broadcast_to[A, B, out_dtype, op](a, b)
 
     var ext: IndexList[rank]
     var a_str: IndexList[rank]
@@ -701,7 +785,7 @@ def broadcast_binary_to[
         ctx, _broadcast_layout(ext)
     )
     var xs = _flat(a)
-    var zs = _flat(b)
+    var zs = _flat[dtype=in_dtype](b)
     var ys = _flat_out(out)
 
     @always_inline

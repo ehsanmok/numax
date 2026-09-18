@@ -80,6 +80,7 @@ from layout.tile_layout import TensorLayout
 # are `1e5` and `9e6` ulp off there (`numax/core/libm.mojo`).
 from .libm import exp as _std_exp
 from .libm import log as _std_log
+from .tensorlike import TensorLike, dim, is_row_major
 from .array import Dynamic, Static, Tensor
 from ._drive import (
     _BroadcastRank,
@@ -102,14 +103,14 @@ def _exp_op[
 
 
 def exp[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `e**x`."""
-    return unary[dtype, LayoutType, op=_exp_op[dtype, _], gpu=gpu, name="exp"](
-        a
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_exp_op[dtype, _], gpu=gpu, name="exp"](a)
 
 
 def _exp2_op[
@@ -119,14 +120,14 @@ def _exp2_op[
 
 
 def exp2[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `2**x`."""
-    return unary[
-        dtype, LayoutType, op=_exp2_op[dtype, _], gpu=gpu, name="exp2"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_exp2_op[dtype, _], gpu=gpu, name="exp2"](a)
 
 
 def _expm1_op[
@@ -136,14 +137,14 @@ def _expm1_op[
 
 
 def expm1[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `e**x - 1`, accurate for small `x`."""
-    return unary[
-        dtype, LayoutType, op=_expm1_op[dtype, _], gpu=gpu, name="expm1"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_expm1_op[dtype, _], gpu=gpu, name="expm1"](a)
 
 
 def _log_op[
@@ -153,14 +154,14 @@ def _log_op[
 
 
 def log[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise natural logarithm."""
-    return unary[dtype, LayoutType, op=_log_op[dtype, _], gpu=gpu, name="log"](
-        a
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_log_op[dtype, _], gpu=gpu, name="log"](a)
 
 
 def _log2_op[
@@ -170,14 +171,14 @@ def _log2_op[
 
 
 def log2[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise base-2 logarithm."""
-    return unary[
-        dtype, LayoutType, op=_log2_op[dtype, _], gpu=gpu, name="log2"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_log2_op[dtype, _], gpu=gpu, name="log2"](a)
 
 
 def _log10_op[
@@ -187,14 +188,14 @@ def _log10_op[
 
 
 def log10[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise base-10 logarithm."""
-    return unary[
-        dtype, LayoutType, op=_log10_op[dtype, _], gpu=gpu, name="log10"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_log10_op[dtype, _], gpu=gpu, name="log10"](a)
 
 
 def _log1p_op[
@@ -204,14 +205,14 @@ def _log1p_op[
 
 
 def log1p[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `log(1 + x)`, accurate for small `x`."""
-    return unary[
-        dtype, LayoutType, op=_log1p_op[dtype, _], gpu=gpu, name="log1p"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_log1p_op[dtype, _], gpu=gpu, name="log1p"](a)
 
 
 def _sqrt_op[
@@ -221,14 +222,14 @@ def _sqrt_op[
 
 
 def sqrt[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise square root."""
-    return unary[
-        dtype, LayoutType, op=_sqrt_op[dtype, _], gpu=gpu, name="sqrt"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_sqrt_op[dtype, _], gpu=gpu, name="sqrt"](a)
 
 
 def _rsqrt_op[
@@ -238,14 +239,14 @@ def _rsqrt_op[
 
 
 def rsqrt[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `1 / sqrt(x)`."""
-    return unary[
-        dtype, LayoutType, op=_rsqrt_op[dtype, _], gpu=gpu, name="rsqrt"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_rsqrt_op[dtype, _], gpu=gpu, name="rsqrt"](a)
 
 
 def _cbrt_op[
@@ -255,14 +256,14 @@ def _cbrt_op[
 
 
 def cbrt[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise cube root."""
-    return unary[
-        dtype, LayoutType, op=_cbrt_op[dtype, _], gpu=gpu, name="cbrt"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_cbrt_op[dtype, _], gpu=gpu, name="cbrt"](a)
 
 
 def _sin_op[
@@ -272,14 +273,14 @@ def _sin_op[
 
 
 def sin[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise sine."""
-    return unary[dtype, LayoutType, op=_sin_op[dtype, _], gpu=gpu, name="sin"](
-        a
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_sin_op[dtype, _], gpu=gpu, name="sin"](a)
 
 
 def _cos_op[
@@ -289,14 +290,14 @@ def _cos_op[
 
 
 def cos[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise cosine."""
-    return unary[dtype, LayoutType, op=_cos_op[dtype, _], gpu=gpu, name="cos"](
-        a
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_cos_op[dtype, _], gpu=gpu, name="cos"](a)
 
 
 def _tan_op[
@@ -306,14 +307,14 @@ def _tan_op[
 
 
 def tan[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise tangent."""
-    return unary[dtype, LayoutType, op=_tan_op[dtype, _], gpu=gpu, name="tan"](
-        a
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_tan_op[dtype, _], gpu=gpu, name="tan"](a)
 
 
 def _arcsin_op[
@@ -323,14 +324,14 @@ def _arcsin_op[
 
 
 def arcsin[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise inverse sine. `numpy.arcsin`."""
-    return unary[
-        dtype, LayoutType, op=_arcsin_op[dtype, _], gpu=gpu, name="arcsin"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_arcsin_op[dtype, _], gpu=gpu, name="arcsin"](a)
 
 
 def _arccos_op[
@@ -340,14 +341,14 @@ def _arccos_op[
 
 
 def arccos[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise inverse cosine. `numpy.arccos`."""
-    return unary[
-        dtype, LayoutType, op=_arccos_op[dtype, _], gpu=gpu, name="arccos"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_arccos_op[dtype, _], gpu=gpu, name="arccos"](a)
 
 
 def _arctan_op[
@@ -357,14 +358,14 @@ def _arctan_op[
 
 
 def arctan[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise inverse tangent. `numpy.arctan`."""
-    return unary[
-        dtype, LayoutType, op=_arctan_op[dtype, _], gpu=gpu, name="arctan"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_arctan_op[dtype, _], gpu=gpu, name="arctan"](a)
 
 
 def _sinh_op[
@@ -374,14 +375,14 @@ def _sinh_op[
 
 
 def sinh[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise hyperbolic sine."""
-    return unary[
-        dtype, LayoutType, op=_sinh_op[dtype, _], gpu=gpu, name="sinh"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_sinh_op[dtype, _], gpu=gpu, name="sinh"](a)
 
 
 def _cosh_op[
@@ -391,14 +392,14 @@ def _cosh_op[
 
 
 def cosh[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise hyperbolic cosine."""
-    return unary[
-        dtype, LayoutType, op=_cosh_op[dtype, _], gpu=gpu, name="cosh"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_cosh_op[dtype, _], gpu=gpu, name="cosh"](a)
 
 
 def _tanh_op[
@@ -408,14 +409,14 @@ def _tanh_op[
 
 
 def tanh[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise hyperbolic tangent."""
-    return unary[
-        dtype, LayoutType, op=_tanh_op[dtype, _], gpu=gpu, name="tanh"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_tanh_op[dtype, _], gpu=gpu, name="tanh"](a)
 
 
 def _arcsinh_op[
@@ -425,14 +426,14 @@ def _arcsinh_op[
 
 
 def arcsinh[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise inverse hyperbolic sine. `numpy.arcsinh`."""
-    return unary[
-        dtype, LayoutType, op=_arcsinh_op[dtype, _], gpu=gpu, name="arcsinh"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_arcsinh_op[dtype, _], gpu=gpu, name="arcsinh"](a)
 
 
 def _arccosh_op[
@@ -442,14 +443,14 @@ def _arccosh_op[
 
 
 def arccosh[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise inverse hyperbolic cosine. `numpy.arccosh`."""
-    return unary[
-        dtype, LayoutType, op=_arccosh_op[dtype, _], gpu=gpu, name="arccosh"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_arccosh_op[dtype, _], gpu=gpu, name="arccosh"](a)
 
 
 def _arctanh_op[
@@ -459,14 +460,14 @@ def _arctanh_op[
 
 
 def arctanh[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise inverse hyperbolic tangent. `numpy.arctanh`."""
-    return unary[
-        dtype, LayoutType, op=_arctanh_op[dtype, _], gpu=gpu, name="arctanh"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_arctanh_op[dtype, _], gpu=gpu, name="arctanh"](a)
 
 
 def _floor_op[
@@ -476,14 +477,14 @@ def _floor_op[
 
 
 def floor[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise largest integer `<= x`."""
-    return unary[
-        dtype, LayoutType, op=_floor_op[dtype, _], gpu=gpu, name="floor"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_floor_op[dtype, _], gpu=gpu, name="floor"](a)
 
 
 def _ceil_op[
@@ -493,14 +494,14 @@ def _ceil_op[
 
 
 def ceil[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise smallest integer `>= x`."""
-    return unary[
-        dtype, LayoutType, op=_ceil_op[dtype, _], gpu=gpu, name="ceil"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_ceil_op[dtype, _], gpu=gpu, name="ceil"](a)
 
 
 def _trunc_op[
@@ -510,14 +511,14 @@ def _trunc_op[
 
 
 def trunc[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `x` rounded toward zero."""
-    return unary[
-        dtype, LayoutType, op=_trunc_op[dtype, _], gpu=gpu, name="trunc"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_trunc_op[dtype, _], gpu=gpu, name="trunc"](a)
 
 
 def _round_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -525,30 +526,30 @@ def _round_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
 
 
 def round[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `x` rounded to nearest, ties to even."""
-    return unary[
-        dtype, LayoutType, op=_round_op[dtype, _], gpu=gpu, name="round"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_round_op[dtype, _], gpu=gpu, name="round"](a)
 
 
 def rint[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `x` rounded to nearest, ties to even. `numpy.rint`.
 
     The same operation as `round`, under the name NumPy gives it when no
     decimal count is involved; both are half-to-even, so `rint` exists to
     be found rather than to do anything `round` does not.
     """
-    return unary[
-        dtype, LayoutType, op=_round_op[dtype, _], gpu=gpu, name="rint"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_round_op[dtype, _], gpu=gpu, name="rint"](a)
 
 
 def _sign_op[
@@ -566,18 +567,18 @@ def _sign_op[
 
 
 def sign[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `-1`, `0` or `1` by the sign of `x`. `numpy.sign`.
 
     Zero maps to zero and NaN to NaN, which is why this is not
     `copysign(1, x)` -- that answers `-1` for `-0.0` and `1` for NaN.
     """
-    return unary[
-        dtype, LayoutType, op=_sign_op[dtype, _], gpu=gpu, name="sign"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_sign_op[dtype, _], gpu=gpu, name="sign"](a)
 
 
 def _square_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -585,16 +586,16 @@ def _square_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
 
 
 def square[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """Elementwise `x * x`. `numpy.square`.
 
     One multiply rather than `power(a, 2)`'s general exponentiation, and
     exact where the general form is not.
     """
-    return unary[
-        dtype, LayoutType, op=_square_op[dtype, _], gpu=gpu, name="square"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_square_op[dtype, _], gpu=gpu, name="square"](a)
 
 
 def _reciprocal_op[
@@ -604,18 +605,19 @@ def _reciprocal_op[
 
 
 def reciprocal[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `1 / x`. `numpy.reciprocal`.
 
     A zero gives an infinity rather than raising, as NumPy's does with the
     error state at its default.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     return unary[
-        dtype,
-        LayoutType,
+        T,
         op=_reciprocal_op[dtype, _],
         gpu=gpu,
         name="reciprocal",
@@ -629,14 +631,14 @@ def _degrees_op[
 
 
 def degrees[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise radians to degrees, `x * 180 / pi`. `numpy.degrees`."""
-    return unary[
-        dtype, LayoutType, op=_degrees_op[dtype, _], gpu=gpu, name="degrees"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_degrees_op[dtype, _], gpu=gpu, name="degrees"](a)
 
 
 def _radians_op[
@@ -646,14 +648,14 @@ def _radians_op[
 
 
 def radians[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise degrees to radians, `x * pi / 180`. `numpy.radians`."""
-    return unary[
-        dtype, LayoutType, op=_radians_op[dtype, _], gpu=gpu, name="radians"
-    ](a)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_radians_op[dtype, _], gpu=gpu, name="radians"](a)
 
 
 def _arctan2_op[
@@ -665,14 +667,14 @@ def _arctan2_op[
 
 
 def arctan2[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `atan2(a, b)`, quadrant-aware. `numpy.arctan2`."""
-    return binary[
-        dtype, LayoutType, op=_arctan2_op[dtype, _], gpu=gpu, name="arctan2"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_arctan2_op[dtype, _], gpu=gpu, name="arctan2"](a, b)
 
 
 def _hypot_op[
@@ -684,14 +686,14 @@ def _hypot_op[
 
 
 def hypot[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise `sqrt(a*a + b*b)` without intermediate overflow."""
-    return binary[
-        dtype, LayoutType, op=_hypot_op[dtype, _], gpu=gpu, name="hypot"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_hypot_op[dtype, _], gpu=gpu, name="hypot"](a, b)
 
 
 def _copysign_op[
@@ -703,14 +705,14 @@ def _copysign_op[
 
 
 def copysign[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise magnitude of `a` with the sign of `b`."""
-    return binary[
-        dtype, LayoutType, op=_copysign_op[dtype, _], gpu=gpu, name="copysign"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_copysign_op[dtype, _], gpu=gpu, name="copysign"](a, b)
 
 
 def _remainder_op[
@@ -722,14 +724,16 @@ def _remainder_op[
 
 
 def remainder[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Elementwise IEEE remainder of `a` and `b`."""
-    return binary[
-        dtype, LayoutType, op=_remainder_op[dtype, _], gpu=gpu, name="remainder"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_remainder_op[dtype, _], gpu=gpu, name="remainder"](
+        a, b
+    )
 
 
 def _abs_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -739,8 +743,8 @@ def _abs_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
 
 
 def abs[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """Elementwise magnitude. `numpy.abs`.
 
     Defining `abs` here hides Mojo's builtin `abs` for the rest of this
@@ -748,9 +752,9 @@ def abs[
     caller who imports this name pays the same price in their own file,
     exactly as `from numpy import abs` does in Python.
     """
-    return unary[dtype, LayoutType, op=_abs_op[dtype, _], gpu=gpu, name="abs"](
-        a
-    )
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_abs_op[dtype, _], gpu=gpu, name="abs"](a)
 
 
 def _maximum_op[
@@ -766,19 +770,17 @@ def _maximum_op[
 
 
 def maximum[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """Elementwise larger of the two, NaN-propagating. `numpy.maximum`.
 
     A NaN in either operand gives NaN, which is NumPy's rule and *not* the
     hardware's: `max` on a `SIMD` is IEEE `maxNum` and quietly returns the
     other operand. `fmax` is the name for that behavior.
     """
-    return binary[
-        dtype, LayoutType, op=_maximum_op[dtype, _], gpu=gpu, name="maximum"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_maximum_op[dtype, _], gpu=gpu, name="maximum"](a, b)
 
 
 def _minimum_op[
@@ -791,18 +793,16 @@ def _minimum_op[
 
 
 def minimum[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """Elementwise smaller of the two, NaN-propagating. `numpy.minimum`.
 
     A NaN in either operand gives NaN, as `maximum` records; `fmin` is the
     name that skips it.
     """
-    return binary[
-        dtype, LayoutType, op=_minimum_op[dtype, _], gpu=gpu, name="minimum"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_minimum_op[dtype, _], gpu=gpu, name="minimum"](a, b)
 
 
 def _fmax_op[
@@ -812,19 +812,17 @@ def _fmax_op[
 
 
 def fmax[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """Elementwise larger of the two, ignoring NaN. `numpy.fmax`.
 
     `fmax(nan, x)` is `x`, where `maximum(nan, x)` is NaN. This is the one
     of the pair that maps straight onto the hardware instruction, so it is
     also the cheaper of the two on a float dtype.
     """
-    return binary[
-        dtype, LayoutType, op=_fmax_op[dtype, _], gpu=gpu, name="fmax"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_fmax_op[dtype, _], gpu=gpu, name="fmax"](a, b)
 
 
 def _fmin_op[
@@ -834,27 +832,27 @@ def _fmin_op[
 
 
 def fmin[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
-    dtype, LayoutType
-]:
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where is_row_major[T]:
     """Elementwise smaller of the two, ignoring NaN. `numpy.fmin`."""
-    return binary[
-        dtype, LayoutType, op=_fmin_op[dtype, _], gpu=gpu, name="fmin"
-    ](a, b)
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_fmin_op[dtype, _], gpu=gpu, name="fmin"](a, b)
 
 
 def clip[
-    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-](
-    a: Tensor[dtype, LayoutType], lo: Scalar[dtype], hi: Scalar[dtype]
-) raises -> Tensor[dtype, LayoutType]:
+    T: TensorLike, gpu: Bool = False
+](a: T, lo: Scalar[T.dtype], hi: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
     """Every element confined to `[lo, hi]`. `numpy.clip`.
 
     Two run-time bounds rather than one, so this carries its own body
     instead of going through `_drive.binary_scalar`; both are captured by
     value and splatted to the launch width.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](a):
         _notice[gpu]("clip")
         var n = a.size()
@@ -862,10 +860,10 @@ def clip[
         var walked = List[Scalar[dtype]](length=n, fill=0)
         for i in range(n):
             walked[i] = min(max(values[i], lo), hi)
-        return Tensor[dtype, LayoutType](a.context(), a.layout, walked^)
+        return Tensor[dtype, LayoutType](a.context(), a.view().layout, walked^)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
@@ -886,8 +884,14 @@ def clip[
 
 
 def diff[
-    dtype: DType, n: Int, gpu: Bool = False
-](a: Static[dtype, n]) raises -> Static[dtype, n - 1] where n >= 1:
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0] - 1] where (
+    dim[T, 0] >= 1
+    and T.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
+):
     """First differences, `out[i] = a[i+1] - a[i]`. `numpy.diff`.
 
     Rank-1, and one element shorter than its input -- which is why the
@@ -895,6 +899,8 @@ def diff[
     value. One launch: the shifted read is `Coord(i + 1)` against the same
     flat view, which stays in bounds because the domain is `n - 1` wide.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     if not _check_device[gpu=gpu](a):
         _notice[gpu]("diff")
         var values = a.to_host()
@@ -920,10 +926,16 @@ def diff[
 
 
 def gradient[
-    dtype: DType, n: Int, gpu: Bool = False
-](a: Static[dtype, n], spacing: Scalar[dtype] = 1) raises -> Static[
-    dtype, n
-] where (n >= 2):
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, spacing: Scalar[T.dtype] = 1) raises -> Static[
+    T.dtype, dim[T, 0]
+] where (
+    dim[T, 0] >= 2
+    and T.rank == 1
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
+):
     """Central differences interior, one-sided at the ends. `numpy.gradient`.
 
     Second-order accurate in the interior and first-order at the two
@@ -937,6 +949,8 @@ def gradient[
     the index, since a run-time `Int` widened to a float is not a Metal
     instruction.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
     if not _check_device[gpu=gpu](a):
         _notice[gpu]("gradient")
         var values = a.to_host()
@@ -977,18 +991,24 @@ def gradient[
 
 
 def arctan2[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
     """Elementwise `atan2(a, b)` at two broadcastable shapes."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_arctan2_op[dtype, _],
         gpu=gpu,
         name="arctan2",
@@ -996,18 +1016,24 @@ def arctan2[
 
 
 def hypot[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
     """Elementwise `sqrt(a*a + b*b)` at two broadcastable shapes."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_hypot_op[dtype, _],
         gpu=gpu,
         name="hypot",
@@ -1015,18 +1041,24 @@ def hypot[
 
 
 def copysign[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
     """Elementwise `copysign` at two broadcastable shapes."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_copysign_op[dtype, _],
         gpu=gpu,
         name="copysign",
@@ -1034,18 +1066,24 @@ def copysign[
 
 
 def remainder[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
     """Elementwise IEEE remainder at two broadcastable shapes."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_remainder_op[dtype, _],
         gpu=gpu,
         name="remainder",
@@ -1053,20 +1091,21 @@ def remainder[
 
 
 def maximum[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """Elementwise larger of the two, at two broadcastable shapes.
 
     `numpy.maximum`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_maximum_op[dtype, _],
         gpu=gpu,
         name="maximum",
@@ -1074,20 +1113,21 @@ def maximum[
 
 
 def minimum[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """Elementwise smaller of the two, at two broadcastable shapes.
 
     `numpy.minimum`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_minimum_op[dtype, _],
         gpu=gpu,
         name="minimum",
@@ -1095,19 +1135,20 @@ def minimum[
 
 
 def fmax[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """Elementwise larger of the two ignoring NaN, at two broadcastable
     shapes. `numpy.fmax`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_fmax_op[dtype, _],
         gpu=gpu,
         name="fmax",
@@ -1115,19 +1156,20 @@ def fmax[
 
 
 def fmin[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
-    dtype, _BroadcastRank[ALayout, BLayout]
-]:
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
     """Elementwise smaller of the two ignoring NaN, at two broadcastable
     shapes. `numpy.fmin`."""
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     return broadcast_binary[
-        dtype,
-        ALayout,
-        BLayout,
+        A,
+        B,
         op=_fmin_op[dtype, _],
         gpu=gpu,
         name="fmin",

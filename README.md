@@ -221,7 +221,8 @@ makes a shape read from a file expressible at all. `.dynamic()` and
 `.static_view[2, 3]()` move between the two without copying, and the second
 raises if the extents it asserts are not the ones there.
 
-Everything NumPy has a name for works on `Tensor`: creation, elementwise
+Everything NumPy has a name for works on `Tensor`, and on a `View` of one
+where the routine reads rather than allocates: creation, elementwise
 math, reductions along an axis, sorting, masking, reshaping, `.npy` files.
 
 `Array[T, n]` is the other array type, and it is not a smaller `Tensor`. It
@@ -449,7 +450,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.arange(5)`, `np.eye(3)` | `arange[5]()`, `eye[3]()` | `arange` takes a count, not a `stop` |
 | `np.zeros_like(a)` | `zeros_like(a)` | derived shapes inherit `a`'s device |
 | `np.eye(3)` to hand to `linalg` | `eye[P, 3]()` | same names at the conformer layer, returning `Array` |
-| `a.reshape(2, 3)` | `reshape[f64, 6, 2, 3](a)`, or `reshape_dyn[rank=2](a, r, c)` | the second takes a shape you computed |
+| `a.reshape(2, 3)` | `reshape[rows=2, cols=3](a)`, or `reshape_dyn[rank=2](a, r, c)` | the second takes a shape you computed |
 | `a[1:3, :]`, `np.broadcast_to(a, (2, 3))` | `slice(a, [1, 0], [3, cols])`, `broadcast_to[rank=2](a, 2, 3)` | both copy rather than returning a view |
 | `np.pad(a, (before, after), mode)` | `pad[f64, n, before, after, mode](a)` | the widths are compile-time because the padded extent is part of the return type; `gpu=True` is the constant mode only, and the `where` clause makes the other modes a compile error rather than a silent host fallback |
 | `a[a > 0]`, `np.take(a, idx)` | `extract(greater(a, zeros_like(a)), a)`, `take(a, idx)` | the result is sized by the data, so it comes back `Dynamic` |

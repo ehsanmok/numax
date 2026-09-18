@@ -323,7 +323,7 @@ def cholesky[
             ")",
         )
 
-    return tril[dtype, n, n, gpu](work)
+    return tril[gpu=gpu](work)
 
 
 def cholesky_solve[

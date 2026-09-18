@@ -31,6 +31,7 @@ from std.utils.numerics import inf as _inf
 
 from layout.tile_layout import TensorLayout
 
+from ..core.tensorlike import is_row_major
 from ..core.array import Tensor, full_like
 from ..core.elementwise import sqrt as _sqrt
 from ..core.logic import isnan
@@ -43,7 +44,7 @@ def _filled[
     dtype: DType, LayoutType: TensorLayout
 ](xs: Tensor[dtype, LayoutType], fill: Scalar[dtype]) raises -> Tensor[
     dtype, LayoutType
-] where dtype.is_floating_point():
+] where (dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]):
     """`xs` with every NaN replaced by `fill`."""
     var mask = isnan(xs)
     var value = full_like(xs, fill)
@@ -52,15 +53,17 @@ def _filled[
 
 def _nan_count[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Int where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType]) raises -> Int where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     return count_nonzero(isnan(xs))
 
 
 def nansum[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType]) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The sum of the non-NaN elements; `0` if there are none.
     `numpy.nansum`."""
     return _sum(_filled(xs, Scalar[dtype](0)))
@@ -68,9 +71,9 @@ def nansum[
 
 def nanprod[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType]) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The product of the non-NaN elements; `1` if there are none.
     `numpy.nanprod`."""
     from .statistics import prod as _prod
@@ -80,9 +83,9 @@ def nanprod[
 
 def nanmean[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType]) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The mean of the non-NaN elements. `numpy.nanmean`. Raises when every
     element is NaN, where NumPy warns and returns NaN."""
     var kept = xs.size() - _nan_count(xs)
@@ -93,9 +96,9 @@ def nanmean[
 
 def nanvar[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The variance of the non-NaN elements, with `ddof` degrees of freedom
     removed from the count. `numpy.nanvar(a, ddof=ddof)`.
 
@@ -116,9 +119,9 @@ def nanvar[
 
 def nanstd[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The square root of `nanvar`. `numpy.nanstd`."""
     from std.math import sqrt
 
@@ -127,9 +130,9 @@ def nanstd[
 
 def nanmin[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType]) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The smallest non-NaN element. `numpy.nanmin`. Raises when every
     element is NaN."""
     if _nan_count(xs) == xs.size():
@@ -139,9 +142,9 @@ def nanmin[
 
 def nanmax[
     dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+](xs: Tensor[dtype, LayoutType]) raises -> Scalar[dtype] where (
+    dtype.is_floating_point() and is_row_major[Tensor[dtype, LayoutType]]
+):
     """The largest non-NaN element. `numpy.nanmax`. Raises when every
     element is NaN."""
     if _nan_count(xs) == xs.size():

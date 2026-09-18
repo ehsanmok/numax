@@ -187,7 +187,7 @@ def main() raises:
         for j in range(n):
             scaled_entries.append(u_host[i * n + j] * s_host[j])
     var scaled = Static[dtype, n, n](ctx, scaled_entries^)
-    var v_transposed = transpose[dtype, n, n](factored.v)
+    var v_transposed = transpose(factored.v)
     var reconstructed = matmul(scaled, v_transposed)
     var original = general(ctx)
     print(
@@ -238,7 +238,7 @@ def main() raises:
     # `2 x 2` block on the diagonal rather than splitting into two real
     # eigenvalues that do not exist.
     var zt = matmul(form.z, form.t)
-    var z_transposed = transpose[dtype, n, n](form.z)
+    var z_transposed = transpose(form.z)
     var rebuilt = matmul(zt, z_transposed)
     var source = general(ctx)
     print("  max |Z T Z^T - A| =", worst_difference(rebuilt, source))
