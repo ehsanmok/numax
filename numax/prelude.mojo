@@ -408,7 +408,15 @@ from .optimize.root import root
 from .integrate.integrate import quad, quad_vec, solve_ivp
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 from .integrate.ode import dopri5, rk4_system
-from .interpolate.interp import horner, interp
+from .interpolate.interp import (
+    horner,
+    interp,
+    polyder,
+    polyfit,
+    polyint,
+    polyval,
+    roots,
+)
 from .interpolate.spline import (
     Akima1DInterpolator,
     CubicHermiteSpline,

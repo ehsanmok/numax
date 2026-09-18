@@ -1,5 +1,19 @@
-"""Interpolation over `numax.core.array.Tensor`: NumPy's `interp` and
-polynomial evaluation over a tensor of query points.
+"""Interpolation over `numax.core.array.Tensor`: NumPy's `interp`, the
+legacy `numpy.poly*` family, and polynomial evaluation over a tensor of
+query points.
+
+## Two coefficient orders, both NumPy's
+
+`horner` takes coefficients **ascending** (`c[i]` multiplies `x^i`), which
+is `numpy.polynomial.polynomial.polyval`'s order and the modern one.
+`polyval`, `polyder`, `polyint`, `roots` and `polyfit` take and return
+them **descending** (`p[0]` is the highest power), which is the legacy
+`numpy.poly*` order. Both ship because both are NumPy, and neither order
+is a wrapper's arbitrary choice: a caller porting `numpy.polyfit` output
+into `numpy.polyval` needs the descending pair to agree with each other,
+and `scipy.linalg.companion` -- which `roots` is built on -- is descending
+too. Each docstring names its order, and `polyval` says how to get the
+other one.
 
 **This module is tier 2.** Each routine is one `elementwise` launch over
 the query points -- host-driven, device-resident, `Plain`-only -- and
@@ -36,7 +50,10 @@ from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout
 from max.algorithm.functional import elementwise
 
-from ..core.array import Static
+from ..core.array import Static, vander
+from ..linalg.eigen import Eigenvalues, eigvals
+from ..linalg.qr import lstsq
+from ..linalg.special_matrices import companion
 
 comptime _View[dtype: DType, LayoutType: TensorLayout] = TileTensor[
     dtype, LayoutType, MutAnyOrigin
@@ -181,3 +198,154 @@ def horner[
     )
     ctx.synchronize()
     return out^
+
+
+def polyval[
+    dtype: DType, k: Int, m: Int, gpu: Bool = False
+](mut p: Static[dtype, k], mut x: Static[dtype, m]) raises -> Static[
+    dtype, m
+] where (dtype.is_floating_point() and k > 0 and m > 0):
+    """The polynomial with **descending** coefficients `p` evaluated at
+    every point of `x`. `numpy.polyval`.
+
+    `p[0]` multiplies `x ** (k - 1)` and `p[k - 1]` is the constant term,
+    which is the legacy `numpy.polyval` order and the order `polyfit`
+    returns and `roots` consumes. `horner` above is the same evaluation
+    with the coefficients ascending; `polyval(p, x)` is
+    `horner(flip(p), x)`, and either spelling works if the order is the
+    one being converted.
+
+    One `elementwise` launch of Horner's rule per lane, as `horner`'s is.
+    """
+    var ctx = x.context()
+    var out = Static[dtype, m]._uninitialized(ctx)
+    var cs = p.view()
+    var xs = x.view()
+    var ys = out.view()
+
+    @always_inline
+    def evaluate[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var cs, var xs, var ys}:
+        var q = coord_to_index_list(coord)[0]
+        var at = xs[Coord(q)]
+        var total = cs[Coord(0)]
+        for step in range(1, k):
+            total = total * at + cs[Coord(step)]
+        ys.store[1](Coord(q), total)
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        evaluate, Coord(m), ctx
+    )
+    ctx.synchronize()
+    return out^
+
+
+def polyder[
+    dtype: DType, k: Int
+](p: Static[dtype, k]) raises -> Static[dtype, k - 1] where (
+    dtype.is_floating_point() and k >= 2
+):
+    """The derivative of the polynomial with descending coefficients `p`.
+    `numpy.polyder`.
+
+    A degree-`k - 1` polynomial differentiates to a degree-`k - 2` one, so
+    the result is one shorter and the length change is in the type. A
+    constant (`k == 1`) would differentiate to the empty polynomial rather
+    than to zero, which numax has no tensor for, so `k >= 2` is a `where`
+    clause: differentiate a constant and it fails to compile rather than
+    returning something of a length nobody asked for.
+
+    Higher orders compose -- `polyder(polyder(p))` is the second
+    derivative -- rather than taking an `m` parameter, because each
+    application changes the return type and a parameterized `m` would have
+    to spell `k - m` with `m` proven below `k`.
+
+    Host-side: `k` coefficient multiplies, which is not work worth a launch.
+    """
+    var source = p.to_host()
+    var values = List[Scalar[dtype]](capacity=k - 1)
+    for i in range(k - 1):
+        # Descending: p[i] multiplies x ** (k - 1 - i), whose derivative
+        # is (k - 1 - i) * x ** (k - 2 - i).
+        values.append(source[i] * Scalar[dtype](k - 1 - i))
+    return Static[dtype, k - 1](p.context(), values^)
+
+
+def polyint[
+    dtype: DType, k: Int
+](p: Static[dtype, k], constant: Scalar[dtype] = 0) raises -> Static[
+    dtype, k + 1
+] where (dtype.is_floating_point() and k >= 1):
+    """The antiderivative of the polynomial with descending coefficients
+    `p`, with integration constant `constant`. `numpy.polyint`.
+
+    One longer than its input, and the constant lands in the last slot
+    because that is the `x ** 0` position in descending order. The inverse
+    of `polyder` up to that constant: `polyder(polyint(p))` is `p`.
+    """
+    var source = p.to_host()
+    var values = List[Scalar[dtype]](capacity=k + 1)
+    for i in range(k):
+        values.append(source[i] / Scalar[dtype](k - i))
+    values.append(constant)
+    return Static[dtype, k + 1](p.context(), values^)
+
+
+def roots[
+    dtype: DType, k: Int, gpu: Bool = False
+](mut p: Static[dtype, k]) raises -> Eigenvalues[dtype, k - 1] where (
+    dtype.is_floating_point() and k >= 2
+):
+    """The roots of the polynomial with descending coefficients `p`, real
+    and complex. `numpy.roots`.
+
+    The companion matrix's eigenvalues, which is how `numpy.roots` is
+    implemented and what `numax.linalg.companion`'s docstring already
+    pointed at: build the companion, take its spectrum, and those are the
+    roots. So this is two existing calls under the name a caller looks
+    for, not a new algorithm.
+
+    The result is an `Eigenvalues` -- a real tensor and an imaginary one --
+    for the reason that struct records: a `dtype`-monomorphic `Tensor`
+    cannot hold a complex value. A real root has `im == 0` exactly.
+
+    `p[0]` must be nonzero; `companion` divides by it and its docstring
+    explains why trimming a leading zero is the caller's decision. The
+    order is NumPy's `roots`, not its `polynomial` package's, matching
+    `polyfit` and `polyval`.
+
+    **Tier 2, and `gpu=True` does not compile**, because `eigvals` refuses
+    it -- see `numax.linalg.eigvals`.
+    """
+    var c = companion[dtype, k, gpu](p)
+    return eigvals[dtype, k - 1, gpu](c)
+
+
+def polyfit[
+    dtype: DType, n: Int, deg: Int, gpu: Bool = False
+](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
+    dtype, deg + 1
+] where (dtype.is_floating_point() and n >= deg + 1 and deg + 1 >= 1):
+    """The degree-`deg` least-squares polynomial fit of `y` against `x`, as
+    **descending** coefficients. `numpy.polyfit`.
+
+    The Vandermonde design matrix fed to `lstsq`, which is NumPy's own
+    route: `vander` with its default descending powers gives a column per
+    power, and the least-squares solution of `V c = y` is the fit. Both
+    pieces already existed; this is the name that joins them, and its
+    output feeds `polyval` and `roots` without a reversal.
+
+    `n >= deg + 1` is a `where` clause rather than a run-time check: fewer
+    points than coefficients is an underdetermined system with a solution
+    space rather than a solution, and `lstsq` requires the overdetermined
+    shape anyway.
+
+    No weights and no conditioning report. `numpy.polyfit`'s `w`, `cov`
+    and its rank warning are absent; a caller wanting the conditioning
+    takes `cond` of the `vander` matrix, and one wanting the
+    minimum-norm answer for a rank-deficient fit spells
+    `lstsq[method="svd"]` on `vander(x, deg + 1)` directly.
+    """
+    var design = vander[dtype, n, deg + 1](x)
+    return lstsq[dtype, n, deg + 1, gpu](design, y)

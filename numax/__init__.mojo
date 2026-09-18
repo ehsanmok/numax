@@ -466,7 +466,15 @@ from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 
 # Interpolation -- `numax.interpolate`, the `Tensor` tier. The `FloatLike`
 # spline and Chebyshev fit are one import away at `numax.interpolate.array`.
-from .interpolate.interp import horner, interp
+from .interpolate.interp import (
+    horner,
+    interp,
+    polyder,
+    polyfit,
+    polyint,
+    polyval,
+    roots,
+)
 from .interpolate.spline import (
     Akima1DInterpolator,
     CubicHermiteSpline,
