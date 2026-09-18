@@ -249,32 +249,47 @@ def matvec[
     hands MAX a different description of bytes it was going to read
     anyway, not a copy.
 
-    **The row count is grown to a lane multiple first, when it is not one
-    already.** MAX's GEMV reduces each row on its own SIMD lane, so it
-    walks the rows in blocks of `simd_width_of[dtype]()`, and its final
-    block runs past the last row whenever `m` is not a whole number of
-    lanes -- reading as much as `(lanes - 1) * k` elements beyond the
-    matrix. Those values are discarded, so the defect stays invisible
-    until the allocation ends on a page boundary and the read faults,
-    which is what `matvec[dtype, 6, 4]` did on the Linux CI runner while
-    the same call passed everywhere else. Growing the matrix to
-    `m_pad x k` with the phantom rows zeroed turns the read the kernel
-    wants into a read numax has allocated, and the extra outputs are zeros
-    that get dropped.
+    **Both extents are grown to a lane multiple first**, when they are not
+    ones already. MAX's GEMV over-reads its input in two independent ways
+    at `max ==26.5`, and each needs its own padding:
 
-    The growth costs one `m_pad x k` allocation and two `elementwise`
-    passes, bounded by `lanes - 1` extra rows, and an aligned `m` skips
-    all of it at compile time and runs what it ran before -- so no
-    existing measurement moves. This is a workaround for the pinned
-    `max ==26.5`, not a design choice, and it should go when MAX's GEMV
-    masks its own tail.
+    - **`m`**, the row count. The kernel walks the rows in blocks of
+      `simd_width_of[dtype]()`, and its final block runs past the last row
+      whenever `m` is not a whole number of lanes -- as much as
+      `(lanes - 1) * k` elements beyond the matrix.
+    - **`k`**, the row length. The reduction over each row is unrolled by
+      the same width, so the last load of row `i` reaches into row
+      `i + 1` whenever `k` is not a whole number of lanes. That is
+      harmless in the interior and reads off the end of the buffer on the
+      final row.
+
+    Both are discarded values, so either defect stays invisible until the
+    allocation ends on a page boundary and the read faults. `m` alone was
+    padded until the `k` case turned up: `matvec[float64, 6, 4]` faulted on
+    the Linux CI runner where the same call passed on Apple Silicon, and
+    then a padded-`m` call faulted there too -- `simd_width_of[float64]()`
+    is 8 under AVX-512 against 2 on NEON, so almost every `k` is misaligned
+    on one and almost none on the other.
+
+    Growing the matrix to `m_pad x k_pad` with the phantom row and column
+    entries zeroed turns the read the kernel wants into a read numax has
+    allocated. The padding cannot change the answer: a phantom column
+    contributes `0 * 0` to every dot product, and a phantom row produces an
+    output that is trimmed away.
+
+    The growth costs one `m_pad x k_pad` allocation and two `elementwise`
+    passes, bounded by `lanes - 1` in each extent, and a call already
+    aligned in both skips all of it at compile time -- so no existing
+    measurement moves. This is a workaround for the pinned `max ==26.5`,
+    not a design choice, and it should go when MAX's GEMV masks its own
+    tail.
     """
     comptime lanes = simd_width_of[dtype]()
     var ctx = a.context()
     var xv = x.view()
     var x_col = TileTensor(xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1)))
 
-    comptime if m % lanes == 0:
+    comptime if m % lanes == 0 and k % lanes == 0:
         var result = Static[dtype, m](ctx)
         var yv = result.view()
         var y_col = TileTensor(
@@ -285,9 +300,10 @@ def matvec[
         return result^
     else:
         comptime m_pad = ((m + lanes - 1) // lanes) * lanes
+        comptime k_pad = ((k + lanes - 1) // lanes) * lanes
 
-        # Not zeroed: `grow` writes every element, phantom rows included.
-        var padded = Static[dtype, m_pad, k]._uninitialized(ctx)
+        # Not zeroed: `grow` writes every element, phantom entries included.
+        var padded = Static[dtype, m_pad, k_pad]._uninitialized(ctx)
         var av = a.view()
         var pv = padded.view()
 
@@ -296,14 +312,33 @@ def matvec[
         # inside one row of `a` -- the very over-read this exists to avoid.
         @always_inline
         def grow[w: Int, alignment: Int = 1](coord: Coord) {var av, var pv}:
-            var i = coord_to_index_list(coord)[0]
-            if i < m:
-                pv.store[1](coord, av[coord])
+            var at = coord_to_index_list(coord)
+            if at[0] < m and at[1] < k:
+                pv.store[1](coord, av[Coord(at[0], at[1])])
             else:
                 pv.store[1](coord, Scalar[dtype](0))
 
         elementwise[simd_width=1, target=_target[gpu]()](
-            grow, Coord(m_pad, k), ctx
+            grow, Coord(m_pad, k_pad), ctx
+        )
+
+        # `x` grows with it, so the phantom columns pair `0` against `0`.
+        var x_wide = Static[dtype, k_pad]._uninitialized(ctx)
+        var xw = x_wide.view()
+
+        @always_inline
+        def grow_x[w: Int, alignment: Int = 1](coord: Coord) {var xv, var xw}:
+            var j = coord_to_index_list(coord)[0]
+            if j < k:
+                xw.store[1](coord, xv[coord])
+            else:
+                xw.store[1](coord, Scalar[dtype](0))
+
+        elementwise[simd_width=1, target=_target[gpu]()](
+            grow_x, Coord(k_pad), ctx
+        )
+        var x_pad_col = TileTensor(
+            xw.ptr_at_offset(Coord(0)), row_major(Coord(k_pad, 1))
         )
 
         var wide = Static[dtype, m_pad]._uninitialized(ctx)
@@ -312,7 +347,7 @@ def matvec[
             wv.ptr_at_offset(Coord(0)), row_major(Coord(m_pad, 1))
         )
         _max_matmul[target="gpu" if gpu else "cpu"](
-            y_col, padded.view(), x_col, ctx
+            y_col, padded.view(), x_pad_col, ctx
         )
         ctx.synchronize()
 
@@ -333,6 +368,7 @@ def matvec[
         # reads through `read`: the queued free ran at the next
         # `synchronize` and `trim` copied a heap pointer into `result[0]`.
         _ = wide^
+        _ = x_wide^
         return result^
 
 

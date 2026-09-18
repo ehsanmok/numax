@@ -223,6 +223,56 @@ def test_matvec_odd_rows_and_odd_columns_every_element() raises:
     _matvec_every_element_matches_matmul[3, 4]()
 
 
+def test_matvec_at_a_k_misaligned_for_the_widest_lane_counts() raises:
+    """`k` off a lane multiple is a *second* over-read, independent of `m`.
+
+    MAX's GEMV unrolls the reduction along the row by the lane width too,
+    so the last load of row `i` reaches into row `i + 1` and, on the final
+    row, past the buffer. `simd_width_of[float64]()` is 2 on NEON and 8
+    under AVX-512, so a `k` these shapes leave misaligned on the wider
+    machine is aligned on the narrower one -- which is why padding only
+    `m` passed every local run and segfaulted `eigvals` and `nnls` on the
+    Linux runner.
+
+    These pin the padding arithmetic at `k` values misaligned modulo 2, 4,
+    8 and 16 at once. They cannot reproduce the fault on a 2-lane host --
+    an over-read only faults when the allocation ends on a page boundary --
+    so what they assert is that the widened product still equals the
+    matmul, which is what the phantom `0 * 0` columns are for.
+    """
+    _matvec_every_element_matches_matmul[4, 9]()
+    _matvec_every_element_matches_matmul[8, 17]()
+    _matvec_every_element_matches_matmul[16, 7]()
+    _matvec_every_element_matches_matmul[6, 11]()
+    # Both extents misaligned at every width in play.
+    _matvec_every_element_matches_matmul[9, 9]()
+
+
+def test_matvec_at_float32_where_a_lane_is_sixteen_wide() raises:
+    """The same padding at `float32`, whose lane count is twice
+    `float64`'s -- 16 under AVX-512 -- so a `k` well past any shape the
+    float64 tests reach is still inside one block."""
+    comptime m = 5
+    comptime k = 13
+    var ctx = _cpu()
+    var values = List[Scalar[DType.float32]](capacity=m * k)
+    for i in range(m * k):
+        values.append(Scalar[DType.float32](Float64(i % 7) - 3.0))
+    var xs = List[Scalar[DType.float32]](capacity=k)
+    for i in range(k):
+        xs.append(Scalar[DType.float32](Float64(i) * 0.25 - 1.0))
+
+    var a = Static[DType.float32, m, k](ctx, values.copy())
+    var x = Static[DType.float32, k](ctx, xs.copy())
+    var got = matvec(a, x).to_host()
+
+    var column = Static[DType.float32, k, 1](ctx, xs^)
+    var b = Static[DType.float32, m, k](ctx, values^)
+    var want = matmul(b, column).to_host()
+    for i in range(m):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-5)
+
+
 def test_matvec_square_but_not_a_lane_multiple() raises:
     """`6 x 6` -- square, and still not a lane multiple, which is the case
     that showed the fault is about the row count and not about the matrix

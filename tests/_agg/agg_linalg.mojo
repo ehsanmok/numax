@@ -721,6 +721,12 @@ from test_tensor_linalg import (
     test_matvec_odd_rows_and_odd_columns_every_element as test_tensor_linalg__test_matvec_odd_rows_and_odd_columns_every_element,
 )
 from test_tensor_linalg import (
+    test_matvec_at_a_k_misaligned_for_the_widest_lane_counts as test_tensor_linalg__test_matvec_at_a_k_misaligned_for_the_widest_lane_counts,
+)
+from test_tensor_linalg import (
+    test_matvec_at_float32_where_a_lane_is_sixteen_wide as test_tensor_linalg__test_matvec_at_float32_where_a_lane_is_sixteen_wide,
+)
+from test_tensor_linalg import (
     test_matvec_square_but_not_a_lane_multiple as test_tensor_linalg__test_matvec_square_but_not_a_lane_multiple,
 )
 from test_tensor_linalg import (
@@ -1384,6 +1390,12 @@ def main() raises:
     ]()
     suite.test[
         test_tensor_linalg__test_matvec_odd_rows_and_odd_columns_every_element
+    ]()
+    suite.test[
+        test_tensor_linalg__test_matvec_at_a_k_misaligned_for_the_widest_lane_counts
+    ]()
+    suite.test[
+        test_tensor_linalg__test_matvec_at_float32_where_a_lane_is_sixteen_wide
     ]()
     suite.test[test_tensor_linalg__test_matvec_square_but_not_a_lane_multiple]()
     suite.test[
