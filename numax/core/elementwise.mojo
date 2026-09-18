@@ -58,6 +58,7 @@ from std.math import (
     expm1 as _std_expm1,
     floor as _std_floor,
     hypot as _std_hypot,
+    isnan as _std_isnan,
     log10 as _std_log10,
     log1p as _std_log1p,
     log2 as _std_log2,
@@ -534,6 +535,127 @@ def round[
     ](a)
 
 
+def rint[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+] where dtype.is_floating_point():
+    """Elementwise `x` rounded to nearest, ties to even. `numpy.rint`.
+
+    The same operation as `round`, under the name NumPy gives it when no
+    decimal count is involved; both are half-to-even, so `rint` exists to
+    be found rather than to do anything `round` does not.
+    """
+    return unary[
+        dtype, LayoutType, op=_round_op[dtype, _], gpu=gpu, name="rint"
+    ](a)
+
+
+def _sign_op[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
+    # Not `copysign(1, x)`: that gives -1 at `-0.0`, where NumPy gives 0.
+    # Two comparisons keep `sign(0.0) == 0.0`, `sign(-0.0) == -0.0` and
+    # `sign(nan) == nan`, which is NumPy's full contract.
+    # `.gt`/`.lt` rather than `>`/`<`: at `w == 1` the operators narrow to
+    # `Bool`, which has no per-lane `select`.
+    var zero = SIMD[dtype, w](0)
+    var pos = x.gt(zero).select(SIMD[dtype, w](1), zero)
+    # `+ (x - x)` carries a NaN through and is exact everywhere else.
+    return x.lt(zero).select(SIMD[dtype, w](-1), pos) + (x - x)
+
+
+def sign[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+] where dtype.is_floating_point():
+    """Elementwise `-1`, `0` or `1` by the sign of `x`. `numpy.sign`.
+
+    Zero maps to zero and NaN to NaN, which is why this is not
+    `copysign(1, x)` -- that answers `-1` for `-0.0` and `1` for NaN.
+    """
+    return unary[
+        dtype, LayoutType, op=_sign_op[dtype, _], gpu=gpu, name="sign"
+    ](a)
+
+
+def _square_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return x * x
+
+
+def square[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[dtype, LayoutType]:
+    """Elementwise `x * x`. `numpy.square`.
+
+    One multiply rather than `power(a, 2)`'s general exponentiation, and
+    exact where the general form is not.
+    """
+    return unary[
+        dtype, LayoutType, op=_square_op[dtype, _], gpu=gpu, name="square"
+    ](a)
+
+
+def _reciprocal_op[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
+    return SIMD[dtype, w](1) / x
+
+
+def reciprocal[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+] where dtype.is_floating_point():
+    """Elementwise `1 / x`. `numpy.reciprocal`.
+
+    A zero gives an infinity rather than raising, as NumPy's does with the
+    error state at its default.
+    """
+    return unary[
+        dtype,
+        LayoutType,
+        op=_reciprocal_op[dtype, _],
+        gpu=gpu,
+        name="reciprocal",
+    ](a)
+
+
+def _degrees_op[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
+    return x * SIMD[dtype, w](57.295779513082320876798154814105)
+
+
+def degrees[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+] where dtype.is_floating_point():
+    """Elementwise radians to degrees, `x * 180 / pi`. `numpy.degrees`."""
+    return unary[
+        dtype, LayoutType, op=_degrees_op[dtype, _], gpu=gpu, name="degrees"
+    ](a)
+
+
+def _radians_op[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
+    return x * SIMD[dtype, w](0.017453292519943295769236907684886)
+
+
+def radians[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+] where dtype.is_floating_point():
+    """Elementwise degrees to radians, `x * pi / 180`. `numpy.radians`."""
+    return unary[
+        dtype, LayoutType, op=_radians_op[dtype, _], gpu=gpu, name="radians"
+    ](a)
+
+
 def _arctan2_op[
     dtype: DType, w: Int
 ](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[
@@ -634,7 +756,13 @@ def abs[
 def _maximum_op[
     dtype: DType, w: Int
 ](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
-    return max(a, b)
+    # `max` is IEEE `maxNum`: it *returns the other operand* when one is
+    # NaN. `numpy.maximum` propagates instead, so the NaN is put back.
+    # `fmax` below is the spelling that wants `max`'s own behavior.
+    comptime if dtype.is_floating_point():
+        return _std_isnan(a).select(a, _std_isnan(b).select(b, max(a, b)))
+    else:
+        return max(a, b)
 
 
 def maximum[
@@ -642,7 +770,12 @@ def maximum[
 ](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
     dtype, LayoutType
 ]:
-    """Elementwise larger of the two. `numpy.maximum`."""
+    """Elementwise larger of the two, NaN-propagating. `numpy.maximum`.
+
+    A NaN in either operand gives NaN, which is NumPy's rule and *not* the
+    hardware's: `max` on a `SIMD` is IEEE `maxNum` and quietly returns the
+    other operand. `fmax` is the name for that behavior.
+    """
     return binary[
         dtype, LayoutType, op=_maximum_op[dtype, _], gpu=gpu, name="maximum"
     ](a, b)
@@ -651,7 +784,10 @@ def maximum[
 def _minimum_op[
     dtype: DType, w: Int
 ](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
-    return min(a, b)
+    comptime if dtype.is_floating_point():
+        return _std_isnan(a).select(a, _std_isnan(b).select(b, min(a, b)))
+    else:
+        return min(a, b)
 
 
 def minimum[
@@ -659,9 +795,52 @@ def minimum[
 ](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
     dtype, LayoutType
 ]:
-    """Elementwise smaller of the two. `numpy.minimum`."""
+    """Elementwise smaller of the two, NaN-propagating. `numpy.minimum`.
+
+    A NaN in either operand gives NaN, as `maximum` records; `fmin` is the
+    name that skips it.
+    """
     return binary[
         dtype, LayoutType, op=_minimum_op[dtype, _], gpu=gpu, name="minimum"
+    ](a, b)
+
+
+def _fmax_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return max(a, b)
+
+
+def fmax[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+]:
+    """Elementwise larger of the two, ignoring NaN. `numpy.fmax`.
+
+    `fmax(nan, x)` is `x`, where `maximum(nan, x)` is NaN. This is the one
+    of the pair that maps straight onto the hardware instruction, so it is
+    also the cheaper of the two on a float dtype.
+    """
+    return binary[
+        dtype, LayoutType, op=_fmax_op[dtype, _], gpu=gpu, name="fmax"
+    ](a, b)
+
+
+def _fmin_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return min(a, b)
+
+
+def fmin[
+    dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+](a: Tensor[dtype, LayoutType], b: Tensor[dtype, LayoutType]) raises -> Tensor[
+    dtype, LayoutType
+]:
+    """Elementwise smaller of the two, ignoring NaN. `numpy.fmin`."""
+    return binary[
+        dtype, LayoutType, op=_fmin_op[dtype, _], gpu=gpu, name="fmin"
     ](a, b)
 
 
@@ -912,4 +1091,44 @@ def minimum[
         op=_minimum_op[dtype, _],
         gpu=gpu,
         name="minimum",
+    ](a, b)
+
+
+def fmax[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    gpu: Bool = False,
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, _BroadcastRank[ALayout, BLayout]
+]:
+    """Elementwise larger of the two ignoring NaN, at two broadcastable
+    shapes. `numpy.fmax`."""
+    return broadcast_binary[
+        dtype,
+        ALayout,
+        BLayout,
+        op=_fmax_op[dtype, _],
+        gpu=gpu,
+        name="fmax",
+    ](a, b)
+
+
+def fmin[
+    dtype: DType,
+    ALayout: TensorLayout,
+    BLayout: TensorLayout,
+    gpu: Bool = False,
+](a: Tensor[dtype, ALayout], b: Tensor[dtype, BLayout]) raises -> Dynamic[
+    dtype, _BroadcastRank[ALayout, BLayout]
+]:
+    """Elementwise smaller of the two ignoring NaN, at two broadcastable
+    shapes. `numpy.fmin`."""
+    return broadcast_binary[
+        dtype,
+        ALayout,
+        BLayout,
+        op=_fmin_op[dtype, _],
+        gpu=gpu,
+        name="fmin",
     ](a, b)

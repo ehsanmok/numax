@@ -43,6 +43,7 @@ from std.math import (
     log10 as _std_log10,
     log1p as _std_log1p,
     log2 as _std_log2,
+    nan,
     remainder as _std_remainder,
     round as _std_round,
     rsqrt as _std_rsqrt,
@@ -87,11 +88,14 @@ from numax import (
     copysign,
     cos,
     cosh,
+    degrees,
     diff,
     exp,
     exp2,
     expm1,
     floor,
+    fmax,
+    fmin,
     gradient,
     hypot,
     log,
@@ -100,12 +104,18 @@ from numax import (
     log2,
     maximum,
     minimum,
+    power,
+    radians,
+    reciprocal,
     remainder,
+    rint,
     round,
     rsqrt,
+    sign,
     sin,
     sinh,
     sqrt,
+    square,
     tan,
     trunc,
 )
@@ -340,6 +350,17 @@ def _edge() -> List[Float64]:
     return [-3.5, -1.0, -0.0, 0.0, 0.5, 1.0, 2.5, inf, -inf, inf - inf]
 
 
+def _nan_or(
+    a: Scalar[dtype], b: Scalar[dtype], otherwise: Scalar[dtype]
+) -> Scalar[dtype]:
+    """NumPy's NaN rule for `maximum`/`minimum`: either operand NaN wins."""
+    if isnan(a):
+        return a
+    if isnan(b):
+        return b
+    return otherwise
+
+
 def _same(got: Scalar[dtype], want: Scalar[dtype]) raises:
     """Bit-for-bit agreement, with NaN compared by class rather than value."""
     if isnan(want):
@@ -430,14 +451,21 @@ def test_binary_routing_is_bit_exact_over_the_edge_cases() raises:
     var got_remainder = remainder(a, b).to_host()
     var got_max = maximum(a, b).to_host()
     var got_min = minimum(a, b).to_host()
+    var got_fmax = fmax(a, b).to_host()
+    var got_fmin = fmin(a, b).to_host()
 
     for i in range(10):
         _same(got_atan2[i], _std_atan2(x[i], y[i]))
         _same(got_hypot[i], _std_hypot(x[i], y[i]))
         _same(got_copysign[i], _std_copysign(x[i], y[i]))
         _same(got_remainder[i], _std_remainder(x[i], y[i]))
-        _same(got_max[i], max(x[i], y[i]))
-        _same(got_min[i], min(x[i], y[i]))
+        # `max`/`min` are IEEE `maxNum`/`minNum` and skip a NaN, which is
+        # `fmax`/`fmin`'s contract. `maximum`/`minimum` follow NumPy and
+        # propagate, so their reference has to say so.
+        _same(got_fmax[i], max(x[i], y[i]))
+        _same(got_fmin[i], min(x[i], y[i]))
+        _same(got_max[i], _nan_or(x[i], y[i], max(x[i], y[i])))
+        _same(got_min[i], _nan_or(x[i], y[i], min(x[i], y[i])))
 
 
 def test_clip_diff_and_gradient_match_their_scalar_walks() raises:
@@ -582,6 +610,102 @@ def test_broadcast_binary_to_stretches_a_row() raises:
     var expected = [False, True, False, True, False, True]
     for i in range(6):
         assert_equal(out[i], expected[i])
+
+
+def test_sign_is_zero_at_both_zeros_and_nan_at_nan() raises:
+    var a = _t[5]([2.5, -2.5, 0.0, -0.0, nan[dtype]()])
+    var got = sign(a).to_host()
+    assert_equal(got[0], 1.0)
+    assert_equal(got[1], -1.0)
+    assert_equal(got[2], 0.0)
+    # `copysign(1, x)` would answer -1 here and 1 at NaN; NumPy does not.
+    assert_equal(got[3], 0.0)
+    assert_true(isnan(got[4]), "sign(nan) should be nan")
+
+
+def test_square_and_reciprocal_match_hand_computed_values() raises:
+    var a = _t[4]([2.0, -3.0, 0.5, 0.0])
+    var sq = square(a).to_host()
+    assert_almost_equal(sq[0], 4.0)
+    assert_almost_equal(sq[1], 9.0)
+    assert_almost_equal(sq[2], 0.25)
+    assert_almost_equal(sq[3], 0.0)
+    var r = reciprocal(a).to_host()
+    assert_almost_equal(r[0], 0.5)
+    assert_almost_equal(r[1], -1.0 / 3.0)
+    assert_almost_equal(r[2], 2.0)
+    assert_true(r[3] > 1e300, "reciprocal(0) should be an infinity")
+
+
+def test_square_agrees_with_power_of_two() raises:
+    var a = _t[4]([1.5, -2.25, 3.0, 0.125])
+    var sq = square(a).to_host()
+    var viapow = power(a, Scalar[dtype](2)).to_host()
+    for i in range(4):
+        assert_almost_equal(sq[i], viapow[i])
+
+
+def test_degrees_and_radians_round_trip() raises:
+    var a = _t[4](
+        [0.0, 0.5235987755982988, 1.5707963267948966, -3.141592653589793]
+    )
+    var d = degrees(a).to_host()
+    assert_almost_equal(d[0], 0.0)
+    assert_almost_equal(d[1], 30.0)
+    assert_almost_equal(d[2], 90.0)
+    assert_almost_equal(d[3], -180.0)
+    var back = radians(degrees(a)).to_host()
+    var orig = a.to_host()
+    for i in range(4):
+        assert_almost_equal(back[i], orig[i])
+
+
+def test_rint_is_round_under_numpys_name() raises:
+    var a = _t[6]([0.5, 1.5, 2.5, -0.5, -1.5, 2.4])
+    var r = rint(a).to_host()
+    var viaround = round(a).to_host()
+    for i in range(6):
+        assert_equal(r[i], viaround[i])
+    # half to even, not half away from zero
+    assert_equal(r[0], 0.0)
+    assert_equal(r[1], 2.0)
+    assert_equal(r[2], 2.0)
+
+
+def test_maximum_propagates_nan_and_fmax_ignores_it() raises:
+    var a = _t[3]([nan[dtype](), 1.0, 5.0])
+    var b = _t[3]([1.0, nan[dtype](), 2.0])
+
+    var mx = maximum(a, b).to_host()
+    assert_true(isnan(mx[0]), "maximum(nan, 1) should be nan")
+    assert_true(isnan(mx[1]), "maximum(1, nan) should be nan")
+    assert_equal(mx[2], 5.0)
+
+    var mn = minimum(a, b).to_host()
+    assert_true(isnan(mn[0]), "minimum(nan, 1) should be nan")
+    assert_true(isnan(mn[1]), "minimum(1, nan) should be nan")
+    assert_equal(mn[2], 2.0)
+
+    # `fmax`/`fmin` are the hardware instruction: the NaN is skipped.
+    var fx = fmax(a, b).to_host()
+    assert_equal(fx[0], 1.0)
+    assert_equal(fx[1], 1.0)
+    assert_equal(fx[2], 5.0)
+
+    var fm = fmin(a, b).to_host()
+    assert_equal(fm[0], 1.0)
+    assert_equal(fm[1], 1.0)
+    assert_equal(fm[2], 2.0)
+
+
+def test_fmax_broadcasts_a_row_like_maximum() raises:
+    var a = _m2[2, 3]([1.0, 5.0, 3.0, 7.0, 2.0, 9.0])
+    var row = _t[3]([4.0, 4.0, 4.0])
+    var wide = _m2[2, 3]([4.0, 4.0, 4.0, 4.0, 4.0, 4.0])
+    var broadcast = fmax(a, row).to_host()
+    var direct = fmax(a, wide).to_host()
+    for i in range(6):
+        assert_equal(broadcast[i], direct[i])
 
 
 def main() raises:
