@@ -21,8 +21,11 @@ default computes the exact two-sided distribution by Marsaglia-Tsang-Wang.
 That is a divergence recorded in `docs/parity.md`: the exact two-sided
 law is a substantial algorithm of its own, and at the sample sizes a
 device tensor holds the two agree; at `n = 16` they differ in the second
-digit. `mannwhitneyu` likewise is always asymptotic, where SciPy
-enumerates exactly for tiny untied samples.
+digit. `mannwhitneyu`, `ks_2samp` and `wilcoxon` are likewise always
+asymptotic, where SciPy enumerates exactly for tiny untied samples;
+`ks_2samp`'s one-sided tails carry Hodges' finite-sample correction,
+which is SciPy's `method="asymp"` formula and not optional -- without it
+the tail reads 0.607 where SciPy reads 0.472 for two samples of eight.
 
 ## The MAX gate
 
@@ -447,3 +450,202 @@ def mannwhitneyu[
     var z = numerator / sigma
     var p = factor * Float64(norm.sf[_P](_P(z), _P(0.0), _P(1.0)).v)
     return TestResult(u1, min(1.0, max(0.0, p)), 0.0)
+
+
+def ks_2samp[
+    dtype: DType, XLayout: TensorLayout, YLayout: TensorLayout
+](
+    xs: Tensor[dtype, XLayout],
+    ys: Tensor[dtype, YLayout],
+    alternative: StaticString = "two-sided",
+) raises -> TestResult where dtype.is_floating_point():
+    """The two-sample Kolmogorov-Smirnov test that `xs` and `ys` come from
+    one continuous distribution.
+    `scipy.stats.ks_2samp(x, y, alternative, method="asymp")`.
+
+    The statistic is the largest gap between the two empirical
+    distributions -- `D+`, `D-` or their maximum by `alternative`, with
+    `"greater"` and `"less"` naming the sign of the gap SciPy names. Where
+    `ks_1samp` compares a sample against a `cdf`, this walks both sorted
+    samples together and compares the two step functions.
+
+    The p-value is asymptotic: the effective sample size
+    `n1 n2 / (n1 + n2)` is substituted into the same Kolmogorov tail
+    `ks_1samp` uses two-sided, and into the Birnbaum-Tingey exponential
+    one-sided. SciPy computes an exact p-value for small untied samples
+    and this does not -- the same declared divergence `ks_1samp` and
+    `mannwhitneyu` carry, and `docs/parity.md` records.
+
+    `df` carries the effective sample size rather than a degrees of
+    freedom, since this test has none.
+    """
+    _check_alternative(alternative)
+    var a = _values(xs)
+    var b = _values(ys)
+    var n1 = len(a)
+    var n2 = len(b)
+    if n1 < 1 or n2 < 1:
+        raise Error("ks_2samp: both samples must be non-empty")
+    _sort(a)
+    _sort(b)
+
+    # Walk the union of the two sorted samples, tracking each empirical
+    # distribution at the current value. Ties have to advance *both*
+    # before the gap is read, or a shared value reports a gap that the
+    # step functions do not actually have.
+    var i = 0
+    var j = 0
+    var d_plus = 0.0
+    var d_minus = 0.0
+    while i < n1 and j < n2:
+        var at = min(a[i], b[j])
+        while i < n1 and a[i] <= at:
+            i += 1
+        while j < n2 and b[j] <= at:
+            j += 1
+        var fa = Float64(i) / Float64(n1)
+        var fb = Float64(j) / Float64(n2)
+        d_plus = max(d_plus, fa - fb)
+        d_minus = max(d_minus, fb - fa)
+
+    var effective = Float64(n1 * n2) / Float64(n1 + n2)
+    if alternative == "greater":
+        return TestResult(d_plus, _ks_hodges(n1, n2, d_plus), effective)
+    if alternative == "less":
+        return TestResult(d_minus, _ks_hodges(n1, n2, d_minus), effective)
+    var d = max(d_plus, d_minus)
+    return TestResult(d, _kolmogorov_sf(_sqrt(effective) * d), effective)
+
+
+def _ks_hodges(n1: Int, n2: Int, d: Float64) -> Float64:
+    """The one-sided two-sample KS tail with Hodges' correction, which is
+    the formula `scipy.stats.ks_2samp` uses at `method="asymp"`.
+
+    `exp(-2 z^2)` is the Birnbaum-Tingey limit; the second term is Hodges'
+    equation 5.3, a finite-sample correction in `(m + 2n) / sqrt(m n
+    (m + n))`. Without it the tail is visibly wrong at the sample sizes a
+    two-sample test is actually run at -- 0.607 against SciPy's 0.472 for
+    two samples of eight -- so it is not an optional refinement.
+    """
+    if d <= 0.0:
+        return 1.0
+    var m = Float64(n1)
+    var nn = Float64(n2)
+    var effective = m * nn / (m + nn)
+    var z = _sqrt(effective) * d
+    var correction = 2.0 * z * (m + 2.0 * nn) / _sqrt(m * nn * (m + nn)) / 3.0
+    return min(1.0, max(0.0, _exp(-2.0 * z * z - correction)))
+
+
+def wilcoxon[
+    dtype: DType, XLayout: TensorLayout, YLayout: TensorLayout
+](
+    xs: Tensor[dtype, XLayout],
+    ys: Tensor[dtype, YLayout],
+    alternative: StaticString = "two-sided",
+    use_continuity: Bool = True,
+) raises -> TestResult where dtype.is_floating_point():
+    """The Wilcoxon signed-rank test that the paired differences
+    `xs - ys` are centred on zero.
+    `scipy.stats.wilcoxon(x, y, alternative, correction, method="approx")`.
+
+    `ttest_rel`'s nonparametric counterpart: it ranks the *magnitudes* of
+    the paired differences and sums the ranks of the positive ones, so a
+    pair of outliers cannot move it the way they move a mean. The
+    statistic is SciPy's `W`, the smaller of the positive and negative
+    rank sums for `"two-sided"` and the positive sum for the one-sided
+    alternatives.
+
+    Zero differences are **dropped** before ranking, SciPy's `"wilcox"`
+    zero_method and its default, and the sample size falls with them. Ties
+    among the magnitudes take average ranks and enter the variance
+    correction.
+
+    Always the normal approximation, with SciPy's continuity correction by
+    default, where SciPy enumerates the exact distribution for a small
+    untied sample. Same declared divergence as `mannwhitneyu`.
+
+    `df` carries the number of pairs that survived the zero-dropping,
+    which is what the approximation was taken at.
+    """
+    _check_alternative(alternative)
+    var a = _values(xs)
+    var b = _values(ys)
+    if len(a) != len(b):
+        raise Error(
+            "wilcoxon: ", len(a), " and ", len(b), " are not paired lengths"
+        )
+
+    var magnitudes = List[Float64]()
+    var positive = List[Bool]()
+    for i in range(len(a)):
+        var d = a[i] - b[i]
+        if d == 0.0:
+            continue
+        magnitudes.append(d.__abs__())
+        positive.append(d > 0.0)
+
+    var n = len(magnitudes)
+    if n < 1:
+        raise Error("wilcoxon: every pair is a zero difference")
+
+    # Average ranks of the magnitudes, and the tie groups for the variance.
+    var order = List[Int](capacity=n)
+    for i in range(n):
+        order.append(i)
+    for i in range(1, n):
+        var key = order[i]
+        var k = i - 1
+        while k >= 0 and magnitudes[order[k]] > magnitudes[key]:
+            order[k + 1] = order[k]
+            k -= 1
+        order[k + 1] = key
+
+    var ranks = List[Float64](length=n, fill=0.0)
+    var tie_term = 0.0
+    var at = 0
+    while at < n:
+        var stop = at + 1
+        while stop < n and magnitudes[order[stop]] == magnitudes[order[at]]:
+            stop += 1
+        var group = stop - at
+        var average = (Float64(at + 1) + Float64(stop)) / 2.0
+        for k in range(at, stop):
+            ranks[order[k]] = average
+        tie_term += Float64(group * group * group - group)
+        at = stop
+
+    var w_plus = 0.0
+    for i in range(n):
+        if positive[i]:
+            w_plus += ranks[i]
+    var total = Float64(n) * Float64(n + 1) / 2.0
+    var w_minus = total - w_plus
+
+    var mean = total / 2.0
+    var variance = (
+        Float64(n) * Float64(n + 1) * Float64(2 * n + 1) / 24.0
+        - tie_term / 48.0
+    )
+    if variance <= 0.0:
+        raise Error("wilcoxon: every difference is tied, so W has no spread")
+    var spread = _sqrt(variance)
+
+    var statistic = w_plus
+    if alternative == "two-sided":
+        statistic = min(w_plus, w_minus)
+
+    var correction = 0.5 if use_continuity else 0.0
+    if alternative == "greater":
+        var z = (w_plus - mean - correction) / spread
+        return TestResult(
+            statistic, norm.sf(_P(z), _P(0.0), _P(1.0)).v[0], Float64(n)
+        )
+    if alternative == "less":
+        var z = (w_plus - mean + correction) / spread
+        return TestResult(
+            statistic, norm.cdf(_P(z), _P(0.0), _P(1.0)).v[0], Float64(n)
+        )
+    var z = ((w_plus - mean).__abs__() - correction) / spread
+    var tail = norm.sf(_P(z), _P(0.0), _P(1.0)).v[0]
+    return TestResult(statistic, min(1.0, 2.0 * tail), Float64(n))

@@ -59,7 +59,7 @@ from .bessel import (
     y1,
     yv,
 )
-from .beta import beta, betainc, betaincc
+from .beta import beta, betainc, betaincc, betaln
 from .elliptic import elliptic_e, elliptic_k
 from .erf import erf, erfc, erfcinv, erfinv
 from .gamma import (

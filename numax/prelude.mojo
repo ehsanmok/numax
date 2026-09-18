@@ -256,7 +256,7 @@ from .special.airy import airy
 from .special.bessel import iv, jv, kv, yv
 from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
 from .special.logsumexp import logsumexp
-from .special.beta import beta
+from .special.beta import beta, betaln
 
 # Dense linear algebra over `Tensor`. The `Array` tier is
 # `numax.linalg.array` and shares these names, so it stays out of the
@@ -369,10 +369,12 @@ from .stats.hypothesis import (
     chisquare,
     f_oneway,
     ks_1samp,
+    ks_2samp,
     mannwhitneyu,
     ttest_1samp,
     ttest_ind,
     ttest_rel,
+    wilcoxon,
 )
 from .stats.nanfunctions import (
     nanmax,
@@ -412,7 +414,7 @@ from .optimize.least_squares import curve_fit, least_squares
 from .optimize.linear import lsq_linear, nnls
 from .optimize.minimize import minimize
 from .optimize.root import root
-from .integrate.integrate import quad, quad_vec, solve_ivp
+from .integrate.integrate import dblquad, fixed_quad, quad, quad_vec, solve_ivp
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 from .integrate.ode import dopri5, rk4_system
 from .interpolate.interp import (

@@ -11,7 +11,14 @@ from std.math import atan, cos as cos_f64, exp, pi, sqrt
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import FloatLike, Plain
-from numax.integrate import quad, quad_vec, solve_ivp, solve_ivp_stiff
+from numax.integrate import (
+    dblquad,
+    fixed_quad,
+    quad,
+    quad_vec,
+    solve_ivp,
+    solve_ivp_stiff,
+)
 from numax.integrate.array import dopri5
 from numax.integrate.array import gauss_legendre
 
@@ -401,6 +408,45 @@ def test_the_stiff_solver_takes_far_fewer_steps_on_a_stiff_problem() raises:
     assert_almost_equal(implicit.y, cos_f64(1.0), atol=1e-5)
 
     assert_true(implicit.accepted * 4 < explicit.accepted)
+
+
+def _gauss[U: FloatLike](x: U) -> U:
+    return (-(x * x)).exp()
+
+
+def _x2y[U: FloatLike](x: U, y: U) -> U:
+    return x * x * y
+
+
+def test_fixed_quad_matches_scipy() raises:
+    """`scipy.integrate.fixed_quad(exp(-t^2), 0, 1, n=8)` is
+    0.7468241328124335."""
+    assert_almost_equal(
+        fixed_quad[_gauss](0.0, 1.0), 0.7468241328124335, atol=1e-12
+    )
+
+
+def test_fixed_quad_agrees_with_the_adaptive_quad_on_a_smooth_integrand() raises:
+    """Where the integrand is smooth the fixed rule is already exact, so
+    the adaptive one has nothing to add -- which is the docstring's claim."""
+    var fixed = fixed_quad[_gauss](0.0, 1.0)
+    var adaptive = quad[_gauss](0.0, 1.0)
+    assert_true(adaptive.converged)
+    assert_almost_equal(fixed, adaptive.value, atol=1e-10)
+
+
+def test_dblquad_matches_scipy_on_a_product_integrand() raises:
+    """`scipy.integrate.dblquad(lambda y, x: x*x*y, 0, 2, 0, 3)` is 12.0:
+    the integral of x^2 over [0,2] is 8/3 and of y over [0,3] is 9/2."""
+    assert_almost_equal(dblquad[_x2y](0.0, 2.0, 0.0, 3.0), 12.0, atol=1e-10)
+
+
+def test_dblquad_is_exact_for_a_low_degree_polynomial() raises:
+    """An 8-point product rule is exact to rounding for degree 15 in each
+    variable, so a degree-2-by-degree-1 integrand has no error at all."""
+    var got = dblquad[_x2y](-1.0, 1.0, 0.0, 2.0)
+    # int_-1^1 x^2 dx = 2/3, int_0^2 y dy = 2, so 4/3.
+    assert_almost_equal(got, 4.0 / 3.0, atol=1e-13)
 
 
 def main() raises:

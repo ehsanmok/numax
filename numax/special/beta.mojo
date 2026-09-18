@@ -56,6 +56,24 @@ def beta[T: FloatLike](a: T, b: T) -> T:
     return (lgamma(a) + lgamma(b) - lgamma(a + b)).exp()
 
 
+def betaln[T: FloatLike](a: T, b: T) -> T:
+    """The natural log of the Beta function,
+    `ln B(a,b) = lgamma(a) + lgamma(b) - lgamma(a+b)`.
+    `scipy.special.betaln`.
+
+    Not `beta(a, b).ln()`, and that is the entire point of the name: `beta`
+    exponentiates a sum of log-gammas, so for large `a` or `b` it
+    underflows to zero and the log of that is `-inf` where the true value
+    is merely a large negative number. `betaln(1e4, 1e4)` is about
+    `-13864`, which `beta` cannot represent at all.
+
+    Same domain as `beta` -- `a > 0`, `b > 0` -- and **tier 1**: one
+    subtraction over three `lgamma` calls, no branching, so it
+    differentiates at `Dual` and runs in a kernel.
+    """
+    return lgamma(a) + lgamma(b) - lgamma(a + b)
+
+
 def _guard_away_from_zero[T: FloatLike](d: T) -> T:
     """Lentz's `if |d| < tiny: d = tiny`, branchless and sign-preserving --
     `guard_nonzero` next to the trait, at this module's chosen floor."""

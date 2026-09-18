@@ -25,6 +25,7 @@ from numax.stats import (
     hmean,
     kurtosis,
     ks_1samp,
+    ks_2samp,
     mannwhitneyu,
     norm,
     sem,
@@ -33,6 +34,7 @@ from numax.stats import (
     ttest_1samp,
     ttest_ind,
     ttest_rel,
+    wilcoxon,
 )
 
 comptime dtype = DType.float64
@@ -270,6 +272,92 @@ def test_f_oneway_and_mannwhitneyu_match_scipy() raises:
     assert_almost_equal(less.pvalue, 0.5451473426736253, atol=1e-12)
     var plain = mannwhitneyu(x, y, use_continuity=False)
     assert_almost_equal(plain.pvalue, 0.9247051982468886, atol=1e-12)
+
+
+def test_ks_2samp_matches_scipy() raises:
+    """`scipy.stats.ks_2samp` on two shifted eight-sample series.
+
+    The statistic is method-independent and matches exactly. The p-values
+    are asymptotic: the one-sided ones use Hodges' correction and agree
+    with SciPy's `method="asymp"` to rounding, while the two-sided one is
+    the Kolmogorov limit where SciPy's default picks the exact
+    combinatorial value (0.9639 against 0.90625 here) -- the declared
+    divergence `ks_1samp` and `mannwhitneyu` also carry.
+    """
+    var x = _from[8]([1.0, 2.5, 3.0, 4.5, 5.0, 6.5, 7.0, 8.5])
+    var y = _from[8]([2.0, 3.5, 4.0, 5.5, 6.0, 7.5, 8.0, 9.5])
+
+    var two = ks_2samp(x, y)
+    assert_almost_equal(two.statistic, 0.25, atol=1e-12)
+    assert_almost_equal(two.pvalue, 0.9639452436648751, atol=1e-9)
+    # `df` carries the effective sample size, n1 n2 / (n1 + n2).
+    assert_almost_equal(two.df, 4.0, atol=1e-12)
+
+    var greater = ks_2samp(x, y, "greater")
+    assert_almost_equal(greater.statistic, 0.25, atol=1e-12)
+    assert_almost_equal(greater.pvalue, 0.4723665527410147, atol=1e-9)
+
+    var less = ks_2samp(x, y, "less")
+    assert_almost_equal(less.statistic, 0.0, atol=1e-12)
+    assert_almost_equal(less.pvalue, 1.0, atol=1e-12)
+
+
+def test_ks_2samp_of_identical_samples_has_no_gap() raises:
+    var x = _from[8]([1.0, 2.5, 3.0, 4.5, 5.0, 6.5, 7.0, 8.5])
+    var y = _from[8]([1.0, 2.5, 3.0, 4.5, 5.0, 6.5, 7.0, 8.5])
+    var got = ks_2samp(x, y)
+    assert_almost_equal(got.statistic, 0.0, atol=1e-12)
+    assert_almost_equal(got.pvalue, 1.0, atol=1e-12)
+
+
+def test_wilcoxon_matches_scipy() raises:
+    """`scipy.stats.wilcoxon(x, y, method="approx", correction=True)`.
+
+    Every pair differs by exactly -1, so every rank is negative: W is 0
+    and the test is as significant as eight pairs allow.
+    """
+    var x = _from[8]([1.0, 2.5, 3.0, 4.5, 5.0, 6.5, 7.0, 8.5])
+    var y = _from[8]([2.0, 3.5, 4.0, 5.5, 6.0, 7.5, 8.0, 9.5])
+
+    var two = wilcoxon(x, y)
+    assert_almost_equal(two.statistic, 0.0, atol=1e-12)
+    assert_almost_equal(two.pvalue, 0.005962078532093707, atol=1e-9)
+    assert_almost_equal(two.df, 8.0, atol=1e-12)
+
+    var greater = wilcoxon(x, y, "greater")
+    assert_almost_equal(greater.pvalue, 0.9981754021925937, atol=1e-9)
+
+
+def test_wilcoxon_drops_zero_differences() raises:
+    """SciPy's default `zero_method="wilcox"`: a tied pair leaves the
+    sample entirely, so `df` reports the pairs that survived."""
+    var x = _from[4]([1.0, 2.0, 3.0, 4.0])
+    var y = _from[4]([1.0, 1.0, 2.0, 3.0])
+    var got = wilcoxon(x, y)
+    # One pair is tied, so three remain.
+    assert_almost_equal(got.df, 3.0, atol=1e-12)
+
+
+def test_wilcoxon_rejects_unpaired_lengths() raises:
+    var x = _from[4]([1.0, 2.0, 3.0, 4.0])
+    var y = _from[3]([1.0, 2.0, 3.0])
+    var raised = False
+    try:
+        _ = wilcoxon(x, y)
+    except:
+        raised = True
+    assert_true(raised)
+
+
+def test_wilcoxon_rejects_an_all_tied_sample() raises:
+    var x = _from[3]([1.0, 2.0, 3.0])
+    var y = _from[3]([1.0, 2.0, 3.0])
+    var raised = False
+    try:
+        _ = wilcoxon(x, y)
+    except:
+        raised = True
+    assert_true(raised)
 
 
 def main() raises:

@@ -7,10 +7,10 @@ distribution's symmetry), `I_x(a,1) = x^a`, and the recurrence relating
 `I_x(a,b)` to `I_x(a+1,b)`.
 """
 
-from std.math import exp as exp_f64
+from std.math import exp as exp_f64, log as log_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
-from numax import Dual, Plain, beta, betainc, betaincc
+from numax import Dual, Plain, beta, betainc, betaincc, betaln
 
 comptime dtype = DType.float64
 comptime width = 1
@@ -180,6 +180,54 @@ def test_beta_relates_to_the_gamma_ratio_numerically() raises:
     var expected = exp_f64(0.0) * (1.0 / 12.0)
     assert_almost_equal(
         beta(pv(2.0), pv(3.0)).v, SIMD[dtype, width](expected), atol=1e-10
+    )
+
+
+def test_betaln_agrees_with_the_log_of_beta_where_beta_survives() raises:
+    """At small parameters the two routes agree, which pins the formula."""
+    assert_almost_equal(
+        betaln(pv(2), pv(3)).v,
+        SIMD[dtype, width](-2.4849066497880004),
+        atol=1e-12,
+    )
+    for pair in [(1.0, 1.0), (2.0, 3.0), (3.0, 3.0), (0.5, 2.5)]:
+        var a = pv(pair[0])
+        var b = pv(pair[1])
+        var direct = betaln(a, b).v
+        var viabeta = log_f64(beta(a, b).v)
+        assert_almost_equal(direct, viabeta, atol=1e-12)
+
+
+def test_betaln_survives_where_beta_underflows_to_zero() raises:
+    """The reason the name exists. `beta(1e4, 1e4)` is exactly zero in
+    float64, so `log(beta(...))` is -inf; `scipy.special.betaln(1e4, 1e4)`
+    is -13866.28325676141 and so is this."""
+    var a = pv(1.0e4)
+    var b = pv(1.0e4)
+    assert_almost_equal(
+        betaln(a, b).v, SIMD[dtype, width](-13866.28325676141), atol=1e-7
+    )
+    # And the direct route really does underflow, so this is not a
+    # hypothetical distinction.
+    assert_almost_equal(beta(a, b).v, SIMD[dtype, width](0.0), atol=0.0)
+
+
+def test_betaln_is_symmetric_and_differentiable() raises:
+    """B(a,b) == B(b,a), and the derivative is digamma(a) - digamma(a+b),
+    which `Dual` should produce with no rule written."""
+    assert_almost_equal(
+        betaln(pv(2.5), pv(4.0)).v, betaln(pv(4.0), pv(2.5)).v, atol=1e-12
+    )
+    var a = D(pv(2.0), pv(1.0))
+    var b = D(pv(3.0), pv(0.0))
+    var seeded = betaln(a, b)
+    # d/da ln B(a,b) = digamma(a) - digamma(a+b)
+    # digamma(2) = 1 - gamma = 0.42278433509846713
+    # digamma(5) = 1.5061176684318005
+    assert_almost_equal(
+        seeded.deriv.v,
+        SIMD[dtype, width](0.42278433509846713 - 1.5061176684318005),
+        atol=1e-9,
     )
 
 

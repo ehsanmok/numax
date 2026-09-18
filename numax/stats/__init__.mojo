@@ -120,10 +120,12 @@ from .hypothesis import (
     chisquare,
     f_oneway,
     ks_1samp,
+    ks_2samp,
     mannwhitneyu,
     ttest_1samp,
     ttest_ind,
     ttest_rel,
+    wilcoxon,
 )
 from .nanfunctions import (
     nanmax,

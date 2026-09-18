@@ -54,7 +54,11 @@ from .array.ode import dopri5_step
 from .ode import dopri5_step as _tensor_dopri5_step
 from ..core.array import Static, copy
 from max.gpu.host import DeviceContext
-from .array.quadrature import gauss_legendre
+from .array.quadrature import (
+    _gauss_legendre_nodes,
+    _gauss_legendre_weights,
+    gauss_legendre,
+)
 
 # Fixed to float64 for the same two reasons as `numax.optimize`: an error
 # tolerance of 1e-10 is meaningless at float32, and Mojo will not accept a
@@ -600,3 +604,73 @@ def solve_ivp_stiff[
         h = h * scale
 
     return IVPResult(t, y, accepted, rejected, False)
+
+
+def fixed_quad[
+    f: def[U: FloatLike](U) thin -> U, n: Int = 8
+](a: Float64, b: Float64) -> Float64:
+    """Integrate `f` over `[a, b]` with a fixed `n`-point Gauss-Legendre
+    rule, no subdivision. `scipy.integrate.fixed_quad(f, a, b, n=n)`,
+    first return value.
+
+    `quad` above is the adaptive routine and is what to reach for when the
+    integrand's behavior is unknown; this is the one to reach for when it
+    is known to be smooth, because then `n = 8` is already exact to
+    rounding for a degree-15 polynomial and the adaptivity is pure
+    overhead. Exactly `n` evaluations, no error estimate, no convergence
+    flag -- which is why it returns a bare `Float64` where `quad` returns
+    a `QuadResult`.
+
+    `numax.integrate.array.gauss_legendre` is the same rule at any
+    `FloatLike`, so it differentiates and runs in a kernel; this is its
+    `Float64` front door under SciPy's name.
+    """
+    return gauss_legendre[_P, f, n](_P(a), _P(b)).v[0]
+
+
+def dblquad[
+    f: def[U: FloatLike](U, U) thin -> U, n: Int = 8
+](ax: Float64, bx: Float64, ay: Float64, by: Float64) -> Float64:
+    """Integrate `f(x, y)` over the rectangle `[ax, bx] x [ay, by]` with a
+    tensor-product Gauss-Legendre rule. Close to
+    `scipy.integrate.dblquad(f, ax, bx, ay, by)`.
+
+    `n * n` evaluations on the product of two `n`-point rules, exact to
+    rounding for any polynomial of degree `2n - 1` in each variable
+    separately.
+
+    **Two deliberate differences from SciPy**, both worth knowing before
+    reaching for this. The inner bounds are **constants, not functions of
+    `x`**, so the region is a rectangle rather than SciPy's `gfun`/`hfun`
+    region. And the rule is **fixed-order, not adaptive**.
+
+    Both come from one constraint rather than from taste: `quad`'s
+    integrand is a compile-time non-capturing function parameter, so the
+    inner integral -- which is a function of the outer variable and must
+    therefore capture it -- cannot be handed to `quad` at all. A nested
+    adaptive `dblquad` needs a capturing integrand, and `f(x, y)` taking
+    both variables at once is what sidesteps it. The argument order is
+    `f(x, y)`, not SciPy's reversed `f(y, x)`; swapping it silently would
+    be worse than saying so.
+    """
+    comptime nodes = _gauss_legendre_nodes[n]()
+    comptime weights = _gauss_legendre_weights[n]()
+
+    var mid_x = (ax + bx) / 2.0
+    var span_x = (bx - ax) / 2.0
+    var mid_y = (ay + by) / 2.0
+    var span_y = (by - ay) / 2.0
+
+    var total = 0.0
+    comptime for i in range(n):
+        comptime node_i = nodes[i]
+        comptime weight_i = weights[i]
+        var xi = mid_x + span_x * node_i
+        var inner = 0.0
+        comptime for j in range(n):
+            comptime node_j = nodes[j]
+            comptime weight_j = weights[j]
+            var yj = mid_y + span_y * node_j
+            inner += weight_j * f(_P(xi), _P(yj)).v[0]
+        total += weight_i * inner
+    return total * span_x * span_y

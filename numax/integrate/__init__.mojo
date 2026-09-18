@@ -14,6 +14,7 @@ Two tiers, one import each, the same split `numax.linalg`, `numax.fft` and
 
 This surface is the `Tensor` one. It also carries the adaptive scalar
 drivers -- `quad`, `quad_vec`, the scalar `solve_ivp`, `solve_ivp_stiff` --
+plus the fixed-order `fixed_quad` and the product-rule `dblquad` --
 which take a `FloatLike` integrand but iterate to a tolerance on the host,
 so they are tier 2 and belong to neither tier's type; they stay where they
 were. `solve_ivp` is therefore two overloads under one name: a `Float64`
@@ -32,6 +33,8 @@ from .integrate import (
     QuadResult,
     TensorIVPResult,
     quad,
+    dblquad,
+    fixed_quad,
     quad_vec,
     solve_ivp,
     solve_ivp_stiff,

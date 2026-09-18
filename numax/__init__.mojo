@@ -340,7 +340,7 @@ from .special.bessel import (
     y1,
     yv,
 )
-from .special.beta import beta, betainc, betaincc
+from .special.beta import beta, betainc, betaincc, betaln
 from .special.elliptic import elliptic_e, elliptic_k
 from .special.erf import erf, erfc, erfcinv, erfinv
 from .special.gamma import (
@@ -463,6 +463,8 @@ from .integrate.integrate import (
     IVPResult,
     QuadResult,
     TensorIVPResult,
+    dblquad,
+    fixed_quad,
     quad,
     quad_vec,
     solve_ivp,
@@ -622,10 +624,12 @@ from .stats.hypothesis import (
     chisquare,
     f_oneway,
     ks_1samp,
+    ks_2samp,
     mannwhitneyu,
     ttest_1samp,
     ttest_ind,
     ttest_rel,
+    wilcoxon,
 )
 from .stats.nanfunctions import (
     nanmax,
