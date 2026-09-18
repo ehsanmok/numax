@@ -5,21 +5,12 @@ name = "numax"
 version = "0.1.0"
 preview = ["pixi-build"]
 
-# The aliased platform entries below (`{ name = ..., platform = ..., glibc =
-# ... }`) are a newer-pixi manifest feature: an older pixi rejects the whole
-# file with a bare `expected a string, found table` pointing at the platforms
-# array, which says nothing about the actual problem. Declaring the floor here
-# turns that into "this project requires pixi '>=0.76', but you have pixi
-# X.Y.Z" plus a `pixi self-update` hint, because the version gate is checked
-# before the manifest is parsed.
+# Below this, the aliased platform entries need a newer pixi; an older one
+# rejects the whole file with `expected a string, found table`.
 requires-pixi = ">=0.76"
 
-# The plain "osx-arm64"/"linux-64"/"linux-aarch64" entries are what the
-# default (mojo/max) environment solves against. The "-mac14"/"-glibc235"
-# aliases below are for feature.bench-python only: mlx/torch only ship
-# wheels for macOS 14+ / glibc 2.35+ (manylinux_2_35), both newer than
-# pixi's default assumed `__osx`/`__glibc` baseline, which makes the pypi
-# solver reject every wheel for those two otherwise.
+# The `-mac14`/`-glibc235` aliases are for bench-python only: mlx and torch
+# ship wheels for macOS 14+ / glibc 2.35+, above pixi's assumed baseline.
 platforms = [
     "osx-arm64",
     { name = "osx-arm64-mac14", platform = "osx-arm64", macos = "14.0" },
@@ -34,54 +25,23 @@ name = "numax"
 version = "0.1.0"
 
 [package.build]
-# This channel set no longer carries any 0.3.x build with a resolvable
-# `pixi-build-api-version` (only >=6 has candidates today), and the
-# installed pixi (0.76.1) already speaks that version. ">=0.4" is the
-# floor that actually solves; unpinned "*" also solves today but would
-# silently ride whatever the channel publishes next.
+# ">=0.4" is the floor that solves; 0.3.x has no candidates left.
 backend = { name = "pixi-build-rattler-build", version = ">=0.4" }
 
 [dependencies]
-# `max-core`, not `max`. numax is a pure Mojo library: it needs the kernel
-# packages (`linalg`, `nn`, `algorithm`, `layout`, `max.gpu.host`,
-# `max.algorithm`) and nothing Python-facing. `max-core` is exactly that,
-# where the `max` metapackage adds the Python API on top -- cpython 3.14,
-# click, rich, psutil, ~1,500 files a Mojo consumer never imports. Dropping
-# it takes the default environment from 66 packages to 55, measured both
-# ways.
-#
-# `mojo` stays, and is not redundant even though `max-core` already pulls
-# `mojo-compiler` (which is where `bin/mojo` lives). The metapackage is
-# what carries the *toolchain*: `mblack`, without which `mojo format`
-# fails with "unable to resolve Mojo formatter in PATH", and
-# `llvm-symbolizer`, which CI points `LLVM_SYMBOLIZER_PATH` at so a
-# transient runtime crash names a function instead of eight raw addresses.
-# Both were verified absent with `max-core` alone.
-#
-# The mojo range is wider than the max pin on purpose, and `max-core`
-# narrows it anyway: `max-core ==26.5` depends on `mojo-compiler ==1.0.0`,
-# so 1.0.0 is what solves today. The range says numax's source is expected
-# to keep compiling across the 1.x line, and the ceiling is the major
-# version, where the language itself may break `def`/`where`/`comptime`.
+# `max-core`, not `max`: numax imports the Mojo kernel packages and nothing
+# Python-facing, and dropping the Python API takes this env from 66 packages
+# to 55. `mojo` is not redundant on top of it -- `max-core` pulls
+# `mojo-compiler` (which has `bin/mojo`), but the metapackage is what brings
+# `mblack` for `mojo format` and `llvm-symbolizer` for CI's crash dumps.
 max-core = "==26.5"
 mojo = ">=1.0.0,<2.0.0"
-# Not a library dependency, and here so that it stops being an invisible
-# one. `examples/intermediate/npy_to_cholesky.mojo` calls real NumPy
-# through `std.python` -- `np.save`, then `numax.io.numpy.load`, then the
-# factor back out for NumPy to reload -- because the point of that example
-# is proving the `.npy` round trip against the real thing rather than
-# against numax's own writer. numpy used to arrive as a transitive
-# dependency of `max`, so dropping `max` broke it with "No module named
-# 'numpy'". Nothing under `numax/` imports it: `numax.io.numpy` parses the
-# format itself, which is what `pixi run examples-cpu` exercises on every
-# other example.
+# For `examples/intermediate/npy_to_cholesky.mojo` only, which checks the
+# `.npy` round trip against real NumPy. Nothing under `numax/` imports it.
 numpy = ">=1.18"
 
-# Cross-language baselines for bench/{numpy,mlx,torch,thermite}/ -- kept as
-# separate features/environments, not the default one, so `pixi install`
-# for the Mojo library itself doesn't also pull in NumPy/MLX/PyTorch/a Rust
-# toolchain. `no-default-feature` on both below means neither pulls in
-# mojo/max either; they have nothing to do with each other.
+# The cross-language baselines live in their own features so `pixi install`
+# does not pull NumPy/MLX/PyTorch/Rust for the library itself.
 [feature.bench-python]
 platforms = ["osx-arm64-mac14", "linux-64-glibc235", "linux-aarch64-glibc235"]
 
@@ -91,47 +51,27 @@ python = ">=3.11,<3.13"
 [feature.bench-python.pypi-dependencies]
 numpy = ">=2.0"
 torch = ">=2.5"
-# The LAPACK/BLAS baseline for bench/scipy/linalg.py -- reference `potrf`,
-# `getrf`, `gesv`, `geqrf` and the level-1 routines numax's `Tensor` tier is
-# named after, so the linalg comparison is against the routine rather than
-# against a NumPy ufunc.
+# The LAPACK/BLAS baseline for bench/scipy/linalg.py.
 scipy = ">=1.14"
-# Reference values for the accuracy harness. Only needed to *regenerate*
-# bench/accuracy/reference_data.mojo, which is checked in -- `pixi run
-# accuracy` itself runs in the default Mojo environment.
+# Only to regenerate bench/accuracy/reference_data.mojo, which is checked in.
 mpmath = ">=1.3"
 
-# MLX ships its compute backend as a separate wheel and only selects one
-# automatically on macOS (`mlx-metal`, via a `platform_system == "Darwin"`
-# marker in mlx's own metadata). On Linux the backend is an opt-in extra
-# whose name pins a CUDA major version (`cuda12`/`cuda13`) that has to match
-# the host driver, and a bare `mlx` there installs but fails at import with
-# "libmlx.so: cannot open shared object file". Rather than carry a pin that
-# is only correct on one machine, MLX is macOS-only here -- it is Apple's
-# array framework, and that is where the comparison means something.
+# macOS only. On Linux the backend is an opt-in extra pinning a CUDA major
+# version, and a bare `mlx` there imports as "libmlx.so: cannot open shared
+# object file".
 [feature.bench-python.target.osx-arm64-mac14.pypi-dependencies]
 mlx = ">=0.30"
 
-# `bench-mlx` is declared on the same target as its dependency, so it does
-# not appear in `pixi task list` on Linux rather than appearing and failing
-# at import.
+# Declared on the same target as its dependency, so it does not show up in
+# `pixi task list` on Linux.
 [feature.bench-python.target.osx-arm64-mac14.tasks]
 bench-mlx = { cmd = "python3 gaussian.py", cwd = "bench/mlx" }
 
-# CuPy is CUDA-only and, like MLX's Linux backend, ships one wheel per CUDA
-# major version rather than resolving the host's. `cupy-cuda12x` matches the
-# CUDA 12 toolkits current drivers carry; a CUDA 13 host wants
-# `cupy-cuda13x` instead. x86_64 only here, which is where the NVIDIA
-# comparison in bench/README.md was measured.
+# One wheel per CUDA major version; a CUDA 13 host wants `cupy-cuda13x`.
 [feature.bench-python.target.linux-64-glibc235.pypi-dependencies]
 cupy-cuda12x = ">=13"
-# The CUDA 12 math libraries CuPy's linalg path dlopens. The wheel itself
-# only carries the kernels: `bench/cupy/gaussian.py` needs nothing else,
-# but `bench/cupy/linalg.py` is cuSOLVER/cuBLAS underneath and fails at
-# import with `libcublas.so.12: cannot open shared object file` on a host
-# whose system CUDA is 13. Pinning them here rather than relying on the
-# host's toolkit keeps the baseline reproducible on any CUDA 12-or-newer
-# driver.
+# The math libraries CuPy's linalg path dlopens -- without them
+# bench/cupy/linalg.py fails at import on a CUDA 13 host.
 nvidia-cublas-cu12 = ">=12.4"
 nvidia-cusolver-cu12 = ">=11.6"
 nvidia-cusparse-cu12 = ">=12.3"
@@ -144,23 +84,16 @@ bench-cupy-linalg = { cmd = "python3 linalg.py", cwd = "bench/cupy" }
 [feature.bench-python.tasks]
 bench-numpy = { cmd = "python3 gaussian.py", cwd = "bench/numpy" }
 bench-torch = { cmd = "python3 gaussian.py", cwd = "bench/torch" }
-# The linalg baselines, against `bench_linalg.mojo` (scipy, CPU) and
-# `bench_linalg_gpu.mojo` (torch and cupy, CUDA). `bench-torch-linalg` is
-# here rather than under the linux-64 target because PyTorch installs
-# everywhere and the script says so and exits when there is no device.
+# `bench-torch-linalg` is not under the linux-64 target because PyTorch
+# installs everywhere and its script exits when there is no device.
 bench-scipy-linalg = { cmd = "python3 linalg.py", cwd = "bench/scipy" }
 bench-torch-linalg = { cmd = "python3 linalg.py", cwd = "bench/torch" }
-# The signal, interpolation and statistics baselines, against
-# `bench_signal.mojo`, `bench_interpolate.mojo` and `bench_stats.mojo`.
 bench-scipy-signal = { cmd = "python3 signal_processing.py", cwd = "bench/scipy" }
-# The transform baseline, against `bench_fft.mojo`. Not `fft.py`: a module
-# in a task's `cwd` that shadows one SciPy imports breaks the directory.
+# Not `fft.py`: a module in the task's `cwd` shadowing one SciPy imports
+# breaks the directory.
 bench-scipy-fft = { cmd = "python3 fft_transforms.py", cwd = "bench/scipy" }
 bench-scipy-interpolate = { cmd = "python3 interpolate.py", cwd = "bench/scipy" }
 bench-scipy-stats = { cmd = "python3 stats.py", cwd = "bench/scipy" }
-# The core-surface baseline, against `bench_core_surface.mojo`. Two
-# comparison rows, because numax has no tensor-scalar comparison and the
-# file says what that costs.
 bench-numpy-core-surface = { cmd = "python3 core_surface.py", cwd = "bench/numpy" }
 accuracy-gen = { cmd = "python3 gen_reference.py", cwd = "bench/accuracy" }
 
@@ -173,79 +106,38 @@ rust = ">=1.95"
 [feature.bench-rust.tasks]
 bench-thermite = { cmd = "cargo run --release", cwd = "bench/thermite" }
 
-# ------------------------------------------------------------------
-# Dev feature: everything beyond "run the library + tests". Activate
-# via `pixi run -e dev <task>` or `pixi shell -e dev`. End users of the
-# library (and CI's default test matrix) don't need these deps, so the
-# default environment stays lean.
-# ------------------------------------------------------------------
+# Everything beyond running the library and its tests: `pixi run -e dev`.
 [feature.dev.dependencies]
 pre-commit = ">=4.2.0,<5"
-# mojodoc (the docs builder) is intentionally NOT a pixi dependency
-# here: as of this writing, mojodoc's own `[package.build]` pin
-# (`pixi-build-rattler-build ==0.3.13`) is incompatible with numax's
-# (`>=0.4`) -- mixing the two in a single pixi solve fails with
-# "no viable candidates for pixi-build-api-version >=4,<5", and the
-# 0.3.x series no longer has candidates on the channels numax solves
-# against. The sibling json library hits the same wall.
-#
-# The `docs`/`docs-build` tasks below invoke mojodoc's CLI directly via
-# `node` against a sibling checkout at `../mojodoc`, which is the
-# pattern the user has confirmed works locally. CI (the docs.yaml
-# workflow) builds the docs the same way. To use a different mojodoc
-# location, set the MOJODOC_CLI env var:
-#
-#   pixi run -e dev docs-build       # uses ../mojodoc by default
-#   MOJODOC_CLI=/path/to/mojodoc/packages/cli/dist/index.js pixi run -e dev docs-build
-#
-# This is deliberately a CLI-shim approach rather than a pixi dep
-# until mojodoc's [package.build] pin is bumped upstream.
+# mojodoc is deliberately not a dependency: its own `[package.build]` pin
+# (`==0.3.13`) cannot solve alongside numax's `>=0.4`. The docs tasks below
+# shell out to a sibling `../mojodoc` checkout instead, overridable with
+# MOJODOC_CLI.
 
 [feature.dev.tasks]
 install-pre-commit = "pre-commit install"
-# `format` lives in the dev feature (not the default env) because it
-# depends-on `install-pre-commit`, which needs pre-commit installed.
+# In the dev feature because it depends-on `install-pre-commit`.
 format = { cmd = "mojo format numax examples tests bench", depends-on = ["install-pre-commit"] }
 format-check = { cmd = "bash -c 'mojo format numax examples tests bench && git diff --exit-code numax examples tests bench || (echo \"Error: Code is not formatted. Run \\\"pixi run -e dev format\\\" to fix.\" && exit 1)'" }
-# Docs -- `--open` previews in the browser; build produces target/doc/
-# which the docs.yaml workflow publishes to GitHub Pages.
-#
-# Invokes mojodoc's node CLI. Defaults to ../mojodoc/packages/cli/dist/index.js
-# (the standard sibling-checkout location). To use a different path,
-# set MOJODOC_CLI before invoking the task:
-#
-#   MOJODOC_CLI=/path/to/mojodoc/packages/cli/dist/index.js pixi run -e dev docs-build
-#
-# See the comment above [feature.dev.dependencies] for why mojodoc is
-# not a pixi dep (build-backend pin mismatch).
+# `--open` previews; `docs-build` writes target/doc/ for docs.yaml.
 docs      = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --open'" }
 docs-build = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --out-dir target/doc --base-url /numax/'" }
 
 [environments]
-# `default` stays lean -- just mojo + max, enough to build + test the library.
-# `dev` layers mojodoc tooling + pre-commit on top of the default env's
-# mojo + max (it inherits the default feature), so `pixi run -e dev docs-build`
-# can drive mojo doc through the mojodoc CLI. The bench-python/bench-rust
-# envs keep their own no-default-feature isolation; the dev env does not,
-# because mojodoc invokes mojo at build time.
+# `dev` inherits the default feature because mojodoc invokes mojo; the bench
+# envs do not, having nothing to do with it.
 default = { features = [], solve-group = "default" }
 dev = { features = ["dev"], solve-group = "default" }
 bench-python = { features = ["bench-python"], no-default-feature = true }
 bench-rust = { features = ["bench-rust"], no-default-feature = true }
 
 [tasks]
-# `mojo` with this directory on the import path, so a file in a clone can be
-# run straight: `pixi run run examples/basic/npy_interop.mojo`. Every task
-# below spells the same `-I .` out; a bare `pixi run mojo <file>` does not
-# have it and cannot find `numax`.
+# Every task below spells out `-I .`; a bare `pixi run mojo <file>` cannot
+# find `numax`.
 run = { cmd = "mojo -I . {{ file }}", args = ["file"] }
 
-# One upstream repro from `.cursor/upstream-repros/`:
-# `pixi run repro 1.1b-conformance-where-rejected.mojo`. These are the
-# evidence behind `mojo-feedback.md` and `max-feedback.md`, so most are
-# *expected* to fail -- the diagnostic is the result. No `-I .`, because a
-# repro that imported numax would not be sendable upstream. `1.8` never
-# terminates by design; interrupt it.
+# Most are *expected* to fail -- the diagnostic is the result. No `-I .`, so
+# they stay sendable upstream. `1.8` never terminates by design.
 repro = { cmd = "mojo .cursor/upstream-repros/{{ file }}", args = ["file"] }
 
 test-dual = "mojo -I . tests/core/test_dual.mojo"
@@ -337,31 +229,17 @@ test-creation = "mojo -I . tests/core/test_creation.mojo"
 test-constants = "mojo -I . tests/core/test_constants.mojo"
 test-rowwise = "mojo -I . tests/core/test_rowwise.mojo"
 test-map-blocks = "mojo -I . tests/core/test_map_blocks.mojo"
-# `tests` compiles each area of tests/ into ONE binary and runs that,
-# instead of one `mojo` invocation per file. The per-file chain spent all
-# its time re-elaborating the `numax` source graph 89 times over, and the
-# 1437 tests themselves run in under a second -- compilation was the entire
-# cost. On CI that step was 22.9 min on macos-15 and 27.4 min on
-# ubuntu-latest (run 35066346719); locally and warm, 5:30 against 35s.
-# CI is always cold, so expect it to land between those regimes.
-#
-# It also cuts process starts from 89 to 11, which matters for the
-# transient `libKGENCompilerRTShared` segfault the CI job documents: fewer
-# starts is fewer chances to roll it, and the runner still retries each
-# aggregate three times.
-#
-# The aggregates are generated (tools/gen_test_aggregates.py) and the
-# runner re-checks them against the tree before building, so a newly added
-# test file cannot silently stop running.
+# One binary per area of tests/ rather than one `mojo` per file:
+# compilation was the entire cost (CI 22.9 min to ~35s warm locally), and it
+# cuts process starts from 89 to 11, which matters for the transient
+# `libKGENCompilerRTShared` segfault. The aggregates are generated by
+# tools/gen_test_aggregates.py and re-checked against the tree before
+# building, so a new test file cannot silently stop running.
 tests = "bash tools/run_test_aggregates.sh"
 tests-gen = "python3 tools/gen_test_aggregates.py"
 
-# The old per-file chain. Kept for bisecting a failure down to a single
-# file, and because every `test-<name>` task above is still the way to run
-# one suite. Listed as dependencies rather than one long `&&` chain so a
-# new suite is one line to add in one place; pixi runs them in the order
-# given. A new suite goes here AND is picked up by the aggregates
-# automatically -- the generator reads the tree, not this list.
+# For bisecting to one file. A new suite is picked up by the aggregates
+# automatically; this list is optional.
 tests-per-file = { depends-on = [
     "test-dual",
     "test-format",
@@ -475,12 +353,9 @@ example-wave-packet = "mojo -I . examples/intermediate/wave_packet.mojo"
 example-interference = "mojo -I . examples/intermediate/interference.mojo"
 example-quantum-well = "mojo -I . examples/advanced/quantum_well.mojo"
 example-batched-solve = "mojo -I . examples/advanced/batched_solve.mojo"
-# The 0.2 surfaces: the spectral decompositions and matrix functions over
-# `Tensor`, the `scipy.stats`/NumPy statistics surface, and `scipy.signal`.
 example-spectral = "mojo -I . examples/advanced/spectral.mojo"
 example-stats-surface = "mojo -I . examples/intermediate/stats_surface.mojo"
 example-signal-processing = "mojo -I . examples/intermediate/signal_processing.mojo"
-# The special functions at `Interval` and `Decimal`.
 example-enclosures = "mojo -I . examples/intermediate/enclosures.mojo"
 examples = { depends-on = [
     "examples-cpu",
@@ -492,44 +367,18 @@ examples = { depends-on = [
     "example-quantum-well",
     "example-batched-solve",
 ] }
-# The seven GPU examples, compiled but not run, to catch a call that no longer
-# matches its signature -- which is exactly what went unnoticed while
-# `examples` ran nowhere in CI.
-#
-# `--target-accelerator` is not optional here. Without it the compiler resolves
-# the accelerator architecture from the host, and on a machine with no GPU that
-# resolution fails inside the standard library rather than in user code:
-# `std/gpu/host/info.mojo` raises `constraint failed: Unknown GPU architecture
-# detected` from `GPUInfo.from_target`, and the build dies before type-checking
-# anything. Naming an architecture skips host detection entirely.
-#
-# `sm_80` specifically, on every host including Apple Silicon: NVPTX codegen is
-# in-tree LLVM and needs no external tool, while `metal:N` shells out to Apple's
-# `metal` compiler and therefore only builds on macOS. Nothing here runs, and
-# the binary is deleted immediately -- the architecture only has to be one the
-# compiler can generate code for, not one the machine owns. Bump it only if a
-# kernel in these examples starts depending on a newer NVIDIA feature.
-#
-# The seven builds are independent, so they run concurrently:
-# tools/run_examples.sh owns the list and the job cap. 7.0s -> 2.3s.
+# The seven GPU examples, compiled but not run, to catch a signature drift.
+# `--target-accelerator` is not optional: without it host detection fails on a
+# GPU-less machine with `Unknown GPU architecture detected`. `sm_80` on every
+# host including Apple Silicon, because NVPTX codegen is in-tree while
+# `metal:N` shells out to Apple's compiler.
 examples-gpu-build = "bash tools/run_examples.sh --gpu-build"
-# Every example except `gaussian_gpu.mojo`, `softmax.mojo`, `ode.mojo`,
-# `random_ensemble.mojo`, `unified_tensor_gpu.mojo`, `quantum_well.mojo` and
-# `batched_solve.mojo`, which launch GPU kernels alongside their CPU paths --
-# this is what CI runs, on GPU-less runners, alongside `examples-gpu-build`
-# for the other seven.
-#
-# An example cannot be aggregated the way a test suite can -- each one is
-# its own `main` and its output is the point -- but the build phase is
-# still the cost, and the builds are independent. `tools/run_examples.sh`
-# compiles them concurrently and then runs one process each: 1:19 -> 23s.
-# It discovers the files from `git ls-files` minus the GPU list, so a new
-# example is covered without being added anywhere.
+# The CPU examples, built concurrently then run one process each.
+# tools/run_examples.sh discovers them from `git ls-files` minus the GPU
+# list, so a new example is covered without being added anywhere.
 examples-cpu = "bash tools/run_examples.sh"
 
-# The per-example chain, kept for the same reason as `tests-per-file`: one
-# example at a time when bisecting, and every `example-<name>` task below
-# still runs exactly one file.
+# For bisecting to one example; see `tests-per-file`.
 examples-cpu-per-file = { depends-on = [
     "example-gaussian",
     "example-array-creation",
@@ -554,21 +403,11 @@ examples-cpu-per-file = { depends-on = [
 bench = "mojo -I . bench/bench_tensor_map.mojo"
 bench-matmul = "mojo -I . bench/bench_matmul.mojo"
 bench-elementwise = "mojo -I . bench/bench_elementwise.mojo"
-# The `Tensor` tier of numax.linalg against the `linalg.matmul` ceiling its
-# blocked factorizations are trying to reach. CPU-only, so CI can run it;
-# `bench-linalg-gpu` is the same measurements on a device.
 bench-linalg = "mojo -I . bench/bench_linalg.mojo"
-# The `Tensor` tiers of numax.signal, numax.interpolate and numax.stats,
-# each against the `bench-scipy-*` baseline of the same name. CPU-only.
 bench-signal = "mojo -I . bench/bench_signal.mojo"
-# The transform engine on its own: us per call and the launch count beside
-# it, against `bench-scipy-fft`'s pocketfft. CPU-only.
 bench-fft = "mojo -I . bench/bench_fft.mojo"
 bench-interpolate = "mojo -I . bench/bench_interpolate.mojo"
 bench-stats = "mojo -I . bench/bench_stats.mojo"
-# The NumPy-named surface over `Tensor`: exp, add, tensor-scalar multiply,
-# comparison and sum at five sizes either side of `_drive`'s threading
-# threshold, plus the abstraction cost of the named call over `map`.
 # CPU-only; `bench-core-surface-gpu` is the same rows on a device.
 bench-core-surface = "mojo -I . bench/bench_core_surface.mojo"
 # Needs a real device, and `float32` only: naming `gpu=True` compiles the
