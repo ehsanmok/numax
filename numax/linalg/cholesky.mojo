@@ -43,7 +43,7 @@ def cholesky[
     n: Int,
     gpu: Bool = False,
     block: Int = 32 if gpu else 64,
-    tile: Int = 512 if gpu else 128,
+    tile: Int = n if gpu else 128,
 ](mut a: Static[dtype, n, n]) raises -> Static[
     dtype, n, n
 ] where dtype.is_floating_point():
@@ -135,12 +135,21 @@ def cholesky[
 
     `tile` cuts the trailing update into blocks; see the module docstring
     for why it exists. `128` on the host, where it is worth 12-15% at
-    `n = 1024`, and `512` on a device, where it is worth nothing measurable
-    -- 63.3-63.4 GFLOP/s untiled against 60.0-63.8 tiled at `n = 1024` --
-    and is kept only because it drops the scratch allocation from `n x n`
-    to `tile x tile`, which at `n = 4096` is 64 MiB against 1 MiB. No pivoting,
-    and none is needed: a symmetric positive definite matrix does not
-    require it.
+    `n = 1024`. **On a device it defaults to `n` -- untiled -- which
+    reverses what this docstring said at the previous MAX pin.** A fixed
+    `tile = 512` used to cost "nothing measurable" (63.3-63.4 GFLOP/s
+    untiled against 60.0-63.8 tiled at `n = 1024`); under `max-core 26.6`
+    / `mojo 1.1` the same comparison, NVIDIA A10G, is 62.4 against 44.5 at
+    `n = 1024`, 204.0 against 90.5 at `n = 2048`, and 484.1 against 136.5
+    at `n = 4096` -- a cost that grows from 40% to 3.5x with `n` rather
+    than staying flat, so more tiles now means more relative launch
+    overhead where it used to mean none. The memory `tile` trades for is
+    real only past what a modern device holds without noticing: untiled
+    scratch is `n x n` rather than `tile x tile`, 64 MiB at `n = 4096`
+    against 1 MiB, trivial next to a 23 GB A10G. Pass a smaller `tile`
+    explicitly on a memory-constrained device or a much larger `n`; not
+    re-measured on Metal. No pivoting, and none is needed: a symmetric
+    positive definite matrix does not require it.
 
     Raises when a diagonal entry comes out non-positive, which is what a
     matrix that is not positive definite looks like from in here. The check

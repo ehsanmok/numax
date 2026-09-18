@@ -597,7 +597,7 @@ A10G:
 | op | numax | PyTorch | CuPy |
 |---|---|---|---|
 | `matmul` (ceiling) | 20,459 | 15,342 | 14,995 |
-| `cholesky` | 44.6 | 595.0 | 349.9 |
+| `cholesky` | 62.5 | 595.0 | 349.9 |
 | `lu_factor` | 30.6 | 282.9 | 266.8 |
 | `solve` | 28.1 | 257.6 | 257.9 |
 | `qr` (n=512) | 8.4 | 80.0 | 79.1 |
@@ -606,13 +606,14 @@ A10G:
 7R32 + A10G box.** Every CPU row rose 14-44% from the session above --
 `matmul`'s own ceiling went 656 to 776 GFLOP/s, and the four
 factorizations improved by more than that, so the panel side gained on
-top of the GEMM. The A10G table holds for every op except `cholesky`,
-which dropped 51.0 to **44.6 GFLOP/s** (-12.5%, reproduced twice) while
-its own ceiling (20,447-20,496 across two runs) and its three siblings --
-which share its panel-then-GEMM shape -- sit within a percent of their
-prior figures. Isolated to `cholesky`'s own panel or trailing update, not
-root-caused; see `docs/performance.md`'s "Dense linalg" section for the
-full note.
+top of the GEMM. `cholesky`'s A10G number first came back at 44.6
+GFLOP/s (-12.5% from 51.0) while its ceiling and its three siblings held.
+Root cause: its device default tiled the trailing update (`tile = 512`)
+for a memory saving this docstring called free in launch cost -- true at
+the previous pin, a 40% to 3.5x cost at this one as `n` grows. Fixed by
+defaulting `tile` to `n` (untiled) on a device; the number above is
+post-fix, **22% ahead of the original 51.0**. Full sweep and the fix
+itself are in `numax/linalg/cholesky.mojo`'s docstring.
 
 **MAX's GEMM is not what is slow.** It reaches 79% of OpenBLAS on the CPU
 and beats cuBLAS's FP32 path on the A10G -- 20.5 against 15.3 TFLOP/s. It

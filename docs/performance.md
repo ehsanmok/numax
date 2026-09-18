@@ -332,7 +332,7 @@ which is `n = 512`:
 | op | numax | PyTorch (cuSOLVER) | CuPy (cuSOLVER) |
 |---|---|---|---|
 | `matmul` (ceiling) | 20,459 | 15,342 | 14,995 |
-| `cholesky` | 44.6 | 595.0 | 349.9 |
+| `cholesky` | 62.5 | 595.0 | 349.9 |
 | `lu_factor` | 30.6 | 282.9 | 266.8 |
 | `solve` | 28.1 | 257.6 | 257.9 |
 | `qr` (n=512) | 8.4 | 80.0 | 79.1 |
@@ -343,16 +343,16 @@ table first recorded -- `matmul`'s own ceiling went 656 to 776 GFLOP/s,
 and `cholesky`, `lu_factor`, `solve` and `qr_factor` all improved by more
 than that, so the panel side gained on top of the GEMM. The GPU table
 holds for every op except `cholesky`, which dropped from 51.0 to
-**44.6 GFLOP/s** (-12.5%, reproduced across two runs) while its own
-ceiling (20,447-20,496 across two runs, unchanged from 20,459) and its
-three siblings -- `lu_factor`, `solve`, `qr`, which share its
-panel-then-GEMM shape -- all sit within a percent of their prior figures.
-The regression is isolated to `cholesky`'s own panel or trailing update,
-not the panel pattern generally, and has not been root-caused; a
-`parallelize` signature change in the same bump
-(`08a161e`'s commit body) is the leading suspect but that call is
-host-only and `cholesky`'s GPU panel does not run through it, so this is
-still open.
+44.6 GFLOP/s (-12.5%, reproduced across two runs) while its own ceiling
+and its three siblings -- `lu_factor`, `solve`, `qr` -- sat within a
+percent of their prior figures. Root cause: `cholesky`'s device default
+tiled the trailing update (`tile = 512`) for a memory saving this
+docstring called "nothing measurable" in launch cost -- true at the
+previous pin, false at this one, where a fixed `tile` now costs 40% at
+`n = 1024` and 3.5x at `n = 4096` in extra launch overhead. `cholesky`'s
+device default is now `tile = n` (untiled); the table above already
+reflects the fix -- **62.5 GFLOP/s, 22% above the original 51.0** -- and
+`numax/linalg/cholesky.mojo`'s docstring carries the full sweep.
 
 Three things to read out of those, in order of how much they matter:
 
@@ -362,7 +362,7 @@ Three things to read out of those, in order of how much they matter:
    (max residual 8.4 against cuBLAS FP32's 3.4, where cuBLAS with TF32
    enabled gives 18.2 at 25.2 TFLOP/s), so MAX's `float32` GEMM sits
    between the two vendor paths on both axes. Either way, a factorization
-   at 45 GFLOP/s on a device whose GEMM does 20,000 is not being held back
+   at 63 GFLOP/s on a device whose GEMM does 20,000 is not being held back
    by the multiply.
 2. **The gap is the panel and the launch count.** Every block step is a
    single-block panel kernel -- one SM on the GPU, effectively serial on
