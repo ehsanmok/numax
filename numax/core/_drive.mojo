@@ -52,7 +52,7 @@ No driver calls `ctx.synchronize()`. The launches are stream-ordered and
 
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major, TensorLayout
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.io import FileDescriptor
@@ -103,14 +103,14 @@ comptime _FlatIn[dtype: DType] = TileTensor[
     dtype,
     _FlatLayout,
     ImmutAnyOrigin,
-    Storage=PointerStorage[element_width=1],
+    Engine=DefaultEngine[element_width=1],
 ]
 """A read-only flat view. Immutable because a driver takes its input
 borrowed, and `DeviceBuffer`'s tile constructor borrows the buffer's own
 origin -- an immutable `self` cannot produce a `MutAnyOrigin` view."""
 
 comptime _FlatOut[dtype: DType] = TileTensor[
-    dtype, _FlatLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    dtype, _FlatLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
 ]
 """A writable flat view, for a destination the driver owns."""
 
@@ -138,7 +138,7 @@ def _flat_out[
 
 
 comptime _DenseIn[dtype: DType, LayoutType: TensorLayout] = TileTensor[
-    dtype, LayoutType, ImmutAnyOrigin, Storage=PointerStorage[element_width=1]
+    dtype, LayoutType, ImmutAnyOrigin, Engine=DefaultEngine[element_width=1]
 ]
 """A read-only view at the tensor's own rank and layout."""
 

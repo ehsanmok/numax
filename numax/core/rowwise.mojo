@@ -76,6 +76,7 @@ docstrings say so.
 """
 
 from algorithm import rowwise
+from algorithm.rowwise_types import RowCoord
 from algorithm.reduce_op import (
     ArgMax,
     ArgMin,
@@ -85,9 +86,9 @@ from algorithm.reduce_op import (
     ReduceSum,
     Welford,
 )
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major, TensorLayout
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.gpu.host import DeviceContext
 from std.utils import IndexList
 
@@ -133,7 +134,7 @@ and `min` run the narrow chain. It is ignored on GPU.
 
 def reduce_all[
     dtype: DType,
-    Contribute: (def[w: Int](SIMD[dtype, w], IndexList[1]) -> SIMD[dtype, w])
+    Contribute: (def[w: Int](SIMD[dtype, w], RowCoord[1]) -> SIMD[dtype, w])
     & RegisterPassable
     & ImplicitlyCopyable,
     //,
@@ -144,14 +145,14 @@ def reduce_all[
         dtype,
         _,
         _,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
         linear_idx_type=_,
     ],
     dst: TileTensor[
         dtype,
         _,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
         linear_idx_type=_,
     ],
     contribute: Contribute,
@@ -197,9 +198,9 @@ def reduce_all[
     }:
         @always_inline
         def load[
-            width: Int, alignment: Int, coord_rank: Int
-        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
-            return src.load[width](Coord(idx))
+            width: Int, alignment: Int
+        ](idx: RowCoord[1]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](idx.coord)
 
         var row = rowwise.Row[params, dtype, dtype, 0, 1, is_cached=False](
             row_coords, n, c, load
@@ -229,7 +230,7 @@ def reduce_all[
             )
 
         @always_inline
-        def write(oc: IndexList[1]) {var acc, var out}:
+        def write(oc: RowCoord[1]) {var acc, var out}:
             out.store[params.emit_tile_width](
                 Coord(0), acc.slice[params.emit_tile_width]()
             )
@@ -252,7 +253,7 @@ def _argn_all[
         dtype,
         _,
         _,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
         linear_idx_type=_,
     ],
     ctx: DeviceContext,
@@ -289,9 +290,9 @@ def _argn_all[
     }:
         @always_inline
         def load[
-            width: Int, alignment: Int, coord_rank: Int
-        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
-            return src.load[width](Coord(idx))
+            width: Int, alignment: Int
+        ](idx: RowCoord[1]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](idx.coord)
 
         var row = rowwise.Row[params, dtype, dtype, 0, 1, is_cached=False](
             row_coords, n, c, load
@@ -300,7 +301,7 @@ def _argn_all[
         @always_inline
         def value[
             w: Int
-        ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+        ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
             return tile
 
         var indices: SIMD[DType.int64, params.simd_width]
@@ -314,7 +315,7 @@ def _argn_all[
             ).acc_indices
 
         @always_inline
-        def write(oc: IndexList[1]) {var indices, var out}:
+        def write(oc: RowCoord[1]) {var indices, var out}:
             out.store[params.emit_tile_width](
                 Coord(0), indices.slice[params.emit_tile_width]()
             )
@@ -338,7 +339,7 @@ def argmax_all[
         dtype,
         _,
         _,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
         linear_idx_type=_,
     ],
     ctx: DeviceContext,
@@ -361,7 +362,7 @@ def argmin_all[
         dtype,
         _,
         _,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
         linear_idx_type=_,
     ],
     ctx: DeviceContext,
@@ -379,19 +380,19 @@ def _fold_axis[
     monoid: StaticString,
     target: StaticString,
 ](
-    xs: TileTensor[dtype, XsLayout, _, Storage=PointerStorage[element_width=1]],
+    xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     ctx: Optional[DeviceContext] = None,
 ) raises where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """Fold `xs` along `axis` into `dst` under `monoid`, on either target.
@@ -422,9 +423,9 @@ def _fold_axis[
     }:
         @always_inline
         def load[
-            width: Int, alignment: Int, coord_rank: Int
-        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
-            return src.load[width](Coord(idx))
+            width: Int, alignment: Int
+        ](idx: RowCoord[rank]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](idx.coord)
 
         var row = rowwise.Row[
             params, dtype, dtype, axis, rank, is_cached=False
@@ -433,7 +434,7 @@ def _fold_axis[
         @always_inline
         def contribute[
             w: Int
-        ](tile: SIMD[dtype, w], idx: IndexList[rank]) {} -> SIMD[dtype, w]:
+        ](tile: SIMD[dtype, w], idx: RowCoord[rank]) {} -> SIMD[dtype, w]:
             return tile
 
         var acc: SIMD[dtype, params.simd_width]
@@ -460,9 +461,11 @@ def _fold_axis[
             )
 
         @always_inline
-        def write(oc: IndexList[rank]) {var acc, var out_flat, var dims}:
+        def write(oc: RowCoord[rank]) {var acc, var out_flat, var dims}:
             out_flat.store[params.emit_tile_width](
-                Coord(_collapsed[rank, axis](oc, dims)),
+                Coord(
+                    _collapsed[rank, axis](coord_to_index_list(oc.coord), dims)
+                ),
                 acc.slice[params.emit_tile_width](),
             )
 
@@ -484,19 +487,19 @@ def sum_axis[
     axis: Int,
     target: StaticString = "cpu",
 ](
-    xs: TileTensor[dtype, XsLayout, _, Storage=PointerStorage[element_width=1]],
+    xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     ctx: Optional[DeviceContext] = None,
 ) raises where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """Sum `xs` along `axis` into `dst`, on either target.
@@ -520,19 +523,19 @@ def prod_axis[
     axis: Int,
     target: StaticString = "cpu",
 ](
-    xs: TileTensor[dtype, XsLayout, _, Storage=PointerStorage[element_width=1]],
+    xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     ctx: Optional[DeviceContext] = None,
 ) raises where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """Multiply `xs` along `axis` into `dst`, on either target.
@@ -553,19 +556,19 @@ def max_axis[
     axis: Int,
     target: StaticString = "cpu",
 ](
-    xs: TileTensor[dtype, XsLayout, _, Storage=PointerStorage[element_width=1]],
+    xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     ctx: Optional[DeviceContext] = None,
 ) raises where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """The largest element of `xs` along `axis`, into `dst`, on either target.
@@ -585,19 +588,19 @@ def min_axis[
     axis: Int,
     target: StaticString = "cpu",
 ](
-    xs: TileTensor[dtype, XsLayout, _, Storage=PointerStorage[element_width=1]],
+    xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     ctx: Optional[DeviceContext] = None,
 ) raises where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """The smallest element of `xs` along `axis`, into `dst`, on either
@@ -614,25 +617,25 @@ def mean_variance_axis[
     target: StaticString = "cpu",
 ](
     xs: TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     means: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     variances: TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],
     ddof: Int = 0,
     ctx: Optional[DeviceContext] = None,
 ) raises where (
     dtype.is_floating_point()
     and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """Mean and variance along `axis` in one pass, on either target.
@@ -689,9 +692,9 @@ def mean_variance_axis[
     }:
         @always_inline
         def load[
-            width: Int, alignment: Int, coord_rank: Int
-        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
-            return src.load[width](Coord(idx))
+            width: Int, alignment: Int
+        ](idx: RowCoord[rank]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](idx.coord)
 
         var row = rowwise.Row[
             params, dtype, dtype, axis, rank, is_cached=False
@@ -700,7 +703,7 @@ def mean_variance_axis[
         @always_inline
         def contribute[
             w: Int
-        ](tile: SIMD[dtype, w], idx: IndexList[rank]) {} -> SIMD[dtype, w]:
+        ](tile: SIMD[dtype, w], idx: RowCoord[rank]) {} -> SIMD[dtype, w]:
             return tile
 
         var state = row.reduce[Welford[dtype, params.simd_width]](
@@ -709,10 +712,12 @@ def mean_variance_axis[
 
         @always_inline
         def write(
-            oc: IndexList[rank],
+            oc: RowCoord[rank],
         ) {var state, var mean_flat, var var_flat, var dims, var divisor}:
             comptime w = params.emit_tile_width
-            var at = Coord(_collapsed[rank, axis](oc, dims))
+            var at = Coord(
+                _collapsed[rank, axis](coord_to_index_list(oc.coord), dims)
+            )
             mean_flat.store[w](at, state.mean.slice[w]())
             var_flat.store[w](at, state.M2.slice[w]() / divisor)
 
@@ -729,8 +734,8 @@ def mean_variance_axis[
 
 @always_inline
 def _collapsed[
-    rank: Int, axis: Int
-](oc: IndexList[rank], dims: IndexList[rank]) -> Int:
+    size: Int, //, rank: Int, axis: Int
+](oc: IndexList[size], dims: IndexList[rank]) -> Int:
     """The flat index of `oc` with `axis` dropped, row-major.
 
     `rowwise.emit` hands out the full-rank coordinate with the reduced axis

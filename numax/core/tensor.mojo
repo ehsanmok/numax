@@ -179,12 +179,12 @@ the distinction lives in the layout -- which is where MAX put it.
 
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
-from layout.tile_tensor import PointerStorage, TensorStorage
+from layout.tile_tensor import DefaultEngine, TensorEngine
 from max.algorithm.functional import elementwise
 from max.gpu import AddressSpace, barrier
 from max.gpu.host import DeviceContext
 from std.collections import Array
-from std.gpu import block_idx, global_idx, thread_idx
+from max.gpu import block_idx, global_idx, thread_idx
 from std.memory import stack_allocation
 
 from ._drive import _target, _width
@@ -234,20 +234,20 @@ def map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """Apply `step` to every element of `xs`, writing into `ys`.
@@ -355,26 +355,26 @@ def map_to[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         out_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].all_dims_known
     and TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """`map`, but `step` may return a different dtype than it takes.
@@ -427,32 +427,32 @@ def zip_to[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     rhs: TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         out_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].all_dims_known
     and TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """The two-input `map_to`: `out[i] = step(lhs[i], rhs[i])`.
@@ -515,21 +515,21 @@ def map_threaded[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ctx: DeviceContext,
 ) raises where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """`map`, but distributed across CPU threads by `max.algorithm.elementwise`.
@@ -584,13 +584,13 @@ def map_blocks[
         dtype,
         type_of(row_major[k_in, batch]()),
         _,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         type_of(row_major[k_out, batch]()),
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ctx: DeviceContext,
 ) raises:
@@ -663,26 +663,26 @@ def map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     rhs: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     out_tensor: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """Apply a two-argument `step` to `lhs` and `rhs`, writing `out_tensor`.
@@ -766,21 +766,21 @@ def map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     p0: Scalar[dtype],
 ) where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """Apply `step` to every element of `xs` under one run-time scalar.
@@ -849,22 +849,22 @@ def map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     p0: Scalar[dtype],
     p1: Scalar[dtype],
 ) where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """Apply `step` to every element of `xs` under two run-time scalars.
@@ -938,16 +938,14 @@ def reduce[
     O: Origin,
     combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
 ](
-    xs: TileTensor[
-        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
-    ],
+    xs: TileTensor[dtype, LayoutType, O, Engine=DefaultEngine[element_width=1]],
     init: SIMD[dtype, 1],
 ) -> SIMD[dtype, 1] where (
     TileTensor[
-        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, O, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, O, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """Fold every element of `xs` down to one value with `combine`, CPU-side.
@@ -985,13 +983,13 @@ def reduce_block_gpu[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     partials: TileTensor[
         dtype,
         PartialsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     identity: SIMD[dtype, 1],
 ):
@@ -1043,13 +1041,13 @@ def reduce_rows[
         dtype,
         RowsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     dst: TileTensor[
         dtype,
         OutLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     init: SIMD[dtype, 1],
 ):
@@ -1102,32 +1100,32 @@ def reduce_axis[
         dtype,
         XsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     dst: TileTensor[
         dtype,
         OutLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     init: SIMD[dtype, 1],
 ) where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """Fold `xs` along one axis, writing the surviving axes into `dst`.
@@ -1200,43 +1198,43 @@ def broadcast_op_axis[
         dtype,
         XsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     values: TileTensor[
         dtype,
         ValuesLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         XsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and TileTensor[
         dtype,
         ValuesLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].all_dims_known
     and TileTensor[
         dtype,
         ValuesLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """Combine `xs` with a `values` tensor that is missing one axis.
@@ -1298,19 +1296,19 @@ def broadcast_op_rows[
         dtype,
         RowsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     row_values: TileTensor[
         dtype,
         ValuesLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         RowsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ):
     """Combine every element of `xs` with its row's value.
@@ -1366,20 +1364,20 @@ def map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     not TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """`map` for a runtime-shaped tensor -- same contract as the static
@@ -1425,26 +1423,26 @@ def map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     rhs: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     out_tensor: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     not TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """The binary `map` for runtime-shaped tensors: `out[i] = step(lhs[i],
@@ -1479,16 +1477,14 @@ def reduce[
     O: Origin,
     combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
 ](
-    xs: TileTensor[
-        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
-    ],
+    xs: TileTensor[dtype, LayoutType, O, Engine=DefaultEngine[element_width=1]],
     init: SIMD[dtype, 1],
 ) -> SIMD[dtype, 1] where (
     not TileTensor[
-        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, O, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, O, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, O, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """`reduce` for a runtime-shaped tensor. Scalar and left-to-right, like
@@ -1514,26 +1510,26 @@ def map_to[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         out_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     not TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].all_dims_known
     and TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """`map_to` for a runtime-shaped tensor -- the dtype-changing walk a
@@ -1566,32 +1562,32 @@ def zip_to[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     rhs: TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         out_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     not TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].all_dims_known
     and TileTensor[
         in_dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """`zip_to` for runtime-shaped tensors: two inputs, one output, and a
@@ -1627,21 +1623,21 @@ def map_threaded[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ctx: DeviceContext,
 ) raises where (
     not TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """`map_threaded` for a runtime-shaped tensor.
@@ -1674,29 +1670,29 @@ def reduce_axis[
         dtype,
         XsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     dst: TileTensor[
         dtype,
         OutLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     init: SIMD[dtype, 1],
 ) where (
     not TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and TileTensor[
-        dtype, OutLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """`reduce_axis` for a runtime-shaped tensor.
@@ -1743,37 +1739,37 @@ def broadcast_op_axis[
         dtype,
         XsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     values: TileTensor[
         dtype,
         ValuesLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         XsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     not TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
     and TileTensor[
         dtype,
         ValuesLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
     and axis >= 0
     and axis
     < TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].rank
 ):
     """`broadcast_op_axis` for a runtime-shaped tensor -- the inverse of the
@@ -1820,16 +1816,16 @@ def broadcast_op_axis[
 def map_strided[
     dtype: DType,
     XsLayout: TensorLayout,
-    XsStorage: TensorStorage,
+    XsStorage: TensorEngine,
     YsLayout: TensorLayout,
-    YsStorage: TensorStorage,
+    YsStorage: TensorEngine,
     step: def[w: Int](SIMD[dtype, w]) thin -> SIMD[dtype, w],
 ](
-    xs: TileTensor[dtype, XsLayout, MutAnyOrigin, Storage=XsStorage],
-    ys: TileTensor[dtype, YsLayout, MutAnyOrigin, Storage=YsStorage],
+    xs: TileTensor[dtype, XsLayout, MutAnyOrigin, Engine=XsStorage],
+    ys: TileTensor[dtype, YsLayout, MutAnyOrigin, Engine=YsStorage],
 ) where (
-    TileTensor[dtype, XsLayout, MutAnyOrigin, Storage=XsStorage].rank
-    == TileTensor[dtype, YsLayout, MutAnyOrigin, Storage=YsStorage].rank
+    TileTensor[dtype, XsLayout, MutAnyOrigin, Engine=XsStorage].rank
+    == TileTensor[dtype, YsLayout, MutAnyOrigin, Engine=YsStorage].rank
 ):
     """`ys[c] = step(xs[c])` at every coordinate `c`, whatever the strides.
 
@@ -1864,10 +1860,10 @@ def map_strided[
 def reduce_strided[
     dtype: DType,
     XsLayout: TensorLayout,
-    XsStorage: TensorStorage,
+    XsStorage: TensorEngine,
     combine: def(SIMD[dtype, 1], SIMD[dtype, 1]) thin -> SIMD[dtype, 1],
 ](
-    xs: TileTensor[dtype, XsLayout, MutAnyOrigin, Storage=XsStorage],
+    xs: TileTensor[dtype, XsLayout, MutAnyOrigin, Engine=XsStorage],
     init: SIMD[dtype, 1],
 ) -> SIMD[dtype, 1]:
     """Fold every element of a strided view down to one value.

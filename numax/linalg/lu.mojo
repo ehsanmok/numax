@@ -501,7 +501,7 @@ def lu_factor[
                 sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, m))
             )
 
-            @parameter
+            @__parameter
             @always_inline
             @__copy_capture(wv, base)
             def subtract[

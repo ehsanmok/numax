@@ -111,9 +111,10 @@ from std.utils.numerics import nan as _nan
 
 from std.utils import IndexList
 
+from algorithm.rowwise_types import RowCoord
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 from nn.cumsum import cumsum as _nn_cumsum
 
@@ -235,7 +236,7 @@ def sum[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """`xs` summed along `axis`. `numpy.sum(a, axis=k)`.
@@ -269,7 +270,7 @@ def prod[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """`xs` multiplied along `axis`. `numpy.prod(a, axis=k)`.
@@ -300,7 +301,7 @@ def min[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """The smallest element along `axis`. `numpy.min(a, axis=k)`.
@@ -334,7 +335,7 @@ def max[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """The largest element along `axis`. `numpy.max(a, axis=k)`. MAX's
@@ -364,7 +365,7 @@ def mean[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """The arithmetic mean along `axis`. `numpy.mean(a, axis=k)`.
@@ -392,7 +393,7 @@ def variance_axis[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """`(mean, variance)` along `axis`, from one traversal.
@@ -425,7 +426,7 @@ def _welford_axis[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ].is_row_major
 ):
     """Fill `means` and `variances` along `axis` from one traversal.
@@ -456,7 +457,7 @@ def _reduce_whole[
     @always_inline
     def identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
     reduce_all[monoid=monoid, target=_target[gpu]()](

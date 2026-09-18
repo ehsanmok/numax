@@ -185,7 +185,7 @@ def _trsm[
             sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, rhs))
         )
 
-        @parameter
+        @__parameter
         @always_inline
         @__copy_capture(b, row0)
         def subtract[

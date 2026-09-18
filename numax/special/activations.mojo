@@ -30,9 +30,9 @@ here numax does not implement -- it hands the tensors to MAX's `nn.softmax`,
 for the reason its own docstring gives.
 """
 
-from layout import TileTensor
+from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from nn.softmax import softmax as nn_softmax
 from std.sys.info import simd_width_of
 
@@ -99,13 +99,13 @@ def softmax[
         dtype,
         RowsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         RowsLayout,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     axis: Int = Int(RowsLayout.rank) - 1,
 ) raises where dtype.is_floating_point():
@@ -123,16 +123,27 @@ def softmax[
     `numax.core.tensor.reduce_rows` and `broadcast_op_rows`, with three
     caller-provided scratch buffers, none of which are needed now.
 
-    Tier 2 because MAX's target-parameterized entry point is out of reach at
-    the pin, so this is the host one. The overload taking a `target` also
-    takes its input as a fused closure in a *compile-time* parameter, whose
-    implicit `__origins__`
-    the compiler cannot infer across the module boundary, and there is no
-    keyword to bind it by hand. The overload numax can call takes tensors and
-    has no `target`. So a device-resident softmax is still hand-launched from
-    `numax.core.tensor`'s primitives -- `examples/intermediate/softmax.mojo`
-    shows both, and checks them against each other.
+    Tier 2, and host-only, which at `max ==26.6` is numax's choice rather
+    than a wall. The tensor-taking overload numax used to call is gone; what
+    remains takes the input as a fused closure, and that closure is now an
+    *argument* where it used to be a compile-time parameter -- which is
+    exactly what put it out of reach before, since the implicit
+    `__origins__` of a parameter closure could not be inferred across the
+    module boundary. Passing it by value sidesteps that, and it also means
+    `target` is now reachable: a device softmax is a `target="gpu"` and a
+    `DeviceContext` away, and is not wired up here only because this
+    function has no `gpu` parameter to switch on.
+    `examples/intermediate/softmax.mojo` hand-launches the device path from
+    `numax.core.tensor`'s primitives and checks the two against each other.
     """
-    nn_softmax[dtype, simd_width_of[dtype](), Int(RowsLayout.rank)](
-        xs, ys, axis
+
+    @always_inline
+    def load[
+        width: Int, alignment: Int
+    ](coord: Coord) {var xs} -> SIMD[dtype, width]:
+        return xs.load[width](coord)
+
+    var shape = xs.layout.shape_coord()
+    nn_softmax[dtype, Int(RowsLayout.rank), target="cpu"](
+        load, shape, xs.dim(axis), ys, axis
     )

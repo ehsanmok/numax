@@ -16,7 +16,7 @@ land within noise of each other. Run with `pixi run bench`.
 
 from layout import TileTensor
 from layout.tile_layout import row_major, TensorLayout
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from std.algorithm.functional import vectorize
 from std.math import exp
 from std.sys.info import simd_width_of
@@ -60,20 +60,20 @@ def bench_numax[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) -> Int where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     var t0 = perf_counter_ns()

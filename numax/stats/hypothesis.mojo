@@ -404,11 +404,10 @@ def mannwhitneyu[
     for i in range(n):
         order.append(i)
 
-    @parameter
-    def by_value(i: Int, j: Int) -> Bool:
+    def by_value(i: Int, j: Int) {imm} -> Bool:
         return pooled[i] < pooled[j] or (pooled[i] == pooled[j] and i < j)
 
-    _sort[by_value](order)
+    _sort(order, by_value)
     var ranks = List[Float64](length=n, fill=0.0)
     var tie_term = 0.0
     var i = 0

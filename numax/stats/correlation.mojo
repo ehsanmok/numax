@@ -77,7 +77,7 @@ from std.sys.info import simd_width_of
 
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major, TensorLayout
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 
@@ -134,7 +134,7 @@ comptime _Block[dtype: DType] = TileTensor[
     dtype,
     type_of(row_major(Coord(0, 0))),
     MutAnyOrigin,
-    Storage=PointerStorage[element_width=1],
+    Engine=DefaultEngine[element_width=1],
 ]
 """A run-time-shaped contiguous rank-2 view over a buffer this module owns
 -- the operand type `linalg.matmul` accepts, the shape
@@ -144,7 +144,7 @@ comptime _Row[dtype: DType] = TileTensor[
     dtype,
     type_of(row_major(Coord(0))),
     MutAnyOrigin,
-    Storage=PointerStorage[element_width=1],
+    Engine=DefaultEngine[element_width=1],
 ]
 """One row of a `_Block` retyped as a rank-1 destination, so a copy into it
 has the *same* extents as its rank-1 source. A cross-shape `elementwise`
@@ -502,11 +502,10 @@ def _ranks(values: List[Float64], method: StaticString) raises -> List[Float64]:
     for i in range(n):
         order.append(i)
 
-    @parameter
-    def by_value(a: Int, b: Int) -> Bool:
+    def by_value(a: Int, b: Int) {imm} -> Bool:
         return values[a] < values[b] or (values[a] == values[b] and a < b)
 
-    _sort[by_value](order)
+    _sort(order, by_value)
     var ranks = List[Float64](length=n, fill=0.0)
     var dense = 0
     var i = 0

@@ -266,7 +266,7 @@ def _apply_block_reflector[
     if padded == width:
         # `C -= V Y`, scattered into `c` by the epilogue: one kernel, and
         # `product`'s store is the wasted half of it.
-        @parameter
+        @__parameter
         @always_inline
         @__copy_capture(c, row0, col0)
         def subtract[

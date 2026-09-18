@@ -36,9 +36,10 @@ to MAX, and leave the `Array` tier to the thing only it can do: run
 `FloatLike`-generically, per SIMD lane, inside a kernel body.
 """
 
+from algorithm.rowwise_types import RowCoord
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from linalg.bmm import batched_matmul as _max_batched_matmul
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
@@ -88,8 +89,8 @@ def dot[
     @always_inline
     def times[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {var rhs} -> SIMD[dtype, w]:
-        return tile * rhs.load[w](Coord(idx))
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {var rhs} -> SIMD[dtype, w]:
+        return tile * rhs.load[w](idx.coord)
 
     reduce_all[monoid="sum", target=_target[gpu]()](
         a.view(), out.view(), times, n, Optional(ctx)
@@ -117,7 +118,7 @@ def nrm2[
     @always_inline
     def square[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile * tile
 
     reduce_all[monoid="sum", target=_target[gpu]()](
@@ -142,7 +143,7 @@ def asum[
     @always_inline
     def magnitude[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return abs(tile)
 
     reduce_all[monoid="sum", target=_target[gpu]()](

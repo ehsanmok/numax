@@ -185,8 +185,8 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
   and numax names no architecture; nothing on any page is an AMD
   measurement.
 - **Stability.** Young and experimental; APIs may change. Requires
-  `max-core ==26.5` and `mojo >=1.0.0,<2.0.0`, and was surveyed against
-  `max 26.5`.
+  `max-core ==26.6` and `mojo >=1.0.0,<2.0.0`. Capability claims citing
+  `max ==26.5` record the version they were surveyed at.
 
 ## Where to read next
 

@@ -85,9 +85,9 @@ which has no GPU runners. Run with `pixi run bench-roofline`.
 
 from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout, row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.gpu.host import DeviceContext
-from std.gpu import global_idx
+from max.gpu import global_idx
 from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
@@ -130,20 +130,20 @@ def _coarse_map[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
 ) where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """`map[gpu=True]`, but each thread handles `width` consecutive elements.
@@ -190,21 +190,21 @@ def _time_launch[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     ys: TileTensor[
         dtype,
         LayoutType,
         MutAnyOrigin,
-        Storage=PointerStorage[element_width=1],
+        Engine=DefaultEngine[element_width=1],
     ],
     block_size: Int,
 ) raises -> Float64 where (
     TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].all_dims_known
     and TileTensor[
-        dtype, LayoutType, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ].is_row_major
 ):
     """Average nanoseconds per launch of `_coarse_map` at these parameters.

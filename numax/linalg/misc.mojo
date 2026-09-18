@@ -19,9 +19,10 @@ from being chosen at run time. `fro` and `inf` are defined in this module
 and shared by both tiers, so `norm[..., fro]` reads the same either way.
 """
 
+from algorithm.rowwise_types import RowCoord
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.algorithm.functional import elementwise
 from std.math import sqrt as _sqrt
 from std.utils import IndexList
@@ -52,7 +53,7 @@ comptime _Flat[dtype: DType] = TileTensor[
     dtype,
     type_of(row_major(Coord(0))),
     MutAnyOrigin,
-    Storage=PointerStorage[element_width=1],
+    Engine=DefaultEngine[element_width=1],
 ]
 """A runtime-shaped rank-1 view over an existing pointer.
 
@@ -97,7 +98,7 @@ def trace[
     @always_inline
     def identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
     reduce_all[monoid="sum", target=_target[gpu]()](
@@ -155,7 +156,7 @@ def norm[
         @always_inline
         def square[
             w: Int
-        ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+        ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
             return tile * tile
 
         reduce_all[monoid="sum", target=_target[gpu]()](

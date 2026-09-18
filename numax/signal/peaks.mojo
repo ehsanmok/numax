@@ -74,13 +74,12 @@ def find_peaks[
         for j in range(count):
             order.append(j)
 
-        @parameter
-        def higher(a: Int, b: Int) -> Bool:
+        def higher(a: Int, b: Int) {imm} -> Bool:
             var ha = Float64(xs[peaks[a]])
             var hb = Float64(xs[peaks[b]])
             return ha > hb or (ha == hb and a < b)
 
-        _sort[higher](order)
+        _sort(order, higher)
         var removed = List[Bool](length=count, fill=False)
         for j in order:
             if removed[j]:

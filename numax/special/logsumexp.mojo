@@ -29,10 +29,11 @@ so `logsumexp([-1000, -1000.5])` is `-999.526` rather than `log(0)`.
 from std.collections import Array
 from std.math import log as _log
 
+from algorithm.rowwise_types import RowCoord
 from algorithm import rowwise
 from algorithm.reduce_op import OnlineLogSumExp
 from layout import Coord, TileTensor
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.gpu.host import DeviceContext
 from std.utils import IndexList
 
@@ -81,7 +82,7 @@ def logsumexp[
     @always_inline
     def identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) -> SIMD[dtype, w]:
         return tile
 
     @always_inline
@@ -90,9 +91,9 @@ def logsumexp[
     ](row_coords: Coord, mut c: rowwise.Context[params]) {var src, var dst}:
         @always_inline
         def load[
-            width: Int, alignment: Int, coord_rank: Int
-        ](idx: IndexList[coord_rank]) {var src} -> SIMD[dtype, width]:
-            return src.load[width](Coord(idx))
+            width: Int, alignment: Int
+        ](idx: RowCoord[1]) {var src} -> SIMD[dtype, width]:
+            return src.load[width](idx.coord)
 
         var row = rowwise.Row[params, dtype, dtype, 0, 1, is_cached=False](
             row_coords, n, c, load
@@ -103,7 +104,7 @@ def logsumexp[
         var value = state.m[0] + _log(state.l[0])
 
         @always_inline
-        def write(oc: IndexList[1]) {var value, var dst}:
+        def write(oc: RowCoord[1]) {var value, var dst}:
             dst.store[1](Coord(0), value)
 
         row.emit(write)

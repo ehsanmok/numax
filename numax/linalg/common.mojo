@@ -13,7 +13,7 @@ each carry their own copy.
 
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.collections import Array
@@ -32,7 +32,7 @@ comptime _Dense[dtype: DType] = TileTensor[
     dtype,
     type_of(row_major(Coord(0, 0))),
     MutAnyOrigin,
-    Storage=PointerStorage[element_width=1],
+    Engine=DefaultEngine[element_width=1],
 ]
 """A runtime-shaped, contiguous rank-2 view over an existing pointer.
 

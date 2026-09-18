@@ -432,7 +432,7 @@ def _subtract_panel[
         ctx.synchronize()
         return
 
-    @parameter
+    @__parameter
     @always_inline
     @__copy_capture(target, row_base, col_base)
     def subtract[

@@ -30,9 +30,9 @@ paths (`map[gpu=False]` walks the host view, `map[gpu=True]` launches on the
 device view through `enqueue_function`).
 
 **Why a `Tensor` wrapper, not a bare `TileTensor`.** `TileTensor` is a
-*view*: a pointer plus a layout, not the memory itself, in every storage
-policy MAX ships (`PointerStorage`, `DevicePointerStorage`,
-`StaticOffsetStorage` -- all non-owning). Confirmed directly: a function
+*view*: a pointer plus a layout, not the memory itself, under every engine
+MAX ships (`DefaultEngine`, `DevicePointerEngine`, `StaticOffsetEngine` --
+all non-owning). Confirmed directly: a function
 that builds a local buffer, wraps it in a `TileTensor`, and returns the
 `TileTensor` alone produces a dangling pointer the instant the function
 returns; a stress test that allocated 2000 more buffers between the call and

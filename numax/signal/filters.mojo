@@ -52,6 +52,7 @@ on a caller. `decimate` is here, in SciPy's `ftype="fir"` form. IIR *design* -- 
 `iirfilter` -- is `design.mojo`'s, one module over.
 """
 
+from std.collections import Array
 from std.math import cos as _cos, sin as _sin
 
 from layout import Coord, coord_to_index_list
@@ -420,7 +421,7 @@ def medfilt[
     @always_inline
     def lane[w: Int, alignment: Int = 1](coord: Coord) {var xs, var ys}:
         var i = coord_to_index_list(coord)[0]
-        var window = InlineArray[Scalar[dtype], kernel_size](fill=0)
+        var window = Array[Scalar[dtype], kernel_size](fill=0)
         for j in range(kernel_size):
             var src = i - half + j
             window[j] = xs[Coord(src)] if (src >= 0 and src < n) else Scalar[

@@ -34,7 +34,7 @@ backend = { name = "pixi-build-rattler-build", version = ">=0.4" }
 # to 55. `mojo` is not redundant on top of it -- `max-core` pulls
 # `mojo-compiler` (which has `bin/mojo`), but the metapackage is what brings
 # `mblack` for `mojo format` and `llvm-symbolizer` for CI's crash dumps.
-max-core = "==26.5"
+max-core = "==26.6"
 mojo = ">=1.0.0,<2.0.0"
 # For `examples/intermediate/npy_to_cholesky.mojo` only, which checks the
 # `.npy` round trip against real NumPy. Nothing under `numax/` imports it.

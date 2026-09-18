@@ -15,6 +15,7 @@ from max.gpu.host import DeviceContext
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 from std.utils import IndexList
 
+from algorithm.rowwise_types import RowCoord
 from numax.core.array import Static, zeros, zeros_dyn
 from numax.core._drive import _flat
 from numax.core.rowwise import (
@@ -186,7 +187,7 @@ def test_reduce_all_matches_reduce_for_every_monoid() raises:
     @always_inline
     def _identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
     reduce_all[monoid="sum"](_flat(a), out.view(), _identity, n, Optional(ctx))
@@ -225,7 +226,7 @@ def test_reduce_all_applies_the_per_tile_transform() raises:
     @always_inline
     def square[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile * tile
 
     reduce_all[monoid="sum"](_flat(a), out.view(), square, n, Optional(ctx))
@@ -256,7 +257,7 @@ def test_reduce_all_agrees_between_a_static_and_a_dynamic_input() raises:
     @always_inline
     def _identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: IndexList[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
     reduce_all[monoid="sum"](

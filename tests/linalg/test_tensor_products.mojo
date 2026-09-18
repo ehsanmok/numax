@@ -151,8 +151,7 @@ def test_tensordot_leaves_one_column_at_every_row_count() raises:
     the tail the padding is missing.
     """
 
-    @parameter
-    for rows in range(1, 10):
+    comptime for rows in range(1, 10):
         var values = List[Float64](capacity=rows * 4)
         for i in range(rows * 4):
             values.append(Float64(i) * 0.25 - 1.0)

@@ -52,11 +52,11 @@ parallelism through GEMM. Nothing above changes when that lands.
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
 from linalg.matmul import matmul as _max_matmul
-from layout.tile_tensor import PointerStorage
+from layout.tile_tensor import DefaultEngine
 from max.algorithm.functional import elementwise, parallelize
 from max.gpu import barrier
 from max.gpu.host import DeviceContext
-from std.gpu import block_dim, thread_idx
+from max.gpu import block_dim, thread_idx
 from std.math import sqrt
 from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
@@ -111,7 +111,7 @@ is the behaviour wanted.
 
 
 comptime _View[dtype: DType, Lay: TensorLayout] = TileTensor[
-    dtype, Lay, MutAnyOrigin, Storage=PointerStorage[element_width=1]
+    dtype, Lay, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
 ]
 """What every routine here takes: an origin-erased, element-at-a-time view.
 
@@ -475,7 +475,7 @@ def getrf2[
             product.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, cols))
         )
 
-        @parameter
+        @__parameter
         @always_inline
         @__copy_capture(a, r0)
         def subtract[
@@ -658,8 +658,7 @@ def latrd_column[
         return
 
     @always_inline
-    @parameter
-    def update_row(index: Int):
+    def update_row(index: Int) {imm}:
         var row = i + index
         var total = a[Coord(row, i)]
         for c in range(j):
@@ -669,7 +668,7 @@ def latrd_column[
 
     comptime if target == "cpu":
         if rows * j * 4 >= _PARALLEL_MIN_WORK:
-            parallelize[update_row](rows)
+            parallelize(update_row, rows)
         else:
             for index in range(rows):
                 update_row(index)
@@ -678,7 +677,9 @@ def latrd_column[
         @always_inline
         def update[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var left, var i, var j, var half}:
+        ](coord: Coord) {
+            var a, var left, var i, var j, var half, var update_row
+        }:
             update_row(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
@@ -766,8 +767,7 @@ def latrd_w[
 
     # Phase one: the `2j + 1` reductions, one task each.
     @always_inline
-    @parameter
-    def reduce_one(r: Int):
+    def reduce_one(r: Int) {imm}:
         var total = Scalar[dtype](0)
         for row in range(first, n):
             var value = Scalar[dtype](0)
@@ -782,7 +782,7 @@ def latrd_w[
 
     comptime if target == "cpu":
         if (n - first) * cols * 3 >= _LATRD_MIN_WORK:
-            parallelize[reduce_one](cols)
+            parallelize(reduce_one, cols)
         else:
             for r in range(cols):
                 reduce_one(r)
@@ -800,6 +800,7 @@ def latrd_w[
             var j,
             var half,
             var n,
+            var reduce_one,
         }:
             reduce_one(coord_to_index_list(coord)[0])
 
@@ -807,7 +808,7 @@ def latrd_w[
 
     # Phase two: `alpha`, which needs every reduction and is one scalar.
     @always_inline
-    @parameter
+    @__parameter
     def fold_alpha():
         var this_tau = tau[Coord(i)]
         var total = red[Coord(0)]
@@ -833,8 +834,7 @@ def latrd_w[
 
     # Phase three: the masked axpy and the two operand stores, per row.
     @always_inline
-    @parameter
-    def build_row(row: Int):
+    def build_row(row: Int) {imm}:
         var this_tau = tau[Coord(i)]
         var alpha = red[Coord(slot)]
         var v = vpad[Coord(row)]
@@ -852,7 +852,7 @@ def latrd_w[
 
     comptime if target == "cpu":
         if n * (4 * j + 6) >= _LATRD_MIN_WORK:
-            parallelize[build_row](n)
+            parallelize(build_row, n)
         else:
             for row in range(n):
                 build_row(row)
@@ -873,6 +873,7 @@ def latrd_w[
             var j,
             var half,
             var slot,
+            var build_row,
         }:
             build_row(coord_to_index_list(coord)[0])
 
@@ -928,8 +929,7 @@ def labrd_column[
         return
 
     @always_inline
-    @parameter
-    def update_row(index: Int):
+    def update_row(index: Int) {imm}:
         var row = i + index
         var total = a[Coord(row, i)]
         for c in range(j):
@@ -939,7 +939,7 @@ def labrd_column[
 
     comptime if target == "cpu":
         if rows * j * 4 >= _PARALLEL_MIN_WORK:
-            parallelize[update_row](rows)
+            parallelize(update_row, rows)
         else:
             for index in range(rows):
                 update_row(index)
@@ -949,7 +949,15 @@ def labrd_column[
         def update[
             w: Int, alignment: Int = 1
         ](coord: Coord) {
-            var a, var left, var x, var y, var right, var i, var j, var k0
+            var a,
+            var left,
+            var x,
+            var y,
+            var right,
+            var i,
+            var j,
+            var k0,
+            var update_row,
         }:
             update_row(coord_to_index_list(coord)[0])
 
@@ -994,8 +1002,7 @@ def labrd_row[
         return
 
     @always_inline
-    @parameter
-    def update_col(index: Int):
+    def update_col(index: Int) {imm}:
         var col = i + 1 + index
         var total = a[Coord(i, col)]
         for c in range(j + 1):
@@ -1006,7 +1013,7 @@ def labrd_row[
 
     comptime if target == "cpu":
         if cols * (j + 1) * 4 >= _PARALLEL_MIN_WORK:
-            parallelize[update_col](cols)
+            parallelize(update_col, cols)
         else:
             for index in range(cols):
                 update_col(index)
@@ -1016,7 +1023,15 @@ def labrd_row[
         def update[
             w: Int, alignment: Int = 1
         ](coord: Coord) {
-            var a, var left, var x, var y, var right, var i, var j, var k0
+            var a,
+            var left,
+            var x,
+            var y,
+            var right,
+            var i,
+            var j,
+            var k0,
+            var update_col,
         }:
             update_col(coord_to_index_list(coord)[0])
 
@@ -1073,8 +1088,7 @@ def labrd_y[
     var i = k0 + j
 
     @always_inline
-    @parameter
-    def reduce_one(r: Int):
+    def reduce_one(r: Int) {imm}:
         var total = Scalar[dtype](0)
         if r < j:
             for row in range(i, m):
@@ -1087,7 +1101,7 @@ def labrd_y[
     if j > 0:
         comptime if target == "cpu":
             if (m - i) * 2 * j * 3 >= _LATRD_MIN_WORK:
-                parallelize[reduce_one](2 * j)
+                parallelize(reduce_one, 2 * j)
             else:
                 for r in range(2 * j):
                     reduce_one(r)
@@ -1097,7 +1111,14 @@ def labrd_y[
             def reduce_all[
                 w: Int, alignment: Int = 1
             ](coord: Coord) {
-                var left, var x, var red, var i, var j, var k0, var m
+                var left,
+                var x,
+                var red,
+                var i,
+                var j,
+                var k0,
+                var m,
+                var reduce_one,
             }:
                 reduce_one(coord_to_index_list(coord)[0])
 
@@ -1106,8 +1127,7 @@ def labrd_y[
             )
 
     @always_inline
-    @parameter
-    def build_col(col: Int):
+    def build_col(col: Int) {imm}:
         var value = Scalar[dtype](0)
         if col > i:
             var acc = t1[Coord(col)]
@@ -1119,7 +1139,7 @@ def labrd_y[
 
     comptime if target == "cpu":
         if n * (4 * j + 4) >= _LATRD_MIN_WORK:
-            parallelize[build_col](n)
+            parallelize(build_col, n)
         else:
             for col in range(n):
                 build_col(col)
@@ -1129,7 +1149,15 @@ def labrd_y[
         def build[
             w: Int, alignment: Int = 1
         ](coord: Coord) {
-            var t1, var y, var right, var red, var tau, var i, var j, var k0
+            var t1,
+            var y,
+            var right,
+            var red,
+            var tau,
+            var i,
+            var j,
+            var k0,
+            var build_col,
         }:
             build_col(coord_to_index_list(coord)[0])
 
@@ -1181,8 +1209,7 @@ def labrd_x[
     var i = k0 + j
 
     @always_inline
-    @parameter
-    def reduce_one(r: Int):
+    def reduce_one(r: Int) {imm}:
         var total = Scalar[dtype](0)
         if r <= j:
             for col in range(i + 1, n):
@@ -1196,7 +1223,7 @@ def labrd_x[
 
     comptime if target == "cpu":
         if (n - i) * (2 * j + 1) * 3 >= _LATRD_MIN_WORK:
-            parallelize[reduce_one](2 * j + 1)
+            parallelize(reduce_one, 2 * j + 1)
         else:
             for r in range(2 * j + 1):
                 reduce_one(r)
@@ -1206,7 +1233,14 @@ def labrd_x[
         def reduce_all[
             w: Int, alignment: Int = 1
         ](coord: Coord) {
-            var y, var right, var red, var i, var j, var k0, var n
+            var y,
+            var right,
+            var red,
+            var i,
+            var j,
+            var k0,
+            var n,
+            var reduce_one,
         }:
             reduce_one(coord_to_index_list(coord)[0])
 
@@ -1215,8 +1249,7 @@ def labrd_x[
         )
 
     @always_inline
-    @parameter
-    def build_row(row: Int):
+    def build_row(row: Int) {imm}:
         var value = Scalar[dtype](0)
         if row > i:
             var acc = t2[Coord(row)]
@@ -1229,7 +1262,7 @@ def labrd_x[
 
     comptime if target == "cpu":
         if m * (4 * j + 6) >= _LATRD_MIN_WORK:
-            parallelize[build_row](m)
+            parallelize(build_row, m)
         else:
             for row in range(m):
                 build_row(row)
@@ -1239,7 +1272,15 @@ def labrd_x[
         def build[
             w: Int, alignment: Int = 1
         ](coord: Coord) {
-            var t2, var left, var x, var red, var tau, var i, var j, var k0
+            var t2,
+            var left,
+            var x,
+            var red,
+            var tau,
+            var i,
+            var j,
+            var k0,
+            var build_row,
         }:
             build_row(coord_to_index_list(coord)[0])
 
@@ -1309,8 +1350,7 @@ def lahr2_column[
 
     # Phase one: the deferred right update, over the whole column.
     @always_inline
-    @parameter
-    def defer_row(row: Int):
+    def defer_row(row: Int) {imm}:
         var total = a[Coord(row, i)]
         for c in range(j):
             total -= y[Coord(row, c)] * v[Coord(i, k0 + c)]
@@ -1318,7 +1358,7 @@ def lahr2_column[
 
     comptime if target == "cpu":
         if n * j * 3 >= _LATRD_MIN_WORK:
-            parallelize[defer_row](n)
+            parallelize(defer_row, n)
         else:
             for row in range(n):
                 defer_row(row)
@@ -1327,15 +1367,16 @@ def lahr2_column[
         @always_inline
         def defer[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var y, var v, var i, var j, var k0}:
+        ](coord: Coord) {
+            var a, var y, var v, var i, var j, var k0, var defer_row
+        }:
             defer_row(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](defer, Coord(n), ctx)
 
     # Phase two: `w = V^T b`, one dot product per panel column.
     @always_inline
-    @parameter
-    def reduce_one(c: Int):
+    def reduce_one(c: Int) {imm}:
         var total = Scalar[dtype](0)
         for row in range(k0 + 1, n):
             total += v[Coord(row, k0 + c)] * a[Coord(row, i)]
@@ -1343,7 +1384,7 @@ def lahr2_column[
 
     comptime if target == "cpu":
         if (n - k0) * j * 3 >= _LATRD_MIN_WORK:
-            parallelize[reduce_one](j)
+            parallelize(reduce_one, j)
         else:
             for c in range(j):
                 reduce_one(c)
@@ -1352,7 +1393,9 @@ def lahr2_column[
         @always_inline
         def reduce_all[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var v, var red, var i, var j, var k0, var n}:
+        ](coord: Coord) {
+            var a, var v, var red, var i, var j, var k0, var n, var reduce_one
+        }:
             reduce_one(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](reduce_all, Coord(j), ctx)
@@ -1360,7 +1403,7 @@ def lahr2_column[
     # Phase two and a half: `w <- T^T w`, `T` upper triangular so entry
     # `c` reads `T[0:c+1, c]`.
     @always_inline
-    @parameter
+    @__parameter
     def fold_one(c: Int):
         var total = Scalar[dtype](0)
         for r in range(c + 1):
@@ -1386,8 +1429,7 @@ def lahr2_column[
         return
 
     @always_inline
-    @parameter
-    def apply_row(index: Int):
+    def apply_row(index: Int) {imm}:
         var row = k0 + 1 + index
         var total = a[Coord(row, i)]
         for c in range(j):
@@ -1396,7 +1438,7 @@ def lahr2_column[
 
     comptime if target == "cpu":
         if rows * j * 3 >= _LATRD_MIN_WORK:
-            parallelize[apply_row](rows)
+            parallelize(apply_row, rows)
         else:
             for index in range(rows):
                 apply_row(index)
@@ -1405,7 +1447,9 @@ def lahr2_column[
         @always_inline
         def apply[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var v, var red, var i, var j, var k0, var half}:
+        ](coord: Coord) {
+            var a, var v, var red, var i, var j, var k0, var half, var apply_row
+        }:
             apply_row(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](apply, Coord(rows), ctx)
@@ -1466,8 +1510,7 @@ def lahr2_y[
     var i = k0 + j
 
     @always_inline
-    @parameter
-    def reduce_one(c: Int):
+    def reduce_one(c: Int) {imm}:
         var total = Scalar[dtype](0)
         for row in range(i + 1, n):
             total += v[Coord(row, k0 + c)] * v[Coord(row, i)]
@@ -1476,7 +1519,7 @@ def lahr2_y[
     if j > 0:
         comptime if target == "cpu":
             if (n - i) * j * 3 >= _LATRD_MIN_WORK:
-                parallelize[reduce_one](j)
+                parallelize(reduce_one, j)
             else:
                 for c in range(j):
                     reduce_one(c)
@@ -1485,14 +1528,15 @@ def lahr2_y[
             @always_inline
             def reduce_all[
                 w: Int, alignment: Int = 1
-            ](coord: Coord) {var v, var red, var i, var j, var k0, var n}:
+            ](coord: Coord) {
+                var v, var red, var i, var j, var k0, var n, var reduce_one
+            }:
                 reduce_one(coord_to_index_list(coord)[0])
 
             elementwise[simd_width=1, target=target](reduce_all, Coord(j), ctx)
 
     @always_inline
-    @parameter
-    def build_row(row: Int):
+    def build_row(row: Int) {imm}:
         var acc = p[Coord(row)]
         for c in range(j):
             acc -= y[Coord(row, c)] * red[Coord(c)]
@@ -1500,7 +1544,7 @@ def lahr2_y[
 
     comptime if target == "cpu":
         if n * (2 * j + 3) >= _LATRD_MIN_WORK:
-            parallelize[build_row](n)
+            parallelize(build_row, n)
         else:
             for row in range(n):
                 build_row(row)
@@ -1509,13 +1553,15 @@ def lahr2_y[
         @always_inline
         def build[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var p, var y, var red, var tau, var i, var j}:
+        ](coord: Coord) {
+            var p, var y, var red, var tau, var i, var j, var build_row
+        }:
             build_row(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](build, Coord(n), ctx)
 
     @always_inline
-    @parameter
+    @__parameter
     def build_t(c: Int):
         if c == j:
             t_block.store[1](Coord(j, j), tau[Coord(i)])
@@ -1835,8 +1881,7 @@ def gemv_sub[
         return
 
     @always_inline
-    @parameter
-    def update_row(index: Int):
+    def update_row(index: Int) {imm}:
         var row = row0 + index
         var total = x[Coord(row)]
         for j in range(cols):
@@ -1849,7 +1894,7 @@ def gemv_sub[
     # triangular solve.
     comptime if target == "cpu":
         if rows * cols >= _PARALLEL_MIN_WORK:
-            parallelize[update_row](rows)
+            parallelize(update_row, rows)
         else:
             for index in range(rows):
                 update_row(index)
@@ -1858,7 +1903,9 @@ def gemv_sub[
         @always_inline
         def update[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var x, var row0, var col0, var cols}:
+        ](coord: Coord) {
+            var a, var x, var row0, var col0, var cols, var update_row
+        }:
             update_row(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](update, Coord(rows), ctx)
@@ -2243,8 +2290,7 @@ def trsm_right_lower_t[
     comptime lanes = simd_width_of[dtype]()
 
     @always_inline
-    @parameter
-    def solve_row(index: Int):
+    def solve_row(index: Int) {imm}:
         var row = k + nb + index
         for j in range(nb):
             # The dot product of this row's finished prefix against row
@@ -2270,7 +2316,7 @@ def trsm_right_lower_t[
     # `elementwise`, which wants one thread per row and has no threshold.
     comptime if target == "cpu":
         if height * nb * nb >= _PARALLEL_MIN_WORK:
-            parallelize[solve_row](height)
+            parallelize(solve_row, height)
         else:
             for index in range(height):
                 solve_row(index)
@@ -2279,7 +2325,7 @@ def trsm_right_lower_t[
         @always_inline
         def solve[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var k, var nb}:
+        ](coord: Coord) {var a, var k, var nb, var solve_row}:
             solve_row(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](solve, Coord(height), ctx)
@@ -2311,8 +2357,7 @@ def trsm_left_lower_unit[
         return
 
     @always_inline
-    @parameter
-    def solve_col(index: Int):
+    def solve_col(index: Int) {imm}:
         var col = k + nb + index
         for i in range(nb):
             var total = a[Coord(k + i, col)]
@@ -2326,7 +2371,7 @@ def trsm_left_lower_unit[
     # apart.
     comptime if target == "cpu":
         if width * nb * nb >= _PARALLEL_MIN_WORK:
-            parallelize[solve_col](width)
+            parallelize(solve_col, width)
         else:
             for index in range(width):
                 solve_col(index)
@@ -2335,7 +2380,7 @@ def trsm_left_lower_unit[
         @always_inline
         def solve[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var a, var k, var nb}:
+        ](coord: Coord) {var a, var k, var nb, var solve_col}:
             solve_col(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](solve, Coord(width), ctx)

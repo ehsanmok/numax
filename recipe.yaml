@@ -44,7 +44,7 @@ requirements:
     # `mojo` is here for the toolchain a consumer building against numax
     # wants anyway -- the formatter and the LSP server -- and because this
     # pair is the combination numax's own CI gate runs against.
-    - max-core ==26.5
+    - max-core ==26.6
     - mojo >=1.0.0,<2.0.0
 
 about:

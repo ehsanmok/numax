@@ -7,12 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 νMAX (`numax`) is a numerical computing library for Mojo built on MAX: special
 functions, dense linear algebra, quadrature, ODE solvers, FFTs, distributions,
 statistics, interpolation, signal processing, and a NumPy-named array surface.
-Requires `max-core ==26.5` and `mojo >=1.0.0,<2.0.0` via pixi -- `max-core`
+Requires `max-core ==26.6` and `mojo >=1.0.0,<2.0.0` via pixi -- `max-core`
 rather than the `max` metapackage, since numax imports the Mojo kernel
 packages and nothing Python-facing. `numpy` is in the default environment
 for one example only (`npy_to_cholesky.mojo`, which checks the `.npy` round
-trip against real NumPy); nothing under `numax/` imports it. `max 26.5` is
-the version every capability claim in the tree was surveyed at.
+trip against real NumPy); nothing under `numax/` imports it. `max 26.6` is
+what solves; a capability claim in the tree citing `max ==26.5` records the
+version it was surveyed at, which is a different fact.
 
 ## Commands
 

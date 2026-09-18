@@ -270,7 +270,7 @@ def cholesky[
                         )
                         continue
 
-                    @parameter
+                    @__parameter
                     @always_inline
                     @__copy_capture(wv, r0, c0)
                     def subtract[
