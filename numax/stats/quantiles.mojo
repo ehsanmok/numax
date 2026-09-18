@@ -49,6 +49,7 @@ from std.utils.numerics import nan as _nan
 
 from layout.tile_layout import TensorLayout
 
+from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.array import Static, Tensor
 
 
@@ -305,8 +306,8 @@ def _select_route(m: Int, n: Int) -> Bool:
 
 
 def _host_values[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], drop_nan: Bool) raises -> List[Scalar[dtype]]:
+    T: TensorLike
+](xs: T, drop_nan: Bool) raises -> List[Scalar[T.dtype]]:
     """The tensor's values on the host at `dtype`, in no particular order,
     NaNs removed when `drop_nan`. Without `drop_nan` a NaN anywhere empties
     the list, which every caller reads as "the answer is NaN" -- NumPy's
@@ -316,6 +317,7 @@ def _host_values[
     compacts in place rather than filtering into a second one: at `2^24`
     elements the copy this avoids is the same size as the download.
     """
+    comptime dtype = T.dtype
     var values = xs.to_host()
     if not drop_nan:
         for i in range(len(values)):
@@ -374,10 +376,10 @@ def _read_many[
 
 
 def quantile[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], q: Float64, method: StaticString = "linear"
-) raises -> Scalar[dtype] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
+    T.dtype
+] where T.dtype.is_floating_point():
     """The `q`-th quantile of every element of `xs`, `q` in `[0, 1]`.
     `numpy.quantile(a, q, method=method)`.
 
@@ -394,12 +396,12 @@ def quantile[
 
 
 def quantile[
-    dtype: DType, LayoutType: TensorLayout, m: Int
+    T: TensorLike, m: Int
 ](
-    xs: Tensor[dtype, LayoutType],
-    q: Static[dtype, m],
+    xs: T,
+    q: Static[T.dtype, m],
     method: StaticString = "linear",
-) raises -> Static[dtype, m] where (dtype.is_floating_point() and m > 0):
+) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
     """Several quantiles at once: `m` selections, or one sort when `m` is
     large enough to pay for it. `numpy.quantile(a, [q0, q1, ...])`.
 
@@ -407,38 +409,40 @@ def quantile[
     `3 m < log2 n`, one sort above it -- and the answer is the same either
     way.
     """
+    comptime dtype = T.dtype
     var values = _host_values(xs, False)
     var out = _read_many[dtype, m](values, q.to_host(), 1.0, method, True)
     return Static[dtype, m](q.context(), out^)
 
 
 def percentile[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], q: Float64, method: StaticString = "linear"
-) raises -> Scalar[dtype] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
+    T.dtype
+] where T.dtype.is_floating_point():
     """`quantile` with `q` in percent. `numpy.percentile(a, q)`."""
     return quantile(xs, q / 100.0, method)
 
 
 def percentile[
-    dtype: DType, LayoutType: TensorLayout, m: Int
+    T: TensorLike, m: Int
 ](
-    xs: Tensor[dtype, LayoutType],
-    q: Static[dtype, m],
+    xs: T,
+    q: Static[T.dtype, m],
     method: StaticString = "linear",
-) raises -> Static[dtype, m] where (dtype.is_floating_point() and m > 0):
+) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
     """Several percentiles at once, on `quantile`'s selection route."""
+    comptime dtype = T.dtype
     var values = _host_values(xs, False)
     var out = _read_many[dtype, m](values, q.to_host(), 100.0, method, True)
     return Static[dtype, m](q.context(), out^)
 
 
 def nanquantile[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], q: Float64, method: StaticString = "linear"
-) raises -> Scalar[dtype] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
+    T.dtype
+] where T.dtype.is_floating_point():
     """`quantile` over the non-NaN elements. `numpy.nanquantile`. Raises
     when every element is NaN, where NumPy warns and returns NaN."""
     var values = _host_values(xs, True)
@@ -446,32 +450,31 @@ def nanquantile[
 
 
 def nanquantile[
-    dtype: DType, LayoutType: TensorLayout, m: Int
+    T: TensorLike, m: Int
 ](
-    xs: Tensor[dtype, LayoutType],
-    q: Static[dtype, m],
+    xs: T,
+    q: Static[T.dtype, m],
     method: StaticString = "linear",
-) raises -> Static[dtype, m] where (dtype.is_floating_point() and m > 0):
+) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
     """Several NaN-ignoring quantiles at once, on the same route."""
+    comptime dtype = T.dtype
     var values = _host_values(xs, True)
     var out = _read_many[dtype, m](values, q.to_host(), 1.0, method, False)
     return Static[dtype, m](q.context(), out^)
 
 
 def nanpercentile[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], q: Float64, method: StaticString = "linear"
-) raises -> Scalar[dtype] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
+    T.dtype
+] where T.dtype.is_floating_point():
     """`percentile` over the non-NaN elements. `numpy.nanpercentile`."""
     return nanquantile(xs, q / 100.0, method)
 
 
 def nanmedian[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T) raises -> Scalar[T.dtype] where T.dtype.is_floating_point():
     """The median of the non-NaN elements. `numpy.nanmedian` -- the
     `"linear"` quantile at `1/2`, which is `median`'s even-count average,
     and like `median` a selection rather than a sort."""
@@ -479,12 +482,12 @@ def nanmedian[
 
 
 def iqr[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    xs: Tensor[dtype, LayoutType],
+    xs: T,
     interpolation: StaticString = "linear",
     nan_policy: StaticString = "propagate",
-) raises -> Scalar[dtype] where dtype.is_floating_point():
+) raises -> Scalar[T.dtype] where T.dtype.is_floating_point():
     """The interquartile range, the 75th percentile less the 25th.
     `scipy.stats.iqr(x, interpolation=..., nan_policy=...)`.
 
@@ -497,6 +500,7 @@ def iqr[
     left behind, which is a permutation of the same sample, so the answer
     does not depend on the order they run in.
     """
+    comptime dtype = T.dtype
     if not (nan_policy == "propagate" or nan_policy == "omit"):
         raise Error("iqr: nan_policy must be 'propagate' or 'omit'")
     var values = _host_values(xs, nan_policy == "omit")

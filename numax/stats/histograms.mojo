@@ -28,6 +28,7 @@ from std.math import floor as _floor
 from layout.tile_layout import TensorLayout
 from max.gpu.host import DeviceContext
 
+from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.array import Dynamic, Static, Tensor, asarray
 
 
@@ -164,14 +165,14 @@ struct Histogram[dtype: DType, bins: Int](Movable):
 
 
 def histogram[
-    dtype: DType, LayoutType: TensorLayout, bins: Int = 10
+    T: TensorLike, bins: Int = 10
 ](
-    xs: Tensor[dtype, LayoutType],
+    xs: T,
     low: Optional[Float64] = None,
     high: Optional[Float64] = None,
     density: Bool = False,
-) raises -> Histogram[dtype, bins] where (
-    dtype.is_floating_point() and bins > 0
+) raises -> Histogram[T.dtype, bins] where (
+    T.dtype.is_floating_point() and bins > 0
 ):
     """The histogram of every element of `xs` over `bins` equal-width bins
     spanning `[low, high]` -- the data's range by default.
@@ -183,6 +184,7 @@ def histogram[
     compile-time parameter because it shapes the result; the explicit-edges
     form takes an `edges` tensor instead. Host-side, one pass.
     """
+    comptime dtype = T.dtype
     var values = _as_float64(xs.to_host())
     var span = _data_range(values)
     var lo = low.value() if low else span[0]
@@ -200,19 +202,20 @@ def histogram[
 
 
 def histogram[
-    dtype: DType, LayoutType: TensorLayout, bins: Int = 10
+    T: TensorLike, bins: Int = 10
 ](
-    xs: Tensor[dtype, LayoutType],
-    weights: Tensor[dtype, LayoutType],
+    xs: T,
+    weights: T,
     low: Optional[Float64] = None,
     high: Optional[Float64] = None,
     density: Bool = False,
-) raises -> Histogram[dtype, bins] where (
-    dtype.is_floating_point() and bins > 0
+) raises -> Histogram[T.dtype, bins] where (
+    T.dtype.is_floating_point() and bins > 0
 ):
     """`histogram` with each sample contributing its weight rather than
     one. `numpy.histogram(a, bins, weights=w)`; `density` normalizes the
     weighted total."""
+    comptime dtype = T.dtype
     var values = _as_float64(xs.to_host())
     var span = _data_range(values)
     var lo = low.value() if low else span[0]
@@ -230,14 +233,14 @@ def histogram[
 
 
 def histogram[
-    dtype: DType, LayoutType: TensorLayout, m: Int
+    T: TensorLike, m: Int
 ](
-    xs: Tensor[dtype, LayoutType],
-    edges: Static[dtype, m],
+    xs: T,
+    edges: Static[T.dtype, m],
     density: Bool = False,
-) raises -> Histogram[dtype, m - 1] where (
-    dtype.is_floating_point() and m >= 2
-):
+) raises -> Histogram[
+    T.dtype, m - 1
+] where (T.dtype.is_floating_point() and m >= 2):
     """`histogram` over the `m - 1` bins between the given ascending
     `edges`, which need not be uniform. `numpy.histogram(a, bins=edges)`.
     The bin is found by bisection; the last edge is inclusive.
@@ -246,6 +249,7 @@ def histogram[
     ambiguous with the weighted uniform form; spell the parameter list out
     (`histogram[bins=...]`) in that one case.
     """
+    comptime dtype = T.dtype
     return _count[dtype, m - 1](
         xs.context(),
         _as_float64(xs.to_host()),
@@ -257,16 +261,17 @@ def histogram[
 
 
 def histogram[
-    dtype: DType, LayoutType: TensorLayout, m: Int
+    T: TensorLike, m: Int
 ](
-    xs: Tensor[dtype, LayoutType],
-    edges: Static[dtype, m],
-    weights: Tensor[dtype, LayoutType],
+    xs: T,
+    edges: Static[T.dtype, m],
+    weights: T,
     density: Bool = False,
-) raises -> Histogram[dtype, m - 1] where (
-    dtype.is_floating_point() and m >= 2
+) raises -> Histogram[T.dtype, m - 1] where (
+    T.dtype.is_floating_point() and m >= 2
 ):
     """The explicit-edges `histogram` with weights."""
+    comptime dtype = T.dtype
     return _count[dtype, m - 1](
         xs.context(),
         _as_float64(xs.to_host()),
@@ -298,11 +303,20 @@ struct Histogram2D[dtype: DType, xbins: Int, ybins: Int](Movable):
 
 
 def histogram2d[
-    dtype: DType, n: Int, xbins: Int = 10, ybins: Int = 10
-](
-    mut x: Static[dtype, n], mut y: Static[dtype, n], density: Bool = False
-) raises -> Histogram2D[dtype, xbins, ybins] where (
-    dtype.is_floating_point() and n > 0 and xbins > 0 and ybins > 0
+    A: TensorLike,
+    B: TensorLike,
+    xbins: Int = 10,
+    ybins: Int = 10,
+](x: A, y: B, density: Bool = False) raises -> Histogram2D[
+    A.dtype, xbins, ybins
+] where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 0 and xbins > 0 and ybins > 0)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
 ):
     """The joint histogram of the paired samples `(x[i], y[i])` over an
     `xbins x ybins` grid of equal-width cells spanning each sample's
@@ -312,6 +326,8 @@ def histogram2d[
     only when it is inside both ranges. `histogramdd` is the same tally at
     any rank; this is its two-axis spelling with the edges as tensors.
     """
+    comptime dtype = A.dtype
+    comptime n = dim[A, 0]
     var xs = _as_float64(x.to_host())
     var ys = _as_float64(y.to_host())
     var xspan = _data_range(xs)
@@ -371,10 +387,16 @@ struct HistogramDD[dtype: DType, *bins: Int](Movable):
 
 
 def histogramdd[
-    dtype: DType, n: Int, d: Int, //, *bins: Int
-](mut points: Static[dtype, n, d], density: Bool = False) raises -> HistogramDD[
-    dtype, *bins
-] where (dtype.is_floating_point() and n > 0 and d > 0):
+    T: TensorLike,
+    //,
+    *bins: Int,
+](points: T, density: Bool = False) raises -> HistogramDD[
+    T.dtype, *bins
+] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0 and dim[T, 1] > 0)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+):
     """The `d`-dimensional histogram of `n` points, row `i` of `points`
     being one sample, over a grid with `bins[k]` equal-width cells along
     dimension `k`. `numpy.histogramdd(sample, bins=(b0, b1, ...),
@@ -385,6 +407,9 @@ def histogramdd[
     count tensor has the grid's shape. `histogram2d` is the `d = 2` case
     with the edges as tensors.
     """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    comptime d = dim[T, 1]
     comptime dims = len(bins)
     comptime assert dims == d, "histogramdd: one bin count per dimension"
     var host = points.to_host()
@@ -437,10 +462,10 @@ def histogramdd[
 
 
 def bincount[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], minlength: Int = 0) raises -> Dynamic[
-    DType.int64, 1
-] where dtype.is_integral():
+    T: TensorLike
+](xs: T, minlength: Int = 0) raises -> Dynamic[DType.int64, 1] where (
+    is_row_major[T] and T.dtype.is_integral()
+):
     """How often each non-negative integer occurs in `xs`: `out[v]` is the
     count of `v`, and the result is `max(xs) + 1` long or `minlength`,
     whichever is greater. `numpy.bincount(x, minlength)`. A negative value
@@ -461,13 +486,13 @@ def bincount[
 
 
 def bincount[
-    dtype: DType, LayoutType: TensorLayout, wdtype: DType
+    T: TensorLike, wdtype: DType
 ](
-    xs: Tensor[dtype, LayoutType],
-    weights: Tensor[wdtype, LayoutType],
+    xs: T,
+    weights: Tensor[wdtype, T.LayoutType],
     minlength: Int = 0,
 ) raises -> Dynamic[wdtype, 1] where (
-    dtype.is_integral() and wdtype.is_floating_point()
+    is_row_major[T] and T.dtype.is_integral() and wdtype.is_floating_point()
 ):
     """`bincount` summing each value's weight instead of counting it.
     `numpy.bincount(x, weights=w, minlength)`."""
@@ -487,10 +512,10 @@ def bincount[
 
 
 def digitize[
-    dtype: DType, LayoutType: TensorLayout, m: Int
-](
-    xs: Tensor[dtype, LayoutType], bins: Static[dtype, m], right: Bool = False
-) raises -> Dynamic[DType.int64, 1] where (dtype.is_floating_point() and m > 0):
+    T: TensorLike, m: Int
+](xs: T, bins: Static[T.dtype, m], right: Bool = False) raises -> Dynamic[
+    DType.int64, 1
+] where (T.dtype.is_floating_point() and m > 0):
     """The index of the bin each element of `xs` falls in, for monotonic
     `bins`: `bins[i-1] <= x < bins[i]` by default, `bins[i-1] < x <=
     bins[i]` with `right`, `0` below the first edge and `m` past the last.

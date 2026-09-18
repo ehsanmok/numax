@@ -161,7 +161,7 @@ from .dual import Dual
 from .gradient import Gradient
 from .numeric import FloatLike
 from .plain import Plain
-from .tensorlike import TensorLike, dim, is_row_major
+from .tensorlike import TensorLike, View, ViewOver, dim, is_row_major
 from .ops import (
     add as _add,
     divide as _divide,
@@ -812,6 +812,43 @@ The struct's own name cannot double as this alias, so a signature whose
 extents are known at compile time spells `Static` and one whose extents
 are not spells `Dynamic`; the factories take the same `*dims`.
 """
+
+
+def _canonical[
+    T: TensorLike, //, *dims: Int
+](a: T) raises -> ViewOver[
+    T.dtype, _LayoutOf[*dims], MutUntrackedOrigin
+] where (T.LayoutType.all_dims_known and is_row_major[T]):
+    """`a` re-viewed at the canonical row-major layout type of `dims`.
+
+    For a generic routine that has to call an axis routine whose `where`
+    clause speaks about rank: Mojo's prover matches facts syntactically, so
+    `T.LayoutType.rank == 2` in the caller does not discharge
+    `T.LayoutType.rank > 1` in the callee, while on `_LayoutOf[rows, n]` the
+    rank is structural and every such clause evaluates on its own. Sound
+    because `is_row_major[T]` says the storage already has these strides;
+    `dims` must be `a`'s own extents, which every caller spells as
+    `dim[T, i]`.
+
+    Untracked, because a value carrying `origin_of(a)` cannot be returned
+    from a function generic over `a`'s type ("might expand to a
+    RegisterPassable type"), and taken by borrow with the mutability added
+    back, because `View` wants a mutable tile and the routines this feeds
+    only read. For a call expression inside a routine that holds `a` that
+    is no loss; do not store the result past `a`, and do not write through
+    it.
+    """
+    var v = a.view()
+    return View(
+        TileTensor[T.dtype, _LayoutOf[*dims], MutUntrackedOrigin](
+            ptr=v.ptr.unsafe_mut_cast[True]().unsafe_origin_cast[
+                MutUntrackedOrigin
+            ](),
+            layout=row_major[*dims](),
+        ),
+        a.context(),
+    )
+
 
 comptime Dynamic[dtype: DType, rank: Int] = Tensor[dtype, _DynLayoutOf[rank]]
 """`Tensor` at a rank that is compile-time and extents that are not:

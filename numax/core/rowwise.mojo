@@ -616,9 +616,7 @@ def mean_variance_axis[
     axis: Int,
     target: StaticString = "cpu",
 ](
-    xs: TileTensor[
-        dtype, XsLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
-    ],
+    xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     means: TileTensor[
         dtype, OutLayout, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
     ],

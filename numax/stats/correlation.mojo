@@ -81,10 +81,12 @@ from layout.tile_tensor import DefaultEngine
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 
-from ..core.array import Static, Tensor
+from ..core.tensorlike import TensorLike, dim, is_row_major
+from ..core.array import _canonical, Static, Tensor
 from ..core._drive import (
     _check_device,
     _dense,
+    _flat,
     _flat_unchecked,
     _notice,
     _target,
@@ -136,6 +138,14 @@ def _normal_two_sided(z: Float64) -> Float64:
     return 2.0 * Float64(tail.v)
 
 
+comptime _BlockIn[dtype: DType] = TileTensor[
+    dtype,
+    type_of(row_major(Coord(0, 0))),
+    ImmutAnyOrigin,
+    Engine=DefaultEngine[element_width=1],
+]
+"""`_Block` for a matmul input, which is read and may come from a borrow."""
+
 comptime _Block[dtype: DType] = TileTensor[
     dtype,
     type_of(row_major(Coord(0, 0))),
@@ -169,21 +179,32 @@ def _lanes[dtype: DType, gpu: Bool]() -> Int:
 
 
 def _stack_rows[
-    dtype: DType, n: Int, gpu: Bool
-](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
-    dtype, 2, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool,
+](x: A, y: B) raises -> Static[A.dtype, 2, dim[A, 0]] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """`x` and `y` as the two rows of one `2 x n` matrix, where they live.
 
     Two same-shape copies rather than one `elementwise` over `Coord(2, n)`
     picking a source per row: each row of the destination is retyped as a
     rank-1 view, so source and destination extents match.
     """
+    comptime dtype = A.dtype
+    comptime n = dim[A, 0]
     var ctx = x.context()
     var out = Static[dtype, 2, n]._uninitialized(ctx)
     var ov = out.view()
-    var xs = _flat_unchecked(x)
-    var ys = _flat_unchecked(y)
+    var xs = _flat(x)
+    var ys = _flat(y)
     var top: _Row[dtype] = TileTensor(
         ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(n))
     )
@@ -197,7 +218,7 @@ def _stack_rows[
 
     @always_inline
     def second[w: Int, alignment: Int = 1](coord: Coord) {var ys, var bottom}:
-        bottom.store[w](coord, ys.load[w](coord))
+        bottom.store[w](coord, ys.load[w](coord).cast[dtype]())
 
     comptime lanes = _lanes[dtype, gpu]()
     elementwise[simd_width=lanes, target=_target[gpu]()](first, Coord(n), ctx)
@@ -206,10 +227,14 @@ def _stack_rows[
 
 
 def _centered[
-    dtype: DType, rows: Int, n: Int, gpu: Bool
-](mut m: Static[dtype, rows, n]) raises -> Static[
-    dtype, rows, n
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool,
+](m: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
+):
     """`m` with each row's own mean subtracted, where `m` lives.
 
     The means come from `numax.stats.mean[axis=1]`, which is MAX's
@@ -217,8 +242,11 @@ def _centered[
     the rank-1 means through a freshly built `Coord`, the lower-rank read
     recorded as safe. Source and destination have the same extents.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     var ctx = m.context()
-    var means = _mean_axis[axis=1, gpu=gpu](m)
+    var means = _mean_axis[axis=1, gpu=gpu](_canonical[rows, n](m))
     var out = Static[dtype, rows, n]._uninitialized(ctx)
     var src = _dense(m)
     var avg = _flat_unchecked(means)
@@ -243,8 +271,11 @@ def _centered[
 
 
 def _gram[
-    dtype: DType, rows: Int, n: Int, gpu: Bool
-](mut centered: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows]:
+    T: TensorLike,
+    gpu: Bool,
+](centered: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
+):
     """`C C^T` for the centered `C`, in one GEMM.
 
     `linalg.matmul` with `transpose_b=True` reads the right operand
@@ -253,16 +284,17 @@ def _gram[
     both operands mutably and rejects two live views sharing an origin --
     the spelling `numax.linalg.cholesky`'s trailing update uses.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     var ctx = centered.context()
     var out = Static[dtype, rows, rows]._uninitialized(ctx)
     var cv = centered.view()
     var ov = out.view()
-    var left: _Block[dtype] = TileTensor(
-        cv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, n))
-    )
-    var right: _Block[dtype] = TileTensor(
-        cv.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, n))
-    )
+    # `cv.ptr` rather than `ptr_at_offset(Coord(0, 0))`: the offset is zero,
+    # and `ptr_at_offset`'s rank clause is not provable for a generic `T`.
+    var left: _BlockIn[dtype] = TileTensor(cv.ptr, row_major(Coord(rows, n)))
+    var right: _BlockIn[dtype] = TileTensor(cv.ptr, row_major(Coord(rows, n)))
     var product: _Block[dtype] = TileTensor(
         ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, rows))
     )
@@ -283,11 +315,18 @@ def _dof_of(bias: Bool, ddof: Optional[Int], n: Int) raises -> Int:
 
 
 def _cov_device[
-    dtype: DType, rows: Int, n: Int, gpu: Bool
-](mut m: Static[dtype, rows, n], dof: Int) raises -> Static[
-    dtype, rows, rows
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool,
+](m: T, dof: Int) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    is_row_major[T]
+    and T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+):
     """Centre, one GEMM, one scaling launch."""
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     var ctx = m.context()
     var centered = _centered[gpu=gpu](m)
     var gram = _gram[gpu=gpu](centered)
@@ -306,10 +345,15 @@ def _cov_device[
 
 
 def _cov_host[
-    dtype: DType, rows: Int, n: Int
-](m: Static[dtype, rows, n], dof: Int) raises -> Static[dtype, rows, rows]:
+    T: TensorLike,
+](m: T, dof: Int) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
+):
     """The pre-0.2 `O(rows^2 n)` host loop, kept as the fallback for a call
     whose target and whose tensor's residency disagree."""
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     var host = _as_float64(m.to_host())
     var series = List[List[Float64]]()
     for r in range(rows):
@@ -327,9 +371,14 @@ def _cov_host[
 
 
 def _corrcoef_host[
-    dtype: DType, rows: Int, n: Int
-](m: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows]:
+    T: TensorLike,
+](m: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known and is_row_major[T]
+):
     """`_cov_host`'s sibling: the pre-0.2 walk, for the mismatch path."""
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     var host = _as_float64(m.to_host())
     var series = List[List[Float64]]()
     for r in range(rows):
@@ -352,13 +401,15 @@ def _corrcoef_host[
 
 
 def cov[
-    dtype: DType, rows: Int, n: Int, gpu: Bool = False
-](
-    mut m: Static[dtype, rows, n],
-    bias: Bool = False,
-    ddof: Optional[Int] = None,
-) raises -> Static[dtype, rows, rows] where (
-    dtype.is_floating_point() and rows > 0 and n > 1
+    T: TensorLike,
+    gpu: Bool = False,
+](m: T, bias: Bool = False, ddof: Optional[Int] = None) raises -> Static[
+    T.dtype, dim[T, 0], dim[T, 0]
+] where (
+    is_row_major[T]
+    and (T.dtype.is_floating_point() and dim[T, 0] > 0 and dim[T, 1] > 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """The covariance matrix of `rows` variables observed `n` times each,
     one variable per row. `numpy.cov(m)` with its default `rowvar=True`.
@@ -376,6 +427,8 @@ def cov[
     loop's in the last bits, and `c[i, j]` and `c[j, i]` are computed
     independently rather than mirrored -- `numpy.cov` does the same.
     """
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     var dof = _dof_of(bias, ddof, n)
     if not _check_device[gpu=gpu](m):
         _notice[gpu]("cov")
@@ -384,13 +437,22 @@ def cov[
 
 
 def cov[
-    dtype: DType, n: Int, gpu: Bool = False
-](
-    mut x: Static[dtype, n],
-    mut y: Static[dtype, n],
-    bias: Bool = False,
-    ddof: Optional[Int] = None,
-) raises -> Static[dtype, 2, 2] where (dtype.is_floating_point() and n > 1):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](x: A, y: B, bias: Bool = False, ddof: Optional[Int] = None) raises -> Static[
+    A.dtype, 2, 2
+] where (
+    is_row_major[A]
+    and is_row_major[B]
+    and (A.dtype.is_floating_point() and dim[A, 0] > 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """The covariance matrix of two variables, `[[var x, cov], [cov, var
     y]]`. `numpy.cov(x, y, bias, ddof)`: `ddof = 1` by default, `0` with
     `bias`, or as given.
@@ -398,14 +460,19 @@ def cov[
     The two vectors are stacked into one `2 x n` matrix and handed to the
     matrix overload, so there is one covariance algorithm here, not two.
     """
+    comptime n = dim[A, 0]
     var stacked = _stack_rows[gpu=gpu](x, y)
     return cov[gpu=gpu](stacked, bias, ddof)
 
 
 def corrcoef[
-    dtype: DType, rows: Int, n: Int, gpu: Bool = False
-](mut m: Static[dtype, rows, n]) raises -> Static[dtype, rows, rows] where (
-    dtype.is_floating_point() and rows > 0 and n > 1
+    T: TensorLike,
+    gpu: Bool = False,
+](m: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] > 0 and dim[T, 1] > 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
 ):
     """The Pearson correlation matrix of `rows` variables, one per row.
     `numpy.corrcoef(m)`.
@@ -416,6 +483,9 @@ def corrcoef[
     written as exactly `1` rather than computed, which is what the host
     walk did and what `numpy.corrcoef`'s clip amounts to.
     """
+    comptime dtype = T.dtype
+    comptime rows = dim[T, 0]
+    comptime n = dim[T, 1]
     if not _check_device[gpu=gpu](m):
         _notice[gpu]("corrcoef")
         return _corrcoef_host(m)
@@ -449,13 +519,24 @@ def corrcoef[
 
 
 def corrcoef[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
-    dtype, 2, 2
-] where (dtype.is_floating_point() and n > 1):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](x: A, y: B) raises -> Static[A.dtype, 2, 2] where (
+    is_row_major[A]
+    and is_row_major[B]
+    and (A.dtype.is_floating_point() and dim[A, 0] > 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """The Pearson correlation matrix of two variables, ones on the
     diagonal. `numpy.corrcoef(x, y)`. The pair is stacked into a `2 x n`
     and handed to the matrix overload."""
+    comptime n = dim[A, 0]
     var stacked = _stack_rows[gpu=gpu](x, y)
     return corrcoef[gpu=gpu](stacked)
 
@@ -486,10 +567,19 @@ def _pearson(xs: List[Float64], ys: List[Float64]) raises -> CorrelationResult:
 
 
 def pearsonr[
-    dtype: DType, n: Int
-](
-    mut x: Static[dtype, n], mut y: Static[dtype, n]
-) raises -> CorrelationResult where (dtype.is_floating_point() and n > 2):
+    A: TensorLike,
+    B: TensorLike,
+](x: A, y: B) raises -> CorrelationResult where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 2)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """Pearson's `r` and the two-sided p-value of `r = 0`.
     `scipy.stats.pearsonr(x, y)`.
 
@@ -497,6 +587,7 @@ def pearsonr[
     sqrt((n - 2) / (1 - r^2))`, which is the same number SciPy's beta form
     gives.
     """
+    comptime n = dim[A, 0]
     return _pearson(_as_float64(x.to_host()), _as_float64(y.to_host()))
 
 
@@ -544,28 +635,38 @@ def _ranks(values: List[Float64], method: StaticString) raises -> List[Float64]:
 
 
 def rankdata[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], method: StaticString = "average"
-) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, method: StaticString = "average") raises -> Tensor[
+    T.dtype, T.LayoutType
+] where T.dtype.is_floating_point():
     """The one-based rank of every element, ties resolved by `method`:
     `"average"` (the default), `"min"`, `"max"`, `"dense"` or
     `"ordinal"`. `scipy.stats.rankdata(a, method)`, the same shape back."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     var ranks = _ranks(_as_float64(xs.to_host()), method)
     var values = List[Scalar[dtype]](capacity=len(ranks))
     for i in range(len(ranks)):
         values.append(Scalar[dtype](ranks[i]))
-    return Tensor[dtype, LayoutType](xs.context(), xs.layout, values^)
+    return Tensor[dtype, LayoutType](xs.context(), xs.view().layout, values^)
 
 
 def spearmanr[
-    dtype: DType, n: Int
-](
-    mut x: Static[dtype, n], mut y: Static[dtype, n]
-) raises -> CorrelationResult where (dtype.is_floating_point() and n > 2):
+    A: TensorLike,
+    B: TensorLike,
+](x: A, y: B) raises -> CorrelationResult where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 2)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """Spearman's rank correlation and its two-sided p-value:
     `pearsonr` on the average ranks, with the same `t` test on `n - 2`
     degrees of freedom SciPy uses. `scipy.stats.spearmanr(x, y)`."""
+    comptime n = dim[A, 0]
     return _pearson(
         _ranks(_as_float64(x.to_host()), "average"),
         _ranks(_as_float64(y.to_host()), "average"),
@@ -573,10 +674,19 @@ def spearmanr[
 
 
 def kendalltau[
-    dtype: DType, n: Int
-](
-    mut x: Static[dtype, n], mut y: Static[dtype, n]
-) raises -> CorrelationResult where (dtype.is_floating_point() and n > 1):
+    A: TensorLike,
+    B: TensorLike,
+](x: A, y: B) raises -> CorrelationResult where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """Kendall's tau-b and its two-sided p-value.
     `scipy.stats.kendalltau(x, y, method="asymptotic")`.
 
@@ -587,6 +697,7 @@ def kendalltau[
     do, so there and only there its p-value differs by the approximation's
     error. `O(n^2)` in the pair count, host-side.
     """
+    comptime n = dim[A, 0]
     var xs = _as_float64(x.to_host())
     var ys = _as_float64(y.to_host())
     var concordant = 0
@@ -669,14 +780,24 @@ struct LinregressResult(Copyable):
 
 
 def linregress[
-    dtype: DType, n: Int
-](
-    mut x: Static[dtype, n], mut y: Static[dtype, n]
-) raises -> LinregressResult where (dtype.is_floating_point() and n > 2):
+    A: TensorLike,
+    B: TensorLike,
+](x: A, y: B) raises -> LinregressResult where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 2)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """The least-squares line `y = slope x + intercept` through the points,
     with `r`, the two-sided p-value of `slope = 0` and both standard
     errors. `scipy.stats.linregress(x, y)`, formula for formula.
     """
+    comptime n = dim[A, 0]
     var xs = _as_float64(x.to_host())
     var ys = _as_float64(y.to_host())
     var ssxm = _covariance(xs, xs, 0)
@@ -702,14 +823,16 @@ def linregress[
 
 
 def zscore[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType], ddof: Int = 0) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, ddof: Int = 0) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Every element standardized by the tensor's mean and standard
     deviation, `(x - mean) / std` with `ddof` degrees of freedom in the
     standard deviation. `scipy.stats.zscore(a, ddof)`, the same shape
     back. A constant tensor raises rather than dividing by zero."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     var values = _as_float64(xs.to_host())
     var n = len(values)
     if n - ddof <= 0:
@@ -721,4 +844,4 @@ def zscore[
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype]((values[i] - centre) / scale))
-    return Tensor[dtype, LayoutType](xs.context(), xs.layout, out^)
+    return Tensor[dtype, LayoutType](xs.context(), xs.view().layout, out^)

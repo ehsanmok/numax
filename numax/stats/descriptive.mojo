@@ -21,12 +21,11 @@ from std.utils.numerics import inf as _inf
 
 from layout.tile_layout import TensorLayout
 
+from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.array import Static, Tensor
 
 
-def _values[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> List[Float64]:
+def _values[T: TensorLike](xs: T) raises -> List[Float64]:
     var host = xs.to_host()
     var out = List[Float64](capacity=len(host))
     for i in range(len(host)):
@@ -54,10 +53,10 @@ def _central_moment(values: List[Float64], order: Int) -> Float64:
 
 
 def skew[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], bias: Bool = True
-) raises -> Float64 where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, bias: Bool = True) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The sample skewness `m3 / m2^(3/2)`, or with `bias=False` the
     adjusted Fisher-Pearson `G1 = sqrt(n(n-1)) / (n-2) * g1`.
     `scipy.stats.skew(a, bias)`. Zero for a symmetric sample; `0` too when
@@ -75,10 +74,10 @@ def skew[
 
 
 def kurtosis[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    xs: Tensor[dtype, LayoutType], fisher: Bool = True, bias: Bool = True
-) raises -> Float64 where dtype.is_floating_point():
+    xs: T, fisher: Bool = True, bias: Bool = True
+) raises -> Float64 where T.dtype.is_floating_point():
     """The sample kurtosis `m4 / m2^2`, less `3` when `fisher` (the
     default, so a normal sample reads `0`), and with `bias=False` the
     unbiased `G2` correction. `scipy.stats.kurtosis(a, fisher, bias)`."""
@@ -101,10 +100,10 @@ def kurtosis[
 
 
 def sem[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], ddof: Int = 1
-) raises -> Float64 where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, ddof: Int = 1) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The standard error of the mean, `std(ddof) / sqrt(n)`, `ddof = 1` by
     default as SciPy's is. `scipy.stats.sem(a, ddof)`."""
     var values = _values(xs)
@@ -119,10 +118,10 @@ def sem[
 
 
 def gmean[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType]
-) raises -> Float64 where dtype.is_floating_point():
+    T: TensorLike
+](xs: T) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The geometric mean, `exp(mean(log x))`. `scipy.stats.gmean(a)`. A
     non-positive element raises rather than returning NaN."""
     var values = _values(xs)
@@ -135,10 +134,10 @@ def gmean[
 
 
 def gmean[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], weights: Tensor[dtype, LayoutType]
-) raises -> Float64 where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, weights: T) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The weighted geometric mean, `exp(sum(w log x) / sum(w))`.
     `scipy.stats.gmean(a, weights=w)`."""
     var values = _values(xs)
@@ -154,10 +153,10 @@ def gmean[
 
 
 def hmean[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType]
-) raises -> Float64 where dtype.is_floating_point():
+    T: TensorLike
+](xs: T) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The harmonic mean, `n / sum(1 / x)`. `scipy.stats.hmean(a)`. A
     non-positive element raises."""
     var values = _values(xs)
@@ -170,10 +169,10 @@ def hmean[
 
 
 def entropy[
-    dtype: DType, LayoutType: TensorLayout
-](
-    pk: Tensor[dtype, LayoutType], base: Optional[Float64] = None
-) raises -> Float64 where dtype.is_floating_point():
+    T: TensorLike
+](pk: T, base: Optional[Float64] = None) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The Shannon entropy `-sum(p log p)` of the distribution `pk`,
     normalized to sum to one first, in nats or in the given `base`.
     `scipy.stats.entropy(pk, base=base)`. Zero-probability terms
@@ -193,12 +192,14 @@ def entropy[
 
 
 def entropy[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    pk: Tensor[dtype, LayoutType],
-    qk: Tensor[dtype, LayoutType],
+    pk: T,
+    qk: T,
     base: Optional[Float64] = None,
-) raises -> Float64 where dtype.is_floating_point():
+) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The relative entropy `sum(p log(p / q))`, the Kullback-Leibler
     divergence of `pk` from `qk`, both normalized first.
     `scipy.stats.entropy(pk, qk, base)`. Infinite where `qk` is zero and
@@ -224,10 +225,10 @@ def entropy[
 
 
 def trim_mean[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    xs: Tensor[dtype, LayoutType], proportiontocut: Float64
-) raises -> Float64 where dtype.is_floating_point():
+    xs: T, proportiontocut: Float64
+) raises -> Float64 where T.dtype.is_floating_point():
     """The mean after dropping `int(proportiontocut * n)` of the smallest
     and as many of the largest values. `scipy.stats.trim_mean(a,
     proportiontocut)`. Raises when the cuts would leave nothing, as SciPy
@@ -260,10 +261,10 @@ struct Description(Copyable):
 
 
 def describe[
-    dtype: DType, LayoutType: TensorLayout
-](
-    xs: Tensor[dtype, LayoutType], ddof: Int = 1, bias: Bool = True
-) raises -> Description where dtype.is_floating_point():
+    T: TensorLike
+](xs: T, ddof: Int = 1, bias: Bool = True) raises -> Description where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The summary SciPy's `describe(a, ddof, bias)` returns: count,
     minimum and maximum, mean, variance with `ddof` degrees of freedom,
     skewness and Fisher kurtosis with the given `bias`."""

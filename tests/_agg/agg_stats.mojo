@@ -408,6 +408,9 @@ from test_statistics import (
 from test_statistics import (
     test_mean_reduces_the_first_axis as test_statistics__test_mean_reduces_the_first_axis,
 )
+from test_statistics import (
+    test_reductions_accept_a_view_and_agree_with_the_tensor as test_statistics__test_reductions_accept_a_view_and_agree_with_the_tensor,
+)
 from test_statistics_axis import (
     test_sum_axis_drops_the_axis_it_folded as test_statistics_axis__test_sum_axis_drops_the_axis_it_folded,
 )
@@ -732,6 +735,9 @@ def main() raises:
         test_statistics__test_variance_axis_agrees_with_the_separate_entry_points
     ]()
     suite.test[test_statistics__test_mean_reduces_the_first_axis]()
+    suite.test[
+        test_statistics__test_reductions_accept_a_view_and_agree_with_the_tensor
+    ]()
     # tests/stats/test_statistics_axis.mojo
     suite.test[test_statistics_axis__test_sum_axis_drops_the_axis_it_folded]()
     suite.test[test_statistics_axis__test_sum_axis_sums_the_right_elements]()

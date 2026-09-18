@@ -502,6 +502,12 @@ route.
 
 ## `numax.stats`
 
+Every routine here takes its tensor arguments through the `TensorLike`
+bound (`sum(v)` on a `View` is `sum(a)` on its tensor, checked by
+`tests/stats/test_statistics.mojo`), reads extents from the argument's
+layout (`cov(m)` rather than `cov[dtype, rows, n](m)`), and takes them by
+borrow. Reductions that flatten carry `where is_row_major[T]`.
+
 | Area | Surface | Where |
 |---|---|---|
 | Reductions | `sum`, `prod`, `mean`, `median`, `mode`, `min`, `max`, `argmin`, `argmax`, `cumsum`, `cumprod`, `variance`, `stddev` — every one takes a `Tensor` and covers all of it. `sum`, `prod`, `min`, `max`, `argmax`, `argmin`, `mean`, `variance` and `stddev` fold through a MAX monoid (`ReduceSum`, `ReduceProduct`, `ReduceMin`, `ReduceMax`, `ArgMax`, `ArgMin`, `Welford`) on either target under a `gpu: Bool` parameter, and never download the tensor; a mismatched target falls back to the host walk and says so on `stderr`. `sum` and `prod` are reassociated by the monoid. `median`, `mode`, `cumsum` and `cumprod` need a whole slice or a running prefix rather than a fold, so they stay host-side and take no `gpu` -- `median` selects its one or two middle elements in `O(n)` rather than sorting, sharing `stats/quantiles.mojo`'s quickselect. `mean`, `variance`, `stddev` and `cumsum` also have a `FloatLike`-generic `List[T]` form | [`stats/statistics.mojo`](../numax/stats/statistics.mojo) |

@@ -124,12 +124,13 @@ from layout.tile_layout import TensorLayout
 
 from ..core._drive import (
     _check_device,
-    _flat_unchecked,
+    _flat,
     _flat_out,
     _launch,
     _notice,
     _width,
 )
+from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.array import Tensor
 from ..core.plain import Plain
 from ..special.beta import betainc, betaincc
@@ -168,14 +169,15 @@ def _log_beta[T: FloatLike](a: T, b: T) -> T:
 
 
 def _over1[
-    dtype: DType,
-    LayoutType: TensorLayout,
-    step: def[w: Int](SIMD[dtype, w], SIMD[dtype, 1]) thin -> SIMD[dtype, w],
+    T: TensorLike,
+    step: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, 1]) thin -> SIMD[
+        T.dtype, w
+    ],
     gpu: Bool,
     name: StaticString,
-](mut x: Tensor[dtype, LayoutType], p0: Scalar[dtype]) raises -> Tensor[
-    dtype, LayoutType
-] where dtype.is_floating_point():
+](x: T, p0: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Drive a one-parameter distribution kernel across `x` through
     `numax.core._drive`: threaded at native SIMD width on the host, one
     thread per element on the device, with `p0` captured by the body.
@@ -197,17 +199,19 @@ def _over1[
     and says so on `stderr` -- the same fallback, through the same
     `_check_device`/`_notice`, that the elementwise surface takes.
     """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](x):
         _notice[gpu](name)
         var values = x.to_host()
         var walked = List[Scalar[dtype]](length=len(values), fill=0)
         for i in range(len(values)):
             walked[i] = step[1](values[i], p0)[0]
-        return Tensor[dtype, LayoutType](x.context(), x.layout, walked^)
+        return Tensor[dtype, LayoutType](x.context(), x.view().layout, walked^)
 
     var ctx = x.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.layout)
-    var xs = _flat_unchecked(x)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.view().layout)
+    var xs = _flat(x)
     var ys = _flat_out(out)
 
     @always_inline
@@ -221,28 +225,29 @@ def _over1[
 
 
 def _over2[
-    dtype: DType,
-    LayoutType: TensorLayout,
+    T: TensorLike,
     step: def[w: Int](
-        SIMD[dtype, w], SIMD[dtype, 1], SIMD[dtype, 1]
-    ) thin -> SIMD[dtype, w],
+        SIMD[T.dtype, w], SIMD[T.dtype, 1], SIMD[T.dtype, 1]
+    ) thin -> SIMD[T.dtype, w],
     gpu: Bool,
     name: StaticString,
-](
-    mut x: Tensor[dtype, LayoutType], p0: Scalar[dtype], p1: Scalar[dtype]
-) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+](x: T, p0: Scalar[T.dtype], p1: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where (is_row_major[T] and T.dtype.is_floating_point()):
     """`_over1` for a two-parameter distribution."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
     if not _check_device[gpu=gpu](x):
         _notice[gpu](name)
         var values = x.to_host()
         var walked = List[Scalar[dtype]](length=len(values), fill=0)
         for i in range(len(values)):
             walked[i] = step[1](values[i], p0, p1)[0]
-        return Tensor[dtype, LayoutType](x.context(), x.layout, walked^)
+        return Tensor[dtype, LayoutType](x.context(), x.view().layout, walked^)
 
     var ctx = x.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.layout)
-    var xs = _flat_unchecked(x)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.view().layout)
+    var xs = _flat(x)
     var ys = _flat_out(out)
 
     @always_inline
@@ -614,42 +619,51 @@ struct norm:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+        T: TensorLike, gpu: Bool = False
     ](
-        mut x: Tensor[dtype, LayoutType],
-        mu: Scalar[dtype],
-        sigma: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        x: T,
+        mu: Scalar[T.dtype],
+        sigma: Scalar[T.dtype],
+    ) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_norm_pdf_step[dtype, _], gpu=gpu, name="norm.pdf"](
             x, mu, sigma
         )
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+        T: TensorLike, gpu: Bool = False
     ](
-        mut x: Tensor[dtype, LayoutType],
-        mu: Scalar[dtype],
-        sigma: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        x: T,
+        mu: Scalar[T.dtype],
+        sigma: Scalar[T.dtype],
+    ) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_norm_cdf_step[dtype, _], gpu=gpu, name="norm.cdf"](
             x, mu, sigma
         )
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+        T: TensorLike, gpu: Bool = False
     ](
-        mut p: Tensor[dtype, LayoutType],
-        mu: Scalar[dtype],
-        sigma: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        p: T,
+        mu: Scalar[T.dtype],
+        sigma: Scalar[T.dtype],
+    ) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_norm_ppf_step[dtype, _], gpu=gpu, name="norm.ppf"](
             p, mu, sigma
         )
@@ -751,36 +765,39 @@ struct expon:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, rate: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[
             step=_expon_pdf_step[dtype, _], gpu=gpu, name="expon.pdf"
         ](x, rate)
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, rate: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[
             step=_expon_cdf_step[dtype, _], gpu=gpu, name="expon.cdf"
         ](x, rate)
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, rate: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[
             step=_expon_ppf_step[dtype, _], gpu=gpu, name="expon.ppf"
         ](p, rate)
@@ -872,42 +889,51 @@ struct gamma:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+        T: TensorLike, gpu: Bool = False
     ](
-        mut x: Tensor[dtype, LayoutType],
-        shape: Scalar[dtype],
-        scale: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        x: T,
+        shape: Scalar[T.dtype],
+        scale: Scalar[T.dtype],
+    ) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[
             step=_gamma_pdf_step[dtype, _], gpu=gpu, name="gamma.pdf"
         ](x, shape, scale)
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+        T: TensorLike, gpu: Bool = False
     ](
-        mut x: Tensor[dtype, LayoutType],
-        shape: Scalar[dtype],
-        scale: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        x: T,
+        shape: Scalar[T.dtype],
+        scale: Scalar[T.dtype],
+    ) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[
             step=_gamma_cdf_step[dtype, _], gpu=gpu, name="gamma.cdf"
         ](x, shape, scale)
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
+        T: TensorLike, gpu: Bool = False
     ](
-        mut p: Tensor[dtype, LayoutType],
-        shape: Scalar[dtype],
-        scale: Scalar[dtype],
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        p: T,
+        shape: Scalar[T.dtype],
+        scale: Scalar[T.dtype],
+    ) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[
             step=_gamma_ppf_step[dtype, _], gpu=gpu, name="gamma.ppf"
         ](p, shape, scale)
@@ -952,36 +978,39 @@ struct chi2:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, df: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[step=_chi2_pdf_step[dtype, _], gpu=gpu, name="chi2.pdf"](
             x, df
         )
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, df: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[step=_chi2_cdf_step[dtype, _], gpu=gpu, name="chi2.cdf"](
             x, df
         )
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, df: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[step=_chi2_ppf_step[dtype, _], gpu=gpu, name="chi2.ppf"](
             p, df
         )
@@ -1061,36 +1090,39 @@ struct beta:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, a: Scalar[T.dtype], b: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_beta_pdf_step[dtype, _], gpu=gpu, name="beta.pdf"](
             x, a, b
         )
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, a: Scalar[T.dtype], b: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_beta_cdf_step[dtype, _], gpu=gpu, name="beta.cdf"](
             x, a, b
         )
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType], a: Scalar[dtype], b: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, a: Scalar[T.dtype], b: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_beta_ppf_step[dtype, _], gpu=gpu, name="beta.ppf"](
             p, a, b
         )
@@ -1168,32 +1200,35 @@ struct t:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, df: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[step=_t_pdf_step[dtype, _], gpu=gpu, name="t.pdf"](x, df)
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut x: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, df: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[step=_t_cdf_step[dtype, _], gpu=gpu, name="t.cdf"](x, df)
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], df: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, df: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[step=_t_ppf_step[dtype, _], gpu=gpu, name="t.ppf"](p, df)
 
 
@@ -1274,36 +1309,39 @@ struct f:
 
     @staticmethod
     def pdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, df1: Scalar[T.dtype], df2: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The density over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_f_pdf_step[dtype, _], gpu=gpu, name="f.pdf"](
             x, df1, df2
         )
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut x: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](x: T, df1: Scalar[T.dtype], df2: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_f_cdf_step[dtype, _], gpu=gpu, name="f.cdf"](
             x, df1, df2
         )
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType], df1: Scalar[dtype], df2: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, df1: Scalar[T.dtype], df2: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[step=_f_ppf_step[dtype, _], gpu=gpu, name="f.ppf"](
             p, df1, df2
         )
@@ -1387,36 +1425,39 @@ struct poisson:
 
     @staticmethod
     def pmf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut k: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](k: T, rate: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The PMF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[
             step=_poisson_pmf_step[dtype, _], gpu=gpu, name="poisson.pmf"
         ](k, rate)
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut k: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](k: T, rate: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[
             step=_poisson_cdf_step[dtype, _], gpu=gpu, name="poisson.cdf"
         ](k, rate)
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](mut p: Tensor[dtype, LayoutType], rate: Scalar[dtype]) raises -> Tensor[
-        dtype, LayoutType
-    ] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, rate: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over1[
             step=_poisson_ppf_step[dtype, _], gpu=gpu, name="poisson.ppf"
         ](p, rate)
@@ -1507,36 +1548,39 @@ struct binom:
 
     @staticmethod
     def pmf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut k: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](k: T, n: Scalar[T.dtype], prob: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The PMF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[
             step=_binom_pmf_step[dtype, _], gpu=gpu, name="binom.pmf"
         ](k, n, prob)
 
     @staticmethod
     def cdf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut k: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](k: T, n: Scalar[T.dtype], prob: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The CDF over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[
             step=_binom_cdf_step[dtype, _], gpu=gpu, name="binom.cdf"
         ](k, n, prob)
 
     @staticmethod
     def ppf[
-        dtype: DType, LayoutType: TensorLayout, gpu: Bool = False
-    ](
-        mut p: Tensor[dtype, LayoutType], n: Scalar[dtype], prob: Scalar[dtype]
-    ) raises -> Tensor[dtype, LayoutType] where dtype.is_floating_point():
+        T: TensorLike, gpu: Bool = False
+    ](p: T, n: Scalar[T.dtype], prob: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
         """The quantile over a `Tensor`, parameters as scalars; see the module
         docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
         return _over2[
             step=_binom_ppf_step[dtype, _], gpu=gpu, name="binom.ppf"
         ](p, n, prob)

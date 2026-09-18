@@ -186,6 +186,13 @@ satisfies, and the flattening helpers verify the values at run time.
 """
 
 
+comptime ViewOver[
+    dtype: DType, LayoutType: TensorLayout, src: MutOrigin
+] = View[dtype, LayoutType, ImmOrigin(src)]
+"""The `View` type built over a mutable tile at origin `src`, for a
+signature that returns one: `ViewOver[T.dtype, L, origin_of(a)]`."""
+
+
 struct View[
     dtype_: DType,
     LayoutType_: TensorLayout,
@@ -209,9 +216,7 @@ struct View[
     comptime LayoutType = Self.LayoutType_
     comptime rank = Self.LayoutType.rank
     comptime TileType = TileTensor[Self.dtype, Self.LayoutType, Self.origin]
-    comptime Over[src: MutOrigin] = View[
-        Self.dtype_, Self.LayoutType_, ImmOrigin(src)
-    ]
+    comptime Over[src: MutOrigin] = ViewOver[Self.dtype_, Self.LayoutType_, src]
     """The `View` type built over a mutable tile at origin `src`."""
 
     var tile: Self.TileType

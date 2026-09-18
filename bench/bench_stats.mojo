@@ -149,7 +149,7 @@ def bench_cov[
     var m = _matrix[rows, n](ctx)
 
     def cov_work() raises {mut m}:
-        var c = cov[dtype, rows, n](m)
+        var c = cov(m)
         keep(c.buffer.unsafe_ptr())
 
     var cov_ns = (
@@ -162,7 +162,7 @@ def bench_cov[
     )
 
     def corr_work() raises {mut m}:
-        var c = corrcoef[dtype, rows, n](m)
+        var c = corrcoef(m)
         keep(c.buffer.unsafe_ptr())
 
     var corr_ns = (
@@ -187,14 +187,14 @@ def bench_cov[
     for i in range(n):
         acc += (Float64(host[i]) - mean0) * (Float64(host[n + i]) - mean1)
     var want = acc / Float64(n - 1)
-    var c = cov[dtype, rows, n](m).to_host()
+    var c = cov(m).to_host()
     _row(
         String("cov ") + String(rows) + " x n",
         n,
         cov_ns,
         abs(Float64(c[1]) - want),
     )
-    var r = corrcoef[dtype, rows, n](m).to_host()
+    var r = corrcoef(m).to_host()
     _row(
         String("corrcoef ") + String(rows) + " x n",
         n,

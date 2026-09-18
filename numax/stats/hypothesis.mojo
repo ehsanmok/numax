@@ -37,6 +37,7 @@ from std.math import exp as _exp, sqrt as _sqrt
 
 from layout.tile_layout import TensorLayout
 
+from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.array import Static, Tensor
 from ..core.plain import Plain
 from .distributions import chi2, f, norm, t
@@ -55,9 +56,7 @@ struct TestResult(Copyable):
     var df: Float64
 
 
-def _values[
-    dtype: DType, LayoutType: TensorLayout
-](xs: Tensor[dtype, LayoutType]) raises -> List[Float64]:
+def _values[T: TensorLike](xs: T) raises -> List[Float64]:
     var host = xs.to_host()
     var out = List[Float64](capacity=len(host))
     for i in range(len(host)):
@@ -105,12 +104,12 @@ def _t_pvalue(
 
 
 def ttest_1samp[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    xs: Tensor[dtype, LayoutType],
+    xs: T,
     popmean: Float64,
     alternative: StaticString = "two-sided",
-) raises -> TestResult where dtype.is_floating_point():
+) raises -> TestResult where (is_row_major[T] and T.dtype.is_floating_point()):
     """The one-sample `t` test that the mean of `xs` is `popmean`.
     `scipy.stats.ttest_1samp(a, popmean, alternative)`: `t = (mean -
     popmean) / (std_1 / sqrt(n))` on `n - 1` degrees of freedom."""
@@ -127,13 +126,19 @@ def ttest_1samp[
 
 
 def ttest_ind[
-    dtype: DType, XLayout: TensorLayout, YLayout: TensorLayout
+    A: TensorLike,
+    B: TensorLike,
 ](
-    xs: Tensor[dtype, XLayout],
-    ys: Tensor[dtype, YLayout],
+    xs: A,
+    ys: B,
     equal_var: Bool = True,
     alternative: StaticString = "two-sided",
-) raises -> TestResult where dtype.is_floating_point():
+) raises -> TestResult where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """The two-sample `t` test that two independent samples share a mean.
     `scipy.stats.ttest_ind(a, b, equal_var, alternative)`: Student's
     pooled-variance test by default, Welch's unequal-variance test with
@@ -167,12 +172,12 @@ def ttest_ind[
 
 
 def ttest_rel[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    xs: Tensor[dtype, LayoutType],
-    ys: Tensor[dtype, LayoutType],
+    xs: T,
+    ys: T,
     alternative: StaticString = "two-sided",
-) raises -> TestResult where dtype.is_floating_point():
+) raises -> TestResult where (is_row_major[T] and T.dtype.is_floating_point()):
     """The paired `t` test: `ttest_1samp` of the differences against zero.
     `scipy.stats.ttest_rel(a, b, alternative)`."""
     _check_alternative(alternative)
@@ -192,10 +197,10 @@ def ttest_rel[
 
 
 def chisquare[
-    dtype: DType, LayoutType: TensorLayout
-](
-    observed: Tensor[dtype, LayoutType], ddof: Int = 0
-) raises -> TestResult where dtype.is_floating_point():
+    T: TensorLike
+](observed: T, ddof: Int = 0) raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Pearson's chi-squared test that the observed counts are uniform:
     `sum((o - e)^2 / e)` against `chi2` on `k - 1 - ddof` degrees of
     freedom, `e` the mean count. `scipy.stats.chisquare(f_obs, ddof)`."""
@@ -212,12 +217,14 @@ def chisquare[
 
 
 def chisquare[
-    dtype: DType, LayoutType: TensorLayout
+    T: TensorLike
 ](
-    observed: Tensor[dtype, LayoutType],
-    expected: Tensor[dtype, LayoutType],
+    observed: T,
+    expected: T,
     ddof: Int = 0,
-) raises -> TestResult where dtype.is_floating_point():
+) raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """Pearson's chi-squared test against the given expected counts.
     `scipy.stats.chisquare(f_obs, f_exp, ddof)`. SciPy checks that the two
     sum to the same total to a relative `1e-8`; so does this, raising."""
@@ -291,12 +298,11 @@ def _kolmogorov_sf(x: Float64) -> Float64:
 
 
 def ks_1samp[
-    dtype: DType,
-    LayoutType: TensorLayout,
+    T: TensorLike,
     cdf: def(Float64) thin -> Float64,
-](
-    xs: Tensor[dtype, LayoutType], alternative: StaticString = "two-sided"
-) raises -> TestResult where dtype.is_floating_point():
+](xs: T, alternative: StaticString = "two-sided") raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
     """The one-sample Kolmogorov-Smirnov test of `xs` against the
     continuous distribution with the given `cdf`.
     `scipy.stats.ks_1samp(x, cdf, alternative)`.
@@ -331,10 +337,8 @@ def ks_1samp[
 
 
 def f_oneway[
-    dtype: DType, LayoutType: TensorLayout
-](
-    *groups: Tensor[dtype, LayoutType]
-) raises -> TestResult where dtype.is_floating_point():
+    T: TensorLike
+](*groups: T) raises -> TestResult where T.dtype.is_floating_point():
     """The one-way ANOVA `F` test that every group shares a mean:
     between-group over within-group mean square, against `f` on `k - 1`
     and `N - k` degrees of freedom. `scipy.stats.f_oneway(*samples)`, the
@@ -370,13 +374,19 @@ def f_oneway[
 
 
 def mannwhitneyu[
-    dtype: DType, XLayout: TensorLayout, YLayout: TensorLayout
+    A: TensorLike,
+    B: TensorLike,
 ](
-    xs: Tensor[dtype, XLayout],
-    ys: Tensor[dtype, YLayout],
+    xs: A,
+    ys: B,
     alternative: StaticString = "two-sided",
     use_continuity: Bool = True,
-) raises -> TestResult where dtype.is_floating_point():
+) raises -> TestResult where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """The Mann-Whitney `U` test that two independent samples come from
     one distribution. `scipy.stats.mannwhitneyu(x, y, use_continuity,
     alternative, method="asymptotic")`.
@@ -452,12 +462,16 @@ def mannwhitneyu[
 
 
 def ks_2samp[
-    dtype: DType, XLayout: TensorLayout, YLayout: TensorLayout
+    A: TensorLike,
+    B: TensorLike,
 ](
-    xs: Tensor[dtype, XLayout],
-    ys: Tensor[dtype, YLayout],
-    alternative: StaticString = "two-sided",
-) raises -> TestResult where dtype.is_floating_point():
+    xs: A, ys: B, alternative: StaticString = "two-sided"
+) raises -> TestResult where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """The two-sample Kolmogorov-Smirnov test that `xs` and `ys` come from
     one continuous distribution.
     `scipy.stats.ks_2samp(x, y, alternative, method="asymp")`.
@@ -537,13 +551,19 @@ def _ks_hodges(n1: Int, n2: Int, d: Float64) -> Float64:
 
 
 def wilcoxon[
-    dtype: DType, XLayout: TensorLayout, YLayout: TensorLayout
+    A: TensorLike,
+    B: TensorLike,
 ](
-    xs: Tensor[dtype, XLayout],
-    ys: Tensor[dtype, YLayout],
+    xs: A,
+    ys: B,
     alternative: StaticString = "two-sided",
     use_continuity: Bool = True,
-) raises -> TestResult where dtype.is_floating_point():
+) raises -> TestResult where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+):
     """The Wilcoxon signed-rank test that the paired differences
     `xs - ys` are centred on zero.
     `scipy.stats.wilcoxon(x, y, alternative, correction, method="approx")`.
