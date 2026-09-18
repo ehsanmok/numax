@@ -64,6 +64,19 @@ about:
     derivative needs no separate implementation. Tensors own MAX
     DeviceBuffers and carry their shape in their layout type, with extents
     either compiled in or supplied at run time, so numax.core.tensor drives
-    any of it across MAX's TileTensor on CPU or GPU. Young and experimental,
-    so APIs may change; docs/why.md says what it is for and what it does
-    not claim.
+    any of it across MAX's TileTensor on CPU or GPU.
+
+    Every approximation documents an error bound and pixi run accuracy
+    checks it against mpmath references at 50 digits; Plain carries its own
+    one-ulp exp, ln and erf at float64, where std.math's are far off there.
+
+    Young and experimental, so APIs may change. Not here yet, each on
+    purpose: fancy indexing and owned slicing, dtype promotion (astype is
+    explicit), decompositions over run-time shapes, reverse-mode autodiff
+    (Gradient is forward and was measured against a tape), sparse matrices,
+    Krylov solvers and distributed execution. One limit is a bug rather
+    than a decision: the spectral decompositions have no working device
+    path, so gpu=True on eigh, svd and schur is a compile error rather than
+    a wrong answer. docs/why.md says what numax is for and what it does not
+    claim; docs/parity.md carries a disposition for every NumPy and SciPy
+    name left out.

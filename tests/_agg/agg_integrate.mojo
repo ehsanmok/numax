@@ -102,6 +102,18 @@ from test_integrate import (
 from test_integrate import (
     test_the_stiff_solver_takes_far_fewer_steps_on_a_stiff_problem as test_integrate__test_the_stiff_solver_takes_far_fewer_steps_on_a_stiff_problem,
 )
+from test_integrate import (
+    test_fixed_quad_matches_scipy as test_integrate__test_fixed_quad_matches_scipy,
+)
+from test_integrate import (
+    test_fixed_quad_agrees_with_the_adaptive_quad_on_a_smooth_integrand as test_integrate__test_fixed_quad_agrees_with_the_adaptive_quad_on_a_smooth_integrand,
+)
+from test_integrate import (
+    test_dblquad_matches_scipy_on_a_product_integrand as test_integrate__test_dblquad_matches_scipy_on_a_product_integrand,
+)
+from test_integrate import (
+    test_dblquad_is_exact_for_a_low_degree_polynomial as test_integrate__test_dblquad_is_exact_for_a_low_degree_polynomial,
+)
 from test_ode import (
     test_rk4_matches_an_exponential as test_ode__test_rk4_matches_an_exponential,
 )
@@ -310,6 +322,16 @@ def main() raises:
     ]()
     suite.test[
         test_integrate__test_the_stiff_solver_takes_far_fewer_steps_on_a_stiff_problem
+    ]()
+    suite.test[test_integrate__test_fixed_quad_matches_scipy]()
+    suite.test[
+        test_integrate__test_fixed_quad_agrees_with_the_adaptive_quad_on_a_smooth_integrand
+    ]()
+    suite.test[
+        test_integrate__test_dblquad_matches_scipy_on_a_product_integrand
+    ]()
+    suite.test[
+        test_integrate__test_dblquad_is_exact_for_a_low_degree_polynomial
     ]()
     # tests/integrate/test_ode.mojo
     suite.test[test_ode__test_rk4_matches_an_exponential]()

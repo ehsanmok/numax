@@ -126,12 +126,19 @@ the special functions, the FFT, `numax.integrate.array`'s `rk4`/`dopri5` (fixed-
 `numax.integrate.array`'s `gauss_legendre`, the distributions, and `numax.optimize.solve`'s
 fixed-iteration `newton`/`halley`/`bisection`. Tier 2 is the NumPy-named
 surface over `Tensor` -- the elementwise math, the comparisons, sorting,
-the statistics reductions, the array manipulations and file I/O -- plus
+the statistics reductions (tier 2 in *shape*, since they branch on no
+data but make no launchability promise to a `FloatLike` caller; they do
+run on either processor, through MAX's `rowwise` and `elementwise`), the
+array manipulations and file I/O -- plus
 `numax.optimize.optimize` and `numax.integrate.integrate`, which converge
 to a tolerance. `numax.core.tensor` is the boundary itself and declares per
-function: a compile-time shape carries the guarantee and takes `gpu=True`,
-a run-time one cannot, since a shape the compiler cannot see cannot become
-a kernel signature.
+function: there, a compile-time shape carries the guarantee and takes
+`gpu=True` while a run-time one cannot, since a shape the compiler cannot
+see cannot become an `enqueue_function` signature. **That limit is
+`numax.core.tensor`'s, not the library's.** The NumPy-named surface
+launches through `max.algorithm.elementwise` instead, which computes its
+grid from a run-time `Coord`, so a `Dynamic` reaches the device there --
+the routed-surface section below has the policy.
 
 `numax.stats.median` and `mode` are the nearest thing to an exception, and
 they are not one: they reach MAX's own sort, which has data-dependent
@@ -221,7 +228,7 @@ its own, so all of them -- including `Compensated`, once its `exp()`
 coefficients moved to compile-time `dtype`-native constants instead of
 a runtime `float64` table -- run inside a kernel body unchanged.
 
-`examples/gaussian_gpu.mojo` imports the exact same `gaussian`, `Plain`,
+`examples/advanced/gaussian_gpu.mojo` imports the exact same `gaussian`, `Plain`,
 and `Dual` the CPU example does and drives them with `map[gpu=True]`
 instead of `map[gpu=False]`. **No `FloatLike` kernel needed an edit to
 become GPU-launchable.** That's the benefit the fixed-iteration invariant
@@ -266,8 +273,15 @@ survey of what MAX does ship.
   `[gpu=True]` in, so they forward at the default; a device tensor through
   one of them takes the retained host walk and one line on `stderr` naming
   the fast spelling.
-- **`numax.stats`** — whole-tensor reductions, every one taking a `Tensor`,
-  with `argmax`/`argmin` routed to `nn.argmaxmin`; the quantiles, histograms,
+- **`numax.stats`** — whole-tensor reductions, every one taking a `Tensor`
+  and every one of them now a MAX `algorithm.reduce_op` monoid under its
+  `rowwise` scaffolder: `sum`/`prod`/`min`/`max` through
+  `ReduceSum`/`ReduceProduct`/`ReduceMin`/`ReduceMax`,
+  `mean`/`variance`/`stddev` through `Welford`, and the whole-tensor
+  `argmax`/`argmin` through `ArgMax`/`ArgMin`, which carry the index beside
+  the value so numax writes no comparison logic. The *axis-wise*
+  `argmax`/`argmin` stay on `nn.argmaxmin`, MAX's only axis-taking entry
+  point, and only at the innermost axis, which is the only one it accepts; the quantiles, histograms,
   correlation family, shape statistics and hypothesis tests as host-side
   routines over a `Tensor` (each a few sums and a distribution tail); and the
   distributions as nine `scipy.stats`-shaped namespaces (`norm.cdf`,

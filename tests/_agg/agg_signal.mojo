@@ -213,6 +213,51 @@ from test_tensor_spectral import (
 from test_tensor_spectral import (
     test_butter_feeds_freqz_with_unit_gain_at_dc as test_tensor_spectral__test_butter_feeds_freqz_with_unit_gain_at_dc,
 )
+from test_tensor_spectral import (
+    test_csd_of_a_signal_with_itself_is_its_welch_psd as test_tensor_spectral__test_csd_of_a_signal_with_itself_is_its_welch_psd,
+)
+from test_tensor_spectral import (
+    test_csd_is_conjugate_symmetric_in_its_arguments as test_tensor_spectral__test_csd_is_conjugate_symmetric_in_its_arguments,
+)
+from test_tensor_spectral import (
+    test_coherence_lies_in_the_unit_interval as test_tensor_spectral__test_coherence_lies_in_the_unit_interval,
+)
+from test_tensor_spectral import (
+    test_coherence_of_a_signal_with_itself_is_one as test_tensor_spectral__test_coherence_of_a_signal_with_itself_is_one,
+)
+from test_tensor_spectral import (
+    test_coherence_of_a_scaled_copy_is_also_one as test_tensor_spectral__test_coherence_of_a_scaled_copy_is_also_one,
+)
+from test_tensor_spectral import (
+    test_istft_inverts_stft as test_tensor_spectral__test_istft_inverts_stft,
+)
+from test_tensor_spectral import (
+    test_istft_output_covers_at_least_the_original_length as test_tensor_spectral__test_istft_output_covers_at_least_the_original_length,
+)
+from test_tensor_spectral import (
+    test_oaconvolve_agrees_with_fftconvolve as test_tensor_spectral__test_oaconvolve_agrees_with_fftconvolve,
+)
+from test_tensor_spectral import (
+    test_peak_prominences_matches_the_definition as test_tensor_spectral__test_peak_prominences_matches_the_definition,
+)
+from test_tensor_spectral import (
+    test_peak_prominences_uses_the_higher_saddle as test_tensor_spectral__test_peak_prominences_uses_the_higher_saddle,
+)
+from test_tensor_spectral import (
+    test_peak_prominences_rejects_an_index_off_the_signal as test_tensor_spectral__test_peak_prominences_rejects_an_index_off_the_signal,
+)
+from test_tensor_spectral import (
+    test_decimate_keeps_a_slow_signal_and_shortens_it as test_tensor_spectral__test_decimate_keeps_a_slow_signal_and_shortens_it,
+)
+from test_tensor_spectral import (
+    test_decimate_attenuates_a_signal_above_the_new_nyquist as test_tensor_spectral__test_decimate_attenuates_a_signal_above_the_new_nyquist,
+)
+from test_tensor_spectral import (
+    test_zpk2tf_expands_a_real_root_pair as test_tensor_spectral__test_zpk2tf_expands_a_real_root_pair,
+)
+from test_tensor_spectral import (
+    test_zpk2tf_of_a_conjugate_pair_is_real as test_tensor_spectral__test_zpk2tf_of_a_conjugate_pair_is_real,
+)
 
 
 def main() raises:
@@ -327,4 +372,39 @@ def main() raises:
     suite.test[
         test_tensor_spectral__test_butter_feeds_freqz_with_unit_gain_at_dc
     ]()
+    suite.test[
+        test_tensor_spectral__test_csd_of_a_signal_with_itself_is_its_welch_psd
+    ]()
+    suite.test[
+        test_tensor_spectral__test_csd_is_conjugate_symmetric_in_its_arguments
+    ]()
+    suite.test[test_tensor_spectral__test_coherence_lies_in_the_unit_interval]()
+    suite.test[
+        test_tensor_spectral__test_coherence_of_a_signal_with_itself_is_one
+    ]()
+    suite.test[
+        test_tensor_spectral__test_coherence_of_a_scaled_copy_is_also_one
+    ]()
+    suite.test[test_tensor_spectral__test_istft_inverts_stft]()
+    suite.test[
+        test_tensor_spectral__test_istft_output_covers_at_least_the_original_length
+    ]()
+    suite.test[test_tensor_spectral__test_oaconvolve_agrees_with_fftconvolve]()
+    suite.test[
+        test_tensor_spectral__test_peak_prominences_matches_the_definition
+    ]()
+    suite.test[
+        test_tensor_spectral__test_peak_prominences_uses_the_higher_saddle
+    ]()
+    suite.test[
+        test_tensor_spectral__test_peak_prominences_rejects_an_index_off_the_signal
+    ]()
+    suite.test[
+        test_tensor_spectral__test_decimate_keeps_a_slow_signal_and_shortens_it
+    ]()
+    suite.test[
+        test_tensor_spectral__test_decimate_attenuates_a_signal_above_the_new_nyquist
+    ]()
+    suite.test[test_tensor_spectral__test_zpk2tf_expands_a_real_root_pair]()
+    suite.test[test_tensor_spectral__test_zpk2tf_of_a_conjugate_pair_is_real]()
     suite^.run()

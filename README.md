@@ -119,14 +119,23 @@ alternatives compared and what numax does not claim, is
   Newton solve runs inside one GPU thread, or across SIMD lanes on the CPU,
   from the same source. Tier 1 code is launchable by construction and says
   so in its docstring.
+  `map_blocks` is the entry point for the batched case -- one small problem
+  per SIMD lane or per GPU thread, structure-of-arrays so a lane load is
+  consecutive.
   [`quantum_well.mojo`](examples/advanced/quantum_well.mojo),
-  [`ode.mojo`](examples/advanced/ode.mojo).
+  [`ode.mojo`](examples/advanced/ode.mojo),
+  [`batched_solve.mojo`](examples/advanced/batched_solve.mojo) (4096 SPD
+  4x4 Cholesky solves, plus `dx/dA00` at `Dual`).
 - **Derivatives, bounds and precision through SciPy's algorithms, with no
   adjoint rule written.** `Dual` through Cholesky, `eigh`, an integral, an
   ODE and every special function; `Gradient[Dual[Plain], n]` is a Hessian
   by nesting; `Complex[Dual[Plain]]` differentiates holomorphically;
   `Interval` encloses `erf` exactly and `j0` loosely, and the example shows
   where an enclosure stops.
+  `to_tensor` lowers the answer back: a `Dual` becomes a `(value,
+  derivative)` pair of tensors and a `Gradient[.., n]` a value plus its
+  partials, one `dtype` tensor per conformer field, since a tensor element
+  cannot hold the conformer itself.
   [`npy_to_cholesky.mojo`](examples/intermediate/npy_to_cholesky.mojo),
   [`hessian.mojo`](examples/basic/hessian.mojo),
   [`enclosures.mojo`](examples/intermediate/enclosures.mojo).
@@ -156,7 +165,10 @@ Young and experimental, so APIs may change. Not here yet, each on purpose:
 fancy indexing and owned slicing, dtype promotion (`astype` is explicit),
 decompositions over run-time shapes, reverse-mode autodiff (`Gradient` is
 forward and was measured against a tape), sparse matrices, Krylov solvers
-and distributed execution. [`docs/why.md`](docs/why.md) says why for each.
+and distributed execution. One limit is a bug rather than a decision: the
+spectral decompositions have no working device path, so `gpu=True` on
+`eigh`, `svd`, `schur` and their neighbours is a compile error rather than
+a wrong answer. [`docs/why.md`](docs/why.md) says why for each.
 
 ## Install
 
@@ -217,11 +229,14 @@ the `FloatLike` conformer rather than over a `DType`. That is what makes a
 Cholesky differentiate at `Dual` and run inside one GPU thread, one matrix
 per SIMD lane.
 
-**Every algorithmic subpackage now has both tiers**, one per import, sharing
-one set of names: `numax.linalg`, `numax.optimize`, `numax.integrate`,
+**Six subpackages carry both tiers**, one per import, sharing one set of
+names: `numax.linalg`, `numax.optimize`, `numax.integrate`,
 `numax.interpolate`, `numax.fft` and `numax.signal` are the `Tensor` tier and
 go through MAX, and `numax.linalg.array`, `numax.optimize.array` and their
-siblings are the differentiable register-resident one. Pick by what you need
+siblings are the differentiable register-resident one. `numax.stats` and
+`numax.special` have no `.array` sibling and need none -- `numax.special` is
+already `FloatLike`-generic throughout, and `numax.stats`' distributions are
+too, with a `Tensor` overload beside each rather than a separate package. Pick by what you need
 rather than by what exists: a device-resident matrix or a long recording
 wants the `Tensor` tier, a derivative through the algorithm wants the `Array`
 tier, and `to_tensor`/`to_array` cross between them. NumPy gets away with one
@@ -666,7 +681,13 @@ is `Plain`-only: `sorting`, `io`, the converge-to-tolerance minimizers in
 tier of `linalg`, whose panels run on the device while each sweep over a band
 deflates on a host test of the data. `ops`, `elementwise`, `logic` and the
 reductions are tier 2 in shape and run through MAX on either processor,
-chosen by one `gpu` parameter.
+chosen by one `gpu` parameter. That routing is one policy rather than one
+per routine: every NumPy-named call goes through a private launcher that
+picks `max.algorithm.elementwise` on a device, a threaded walk on a large
+host tensor and a serial SIMD loop on a small one. Because `elementwise`
+takes its extent as a run-time `Coord`, a run-time-shaped tensor reaches
+the GPU there, where a hand-launched kernel still needs the shape in its
+type.
 
 Tier 1 never calls tier 2, so a kernel you can launch stays launchable. Where
 both make sense the library ships both: `newton` at a fixed iteration count and
@@ -809,7 +830,7 @@ inheriting that floor. Details:
 ## Testing
 
 ```bash
-pixi run tests           # 42 suites, 638 tests
+pixi run tests           # 89 suites, 1503 tests, as 11 parallel binaries
 pixi run examples-cpu    # every example that does not need a GPU
 pixi run bench           # map vs. a hand-rolled raw-SIMD loop
 pixi run accuracy        # max error per function vs. mpmath references

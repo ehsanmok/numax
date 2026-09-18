@@ -114,6 +114,30 @@ from test_tensor_interp import (
 from test_tensor_interp import (
     test_horner_with_one_coefficient_is_constant as test_tensor_interp__test_horner_with_one_coefficient_is_constant,
 )
+from test_tensor_interp import (
+    test_polyval_is_horner_with_the_order_reversed as test_tensor_interp__test_polyval_is_horner_with_the_order_reversed,
+)
+from test_tensor_interp import (
+    test_polyder_and_polyint_are_inverse_up_to_the_constant as test_tensor_interp__test_polyder_and_polyint_are_inverse_up_to_the_constant,
+)
+from test_tensor_interp import (
+    test_polyint_places_the_constant_in_the_last_slot as test_tensor_interp__test_polyint_places_the_constant_in_the_last_slot,
+)
+from test_tensor_interp import (
+    test_roots_finds_a_real_pair as test_tensor_interp__test_roots_finds_a_real_pair,
+)
+from test_tensor_interp import (
+    test_roots_finds_a_complex_pair as test_tensor_interp__test_roots_finds_a_complex_pair,
+)
+from test_tensor_interp import (
+    test_roots_agrees_with_polyval_at_the_roots_it_finds as test_tensor_interp__test_roots_agrees_with_polyval_at_the_roots_it_finds,
+)
+from test_tensor_interp import (
+    test_polyfit_recovers_a_polynomial_it_was_sampled_from as test_tensor_interp__test_polyfit_recovers_a_polynomial_it_was_sampled_from,
+)
+from test_tensor_interp import (
+    test_polyfit_at_degree_one_is_a_straight_line as test_tensor_interp__test_polyfit_at_degree_one_is_a_straight_line,
+)
 from test_tensor_spline import (
     test_not_a_knot_spline_matches_scipy as test_tensor_spline__test_not_a_knot_spline_matches_scipy,
 )
@@ -208,6 +232,26 @@ def main() raises:
     suite.test[test_tensor_interp__test_horner_matches_polyval]()
     suite.test[
         test_tensor_interp__test_horner_with_one_coefficient_is_constant
+    ]()
+    suite.test[
+        test_tensor_interp__test_polyval_is_horner_with_the_order_reversed
+    ]()
+    suite.test[
+        test_tensor_interp__test_polyder_and_polyint_are_inverse_up_to_the_constant
+    ]()
+    suite.test[
+        test_tensor_interp__test_polyint_places_the_constant_in_the_last_slot
+    ]()
+    suite.test[test_tensor_interp__test_roots_finds_a_real_pair]()
+    suite.test[test_tensor_interp__test_roots_finds_a_complex_pair]()
+    suite.test[
+        test_tensor_interp__test_roots_agrees_with_polyval_at_the_roots_it_finds
+    ]()
+    suite.test[
+        test_tensor_interp__test_polyfit_recovers_a_polynomial_it_was_sampled_from
+    ]()
+    suite.test[
+        test_tensor_interp__test_polyfit_at_degree_one_is_a_straight_line
     ]()
     # tests/interpolate/test_tensor_spline.mojo
     suite.test[test_tensor_spline__test_not_a_knot_spline_matches_scipy]()

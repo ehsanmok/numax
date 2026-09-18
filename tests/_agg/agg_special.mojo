@@ -144,6 +144,15 @@ from test_beta import (
 from test_beta import (
     test_beta_relates_to_the_gamma_ratio_numerically as test_beta__test_beta_relates_to_the_gamma_ratio_numerically,
 )
+from test_beta import (
+    test_betaln_agrees_with_the_log_of_beta_where_beta_survives as test_beta__test_betaln_agrees_with_the_log_of_beta_where_beta_survives,
+)
+from test_beta import (
+    test_betaln_survives_where_beta_underflows_to_zero as test_beta__test_betaln_survives_where_beta_underflows_to_zero,
+)
+from test_beta import (
+    test_betaln_is_symmetric_and_differentiable as test_beta__test_betaln_is_symmetric_and_differentiable,
+)
 from test_elliptic import (
     test_elliptic_k_e_at_zero_are_pi_over_two as test_elliptic__test_elliptic_k_e_at_zero_are_pi_over_two,
 )
@@ -493,6 +502,11 @@ def main() raises:
     suite.test[test_beta__test_betaincc_is_one_minus_betainc]()
     suite.test[test_beta__test_betainc_derivative_matches_the_density]()
     suite.test[test_beta__test_beta_relates_to_the_gamma_ratio_numerically]()
+    suite.test[
+        test_beta__test_betaln_agrees_with_the_log_of_beta_where_beta_survives
+    ]()
+    suite.test[test_beta__test_betaln_survives_where_beta_underflows_to_zero]()
+    suite.test[test_beta__test_betaln_is_symmetric_and_differentiable]()
     # tests/special/test_elliptic.mojo
     suite.test[test_elliptic__test_elliptic_k_e_at_zero_are_pi_over_two]()
     suite.test[test_elliptic__test_elliptic_e_at_one_is_one]()

@@ -234,6 +234,24 @@ from test_hypothesis import (
 from test_hypothesis import (
     test_f_oneway_and_mannwhitneyu_match_scipy as test_hypothesis__test_f_oneway_and_mannwhitneyu_match_scipy,
 )
+from test_hypothesis import (
+    test_ks_2samp_matches_scipy as test_hypothesis__test_ks_2samp_matches_scipy,
+)
+from test_hypothesis import (
+    test_ks_2samp_of_identical_samples_has_no_gap as test_hypothesis__test_ks_2samp_of_identical_samples_has_no_gap,
+)
+from test_hypothesis import (
+    test_wilcoxon_matches_scipy as test_hypothesis__test_wilcoxon_matches_scipy,
+)
+from test_hypothesis import (
+    test_wilcoxon_drops_zero_differences as test_hypothesis__test_wilcoxon_drops_zero_differences,
+)
+from test_hypothesis import (
+    test_wilcoxon_rejects_unpaired_lengths as test_hypothesis__test_wilcoxon_rejects_unpaired_lengths,
+)
+from test_hypothesis import (
+    test_wilcoxon_rejects_an_all_tied_sample as test_hypothesis__test_wilcoxon_rejects_an_all_tied_sample,
+)
 from test_quantiles import (
     test_quantile_matches_numpy_under_every_method as test_quantiles__test_quantile_matches_numpy_under_every_method,
 )
@@ -611,6 +629,12 @@ def main() raises:
     suite.test[test_hypothesis__test_chisquare_matches_scipy]()
     suite.test[test_hypothesis__test_ks_1samp_matches_scipy]()
     suite.test[test_hypothesis__test_f_oneway_and_mannwhitneyu_match_scipy]()
+    suite.test[test_hypothesis__test_ks_2samp_matches_scipy]()
+    suite.test[test_hypothesis__test_ks_2samp_of_identical_samples_has_no_gap]()
+    suite.test[test_hypothesis__test_wilcoxon_matches_scipy]()
+    suite.test[test_hypothesis__test_wilcoxon_drops_zero_differences]()
+    suite.test[test_hypothesis__test_wilcoxon_rejects_unpaired_lengths]()
+    suite.test[test_hypothesis__test_wilcoxon_rejects_an_all_tied_sample]()
     # tests/stats/test_quantiles.mojo
     suite.test[test_quantiles__test_quantile_matches_numpy_under_every_method]()
     suite.test[test_quantiles__test_quantile_at_one_and_two_samples]()

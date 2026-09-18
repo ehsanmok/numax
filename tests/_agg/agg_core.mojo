@@ -186,6 +186,27 @@ from test_array import (
 from test_array import (
     test_atleast_1d_is_the_identity_at_the_only_rank_it_takes as test_array__test_atleast_1d_is_the_identity_at_the_only_rank_it_takes,
 )
+from test_array import (
+    test_flatten_agrees_with_ravel as test_array__test_flatten_agrees_with_ravel,
+)
+from test_array import (
+    test_dstack_interleaves_rather_than_appending as test_array__test_dstack_interleaves_rather_than_appending,
+)
+from test_array import (
+    test_rot90_turns_counterclockwise_and_four_turns_is_identity as test_array__test_rot90_turns_counterclockwise_and_four_turns_is_identity,
+)
+from test_array import (
+    test_atleast_3d_uses_numpys_shapes_at_each_rank as test_array__test_atleast_3d_uses_numpys_shapes_at_each_rank,
+)
+from test_array import (
+    test_array_split_divides_evenly_and_unevenly as test_array__test_array_split_divides_evenly_and_unevenly,
+)
+from test_array import (
+    test_array_split_along_a_later_axis_keeps_the_other_extents as test_array__test_array_split_along_a_later_axis_keeps_the_other_extents,
+)
+from test_array import (
+    test_array_split_rejects_a_nonpositive_count as test_array__test_array_split_rejects_a_nonpositive_count,
+)
 from test_bridge import (
     test_rank_1_round_trips as test_bridge__test_rank_1_round_trips,
 )
@@ -585,6 +606,27 @@ from test_elementwise import (
 )
 from test_elementwise import (
     test_broadcast_binary_to_stretches_a_row as test_elementwise__test_broadcast_binary_to_stretches_a_row,
+)
+from test_elementwise import (
+    test_sign_is_zero_at_both_zeros_and_nan_at_nan as test_elementwise__test_sign_is_zero_at_both_zeros_and_nan_at_nan,
+)
+from test_elementwise import (
+    test_square_and_reciprocal_match_hand_computed_values as test_elementwise__test_square_and_reciprocal_match_hand_computed_values,
+)
+from test_elementwise import (
+    test_square_agrees_with_power_of_two as test_elementwise__test_square_agrees_with_power_of_two,
+)
+from test_elementwise import (
+    test_degrees_and_radians_round_trip as test_elementwise__test_degrees_and_radians_round_trip,
+)
+from test_elementwise import (
+    test_rint_is_round_under_numpys_name as test_elementwise__test_rint_is_round_under_numpys_name,
+)
+from test_elementwise import (
+    test_maximum_propagates_nan_and_fmax_ignores_it as test_elementwise__test_maximum_propagates_nan_and_fmax_ignores_it,
+)
+from test_elementwise import (
+    test_fmax_broadcasts_a_row_like_maximum as test_elementwise__test_fmax_broadcasts_a_row_like_maximum,
 )
 from test_engine import (
     test_runtime_map_to_agrees_with_the_static_one as test_engine__test_runtime_map_to_agrees_with_the_static_one,
@@ -1169,6 +1211,24 @@ from test_sorting import (
 from test_sorting import (
     test_put_rejects_an_out_of_range_index as test_sorting__test_put_rejects_an_out_of_range_index,
 )
+from test_sorting import (
+    test_compress_selects_where_the_condition_is_true as test_sorting__test_compress_selects_where_the_condition_is_true,
+)
+from test_sorting import (
+    test_compress_drops_positions_past_a_short_condition as test_sorting__test_compress_drops_positions_past_a_short_condition,
+)
+from test_sorting import (
+    test_compress_rejects_a_condition_longer_than_the_tensor as test_sorting__test_compress_rejects_a_condition_longer_than_the_tensor,
+)
+from test_sorting import (
+    test_partition_puts_the_kth_element_in_its_sorted_place as test_sorting__test_partition_puts_the_kth_element_in_its_sorted_place,
+)
+from test_sorting import (
+    test_partition_rejects_a_kth_outside_the_tensor as test_sorting__test_partition_rejects_a_kth_outside_the_tensor,
+)
+from test_sorting import (
+    test_argpartition_indices_reproduce_partition as test_sorting__test_argpartition_indices_reproduce_partition,
+)
 from test_sqrt import (
     test_plain_matches_std_math as test_sqrt__test_plain_matches_std_math,
 )
@@ -1382,6 +1442,17 @@ def main() raises:
     suite.test[
         test_array__test_atleast_1d_is_the_identity_at_the_only_rank_it_takes
     ]()
+    suite.test[test_array__test_flatten_agrees_with_ravel]()
+    suite.test[test_array__test_dstack_interleaves_rather_than_appending]()
+    suite.test[
+        test_array__test_rot90_turns_counterclockwise_and_four_turns_is_identity
+    ]()
+    suite.test[test_array__test_atleast_3d_uses_numpys_shapes_at_each_rank]()
+    suite.test[test_array__test_array_split_divides_evenly_and_unevenly]()
+    suite.test[
+        test_array__test_array_split_along_a_later_axis_keeps_the_other_extents
+    ]()
+    suite.test[test_array__test_array_split_rejects_a_nonpositive_count]()
     # tests/core/test_bridge.mojo
     suite.test[test_bridge__test_rank_1_round_trips]()
     suite.test[test_bridge__test_rank_2_round_trips_row_major]()
@@ -1591,6 +1662,19 @@ def main() raises:
     ]()
     suite.test[test_elementwise__test_binary_scalar_captures_its_operand]()
     suite.test[test_elementwise__test_broadcast_binary_to_stretches_a_row]()
+    suite.test[
+        test_elementwise__test_sign_is_zero_at_both_zeros_and_nan_at_nan
+    ]()
+    suite.test[
+        test_elementwise__test_square_and_reciprocal_match_hand_computed_values
+    ]()
+    suite.test[test_elementwise__test_square_agrees_with_power_of_two]()
+    suite.test[test_elementwise__test_degrees_and_radians_round_trip]()
+    suite.test[test_elementwise__test_rint_is_round_under_numpys_name]()
+    suite.test[
+        test_elementwise__test_maximum_propagates_nan_and_fmax_ignores_it
+    ]()
+    suite.test[test_elementwise__test_fmax_broadcasts_a_row_like_maximum]()
     # tests/core/test_engine.mojo
     suite.test[test_engine__test_runtime_map_to_agrees_with_the_static_one]()
     suite.test[test_engine__test_runtime_zip_to_agrees_with_the_static_one]()
@@ -1940,6 +2024,20 @@ def main() raises:
     ]()
     suite.test[test_sorting__test_put_is_the_writing_side_of_nonzero]()
     suite.test[test_sorting__test_put_rejects_an_out_of_range_index]()
+    suite.test[
+        test_sorting__test_compress_selects_where_the_condition_is_true
+    ]()
+    suite.test[
+        test_sorting__test_compress_drops_positions_past_a_short_condition
+    ]()
+    suite.test[
+        test_sorting__test_compress_rejects_a_condition_longer_than_the_tensor
+    ]()
+    suite.test[
+        test_sorting__test_partition_puts_the_kth_element_in_its_sorted_place
+    ]()
+    suite.test[test_sorting__test_partition_rejects_a_kth_outside_the_tensor]()
+    suite.test[test_sorting__test_argpartition_indices_reproduce_partition]()
     # tests/core/test_sqrt.mojo
     suite.test[test_sqrt__test_plain_matches_std_math]()
     suite.test[test_sqrt__test_plain_squares_back]()

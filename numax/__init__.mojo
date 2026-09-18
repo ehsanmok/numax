@@ -24,7 +24,10 @@ needing its own copy of every kernel. Because the decompositions,
 quadrature rules, ODE steps and root solvers are themselves written this
 way, a whole algorithm -- a 24x24 eigensolve, a Newton iteration over it
 -- runs inside one GPU thread at `Dual` as readily as at `Plain`
-(`examples/advanced/quantum_well.mojo`).
+(`examples/advanced/quantum_well.mojo`). `map_blocks` is the batched entry
+point: one small problem per lane or per thread, structure-of-arrays so a
+lane load is consecutive (`examples/advanced/batched_solve.mojo`, 4096 SPD
+4x4 Cholesky solves plus a derivative through them).
 
 **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory decides host or device memory: the
@@ -32,6 +35,11 @@ same kernel, any accelerator, unmodified. Nothing else changes, and
 `.view()` yields the `TileTensor` every MAX kernel takes. Its shape lives
 in its layout type, so `Static[f32, 2, 3]` and `Dynamic[f32, 2]` -- extents
 compiled in, extents supplied at run time -- are one type, not two.
+`to_array` lifts a tensor into the conformer tier and `to_tensor` lowers
+the answer back: a `Dual` projects to a `(value, derivative)` pair and a
+`Gradient[.., n]` to a value plus its partials, one `dtype` tensor per
+conformer field, because a tensor element cannot hold the conformer
+itself.
 
 **NumPy and SciPy's ground.** The SciPy entry points are spelled the way
 SciPy spells them, method strings included, and `.npy` files round-trip
@@ -39,7 +47,11 @@ byte for byte, so a program ported from NumPy ingests the files it has
 and hands results back the same way. The full inventory is
 `docs/features.md`; what is routed to MAX, written here, or left out on
 purpose -- sparse, iterative solvers, distributed execution, dtype
-promotion, reverse-mode autodiff -- is `docs/parity.md`.
+promotion, reverse-mode autodiff -- is `docs/parity.md`, which carries a
+disposition for every name left out rather than only the themes. One limit
+there is a bug and not a decision: the spectral decompositions have no
+working device path, so `gpu=True` on `eigh`, `svd`, `schur` and their
+neighbours is refused at compile time rather than answered wrongly.
 
 **Measured, per processor.** CPU and GPU numbers are never mixed into one
 comparison, and `docs/performance.md` carries every figure with the
@@ -86,7 +98,7 @@ reach them.
 
 | Subpackage | Contents |
 |---|---|
-| `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows` -- is `numax.core.tensor` |
+| `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows`/`map_blocks` -- is `numax.core.tensor`. The NumPy-named surface shares one launch policy rather than one per routine: a private launcher picks `max.algorithm.elementwise` on a device, a threaded walk on a large host tensor and a serial SIMD loop on a small one, and because `elementwise` takes a run-time extent a `Dynamic` reaches the GPU there |
 | `numax.special` | Γ and B with their incomplete forms, `erf`/`erfc`/`erfinv`/`erfcinv`, Bessel at integer (`j0`...`y1`) and arbitrary order (`jv`/`yv`/`iv`/`kv`, `spherical_jn`/`spherical_yn`), Airy, Struve, the exponential integrals `expi`/`exp1`/`expn`, `sici`/`fresnel`, `zeta`, `hyp1f1`/`hyp2f1`, Owen's T, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, `factorial`/`comb`/`perm`/`poch`, the information-theoretic `xlogy`/`rel_entr`/`kl_div`/`entr`, activations, and `logsumexp` over `Tensor` through MAX's `OnlineLogSumExp` monoid. Every one is tier 1: fixed iteration, launchable inside a kernel, with its error bound checked by `pixi run accuracy` |
 | `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner`/`tensordot`/`cross` are MAX kernels or one GEMM each, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace`/`tensorsolve`/`tensorinv` build on those. The spectral decompositions are here too: `sytrd`, `eigvalsh`/`eigh`, `svdvals`/`svd` (rectangular, sorted) with `pinv`/`cond`/`matrix_rank` on top, `hessenberg`, `eigvals` (a real/imaginary pair), `schur`, and the matrix functions on the Schur form -- `expm`, `sqrtm`, `logm`, `funm`, `cosm`/`sinm`, `fractional_matrix_power`. `kron`/`matrix_power`, the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `pascal`, `hadamard`, `helmert`, `fiedler`, `leslie`, `block_diag`, `khatri_rao`, `convolution_matrix`, ...) and the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) sit beside them. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names -- the same factorizations, spectra and solves register-resident, where the point is differentiating through them |
 | `numax.optimize` | `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, box bounds), `root`, `nnls`/`lsq_linear` and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize.array` is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |

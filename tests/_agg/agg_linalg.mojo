@@ -643,6 +643,21 @@ from test_tensor_eigen import (
     test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient as test_tensor_eigen__test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient,
 )
 from test_tensor_eigen import (
+    test_orth_returns_a_basis_of_the_right_width_and_is_orthonormal as test_tensor_eigen__test_orth_returns_a_basis_of_the_right_width_and_is_orthonormal,
+)
+from test_tensor_eigen import (
+    test_orth_of_a_full_rank_matrix_has_every_column as test_tensor_eigen__test_orth_of_a_full_rank_matrix_has_every_column,
+)
+from test_tensor_eigen import (
+    test_null_space_is_annihilated_by_the_matrix as test_tensor_eigen__test_null_space_is_annihilated_by_the_matrix,
+)
+from test_tensor_eigen import (
+    test_null_space_of_a_full_rank_matrix_is_empty as test_tensor_eigen__test_null_space_of_a_full_rank_matrix_is_empty,
+)
+from test_tensor_eigen import (
+    test_polar_factors_reconstruct_and_have_their_defining_properties as test_tensor_eigen__test_polar_factors_reconstruct_and_have_their_defining_properties,
+)
+from test_tensor_eigen import (
     test_hessenberg_is_zero_below_the_subdiagonal_and_a_similarity as test_tensor_eigen__test_hessenberg_is_zero_below_the_subdiagonal_and_a_similarity,
 )
 from test_tensor_eigen import (
@@ -858,6 +873,15 @@ from test_tensor_linalg import (
 from test_tensor_linalg import (
     test_lstsq_recovers_an_exact_linear_fit as test_tensor_linalg__test_lstsq_recovers_an_exact_linear_fit,
 )
+from test_tensor_linalg import (
+    test_rq_reconstructs_the_matrix as test_tensor_linalg__test_rq_reconstructs_the_matrix,
+)
+from test_tensor_linalg import (
+    test_rq_r_is_upper_triangular_and_q_is_orthogonal as test_tensor_linalg__test_rq_r_is_upper_triangular_and_q_is_orthogonal,
+)
+from test_tensor_linalg import (
+    test_rq_of_a_one_by_one_is_the_scalar as test_tensor_linalg__test_rq_of_a_one_by_one_is_the_scalar,
+)
 from test_tensor_matfuncs import (
     test_sqrtm_matches_scipy_and_squares_back as test_tensor_matfuncs__test_sqrtm_matches_scipy_and_squares_back,
 )
@@ -881,6 +905,12 @@ from test_tensor_matfuncs import (
 )
 from test_tensor_matfuncs import (
     test_fractional_matrix_power_matches_scipy_and_sqrtm as test_tensor_matfuncs__test_fractional_matrix_power_matches_scipy_and_sqrtm,
+)
+from test_tensor_matfuncs import (
+    test_tanm_is_the_matrix_quotient_of_sinm_by_cosm as test_tensor_matfuncs__test_tanm_is_the_matrix_quotient_of_sinm_by_cosm,
+)
+from test_tensor_matfuncs import (
+    test_tanm_of_a_diagonal_matrix_is_the_scalar_tangent as test_tensor_matfuncs__test_tanm_of_a_diagonal_matrix_is_the_scalar_tangent,
 )
 from test_tensor_products import (
     test_cross_of_the_axes_and_antisymmetry as test_tensor_products__test_cross_of_the_axes_and_antisymmetry,
@@ -1289,6 +1319,21 @@ def main() raises:
         test_tensor_eigen__test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient
     ]()
     suite.test[
+        test_tensor_eigen__test_orth_returns_a_basis_of_the_right_width_and_is_orthonormal
+    ]()
+    suite.test[
+        test_tensor_eigen__test_orth_of_a_full_rank_matrix_has_every_column
+    ]()
+    suite.test[
+        test_tensor_eigen__test_null_space_is_annihilated_by_the_matrix
+    ]()
+    suite.test[
+        test_tensor_eigen__test_null_space_of_a_full_rank_matrix_is_empty
+    ]()
+    suite.test[
+        test_tensor_eigen__test_polar_factors_reconstruct_and_have_their_defining_properties
+    ]()
+    suite.test[
         test_tensor_eigen__test_hessenberg_is_zero_below_the_subdiagonal_and_a_similarity
     ]()
     suite.test[
@@ -1471,6 +1516,11 @@ def main() raises:
         test_tensor_linalg__test_lstsq_agrees_with_the_factorization_it_wraps
     ]()
     suite.test[test_tensor_linalg__test_lstsq_recovers_an_exact_linear_fit]()
+    suite.test[test_tensor_linalg__test_rq_reconstructs_the_matrix]()
+    suite.test[
+        test_tensor_linalg__test_rq_r_is_upper_triangular_and_q_is_orthogonal
+    ]()
+    suite.test[test_tensor_linalg__test_rq_of_a_one_by_one_is_the_scalar]()
     # tests/linalg/test_tensor_matfuncs.mojo
     suite.test[
         test_tensor_matfuncs__test_sqrtm_matches_scipy_and_squares_back
@@ -1493,6 +1543,12 @@ def main() raises:
     ]()
     suite.test[
         test_tensor_matfuncs__test_fractional_matrix_power_matches_scipy_and_sqrtm
+    ]()
+    suite.test[
+        test_tensor_matfuncs__test_tanm_is_the_matrix_quotient_of_sinm_by_cosm
+    ]()
+    suite.test[
+        test_tensor_matfuncs__test_tanm_of_a_diagonal_matrix_is_the_scalar_tangent
     ]()
     # tests/linalg/test_tensor_products.mojo
     suite.test[test_tensor_products__test_cross_of_the_axes_and_antisymmetry]()
