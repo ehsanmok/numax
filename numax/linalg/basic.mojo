@@ -101,6 +101,9 @@ def pinv[
     singular values below `rcond` times the largest dropped.
     `numpy.linalg.pinv`, and `scipy.linalg.pinv`'s shape.
 
+    **`gpu=True` does not compile**, since this is `svd` plus a reciprocal
+    and `svd` refuses it.
+
     Reach for this instead of `inverse` when the matrix might be singular,
     nearly so, or not square at all: `inverse` solves against the identity
     through a pivoted LU and returns enormous garbage for a near-singular
@@ -114,6 +117,10 @@ def pinv[
     defaults to NumPy's `1e-15`; the `Array` tier uses `1e-12`, because at
     a fixed Jacobi sweep count its small singular values carry more noise.
     """
+    comptime assert not gpu, (
+        "pinv: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     var factored = svd[gpu=gpu](a)
     var s = factored.s.to_host()
     var threshold = Float64(s[0]) * rcond

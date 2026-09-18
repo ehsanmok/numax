@@ -276,6 +276,9 @@ def cond[
     """**Tier 2.** The 2-norm condition number, the ratio of the largest
     singular value to the smallest. `numpy.linalg.cond`.
 
+    **`gpu=True` does not compile**, since this is `svdvals` plus a ratio
+    and `svdvals` refuses it.
+
     The number that says how much a solve can amplify input error -- a
     `cond` of `1e12` at `float64` means about four significant digits
     survive. Worth computing before trusting `solve` or `inverse` on a
@@ -287,5 +290,9 @@ def cond[
     reports a very large finite number instead, because a branchless kernel
     cannot decide to return an infinity; at this tier the decision is free.
     """
+    comptime assert not gpu, (
+        "cond: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     var s = svdvals[gpu=gpu](a).to_host()
     return s[0] / s[n - 1]

@@ -700,6 +700,9 @@ def funm[
     """`f(a)` for a scalar `FloatLike` function `f`, as a function of the
     matrix. `scipy.linalg.funm(a, f)`.
 
+    **`gpu=True` does not compile**, since this reaches
+    `schur` and `schur` refuses it.
+
     **Tier 2.** `schur` reduces `a` to real Schur form with the cubic term
     in `linalg.matmul`, the block Parlett recurrence evaluates `f` on the
     quasi-triangular factor on the host -- `f` itself at `Plain` on a `1 x
@@ -717,6 +720,10 @@ def funm[
     var b = funm[f=my_f](a)
     ```
     """
+    comptime assert not gpu, (
+        "funm: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     var ctx = a.context()
     var decomposed = schur[dtype, n, gpu](a)
     var t = decomposed.t.to_host()
@@ -731,6 +738,9 @@ def sqrtm[
 ):
     """The principal matrix square root, `X @ X == a`. `scipy.linalg.sqrtm`.
 
+    **`gpu=True` does not compile**, since this reaches
+    `schur` and `schur` refuses it.
+
     **Tier 2.** `schur`, then the Bjorck-Hammarling recurrence on the real
     Schur form -- Higham's algorithm, whose denominators are sums of
     principal square roots and never vanish, so repeated and defective
@@ -740,6 +750,10 @@ def sqrtm[
     loud. `numax.linalg.array.sqrtm` is the symmetric positive definite
     route through `eigh` for matrices small enough to live in registers.
     """
+    comptime assert not gpu, (
+        "sqrtm: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     var ctx = a.context()
     var decomposed = schur[dtype, n, gpu](a)
     var t = decomposed.t.to_host()
@@ -755,6 +769,9 @@ def logm[
     """The principal matrix logarithm, `expm(logm(a)) == a`.
     `scipy.linalg.logm`.
 
+    **`gpu=True` does not compile**, since this reaches
+    `schur` and `schur` refuses it.
+
     **Tier 2.** `schur`, then inverse scaling and squaring on the real
     Schur form -- square roots by the `sqrtm` recurrence until the factor
     is within `1/4` of the identity, the degree-8 Pade approximant of
@@ -762,6 +779,10 @@ def logm[
     docstring has the ceiling. Real for a matrix with no eigenvalue on the
     closed negative real axis, NaN otherwise.
     """
+    comptime assert not gpu, (
+        "logm: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     var ctx = a.context()
     var decomposed = schur[dtype, n, gpu](a)
     var t = decomposed.t.to_host()
@@ -783,7 +804,14 @@ def cosm[
     dtype.is_floating_point() and n >= 1
 ):
     """The matrix cosine, `funm` at `cos`. `scipy.linalg.cosm`. `cosm(a) @
-    cosm(a) + sinm(a) @ sinm(a)` is the identity."""
+    cosm(a) + sinm(a) @ sinm(a)` is the identity.
+
+    **`gpu=True` does not compile**, since this reaches
+    `schur` and `schur` refuses it."""
+    comptime assert not gpu, (
+        "cosm: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     return funm[dtype, n, _cos_f, gpu](a)
 
 
@@ -792,7 +820,14 @@ def sinm[
 ](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
     dtype.is_floating_point() and n >= 1
 ):
-    """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`."""
+    """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`.
+
+    **`gpu=True` does not compile**, since this reaches
+    `schur` and `schur` refuses it."""
+    comptime assert not gpu, (
+        "sinm: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
     return funm[dtype, n, _sin_f, gpu](a)
 
 
@@ -805,7 +840,14 @@ def fractional_matrix_power[
     `scipy.linalg.fractional_matrix_power`. Real for a matrix with no
     eigenvalue on the closed negative real axis, and `t = 1/2` agrees with
     `sqrtm` to rounding; SciPy's Schur-Pade route is sharper for `t` near
-    an integer and is the upgrade."""
+    an integer and is the upgrade.
+
+    **`gpu=True` does not compile**, since this reaches
+    `logm` and so `schur`, which refuses it."""
+    comptime assert not gpu, (
+        "fractional_matrix_power: gpu=True is a known-wrong device path and is"
+        " refused; run the default gpu=False. See the docstring."
+    )
     var l = logm[dtype, n, gpu](a)
     var scaled = multiply(l, Scalar[dtype](t))
     return expm[dtype, n, gpu](scaled)
