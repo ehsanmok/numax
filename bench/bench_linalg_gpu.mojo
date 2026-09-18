@@ -159,7 +159,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
     var b = _general_offset[n](ctx)
 
     def work() raises {mut a, mut b, imm ctx}:
-        var r = matmul[dtype, n, n, n, True](a, b)
+        var r = matmul[gpu=True](a, b)
         keep(r.buffer.unsafe_ptr())
         ctx.synchronize()
 
@@ -173,7 +173,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
         * 1e9
     )
 
-    var product = matmul[dtype, n, n, n, True](a, b).to_host()
+    var product = matmul[gpu=True](a, b).to_host()
     var worst = Float64(0)
     for j in range(n):
         var want = Float64(0)
@@ -190,7 +190,7 @@ def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     var a = _spd[n](ctx)
 
     def work() raises {mut a, imm ctx}:
-        var r = cholesky[dtype, n, True, block](a)
+        var r = cholesky[gpu=True, block=block](a)
         keep(r.buffer.unsafe_ptr())
         ctx.synchronize()
 
@@ -204,9 +204,9 @@ def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
         * 1e9
     )
 
-    var lower = cholesky[dtype, n, True, block](a)
+    var lower = cholesky[gpu=True, block=block](a)
     var upper = transpose[gpu=True](lower)
-    var product = matmul[dtype, n, n, n, True](lower, upper).to_host()
+    var product = matmul[gpu=True](lower, upper).to_host()
     var worst = Float64(0)
     for i in range(n):
         for j in range(n):
@@ -222,7 +222,7 @@ def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
 
     def work() raises {mut a, imm ctx}:
-        var r = lu_factor[dtype, n, True, block](a)
+        var r = lu_factor[gpu=True, block=block](a)
         keep(r.factored.buffer.unsafe_ptr())
         ctx.synchronize()
 
@@ -236,10 +236,10 @@ def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
         * 1e9
     )
 
-    var factored = lu_factor[dtype, n, True, block](a)
+    var factored = lu_factor[gpu=True, block=block](a)
     var b = _ramp[n](ctx, 3)
     var x = factored.solve(b)
-    var residual = matvec[dtype, n, n, True](a, x).to_host()
+    var residual = matvec[gpu=True](a, x).to_host()
     var rhs = b.to_host()
     var worst = Float64(0)
     for i in range(n):
@@ -256,7 +256,7 @@ def bench_solve[n: Int, block: Int = 16](ctx: DeviceContext) raises:
     var b = _ramp[n](ctx, 5)
 
     def work() raises {mut a, mut b, imm ctx}:
-        var r = solve[dtype, n, True, block](a, b)
+        var r = solve[gpu=True, block=block](a, b)
         keep(r.buffer.unsafe_ptr())
         ctx.synchronize()
 
@@ -270,8 +270,8 @@ def bench_solve[n: Int, block: Int = 16](ctx: DeviceContext) raises:
         * 1e9
     )
 
-    var x = solve[dtype, n, True, block](a, b)
-    var residual = matvec[dtype, n, n, True](a, x).to_host()
+    var x = solve[gpu=True, block=block](a, b)
+    var residual = matvec[gpu=True](a, x).to_host()
     var rhs = b.to_host()
     var worst = Float64(0)
     for i in range(n):
@@ -289,7 +289,7 @@ def bench_qr[
     var a = _general_rect[m, n](ctx)
 
     def work() raises {mut a, imm ctx}:
-        var r = qr_factor[dtype, m, n, True, block](a)
+        var r = qr_factor[gpu=True, block=block](a)
         keep(r.factored.buffer.unsafe_ptr())
         ctx.synchronize()
 
@@ -303,10 +303,10 @@ def bench_qr[
         * 1e9
     )
 
-    var factored = qr_factor[dtype, m, n, True, block](a)
+    var factored = qr_factor[gpu=True, block=block](a)
     var r = factored.r()
     var q = factored.q()
-    var product = matmul[dtype, m, n, n, True](q, r).to_host()
+    var product = matmul[gpu=True](q, r).to_host()
     var worst = Float64(0)
     for i in range(m):
         for j in range(n):

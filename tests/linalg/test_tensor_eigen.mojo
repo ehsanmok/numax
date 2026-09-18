@@ -157,7 +157,7 @@ def _sytrd_q_at[
     """Form `Q` from a Hilbert `n` reduction at this panel width and pin it
     entry by entry to the reference answer."""
     var a = _hilbert[n]()
-    var reduced = sytrd[dtype, n, False, block](a)
+    var reduced = sytrd[gpu=False, block=block](a)
     var q = reduced.q().to_host()
     for i in range(n * n):
         assert_almost_equal(q[i], want[i], atol=1e-12)
@@ -171,7 +171,7 @@ def test_sytrd_q_matches_the_unblocked_accumulation() raises:
     # `T` is the whole triangular factor.
     comptime six = 6
     var a6 = _hilbert[six]()
-    var ref6 = sytrd[dtype, six, False, six](a6)
+    var ref6 = sytrd[gpu=False, block=six](a6)
     var want6 = ref6.q().to_host()
     _sytrd_q_at[six, 1](want6)
     _sytrd_q_at[six, 2](want6)
@@ -180,7 +180,7 @@ def test_sytrd_q_matches_the_unblocked_accumulation() raises:
 
     comptime five = 5
     var a5 = _hilbert[five]()
-    var ref5 = sytrd[dtype, five, False, five](a5)
+    var ref5 = sytrd[gpu=False, block=five](a5)
     var want5 = ref5.q().to_host()
     _sytrd_q_at[five, 1](want5)
     _sytrd_q_at[five, 2](want5)
@@ -194,7 +194,7 @@ def test_sytrd_q_at_a_ragged_panel_width() raises:
     comptime block = 3
     var a = _hilbert[n]()
     var original = _copy_of(a)
-    var reduced = sytrd[dtype, n, False, block](a)
+    var reduced = sytrd[gpu=False, block=block](a)
     var q = reduced.q()
     var qt = transpose(q)
 
@@ -255,7 +255,7 @@ def _sytrd_reduction_at[
     from."""
     var a = _hilbert[n]()
     var original = _copy_of(a)
-    var reduced = sytrd[dtype, n, False, block](a)
+    var reduced = sytrd[gpu=False, block=block](a)
 
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
@@ -287,7 +287,7 @@ def test_sytrd_blocking_does_not_change_the_answer() raises:
     # pins entries rather than invariants.
     comptime n = 6
     var reference = _hilbert[n]()
-    var whole = sytrd[dtype, n, False, n](reference)
+    var whole = sytrd[gpu=False, block=n](reference)
     var want_d = whole.d.to_host()
     var want_e = whole.e.to_host()
     var want_q = whole.q().to_host()
@@ -307,7 +307,7 @@ def _sytrd_reduction_agrees[
     entrywise with the unblocked reduction."""
     var a = _symmetric_hash[n]()
     var original = _copy_of(a)
-    var reduced = sytrd[dtype, n, False, block](a)
+    var reduced = sytrd[gpu=False, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
     var q = reduced.q()
@@ -341,7 +341,7 @@ def _sytrd_reduction_agrees[
     assert_equal(residual < 1e-10, True)
 
     var plain = _symmetric_hash[n]()
-    var unblocked = sytrd[dtype, n, False, 1](plain)
+    var unblocked = sytrd[gpu=False, block=1](plain)
     var want_d = unblocked.d.to_host()
     var want_e = unblocked.e.to_host()
     var want_q = unblocked.q().to_host()
@@ -626,7 +626,7 @@ def _eigh_agrees[
     """Run `eigh` on Hilbert `n` at this `block` and pin it to a reference
     answer, values and vectors alike."""
     var a = _hilbert[n]()
-    var got = eigh[dtype, n, False, block](a)
+    var got = eigh[gpu=False, block=block](a)
     var w = got.values.to_host()
     var v = got.vectors.to_host()
     for i in range(n):
@@ -643,7 +643,7 @@ def test_eigh_blocking_does_not_change_the_answer() raises:
     # that ran the other way would reverse every sweep.
     comptime six = 6
     var a6 = _hilbert[six]()
-    var ref6 = eigh[dtype, six, False, six](a6)
+    var ref6 = eigh[gpu=False, block=six](a6)
     var w6 = ref6.values.to_host()
     var v6 = ref6.vectors.to_host()
     _eigh_agrees[six, 1](w6, v6)
@@ -653,7 +653,7 @@ def test_eigh_blocking_does_not_change_the_answer() raises:
 
     comptime five = 5
     var a5 = _hilbert[five]()
-    var ref5 = eigh[dtype, five, False, five](a5)
+    var ref5 = eigh[gpu=False, block=five](a5)
     var w5 = ref5.values.to_host()
     var v5 = ref5.vectors.to_host()
     _eigh_agrees[five, 1](w5, v5)
@@ -667,7 +667,7 @@ def test_eigh_ragged_window_sizes() raises:
     comptime n = 40
     var a = _hilbert[n]()
     var original = _copy_of(a)
-    var result = eigh[dtype, n, False, 8](a)
+    var result = eigh[gpu=False, block=8](a)
 
     var av = matmul(original, result.vectors).to_host()
     var v = result.vectors.to_host()
@@ -710,14 +710,14 @@ def test_eigh_at_n_one_and_two() raises:
     ]
     var a2 = zeros[dtype, 2, 2](ctx)
     a2.copy_from_host(pair)
-    var r2 = eigh[dtype, 2, False, 1](a2)
+    var r2 = eigh[gpu=False, block=1](a2)
     var w2 = r2.values.to_host()
     assert_almost_equal(w2[0], Scalar[dtype](1.0), atol=1e-14)
     assert_almost_equal(w2[1], Scalar[dtype](3.0), atol=1e-14)
 
     var b2 = zeros[dtype, 2, 2](ctx)
     b2.copy_from_host(pair)
-    var wide = eigh[dtype, 2, False, 32](b2)
+    var wide = eigh[gpu=False, block=32](b2)
     var w3 = wide.values.to_host()
     var v2 = r2.vectors.to_host()
     var v3 = wide.vectors.to_host()
@@ -826,7 +826,7 @@ def _gebrd_qp_at[
 ) raises where (m >= n and n >= 1 and block >= 1):
     """Form `Q` and `P` from a bidiagonal reduction at this panel width and
     pin both entry by entry to the reference answer."""
-    var reduced = gebrd[dtype, m, n, False, block](a)
+    var reduced = gebrd[gpu=False, block=block](a)
     var q = reduced.q().to_host()
     var p = reduced.p().to_host()
     for i in range(m * n):
@@ -845,7 +845,7 @@ def test_bidiagonal_q_and_p_match_the_unblocked_walk() raises:
     comptime m = 5
     comptime n = 3
     var a = _tall()
-    var reference = gebrd[dtype, m, n, False, n](a)
+    var reference = gebrd[gpu=False, block=n](a)
     var want_q = reference.q().to_host()
     var want_p = reference.p().to_host()
     var a1 = _tall()
@@ -860,7 +860,7 @@ def test_bidiagonal_q_and_p_match_the_unblocked_walk() raises:
     # show up.
     comptime wide = 7
     var b = _rect[wide, wide]()
-    var b_ref = gebrd[dtype, wide, wide, False, wide](b)
+    var b_ref = gebrd[gpu=False, block=wide](b)
     var bq = b_ref.q().to_host()
     var bp = b_ref.p().to_host()
     var b1 = _rect[wide, wide]()
@@ -872,7 +872,7 @@ def test_bidiagonal_q_and_p_match_the_unblocked_walk() raises:
     comptime tall = 9
     comptime narrow = 5
     var c = _rect[tall, narrow]()
-    var c_ref = gebrd[dtype, tall, narrow, False, narrow](c)
+    var c_ref = gebrd[gpu=False, block=narrow](c)
     var cq = c_ref.q().to_host()
     var cp = c_ref.p().to_host()
     var c2 = _rect[tall, narrow]()
@@ -890,7 +890,7 @@ def _gebrd_band_at[
     """Reduce `_rect[m, n]` at this panel width and pin the band and both
     factors entry by entry to the reference answer."""
     var a = _rect[m, n]()
-    var reduced = gebrd[dtype, m, n, False, block](a)
+    var reduced = gebrd[gpu=False, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
     for i in range(n):
@@ -913,7 +913,7 @@ def test_gebrd_blocking_does_not_change_the_answer() raises:
     # GEMM.
     comptime n = 6
     var square = _rect[n, n]()
-    var whole = gebrd[dtype, n, n, False, n](square)
+    var whole = gebrd[gpu=False, block=n](square)
     var wd = whole.d.to_host()
     var we = whole.e.to_host()
     var wq = whole.q().to_host()
@@ -926,7 +926,7 @@ def test_gebrd_blocking_does_not_change_the_answer() raises:
     comptime tm = 5
     comptime tn = 3
     var rect = _rect[tm, tn]()
-    var reference = gebrd[dtype, tm, tn, False, tn](rect)
+    var reference = gebrd[gpu=False, block=tn](rect)
     var rd = reference.d.to_host()
     var rev = reference.e.to_host()
     var rq = reference.q().to_host()
@@ -973,16 +973,16 @@ def _gebrd_reduction_agrees[
     reduction entrywise."""
     var a = _rect_hash[m, n]()
     var original = _copy_rect(a)
-    var reduced = gebrd[dtype, m, n, False, block](a)
+    var reduced = gebrd[gpu=False, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
     var q = reduced.q()
     var p = reduced.p()
 
     var qt = transpose(q)
-    var gram = matmul[dtype, n, m, n](qt, q).to_host()
+    var gram = matmul(qt, q).to_host()
     var pt = transpose(p)
-    var pgram = matmul[dtype, n, n, n](pt, p).to_host()
+    var pgram = matmul(pt, p).to_host()
     for i in range(n):
         for j in range(n):
             var want = Scalar[dtype](1.0) if i == j else Scalar[dtype](0.0)
@@ -990,8 +990,8 @@ def _gebrd_reduction_agrees[
             assert_almost_equal(pgram[i * n + j], want, atol=1e-10)
 
     # `Q^T A P` is the band, off-band entries zero.
-    var half = matmul[dtype, n, m, n](qt, original)
-    var band = matmul[dtype, n, n, n](half, p).to_host()
+    var half = matmul(qt, original)
+    var band = matmul(half, p).to_host()
     for i in range(n):
         for j in range(n):
             if i == j:
@@ -1012,15 +1012,15 @@ def _gebrd_reduction_agrees[
         if i + 1 < n:
             b_host[i * n + i + 1] = e[i]
     b.copy_from_host(b_host)
-    var qb = matmul[dtype, m, n, n](q, b)
+    var qb = matmul(q, b)
     var pt2 = transpose(p)
-    var back = matmul[dtype, m, n, n](qb, pt2).to_host()
+    var back = matmul(qb, pt2).to_host()
     var source = original.to_host()
     for i in range(m * n):
         assert_almost_equal(back[i], source[i], atol=1e-10)
 
     var plain = _rect_hash[m, n]()
-    var unblocked = gebrd[dtype, m, n, False, 1](plain)
+    var unblocked = gebrd[gpu=False, block=1](plain)
     var want_d = unblocked.d.to_host()
     var want_e = unblocked.e.to_host()
     var want_q = unblocked.q().to_host()
@@ -1158,7 +1158,7 @@ def _svd_agrees[
     column's sign is fixed from the reference's largest entry before the
     entries are compared.
     """
-    var got = svd[dtype, m, n, False, block](a)
+    var got = svd[gpu=False, block=block](a)
     var s = got.s.to_host()
     var u = got.u.to_host()
     var v = got.v.to_host()
@@ -1189,7 +1189,7 @@ def test_svd_blocking_does_not_change_the_answer() raises:
     comptime m = 5
     comptime n = 3
     var a = _tall()
-    var reference = svd[dtype, m, n, False, n](a)
+    var reference = svd[gpu=False, block=n](a)
     var want_s = reference.s.to_host()
     var want_u = reference.u.to_host()
     var want_v = reference.v.to_host()
@@ -1202,7 +1202,7 @@ def test_svd_blocking_does_not_change_the_answer() raises:
 
     comptime six = 6
     var b = _hilbert[six]()
-    var b_ref = svd[dtype, six, six, False, six](b)
+    var b_ref = svd[gpu=False, block=six](b)
     var bs = b_ref.s.to_host()
     var bu = b_ref.u.to_host()
     var bv = b_ref.v.to_host()
@@ -1304,15 +1304,15 @@ def _bdsqr_agrees_with_the_oracle[
     the `2n x 2n` tridiagonal whose eigenvalues are `+-sigma`, run through
     the same implicit-QL sweep `eigh` uses."""
     var copy = _copy_rect(a)
-    var got = svdvals[dtype, m, n](a).to_host()
+    var got = svdvals(a).to_host()
 
     var ctx = copy.context()
-    var reduced = gebrd[dtype, m, n](copy)
+    var reduced = gebrd(copy)
     var acc = _RotationBatch[dtype, 2 * n, False, False](32, ctx)
-    var doubled = _golub_kahan[dtype, n, False, False](
+    var doubled = _golub_kahan[n=n, gpu=False, vectors=False](
         reduced.d.to_host(), reduced.e.to_host(), acc, ctx
     )
-    var top = _top_n_descending[dtype, n](doubled)
+    var top = _top_n_descending[n=n](doubled)
     for i in range(n):
         assert_almost_equal(got[i], abs(doubled[top[i]]), atol=atol)
 
@@ -1340,7 +1340,7 @@ def test_svd_of_a_rank_deficient_matrix_reconstructs_it() raises:
     comptime n = 3
     var a = _rank_two()
     var original = _copy_rect(a)
-    var got = svd[dtype, m, n](a)
+    var got = svd(a)
     var s = got.s.to_host()
     assert_almost_equal(s[2], Scalar[dtype](0.0), atol=1e-12)
     assert_equal(s[0] >= s[1], True)
@@ -1352,9 +1352,9 @@ def test_svd_of_a_rank_deficient_matrix_reconstructs_it() raises:
     for i in range(n):
         sh[i * n + i] = s[i]
     sigma.copy_from_host(sh)
-    var us = matmul[dtype, m, n, n](got.u, sigma)
+    var us = matmul(got.u, sigma)
     var vt = transpose(got.v)
-    var back = matmul[dtype, m, n, n](us, vt).to_host()
+    var back = matmul(us, vt).to_host()
     var source = original.to_host()
     for i in range(m * n):
         assert_almost_equal(back[i], source[i], atol=1e-12)
@@ -1677,7 +1677,7 @@ def _hessenberg_q_at[
     order and on the right rows."""
     comptime n = 4
     var original = _copy_of(a)
-    var reduced = hessenberg[dtype, n, False, block](a)
+    var reduced = hessenberg[gpu=False, block=block](a)
     var q = reduced.q()
     var qt = transpose(q)
 
@@ -1750,7 +1750,7 @@ def _hessenberg_at[
     """Reduce at this panel width and pin `H` and `Q` entry by entry to the
     reference, then check the similarity really holds."""
     var original = _copy_of(a)
-    var reduced = hessenberg[dtype, n, False, block](a)
+    var reduced = hessenberg[gpu=False, block=block](a)
     var h = reduced.h.to_host()
     for i in range(n * n):
         assert_almost_equal(h[i], want_h[i], atol=1e-12)
@@ -1776,7 +1776,7 @@ def test_hessenberg_blocking_does_not_change_the_answer() raises:
     # whose trailing updates never run.
     comptime n = 4
     var ref_a = _matrix_a()
-    var wide_a = hessenberg[dtype, n, False, n](ref_a)
+    var wide_a = hessenberg[gpu=False, block=n](ref_a)
     var ha = wide_a.h.to_host()
     var qa = wide_a.q().to_host()
     var a1 = _matrix_a()
@@ -1789,7 +1789,7 @@ def test_hessenberg_blocking_does_not_change_the_answer() raises:
     _hessenberg_at[n, n](a4, ha, qa)
 
     var ref_b = _matrix_b()
-    var wide_b = hessenberg[dtype, n, False, n](ref_b)
+    var wide_b = hessenberg[gpu=False, block=n](ref_b)
     var hb = wide_b.h.to_host()
     var qb = wide_b.q().to_host()
     var b1 = _matrix_b()
@@ -1805,7 +1805,7 @@ def test_hessenberg_blocking_does_not_change_the_answer() raises:
     # so the deferred update is read back more than once.
     comptime m = 6
     var ref_c = _general_hash[m]()
-    var wide_c = hessenberg[dtype, m, False, m](ref_c)
+    var wide_c = hessenberg[gpu=False, block=m](ref_c)
     var hc = wide_c.h.to_host()
     var qc = wide_c.q().to_host()
     var c1 = _general_hash[m]()
@@ -1826,7 +1826,7 @@ def _hessenberg_reduction_agrees[
     similarity holds, and everything agrees with the unblocked run."""
     var a = _square_hash[n]()
     var original = _copy_of(a)
-    var reduced = hessenberg[dtype, n, False, block](a)
+    var reduced = hessenberg[gpu=False, block=block](a)
     var h = reduced.h.to_host()
     for i in range(n):
         for j in range(n):
@@ -1848,7 +1848,7 @@ def _hessenberg_reduction_agrees[
         assert_almost_equal(back[i], source[i], atol=1e-10)
 
     var plain = _square_hash[n]()
-    var unblocked = hessenberg[dtype, n, False, 1](plain)
+    var unblocked = hessenberg[gpu=False, block=1](plain)
     var want_h = unblocked.h.to_host()
     var want_q = unblocked.q().to_host()
     var qh = q.to_host()
@@ -2103,7 +2103,7 @@ def _schur_agrees[
     want_z: List[Scalar[dtype]],
 ) raises where (block >= 1 and n >= 1):
     """Run `schur` at this `block` and pin both factors to a reference."""
-    var got = schur[dtype, n, False, block](a)
+    var got = schur[gpu=False, block=block](a)
     var t = got.t.to_host()
     var z = got.z.to_host()
     for i in range(n * n):
@@ -2122,7 +2122,7 @@ def _hessenberg_form[
     one runs bit-identical arithmetic at every `block`. That is what lets
     the windowing test below pin `T` and `Z` entrywise.
     """
-    var reduced = hessenberg[dtype, n, False, 1](a)
+    var reduced = hessenberg[gpu=False, block=1](a)
     return _copy_of(reduced.h)^
 
 
@@ -2139,7 +2139,7 @@ def test_schur_blocking_does_not_change_the_answer() raises:
     var source_a = _matrix_a()
     var hess_a = _hessenberg_form(source_a)
     var ref_a = _copy_of(hess_a)
-    var wide_a = schur[dtype, n, False, n](ref_a)
+    var wide_a = schur[gpu=False, block=n](ref_a)
     var ta = wide_a.t.to_host()
     var za = wide_a.z.to_host()
     var a1 = _copy_of(hess_a)
@@ -2154,7 +2154,7 @@ def test_schur_blocking_does_not_change_the_answer() raises:
     var source_b = _matrix_b()
     var hess_b = _hessenberg_form(source_b)
     var ref_b = _copy_of(hess_b)
-    var wide_b = schur[dtype, n, False, n](ref_b)
+    var wide_b = schur[gpu=False, block=n](ref_b)
     var tb = wide_b.t.to_host()
     var zb = wide_b.z.to_host()
     var b1 = _copy_of(hess_b)
@@ -2178,7 +2178,7 @@ def test_schur_at_n_one_and_two() raises:
 
     var real_pair = _general[2]([1.0, 2.0, 3.0, 4.0])
     var original = _copy_of(real_pair)
-    var r2 = schur[dtype, 2, False, 1](real_pair)
+    var r2 = schur[gpu=False, block=1](real_pair)
     var t2 = r2.t.to_host()
     assert_almost_equal(t2[2], Scalar[dtype](0), atol=1e-14)
     var zt2 = transpose(r2.z)
@@ -2189,7 +2189,7 @@ def test_schur_at_n_one_and_two() raises:
         assert_almost_equal(back2[i], src2[i], atol=1e-13)
 
     var wide_pair = _general[2]([1.0, 2.0, 3.0, 4.0])
-    var r2w = schur[dtype, 2, False, 32](wide_pair)
+    var r2w = schur[gpu=False, block=32](wide_pair)
     var t2w = r2w.t.to_host()
     var z2w = r2w.z.to_host()
     var z2 = r2.z.to_host()
@@ -2199,7 +2199,7 @@ def test_schur_at_n_one_and_two() raises:
 
     var turn = _general[2]([0.0, -1.0, 1.0, 0.0])
     var turn_source = _copy_of(turn)
-    var r3 = schur[dtype, 2, False, 1](turn)
+    var r3 = schur[gpu=False, block=1](turn)
     _assert_quasi_triangular[2](r3.t.to_host())
     var zt3 = transpose(r3.z)
     var half3 = matmul(r3.z, r3.t)
@@ -2217,7 +2217,7 @@ def test_schur_ragged_window_sizes() raises:
     comptime n = 40
     var a = _general_hash[n]()
     var original = _copy_of(a)
-    var decomposed = schur[dtype, n, False, 8](a)
+    var decomposed = schur[gpu=False, block=8](a)
     _assert_quasi_triangular[n](decomposed.t.to_host())
 
     var zt = transpose(decomposed.z)
@@ -2245,6 +2245,6 @@ def test_schur_ragged_window_sizes() raises:
     var raw = _general_hash[n]()
     var hess = _hessenberg_form(raw)
     var wide = _copy_of(hess)
-    var windowed = schur[dtype, n, False, 8](wide)
+    var windowed = schur[gpu=False, block=8](wide)
     var unblocked = _copy_of(hess)
     _schur_agrees[n, 1](unblocked, windowed.t.to_host(), windowed.z.to_host())

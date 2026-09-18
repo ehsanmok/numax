@@ -49,7 +49,10 @@ from std.sys.info import simd_width_of
 from std.utils import IndexList
 
 from ..core.rowwise import reduce_all
+from .common import _mut_view, _mut_view_as
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import (
+    _canonical_dyn,
     copy,
     Dynamic,
     Static,
@@ -67,10 +70,18 @@ def _target[gpu: Bool]() -> StaticString:
 
 
 def dot[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n], mut b: Static[dtype, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Scalar[A.dtype] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """The inner product `sum(a[i] * b[i])` -- BLAS-1 `dot`, over `Tensor`.
 
     MAX's `ReduceSum` monoid over its `rowwise` scaffolder, with the
@@ -82,81 +93,98 @@ def dot[
     A caller who needs the rounding pinned, or who needs `Compensated`,
     wants that one.
     """
+    comptime n = dim[A, 0]
     var ctx = a.context()
-    var out = Static[dtype, 1](ctx)
-    var rhs = b.view()
+    var out = Static[A.dtype, 1](ctx)
+    var rhs = _mut_view_as[A.dtype](b)
 
     @always_inline
     def times[
         w: Int
-    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {var rhs} -> SIMD[dtype, w]:
+    ](tile: SIMD[A.dtype, w], idx: RowCoord[1]) {var rhs} -> SIMD[A.dtype, w]:
         return tile * rhs.load[w](idx.coord)
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        a.view(), out.view(), times, n, Optional(ctx)
+        _mut_view(a), out.view(), times, n, Optional(ctx)
     )
     return out.to_host()[0]
 
 
 def nrm2[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """The Euclidean norm `sqrt(sum(a[i]**2))` -- BLAS-1 `nrm2`, over
     `Tensor`.
 
     Not rescaled, so a vector whose entries approach the square root of
-    `dtype`'s overflow threshold overflows here where LAPACK's `nrm2`
+    `T.dtype`'s overflow threshold overflows here where LAPACK's `nrm2`
     would not -- the same limit the `Array` overload documents, and for a
     different reason: there the fixed-iteration invariant rules out the
     running maximum, here it would cost a second pass over the data.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var out = Static[dtype, 1](ctx)
+    var out = Static[T.dtype, 1](ctx)
 
     @always_inline
     def square[
         w: Int
-    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return tile * tile
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        a.view(), out.view(), square, n, Optional(ctx)
+        _mut_view(a), out.view(), square, n, Optional(ctx)
     )
     return _sqrt(out.to_host()[0])
 
 
 def asum[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
     """The sum of magnitudes `sum(|a[i]|)` -- BLAS-1 `asum`, over `Tensor`.
 
     Cannot overflow the way `nrm2` can, which is why a convergence check
     that only needs a magnitude usually wants this one.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var out = Static[dtype, 1](ctx)
+    var out = Static[T.dtype, 1](ctx)
 
     @always_inline
     def magnitude[
         w: Int
-    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return abs(tile)
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        a.view(), out.view(), magnitude, n, Optional(ctx)
+        _mut_view(a), out.view(), magnitude, n, Optional(ctx)
     )
     return out.to_host()[0]
 
 
 def axpy[
-    dtype: DType, n: Int, gpu: Bool = False
-](
-    alpha: Scalar[dtype], mut x: Static[dtype, n], mut y: Static[dtype, n]
-) raises -> Static[dtype, n] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](alpha: Float64, x: A, y: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """`alpha * x + y` -- BLAS-1 `axpy`, over `Tensor`.
 
     One fused `max.algorithm.elementwise` pass: `alpha` rides the body's
@@ -169,33 +197,42 @@ def axpy[
     `Array` overload, so the two spellings can be checked against each
     other.
     """
+    var scale = Scalar[A.dtype](alpha)
+    comptime n = dim[A, 0]
     var ctx = x.context()
     # Not zeroed: the `elementwise` pass below writes every element of
     # `out` before anything reads one, so the ordinary constructor's
     # memset would be a full pass over a buffer about to be overwritten,
     # and its synchronize a device round trip for nothing.
-    var out = Static[dtype, n]._uninitialized(ctx)
-    var xv = x.view()
-    var yv = y.view()
+    var out = Static[A.dtype, n]._uninitialized(ctx)
+    var xv = _mut_view(x)
+    var yv = _mut_view_as[A.dtype](y)
     var ov = out.view()
 
     @always_inline
     def step[
         w: Int, alignment: Int = 1
-    ](coord: Coord) {var alpha, var xv, var yv, var ov}:
-        ov.store[w](coord, alpha * xv.load[w](coord) + yv.load[w](coord))
+    ](coord: Coord) {var scale, var xv, var yv, var ov}:
+        ov.store[w](coord, scale * xv.load[w](coord) + yv.load[w](coord))
 
-    elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+    elementwise[simd_width=simd_width_of[A.dtype](), target=_target[gpu]()](
         step, Coord(n), ctx
     )
     return out^
 
 
 def outer[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m], mut b: Static[dtype, n]) raises -> Static[
-    dtype, m, n
-] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The outer product `out[i, j] = a[i] * b[j]` -- over `Tensor`.
 
     The rank-1 update every quasi-Newton method and every Householder
@@ -209,12 +246,14 @@ def outer[
     Unlike the `Array` overload this is not restricted to a square result:
     `a` and `b` may have different lengths, as `numpy.outer` allows.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[B, 0]
     var ctx = a.context()
     # Not zeroed, for the reason `axpy` above gives: the `elementwise`
     # pass writes every element of `out` before anything reads one.
-    var out = Static[dtype, m, n]._uninitialized(ctx)
-    var av = a.view()
-    var bv = b.view()
+    var out = Static[A.dtype, m, n]._uninitialized(ctx)
+    var av = _mut_view(a)
+    var bv = _mut_view_as[A.dtype](b)
     var ov = out.view()
 
     @always_inline
@@ -225,17 +264,25 @@ def outer[
         var j = coord[1]
         ov.store[w](coord, av[i] * bv.load[w](Coord(j)))
 
-    elementwise[simd_width=simd_width_of[dtype](), target=_target[gpu]()](
+    elementwise[simd_width=simd_width_of[A.dtype](), target=_target[gpu]()](
         step, Coord(m, n), ctx
     )
     return out^
 
 
 def matvec[
-    dtype: DType, m: Int, k: Int, gpu: Bool = False
-](mut a: Static[dtype, m, k], mut x: Static[dtype, k]) raises -> Static[
-    dtype, m
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, x: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    is_row_major[B]
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 1]
+):
     """The matrix-vector product `a @ x`, on `a`'s own device.
 
     Routed through `linalg.matmul` rather than `linalg.gemv`, with the
@@ -255,7 +302,7 @@ def matvec[
     at `max ==26.5`, and each needs its own padding:
 
     - **`m`**, the row count. The kernel walks the rows in blocks of
-      `simd_width_of[dtype]()`, and its final block runs past the last row
+      `simd_width_of[A.dtype]()`, and its final block runs past the last row
       whenever `m` is not a whole number of lanes -- as much as
       `(lanes - 1) * k` elements beyond the matrix.
     - **`k`**, the row length. The reduction over each row is unrolled by
@@ -285,18 +332,22 @@ def matvec[
     not a design choice, and it should go when MAX's GEMV masks its own
     tail.
     """
-    comptime lanes = simd_width_of[dtype]()
+    comptime m = dim[A, 0]
+    comptime k = dim[A, 1]
+    comptime lanes = simd_width_of[A.dtype]()
     var ctx = a.context()
-    var xv = x.view()
+    var xv = _mut_view_as[A.dtype](x)
     var x_col = TileTensor(xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1)))
 
     comptime if m % lanes == 0 and k % lanes == 0:
-        var result = Static[dtype, m](ctx)
+        var result = Static[A.dtype, m](ctx)
         var yv = result.view()
         var y_col = TileTensor(
             yv.ptr_at_offset(Coord(0)), row_major(Coord(m, 1))
         )
-        _max_matmul[target="gpu" if gpu else "cpu"](y_col, a.view(), x_col, ctx)
+        _max_matmul[target="gpu" if gpu else "cpu"](
+            y_col, _mut_view(a), x_col, ctx
+        )
         ctx.synchronize()
         return result^
     else:
@@ -304,8 +355,8 @@ def matvec[
         comptime k_pad = ((k + lanes - 1) // lanes) * lanes
 
         # Not zeroed: `grow` writes every element, phantom entries included.
-        var padded = Static[dtype, m_pad, k_pad]._uninitialized(ctx)
-        var av = a.view()
+        var padded = Static[A.dtype, m_pad, k_pad]._uninitialized(ctx)
+        var av = _mut_view(a)
         var pv = padded.view()
 
         # Width 1: this reads its input at an index derived from the
@@ -317,14 +368,14 @@ def matvec[
             if at[0] < m and at[1] < k:
                 pv.store[1](coord, av[Coord(at[0], at[1])])
             else:
-                pv.store[1](coord, Scalar[dtype](0))
+                pv.store[1](coord, Scalar[A.dtype](0))
 
         elementwise[simd_width=1, target=_target[gpu]()](
             grow, Coord(m_pad, k_pad), ctx
         )
 
         # `x` grows with it, so the phantom columns pair `0` against `0`.
-        var x_wide = Static[dtype, k_pad]._uninitialized(ctx)
+        var x_wide = Static[A.dtype, k_pad]._uninitialized(ctx)
         var xw = x_wide.view()
 
         @always_inline
@@ -333,7 +384,7 @@ def matvec[
             if j < k:
                 xw.store[1](coord, xv[coord])
             else:
-                xw.store[1](coord, Scalar[dtype](0))
+                xw.store[1](coord, Scalar[A.dtype](0))
 
         elementwise[simd_width=1, target=_target[gpu]()](
             grow_x, Coord(k_pad), ctx
@@ -342,7 +393,7 @@ def matvec[
             xw.ptr_at_offset(Coord(0)), row_major(Coord(k_pad, 1))
         )
 
-        var wide = Static[dtype, m_pad]._uninitialized(ctx)
+        var wide = Static[A.dtype, m_pad]._uninitialized(ctx)
         var wv = wide.view()
         var y_col = TileTensor(
             wv.ptr_at_offset(Coord(0)), row_major(Coord(m_pad, 1))
@@ -353,7 +404,7 @@ def matvec[
         ctx.synchronize()
 
         # Not zeroed: `trim` writes every element of `result`.
-        var result = Static[dtype, m]._uninitialized(ctx)
+        var result = Static[A.dtype, m]._uninitialized(ctx)
         var rv = result.view()
         var read = wide.view()
 
@@ -374,10 +425,17 @@ def matvec[
 
 
 def matmul[
-    dtype: DType, m: Int, k: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m, k], mut b: Static[dtype, k, n]) raises -> Static[
-    dtype, m, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 1]] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 1]
+):
     """The matrix product `a @ b`, on `a`'s own device.
 
     `linalg.matmul` does the work, and that one call is a whole dispatch
@@ -388,22 +446,33 @@ def matmul[
     picks no kernel.
 
     The sibling `matmul` over `Array[T, n*n]` is the one to call inside a
-    kernel, or at any conformer other than a raw `dtype`; `to_tensor`
+    kernel, or at any conformer other than a raw `A.dtype`; `to_tensor`
     crosses from there to here and `to_array` back.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[B, 1]
     var ctx = a.context()
-    var result = Static[dtype, m, n](ctx)
+    var result = Static[A.dtype, m, n](ctx)
     var c = result.view()
-    _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
+    _max_matmul[target="gpu" if gpu else "cpu"](
+        c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
+    )
     ctx.synchronize()
     return result^
 
 
 def inner[
-    dtype: DType, m: Int, k: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m, k], mut b: Static[dtype, n, k]) raises -> Static[
-    dtype, m, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 0]] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 1] == dim[A, 1]
+):
     """`a @ b.T`, the matrix of inner products between the rows of `a` and
     the rows of `b`. `numpy.inner` at rank 2.
 
@@ -424,21 +493,32 @@ def inner[
     it at both tiers; a second spelling would be one more name meaning
     exactly what an existing one means.
     """
+    comptime m = dim[A, 0]
+    comptime k = dim[A, 1]
+    comptime n = dim[B, 0]
     var ctx = a.context()
-    var result = Static[dtype, m, n](ctx)
+    var result = Static[A.dtype, m, n](ctx)
     var c = result.view()
     _max_matmul[transpose_b=True, target=_target[gpu]()](
-        c, a.view(), b.view(), ctx
+        c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
     )
     ctx.synchronize()
     return result^
 
 
 def kron[
-    dtype: DType, m: Int, n: Int, p: Int, q: Int, gpu: Bool = False
-](mut a: Static[dtype, m, n], mut b: Static[dtype, p, q]) raises -> Static[
-    dtype, m * p, n * q
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[
+    A.dtype, dim[A, 0] * dim[B, 0], dim[A, 1] * dim[B, 1]
+] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+):
     """The Kronecker product `numpy.kron(a, b)`: every entry of `a` scaling
     a whole copy of `b`, tiled into an `(m*p) x (n*q)` result.
 
@@ -461,10 +541,14 @@ def kron[
     -case that boundary for no gain, since the multiplier `a[i, j]` changes
     there too.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[A, 1]
+    comptime p = dim[B, 0]
+    comptime q = dim[B, 1]
     var ctx = a.context()
-    var out = Static[dtype, m * p, n * q]._uninitialized(ctx)
-    var av = a.view()
-    var bv = b.view()
+    var out = Static[A.dtype, m * p, n * q]._uninitialized(ctx)
+    var av = _mut_view(a)
+    var bv = _mut_view_as[A.dtype](b)
     var ov = out.view()
 
     @always_inline
@@ -488,8 +572,15 @@ def kron[
 
 
 def matrix_power[
-    dtype: DType, n: Int, power: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where power >= 0:
+    T: TensorLike,
+    power: Int,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    power >= 0
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """`a` raised to a non-negative integer `power`.
     `numpy.linalg.matrix_power`.
 
@@ -509,11 +600,12 @@ def matrix_power[
     convenience. The compile error names the constraint, so a caller who
     wants it is told what to write.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
 
     comptime if power == 0:
-        var identity = Static[dtype, n, n](ctx)
-        var host = List[Scalar[dtype]](length=n * n, fill=0)
+        var identity = Static[T.dtype, n, n](ctx)
+        var host = List[Scalar[T.dtype]](length=n * n, fill=0)
         for i in range(n):
             host[i * n + i] = 1
         identity.copy_from_host(host)
@@ -522,16 +614,16 @@ def matrix_power[
     # `result` accumulates the answer and `base` the repeated squares.
     # `remaining` is consumed a bit at a time, so both are run-time values
     # even though `power` is not -- the trip count is still known.
-    var result = Static[dtype, n, n](ctx)
+    var result = Static[T.dtype, n, n](ctx)
     var seeded = False
-    var base = Static[dtype, n, n](ctx)
+    var base = Static[T.dtype, n, n](ctx)
     base.copy_from_host(a.to_host())
 
     var remaining = power
     while remaining > 0:
         if remaining % 2 == 1:
             if seeded:
-                result = matmul[dtype, n, n, n, gpu](result, base)
+                result = matmul[gpu=gpu](result, base)
             else:
                 result.copy_from_host(base.to_host())
                 seeded = True
@@ -543,16 +635,22 @@ def matrix_power[
             # `ponytail:` `floor(log2(power))` host round trips per call; a
             # device-resident `copy` removes them.
             var mirror = copy(base)
-            base = matmul[dtype, n, n, n, gpu](base, mirror)
+            base = matmul[gpu=gpu](base, mirror)
 
     return result^
 
 
 def matmul[
-    dtype: DType, gpu: Bool = False
-](mut a: Dynamic[dtype, 2], mut b: Dynamic[dtype, 2]) raises -> Dynamic[
-    dtype, 2
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Dynamic[A.dtype, 2] where (
+    A.LayoutType.rank == 2
+    and not A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and not B.LayoutType.all_dims_known
+):
     """The matrix product `a @ b` at extents known only at run time.
 
     The run-time-shaped overload of the one above, selected by argument
@@ -576,18 +674,28 @@ def matmul[
             b.dim[1](),
         )
     var ctx = a.context()
-    var result = zeros_dyn[dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
+    var result = zeros_dyn[A.dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
     var c = result.view()
-    _max_matmul[target="gpu" if gpu else "cpu"](c, a.view(), b.view(), ctx)
+    _max_matmul[target="gpu" if gpu else "cpu"](
+        c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
+    )
     ctx.synchronize()
     return result^
 
 
 def batched_matmul[
-    dtype: DType, batch: Int, m: Int, k: Int, n: Int, gpu: Bool = False
-](
-    mut a: Static[dtype, batch, m, k], mut b: Static[dtype, batch, k, n]
-) raises -> Static[dtype, batch, m, n]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 1], dim[B, 2]] where (
+    A.LayoutType.rank == 3
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 3
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and dim[B, 1] == dim[A, 2]
+):
     """`batch` independent matrix products, one per leading index.
 
     `linalg.bmm.batched_matmul` does the work, in one launch rather than
@@ -596,11 +704,14 @@ def batched_matmul[
     matrix per SIMD lane, so the batched form only earns its own kernel at
     sizes past the crossover.
     """
+    comptime batch = dim[A, 0]
+    comptime m = dim[A, 1]
+    comptime n = dim[B, 2]
     var ctx = a.context()
-    var result = Static[dtype, batch, m, n](ctx)
+    var result = Static[A.dtype, batch, m, n](ctx)
     var c = result.view()
     _max_batched_matmul[target="gpu" if gpu else "cpu"](
-        c, a.view(), b.view(), context=ctx
+        c, _mut_view(a), _mut_view_as[A.dtype](b), context=ctx
     )
     ctx.synchronize()
     return result^
@@ -610,8 +721,18 @@ def batched_matmul[
 
 
 def cross[
-    dtype: DType, gpu: Bool = False
-](mut a: Static[dtype, 3], mut b: Static[dtype, 3]) raises -> Static[dtype, 3]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[A.dtype, 3] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and dim[A, 0] == 3
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == 3
+):
     """The cross product of two 3-vectors. `numpy.cross(a, b)`.
 
     One `elementwise` map over the three outputs, `out[i] = a[i+1] b[i+2]
@@ -620,9 +741,9 @@ def cross[
     overload takes rows of vectors.
     """
     var ctx = a.context()
-    var out = Static[dtype, 3]._uninitialized(ctx)
-    var av = a.view()
-    var bv = b.view()
+    var out = Static[A.dtype, 3]._uninitialized(ctx)
+    var av = _mut_view(a)
+    var bv = _mut_view_as[A.dtype](b)
     var ov = out.view()
 
     @always_inline
@@ -639,16 +760,26 @@ def cross[
 
 
 def cross[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, 3], mut b: Static[dtype, n, 3]) raises -> Static[
-    dtype, n, 3
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], 3] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == 3
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and dim[B, 1] == 3
+):
     """Row-wise cross products of two `n x 3` tensors, `out[r] = cross(a[r],
     b[r])`. `numpy.cross` on stacks of vectors."""
+    comptime n = dim[A, 0]
     var ctx = a.context()
-    var out = Static[dtype, n, 3]._uninitialized(ctx)
-    var av = a.view()
-    var bv = b.view()
+    var out = Static[A.dtype, n, 3]._uninitialized(ctx)
+    var av = _mut_view(a)
+    var bv = _mut_view_as[A.dtype](b)
     var ov = out.view()
 
     @always_inline
@@ -669,18 +800,18 @@ def cross[
 
 
 def tensordot[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     axes: Int = 2,
     gpu: Bool = False,
-](
-    mut a: Tensor[dtype, ALayout], mut b: Tensor[dtype, BLayout]
-) raises -> Dynamic[dtype, ALayout.rank + BLayout.rank - 2 * axes] where (
-    axes >= 0
-    and axes <= ALayout.rank
-    and axes <= BLayout.rank
-    and ALayout.rank + BLayout.rank - 2 * axes >= 1
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, A.LayoutType.rank + B.LayoutType.rank - 2 * axes
+] where (
+    A.dtype == B.dtype
+    and axes >= 0
+    and axes <= A.LayoutType.rank
+    and axes <= B.LayoutType.rank
+    and A.LayoutType.rank + B.LayoutType.rank - 2 * axes >= 1
 ):
     """Contract the last `axes` dimensions of `a` with the first `axes` of
     `b`. `numpy.tensordot(a, b, axes)` in its integer form: `axes=1` is the
@@ -702,6 +833,8 @@ def tensordot[
     the types carry here: the extents of `a` and `b` are behind two
     different layouts and cannot both be spelled in one compile-time pack.
     """
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime ra = ALayout.rank
     comptime rb = BLayout.rank
     comptime rank = ra + rb - 2 * axes
@@ -726,12 +859,8 @@ def tensordot[
     for d in range(rb - axes):
         n *= b.dim_at(axes + d)
 
-    var a2 = Dynamic[dtype, 2](
-        a.buffer.copy(), row_major(_dyn_shape[2](m, k)), a.host_addressable
-    )
-    var b2 = Dynamic[dtype, 2](
-        b.buffer.copy(), row_major(_dyn_shape[2](k, n)), b.host_addressable
-    )
+    var a2 = _canonical_dyn[2](a, m, k)
+    var b2 = _canonical_dyn[2, dtype=A.dtype](b, k, n)
 
     # Not `matmul`: MAX routes `n == 1` to a GEMV that stores whole SIMD
     # vectors with no masked tail, so a row count off a lane multiple comes
@@ -739,7 +868,7 @@ def tensordot[
     # so this is one `elementwise` over flat rank-1 views.
     if n == 1:
         var ctx = a.context()
-        var out = zeros_dyn[dtype, 1](m, ctx=ctx)
+        var out = zeros_dyn[A.dtype, 1](m, ctx=ctx)
         var av = a2.view()
         var bv = b2.view()
         var flat_a = TileTensor(
@@ -755,7 +884,7 @@ def tensordot[
             w: Int, alignment: Int = 1
         ](coord: Coord) {var flat_a, var flat_b, var flat_out, var k}:
             var i = coord_to_index_list(coord)[0]
-            var total = Scalar[dtype](0)
+            var total = Scalar[A.dtype](0)
             for j in range(k):
                 total += flat_a[Coord(i * k + j)] * flat_b[Coord(j)]
             flat_out.store[1](coord, total)
@@ -770,21 +899,21 @@ def tensordot[
             extents_1.append(a.dim_at(d))
         for d in range(rb - axes):
             extents_1.append(b.dim_at(axes + d))
-        return Dynamic[dtype, rank](
+        return Dynamic[A.dtype, rank](
             out.buffer.copy(),
             row_major(_dyn_shape_from[rank](extents_1)),
-            out.host_addressable,
+            out.on_host(),
         )
 
-    var c = matmul[dtype, gpu](a2, b2)
+    var c = matmul(a2, b2)
 
     var extents = List[Int](capacity=rank)
     for d in range(ra - axes):
         extents.append(a.dim_at(d))
     for d in range(rb - axes):
         extents.append(b.dim_at(axes + d))
-    return Dynamic[dtype, rank](
+    return Dynamic[A.dtype, rank](
         c.buffer.copy(),
         row_major(_dyn_shape_from[rank](extents)),
-        c.host_addressable,
+        c.on_host(),
     )

@@ -27,6 +27,8 @@ from max.algorithm.functional import elementwise
 from std.math import sqrt as _sqrt
 from std.utils import IndexList
 
+from .common import _mut_view, _mut_view_as
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 from ..core.rowwise import max_axis, reduce_all, sum_axis
 
@@ -64,10 +66,14 @@ pointer, different layout."""
 
 
 def trace[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """**Tier 2.** The sum of the diagonal entries of `A`.
     `numpy.trace`.
 
@@ -81,9 +87,10 @@ def trace[
     MAX ships no `trace`, so the composition is numax's; the fold is
     MAX's. Reassociated, unlike the `Array` overload's ordered sum.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var diagonal = Static[dtype, n](ctx)
-    var av = a.view()
+    var diagonal = Static[T.dtype, n](ctx)
+    var av = _mut_view(a)
     var dv = diagonal.view()
 
     @always_inline
@@ -93,12 +100,12 @@ def trace[
 
     elementwise[simd_width=1, target=_target[gpu]()](gather, Coord(n), ctx)
 
-    var out = Static[dtype, 1](ctx)
+    var out = Static[T.dtype, 1](ctx)
 
     @always_inline
     def identity[
         w: Int
-    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+    ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return tile
 
     reduce_all[monoid="sum", target=_target[gpu]()](
@@ -113,10 +120,17 @@ def trace[
 
 
 def norm[
-    dtype: DType, n: Int, ord: Int = fro, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point() and (ord == fro or ord == 1 or ord == inf):
+    T: TensorLike,
+    ord: Int = fro,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    is_row_major[T]
+    and T.dtype.is_floating_point()
+    and (ord == fro or ord == 1 or ord == inf)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """**Tier 2.** A matrix norm of `A`, over `Tensor`.
     `numpy.linalg.norm(A, ord=...)`.
 
@@ -136,7 +150,7 @@ def norm[
     crosses to the host.
 
     Unrescaled like the `Array` overload, so the Frobenius norm of a matrix
-    whose entries approach the square root of `dtype`'s overflow threshold
+    whose entries approach the square root of `T.dtype`'s overflow threshold
     overflows. The reason differs: there a running maximum would break the
     fixed-iteration invariant, here it would cost a second pass. Scale `A`
     yourself, or take the `1`- or `inf`-norm, which cannot overflow this
@@ -144,19 +158,35 @@ def norm[
 
     MAX ships no norm of any kind, so the arrangement is numax's.
     """
+    return _matrix_norm[ord=ord, gpu=gpu](a)
+
+
+def _matrix_norm[
+    T: TensorLike,
+    ord: Int = fro,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    is_row_major[T]
+    and T.dtype.is_floating_point()
+    and (ord == fro or ord == 1 or ord == inf)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
+    """Body of the public overload above, under a name a generic caller
+    can pick without the prover having to refute the sibling overload."""
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var av = a.view()
+    var av = _mut_view(a)
 
     comptime if ord == fro:
-        var flat: _Flat[dtype] = TileTensor(
-            av.ptr_at_offset(Coord(0, 0)), row_major(Coord(n * n))
-        )
-        var out = Static[dtype, 1](ctx)
+        var flat: _Flat[T.dtype] = TileTensor(av.ptr, row_major(Coord(n * n)))
+        var out = Static[T.dtype, 1](ctx)
 
         @always_inline
         def square[
             w: Int
-        ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+        ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
             return tile * tile
 
         reduce_all[monoid="sum", target=_target[gpu]()](
@@ -164,7 +194,7 @@ def norm[
         )
         return _sqrt(out.to_host()[0])
 
-    var magnitudes = Static[dtype, n, n](ctx)
+    var magnitudes = Static[T.dtype, n, n](ctx)
     var mv = magnitudes.view()
 
     @always_inline
@@ -180,7 +210,7 @@ def norm[
     # calls are written out rather than sharing an `axis` computed from
     # `ord`, because a derived comptime axis has nothing to prove its own
     # bound against.
-    var sums = Static[dtype, n](ctx)
+    var sums = Static[T.dtype, n](ctx)
     comptime if ord == 1:
         sum_axis[axis=0, target=_target[gpu]()](mv, sums.view(), ctx)
     else:
@@ -190,17 +220,20 @@ def norm[
     # `mv` and destruction is ASAP. See `numax.linalg.qr`.
     _ = magnitudes^
 
-    var out = Static[dtype, 1](ctx)
+    var out = Static[T.dtype, 1](ctx)
     max_axis[axis=0, target=_target[gpu]()](sums.view(), out.view(), ctx)
     return out.to_host()[0]
 
 
 def norm[
-    dtype: DType, n: Int, ord: Int = 2, gpu: Bool = False
-](mut a: Static[dtype, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point() and (
-    ord == 2 or ord == 1 or ord == inf or ord == neg_inf
+    T: TensorLike,
+    ord: Int = 2,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and (ord == 2 or ord == 1 or ord == inf or ord == neg_inf)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """A vector norm of `a`, over `Tensor`. `numpy.linalg.norm(v, ord=...)`.
 
@@ -232,22 +265,38 @@ def norm[
     `ord` in this table does not cover.
 
     Unrescaled, like the matrix overload: `ord == 2` on a vector whose
-    entries approach the square root of `dtype`'s overflow threshold
+    entries approach the square root of `T.dtype`'s overflow threshold
     overflows. Take the `1`- or `inf`-norm, which cannot.
     """
+    return _vector_norm[ord=ord, gpu=gpu](a)
+
+
+def _vector_norm[
+    T: TensorLike,
+    ord: Int = 2,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and (ord == 2 or ord == 1 or ord == inf or ord == neg_inf)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
+    """Body of the public overload above, under a name a generic caller
+    can pick without the prover having to refute the sibling overload."""
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var av = a.view()
+    var av = _mut_view(a)
 
     comptime if ord == 2:
-        return _nrm2[dtype, n, gpu](a)
+        return _nrm2[gpu=gpu](a)
     elif ord == 1:
-        return _asum[dtype, n, gpu](a)
+        return _asum[gpu=gpu](a)
     else:
         # The two extremal norms are a magnitude map and then a fold. There
         # is no fused `max(abs(.))` reduction to reach for -- `max_axis`
         # folds what it is given -- so the magnitudes are materialized once
         # and reduced, which is two launches rather than one.
-        var magnitudes = Static[dtype, n]._uninitialized(ctx)
+        var magnitudes = Static[T.dtype, n]._uninitialized(ctx)
         var mv = magnitudes.view()
 
         @always_inline
@@ -270,9 +319,12 @@ def norm[
 
 
 def cond[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m, n]) raises -> Scalar[dtype] where (
-    dtype.is_floating_point() and m >= n and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Scalar[T.dtype] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1] and dim[T, 1] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """**Tier 2.** The 2-norm condition number, the ratio of the largest
     singular value to the smallest. `numpy.linalg.cond`.
@@ -291,6 +343,7 @@ def cond[
     reports a very large finite number instead, because a branchless kernel
     cannot decide to return an infinity; at this tier the decision is free.
     """
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "cond: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."

@@ -63,11 +63,9 @@ def test_linalg_and_the_bridge_are_reachable() raises:
     that tier -- the `Array` tier shares its names, so it is one explicit
     import away. Both halves of that claim are asserted here."""
     var i3 = eye[3]()
-    assert_almost_equal(det[dtype, 3](i3), Scalar[dtype](1.0))
+    assert_almost_equal(det(i3), Scalar[dtype](1.0))
     # Frobenius norm of I3 is sqrt(3).
-    assert_almost_equal(
-        norm[dtype, 3, fro](i3), Scalar[dtype](1.7320508075688772)
-    )
+    assert_almost_equal(norm[ord=fro](i3), Scalar[dtype](1.7320508075688772))
 
     var lifted = to_array[P](i3)
     assert_almost_equal(array_det[P, 3](lifted).v, Scalar[dtype](1.0))

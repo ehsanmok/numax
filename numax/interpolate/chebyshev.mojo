@@ -108,7 +108,7 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
                 previous = current
                 current = next
         var vandermonde = Static[Self.dtype, m, Self.n](x.context(), entries^)
-        var coefficients = lstsq[Self.dtype, m, Self.n, gpu](vandermonde, y)
+        var coefficients = lstsq[gpu=gpu](vandermonde, y)
         return Self(
             coefficients^, Scalar[Self.dtype](lo), Scalar[Self.dtype](hi)
         )

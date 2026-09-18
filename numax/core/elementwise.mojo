@@ -888,7 +888,7 @@ def diff[
     gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0] - 1] where (
     dim[T, 0] >= 1
-    and T.rank == 1
+    and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
     and is_row_major[T]
 ):
@@ -932,7 +932,7 @@ def gradient[
     T.dtype, dim[T, 0]
 ] where (
     dim[T, 0] >= 2
-    and T.rank == 1
+    and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
     and is_row_major[T]
 ):

@@ -10,9 +10,9 @@ minimize(f, x0, method="nelder-mead")      minimize[2, f, method="nelder-mead"](
 root_scalar(f, bracket=(0, 2))             root_scalar[f](bracket=(0.0, 2.0))
 minimize_scalar(f, method="bounded",       minimize_scalar[f, method="bounded"](
                 bounds=(-1, 1))                bounds=(-1.0, 1.0))
-solve_banded((1, 1), ab, b)                solve_banded[dtype, 1, 1, n](ab, b)
-expm(A)                                    expm[dtype, n](A)
-eigvalsh(A), svdvals(A), sqrtm(A)          eigvalsh[dtype, n](A), and so on
+solve_banded((1, 1), ab, b)                solve_banded[l=1, u=1](ab, b)
+expm(A)                                    expm(A)
+eigvalsh(A), svdvals(A), sqrtm(A)          eigvalsh(A), and so on
 nnls(A, b)                                 nnls(A, b)
 minimize(f, x0, method="L-BFGS-B",         minimize[dtype, n, f, jac,
          bounds=bounds)                        method="l-bfgs"](x0, lo, hi)
@@ -201,7 +201,7 @@ def main() raises:
         ab_entries[2 * n + j] = -1.0
     var ab = Static[dtype, 3, n](ctx, ab_entries^)
     var rhs = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
-    var banded = solve_banded[dtype, 1, 1, n](ab, rhs).to_host()
+    var banded = solve_banded[l=1, u=1](ab, rhs).to_host()
     print("  solve_banded((1,1), ab, b)")
     print(
         "    x =",
@@ -214,7 +214,7 @@ def main() raises:
 
     # toeplitz(c) -- the structured constructor SciPy has and NumPy does not.
     var column = Static[dtype, 3](ctx, [2.0, 1.0, 0.5])
-    var structured = toeplitz[dtype, 3](column).to_host()
+    var structured = toeplitz(column).to_host()
     print("\n  toeplitz([2, 1, 0.5])")
     for i in range(3):
         print(
@@ -226,7 +226,7 @@ def main() raises:
 
     # expm(A) -- a rotation generator, whose exponential is the rotation.
     var generator = Static[dtype, 2, 2](ctx, [0.0, -0.7, 0.7, 0.0])
-    var rotated = expm[dtype, 2](generator).to_host()
+    var rotated = expm(generator).to_host()
     print("\n  expm([[0, -0.7], [0.7, 0]])  -- the rotation by 0.7 rad")
     print("    ", rotated[0], rotated[1])
     print("    ", rotated[2], rotated[3])
@@ -238,14 +238,14 @@ def main() raises:
     var symmetric = Static[dtype, 3, 3](
         ctx, [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
     )
-    var spectrum = eigvalsh[dtype, 3](symmetric).to_host()
+    var spectrum = eigvalsh(symmetric).to_host()
     print("\n  eigvalsh(A)   w =", spectrum[0], spectrum[1], spectrum[2])
     print("    ascending, and they sum to the trace, 11")
 
     var for_svd = Static[dtype, 3, 3](
         ctx, [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
     )
-    var singular = svdvals[dtype, 3, 3](for_svd).to_host()
+    var singular = svdvals(for_svd).to_host()
     print("  svdvals(A)    s =", singular[0], singular[1], singular[2])
     print("    descending, which the Array tier's is not")
 
@@ -253,13 +253,13 @@ def main() raises:
     # the real Schur form, not the SPD-only Array version -- so a matrix
     # with complex eigenvalues has a real square root here.
     var for_root = Static[dtype, 2, 2](ctx, [1.0, -3.0, 2.0, 1.0])
-    var half = sqrtm[dtype, 2](for_root).to_host()
+    var half = sqrtm(for_root).to_host()
     print("\n  sqrtm([[1, -3], [2, 1]])  -- eigenvalues 1 +- 2.449i")
     print("    ", half[0], half[1])
     print("    ", half[2], half[3])
 
     var for_log = Static[dtype, 2, 2](ctx, [1.0, -3.0, 2.0, 1.0])
-    var logarithm = logm[dtype, 2](for_log).to_host()
+    var logarithm = logm(for_log).to_host()
     print("  logm(same)")
     print("    ", logarithm[0], logarithm[1])
     print("    ", logarithm[2], logarithm[3])

@@ -168,7 +168,7 @@ def argsort[T: TensorLike](a: T) raises -> List[Int]:
 def searchsorted[
     T: TensorLike,
 ](sorted_values: T, value: Scalar[T.dtype]) raises -> Int where (
-    T.rank == 1 and T.LayoutType.all_dims_known
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
 ):
     """The index where `value` would be inserted to keep `sorted_values`
     ascending. `numpy.searchsorted(a, v, side="left")`.
@@ -862,7 +862,10 @@ def top_k[
 ](a: T, sorted: Bool = True) raises -> Tuple[
     Static[T.dtype, k], Static[DType.int64, k]
 ] where (
-    k > 0 and k <= dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
+    k > 0
+    and k <= dim[T, 0]
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The `k` largest elements of `a` and where they came from.
     `numpy.argpartition` paired with its values, or `torch.topk`.
@@ -891,7 +894,10 @@ def top_k[
 ](a: T, sorted: Bool = True) raises -> Tuple[
     Static[T.dtype, dim[T, 0], k], Static[DType.int64, dim[T, 0], k]
 ] where (
-    k > 0 and k <= dim[T, 1] and T.rank == 2 and T.LayoutType.all_dims_known
+    k > 0
+    and k <= dim[T, 1]
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """The `k` largest elements of each **row** of `a`, and their columns.
     `torch.topk(a, k, dim=-1)`.

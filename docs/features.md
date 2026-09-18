@@ -229,6 +229,21 @@ own GPU-launchable versions.
 Two tiers sharing one set of names, one tier per import.
 `numax.linalg` is the `Tensor` tier; `numax.linalg.array` is the other one.
 
+The `Tensor` tier takes its matrices through the `TensorLike` bound, by
+borrow, and reads their extents from the layout: `cholesky(a)` is the whole
+spelling, `cholesky[gpu=True, block=32](a)` the tuned one, and
+`cholesky[dtype, n](a)` is no longer a spelling. Every factorization and
+solve accepts a `View` of a sub-block in place of a tensor -- the panel
+kernels read through the layout, so `cholesky(View(a.view().tile[4, 4](0,
+0), a.context()))` factors a quadrant with no copy
+(`tests/linalg/test_tensorlike_linalg.mojo`). The two routines that flatten
+an argument by pointer, `matvec`'s vector and the matrix `norm`, carry
+`where is_row_major[T]` and refuse a strided block at compile time. The
+`TensorLU`/`TensorQR` `solve` methods keep their overloads; the private
+`_solve_vector`/`_solve_matrix` beside them exist because Mojo's prover
+matches `where` facts syntactically and a generic caller cannot make it
+refute the sibling overload.
+
 The `Array[T, n*n]` tier is comptime-sized and register-resident, not heap
 allocated. That is what makes `cholesky` differentiable at `Dual` and
 launchable inside a GPU thread, and it is the right shape for the small

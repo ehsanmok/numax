@@ -60,16 +60,25 @@ a sequential sweep with data-dependent deflation.
 
 from std.math import sqrt as _sqrt
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, copy, zeros
 from ..fft.fft import Spectrum, fft, ifft
 
 
 def solve_banded[
-    dtype: DType, l: Int, u: Int, n: Int
-](
-    mut ab: Static[dtype, l + u + 1, n], mut b: Static[dtype, n]
-) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and l >= 0 and u >= 0 and n >= 1
+    A: TensorLike,
+    B: TensorLike,
+    l: Int,
+    u: Int,
+](ab: A, b: B) raises -> Static[A.dtype, dim[A, 1]] where (
+    (A.dtype.is_floating_point() and l >= 0 and u >= 0 and dim[A, 1] >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 0] == l + u + 1
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 1]
 ):
     """Solve `a @ x = b` for a general banded `a`. `scipy.linalg.solve_banded`.
 
@@ -92,9 +101,10 @@ def solve_banded[
     A zero pivot -- a singular matrix, or one whose band is misdescribed --
     raises rather than returning infinities.
     """
+    comptime n = dim[A, 1]
     var ctx = ab.context()
     var band = ab.to_host()
-    var rhs = b.to_host()
+    var rhs = b.to_host[A.dtype]()
 
     # LAPACK's `gbtrf` workspace: the input band shifted down by `l`, with
     # `l` empty rows above it for the fill-in pivoting creates.
@@ -168,16 +178,21 @@ def solve_banded[
             total -= work[(l + u + i - k) * n + k] * x[k]
         x[i] = total / work[(l + u) * n + i]
 
-    var out = List[Scalar[dtype]](capacity=n)
+    var out = List[Scalar[A.dtype]](capacity=n)
     for i in range(n):
-        out.append(Scalar[dtype](x[i]))
-    return Static[dtype, n](ctx, out^)
+        out.append(Scalar[A.dtype](x[i]))
+    return Static[A.dtype, n](ctx, out^)
 
 
 def cholesky_banded[
-    dtype: DType, u: Int, n: Int, lower: Bool = False
-](mut ab: Static[dtype, u + 1, n]) raises -> Static[dtype, u + 1, n] where (
-    dtype.is_floating_point() and u >= 0 and n >= 1
+    T: TensorLike,
+    u: Int,
+    lower: Bool = False,
+](ab: T) raises -> Static[T.dtype, u + 1, dim[T, 1]] where (
+    (T.dtype.is_floating_point() and u >= 0 and dim[T, 1] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 0] == u + 1
 ):
     """The Cholesky factor of a symmetric positive definite banded matrix,
     in the same banded storage. `scipy.linalg.cholesky_banded`.
@@ -195,6 +210,7 @@ def cholesky_banded[
     definite -- or, just as often, that `ab` does not hold the triangle
     `lower` says it does.
     """
+    comptime n = dim[T, 1]
     var ctx = ab.context()
     var host = ab.to_host()
 
@@ -240,21 +256,31 @@ def cholesky_banded[
                 accumulated -= band[(i - k) * n + k] * band[(j - k) * n + k]
             band[(i - j) * n + j] = accumulated / pivot
 
-    var out = List[Scalar[dtype]](length=(u + 1) * n, fill=0)
+    var out = List[Scalar[T.dtype]](length=(u + 1) * n, fill=0)
     for d in range(u + 1):
         for j in range(n):
             if lower:
-                out[d * n + j] = Scalar[dtype](band[d * n + j])
+                out[d * n + j] = Scalar[T.dtype](band[d * n + j])
             elif j + d < n:
-                out[(u - d) * n + j + d] = Scalar[dtype](band[d * n + j])
-    return Static[dtype, u + 1, n](ctx, out^)
+                out[(u - d) * n + j + d] = Scalar[T.dtype](band[d * n + j])
+    return Static[T.dtype, u + 1, n](ctx, out^)
 
 
 def cho_solve_banded[
-    dtype: DType, u: Int, n: Int, lower: Bool = False
-](mut cb: Static[dtype, u + 1, n], mut b: Static[dtype, n]) raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and u >= 0 and n >= 1):
+    A: TensorLike,
+    B: TensorLike,
+    u: Int,
+    lower: Bool = False,
+](cb: A, b: B) raises -> Static[A.dtype, dim[A, 1]] where (
+    (A.dtype.is_floating_point() and u >= 0 and dim[A, 1] >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 0] == u + 1
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 1]
+):
     """Solve `a @ x = b` given `a`'s banded Cholesky factor.
     `scipy.linalg.cho_solve_banded`.
 
@@ -267,9 +293,10 @@ def cho_solve_banded[
     real here in a way it is not for `solve_banded`, whose pivoting makes a
     reusable factorization a different and wider object.
     """
+    comptime n = dim[A, 1]
     var ctx = cb.context()
     var host = cb.to_host()
-    var rhs = b.to_host()
+    var rhs = b.to_host[A.dtype]()
 
     var band = List[Float64](length=(u + 1) * n, fill=0.0)
     for d in range(u + 1):
@@ -300,17 +327,27 @@ def cho_solve_banded[
             total -= band[(k - i) * n + i] * x[k]
         x[i] = total / band[i]
 
-    var out = List[Scalar[dtype]](capacity=n)
+    var out = List[Scalar[A.dtype]](capacity=n)
     for i in range(n):
-        out.append(Scalar[dtype](x[i]))
-    return Static[dtype, n](ctx, out^)
+        out.append(Scalar[A.dtype](x[i]))
+    return Static[A.dtype, n](ctx, out^)
 
 
 def solveh_banded[
-    dtype: DType, u: Int, n: Int, lower: Bool = False
-](mut ab: Static[dtype, u + 1, n], mut b: Static[dtype, n]) raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and u >= 0 and n >= 1):
+    A: TensorLike,
+    B: TensorLike,
+    u: Int,
+    lower: Bool = False,
+](ab: A, b: B) raises -> Static[A.dtype, dim[A, 1]] where (
+    (A.dtype.is_floating_point() and u >= 0 and dim[A, 1] >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 0] == u + 1
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 1]
+):
     """Solve `a @ x = b` for a symmetric positive definite banded `a`.
     `scipy.linalg.solveh_banded`.
 
@@ -324,15 +361,28 @@ def solveh_banded[
     -- the part that matters at scale -- keeps the factor's bandwidth equal
     to the matrix's, where `solve_banded`'s pivoting widens it to `u + l`.
     """
-    var factor = cholesky_banded[dtype, u, n, lower](ab)
-    return cho_solve_banded[dtype, u, n, lower](factor, b)
+    comptime n = dim[A, 1]
+    var factor = cholesky_banded[u=u, lower=lower](ab)
+    return cho_solve_banded[u=u, lower=lower](factor, b)
 
 
 def solve_toeplitz[
-    dtype: DType, n: Int
-](
-    mut c: Static[dtype, n], mut r: Static[dtype, n], mut b: Static[dtype, n]
-) raises -> Static[dtype, n] where (dtype.is_floating_point() and n >= 1):
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+](c: A, r: B, b: C) raises -> Static[A.dtype, dim[A, 0]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
+    and dim[C, 0] == dim[A, 0]
+):
     """Solve `a @ x = b` where `a` is the Toeplitz matrix with first column
     `c` and first row `r`. `scipy.linalg.solve_toeplitz`.
 
@@ -356,10 +406,11 @@ def solve_toeplitz[
     `numax.linalg.special_matrices.toeplitz` into the dense
     `numax.linalg.solve`, which pivots.
     """
+    comptime n = dim[A, 0]
     var ctx = c.context()
     var col = c.to_host()
-    var row = r.to_host()
-    var rhs = b.to_host()
+    var row = r.to_host[A.dtype]()
+    var rhs = b.to_host[A.dtype]()
 
     var diagonal = Float64(col[0])
     if diagonal == 0:
@@ -436,17 +487,25 @@ def solve_toeplitz[
         for j in range(k + 1):
             x[j] += scale * backward[j]
 
-    var out = List[Scalar[dtype]](capacity=n)
+    var out = List[Scalar[A.dtype]](capacity=n)
     for i in range(n):
-        out.append(Scalar[dtype](x[i]))
-    return Static[dtype, n](ctx, out^)
+        out.append(Scalar[A.dtype](x[i]))
+    return Static[A.dtype, n](ctx, out^)
 
 
 def solve_circulant[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut c: Static[dtype, n], mut b: Static[dtype, n]) raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and n > 0):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](c: A, b: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] > 0)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """Solve `a @ x = b` where `a` is the circulant matrix with first column
     `c`. `scipy.linalg.solve_circulant`.
 
@@ -480,17 +539,23 @@ def solve_circulant[
     `numax.core.ops` does not carry -- the same reason `numax.fft` returns
     a real/imaginary pair rather than a complex tensor.
     """
+    comptime n = dim[A, 0]
     var ctx = c.context()
 
     # `fft` consumes its `Spectrum`, and `c` and `b` are borrowed, so each
     # needs an owned copy. `copy` is the explicit spelling `Tensor` requires
     # -- it is `Movable` and not `Copyable` precisely so that duplicating a
     # buffer is a decision rather than something that happens silently.
-    var c_spectrum = fft[dtype, n, gpu](
-        Spectrum[dtype, n](copy(c), zeros[dtype, n](ctx))
+    var c_spectrum = fft[A.dtype, n, gpu](
+        Spectrum[A.dtype, n](
+            Static[A.dtype, n](ctx, c.to_host()), zeros[A.dtype, n](ctx)
+        )
     )
-    var b_spectrum = fft[dtype, n, gpu](
-        Spectrum[dtype, n](copy(b), zeros[dtype, n](ctx))
+    var b_spectrum = fft[A.dtype, n, gpu](
+        Spectrum[A.dtype, n](
+            Static[A.dtype, n](ctx, b.to_host[A.dtype]()),
+            zeros[A.dtype, n](ctx),
+        )
     )
 
     var c_real = c_spectrum[0].to_host()
@@ -498,8 +563,8 @@ def solve_circulant[
     var b_real = b_spectrum[0].to_host()
     var b_imag = b_spectrum[1].to_host()
 
-    var quotient_real = List[Scalar[dtype]](capacity=n)
-    var quotient_imag = List[Scalar[dtype]](capacity=n)
+    var quotient_real = List[Scalar[A.dtype]](capacity=n)
+    var quotient_imag = List[Scalar[A.dtype]](capacity=n)
     for k in range(n):
         var cr = Float64(c_real[k])
         var ci = Float64(c_imag[k])
@@ -515,13 +580,13 @@ def solve_circulant[
             )
         var br = Float64(b_real[k])
         var bi = Float64(b_imag[k])
-        quotient_real.append(Scalar[dtype]((br * cr + bi * ci) / magnitude))
-        quotient_imag.append(Scalar[dtype]((bi * cr - br * ci) / magnitude))
+        quotient_real.append(Scalar[A.dtype]((br * cr + bi * ci) / magnitude))
+        quotient_imag.append(Scalar[A.dtype]((bi * cr - br * ci) / magnitude))
 
-    var solved = ifft[dtype, n, gpu](
-        Spectrum[dtype, n](
-            Static[dtype, n](ctx, quotient_real^),
-            Static[dtype, n](ctx, quotient_imag^),
+    var solved = ifft[A.dtype, n, gpu](
+        Spectrum[A.dtype, n](
+            Static[A.dtype, n](ctx, quotient_real^),
+            Static[A.dtype, n](ctx, quotient_imag^),
         )
     )
     # The imaginary part is zero to rounding, `a` and `b` both being real,
@@ -529,4 +594,4 @@ def solve_circulant[
     # moved, since a `Tuple` element cannot be transferred out of a
     # temporary.
     var real_part = solved[0].to_host()
-    return Static[dtype, n](ctx, real_part^)
+    return Static[A.dtype, n](ctx, real_part^)

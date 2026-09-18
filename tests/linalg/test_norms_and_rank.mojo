@@ -45,9 +45,9 @@ def _v(ctx: DeviceContext) raises -> Static[dtype, 4]:
 def test_vector_two_norm_is_exactly_nrm2() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _v(ctx)
-    var by_norm = norm[dtype, 4, 2](a)
+    var by_norm = norm[ord=2](a)
     var b = _v(ctx)
-    var by_nrm2 = nrm2[dtype, 4](b)
+    var by_nrm2 = nrm2(b)
     assert_equal(Float64(by_norm), Float64(by_nrm2))
 
 
@@ -55,32 +55,30 @@ def test_vector_two_norm_value() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _v(ctx)
     # 9 + 16 + 144 + 1 = 170.
-    assert_almost_equal(
-        Float64(norm[dtype, 4, 2](a)), sqrt_f64(170.0), atol=1e-12
-    )
+    assert_almost_equal(Float64(norm[ord=2](a)), sqrt_f64(170.0), atol=1e-12)
 
 
 def test_vector_two_norm_is_the_default() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _v(ctx)
-    var defaulted = Float64(norm[dtype, 4](a))
+    var defaulted = Float64(norm(a))
     var b = _v(ctx)
-    var explicit = Float64(norm[dtype, 4, 2](b))
+    var explicit = Float64(norm[ord=2](b))
     assert_equal(defaulted, explicit)
 
 
 def test_vector_one_norm() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _v(ctx)
-    assert_almost_equal(Float64(norm[dtype, 4, 1](a)), 20.0, atol=1e-12)
+    assert_almost_equal(Float64(norm[ord=1](a)), 20.0, atol=1e-12)
 
 
 def test_vector_infinity_norms() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _v(ctx)
-    assert_almost_equal(Float64(norm[dtype, 4, inf](a)), 12.0, atol=1e-12)
+    assert_almost_equal(Float64(norm[ord=inf](a)), 12.0, atol=1e-12)
     var b = _v(ctx)
-    assert_almost_equal(Float64(norm[dtype, 4, neg_inf](b)), 1.0, atol=1e-12)
+    assert_almost_equal(Float64(norm[ord=neg_inf](b)), 1.0, atol=1e-12)
 
 
 def test_the_matrix_overload_still_resolves() raises:
@@ -88,7 +86,7 @@ def test_the_matrix_overload_still_resolves() raises:
     `norm` and get its Frobenius default rather than the vector one."""
     var ctx = DeviceContext(api="cpu")
     var m = Static[dtype, 2, 2](ctx, [3.0, 0.0, 0.0, 4.0])
-    assert_almost_equal(Float64(norm[dtype, 2](m)), 5.0, atol=1e-12)
+    assert_almost_equal(Float64(norm(m)), 5.0, atol=1e-12)
 
 
 # --- eigvalsh and svdvals ---------------------------------------------------

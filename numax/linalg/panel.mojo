@@ -53,6 +53,8 @@ from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
 from linalg.matmul import matmul as _max_matmul
 from layout.tile_tensor import DefaultEngine
+
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from max.algorithm.functional import elementwise, parallelize
 from max.gpu import barrier
 from max.gpu.host import DeviceContext
@@ -443,7 +445,7 @@ def getrf2[
 
     var half = nb // 2
 
-    getrf2[dtype, ALayout, PLayout, ILayout, gpu](
+    getrf2[ALayout=ALayout, PLayout=PLayout, ILayout=ILayout, gpu=gpu](
         a, pivots, info, left, right, product, k, half, n, base, ctx
     )
 
@@ -493,7 +495,7 @@ def getrf2[
             elementwise_lambda_fn=subtract, target="gpu" if gpu else "cpu"
         ](out, l21, u12, ctx)
 
-    getrf2[dtype, ALayout, PLayout, ILayout, gpu](
+    getrf2[ALayout=ALayout, PLayout=PLayout, ILayout=ILayout, gpu=gpu](
         a, pivots, info, left, right, product, k + half, nb - half, n, base, ctx
     )
 

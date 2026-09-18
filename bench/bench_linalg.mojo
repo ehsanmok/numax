@@ -213,7 +213,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
     var b = _general_offset[n](ctx)
 
     def work() raises {mut a, mut b}:
-        var c = matmul[dtype, n, n, n](a, b)
+        var c = matmul(a, b)
         keep(c.buffer.unsafe_ptr())
 
     var ns = (
@@ -223,7 +223,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
         * 1e9
     )
 
-    var product = matmul[dtype, n, n, n](a, b).to_host()
+    var product = matmul(a, b).to_host()
     var worst = Float64(0)
     for j in range(n):
         var want = Float64(0)
@@ -240,7 +240,7 @@ def bench_cholesky[n: Int, block: Int = 64](ctx: DeviceContext) raises:
     var a = _spd[n](ctx)
 
     def work() raises {mut a}:
-        var l = cholesky[dtype, n, False, block](a)
+        var l = cholesky[gpu=False, block=block](a)
         keep(l.buffer.unsafe_ptr())
 
     var ns = (
@@ -252,9 +252,9 @@ def bench_cholesky[n: Int, block: Int = 64](ctx: DeviceContext) raises:
 
     # `L @ L.T` against `A`, both on the device, so the residual measures
     # the factorization and not a host copy.
-    var lower = cholesky[dtype, n, False, block](a)
+    var lower = cholesky[gpu=False, block=block](a)
     var upper = transpose(lower)
-    var product = matmul[dtype, n, n, n](lower, upper).to_host()
+    var product = matmul(lower, upper).to_host()
     var worst = Float64(0)
     for i in range(n):
         for j in range(n):
@@ -270,7 +270,7 @@ def bench_lu[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var f = lu_factor[dtype, n, False, block](a)
+        var f = lu_factor[gpu=False, block=block](a)
         keep(f.factored.buffer.unsafe_ptr())
 
     var ns = (
@@ -283,7 +283,7 @@ def bench_lu[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     # One factorization, one solve, and the residual of the original
     # system -- the only check that exercises both triangular halves and
     # the pivot order together.
-    var factored = lu_factor[dtype, n, False, block](a)
+    var factored = lu_factor[gpu=False, block=block](a)
     var b = _ramp[n](ctx, 3)
     var x = factored.solve(b)
     var residual = matvec(a, x).to_host()
@@ -303,7 +303,7 @@ def bench_solve[n: Int, block: Int = 32](ctx: DeviceContext) raises:
     var b = _ramp[n](ctx, 5)
 
     def work() raises {mut a, mut b}:
-        var x = solve[dtype, n, False, block](a, b)
+        var x = solve[gpu=False, block=block](a, b)
         keep(x.buffer.unsafe_ptr())
 
     var ns = (
@@ -313,7 +313,7 @@ def bench_solve[n: Int, block: Int = 32](ctx: DeviceContext) raises:
         * 1e9
     )
 
-    var x = solve[dtype, n, False, block](a, b)
+    var x = solve[gpu=False, block=block](a, b)
     var residual = matvec(a, x).to_host()
     var rhs = b.to_host()
     var worst = Float64(0)
@@ -332,7 +332,7 @@ def bench_qr[
     var a = _general_rect[m, n](ctx)
 
     def work() raises {mut a}:
-        var f = qr_factor[dtype, m, n, False, block](a)
+        var f = qr_factor[gpu=False, block=block](a)
         keep(f.factored.buffer.unsafe_ptr())
 
     var ns = (
@@ -342,10 +342,10 @@ def bench_qr[
         * 1e9
     )
 
-    var factored = qr_factor[dtype, m, n, False, block](a)
+    var factored = qr_factor[gpu=False, block=block](a)
     var r = factored.r()
     var q = factored.q()
-    var product = matmul[dtype, m, n, n](q, r).to_host()
+    var product = matmul(q, r).to_host()
     var worst = Float64(0)
     for i in range(m):
         for j in range(n):
@@ -409,7 +409,7 @@ def bench_eigvalsh[
     var a = _spd[n](ctx)
 
     def work() raises {mut a}:
-        var w = eigvalsh[dtype, n, False, block](a)
+        var w = eigvalsh[gpu=False, block=block](a)
         keep(w.buffer.unsafe_ptr())
 
     var ns = (
@@ -418,7 +418,7 @@ def bench_eigvalsh[
         ).mean()
         * 1e9
     )
-    var w = eigvalsh[dtype, n, False, block](a)
+    var w = eigvalsh[gpu=False, block=block](a)
     _row(
         "eigvalsh",
         n,
@@ -432,7 +432,7 @@ def bench_eigh[n: Int](ctx: DeviceContext) raises:
     var a = _spd[n](ctx)
 
     def work() raises {mut a}:
-        var e = eigh[dtype, n](a)
+        var e = eigh(a)
         keep(e.vectors.buffer.unsafe_ptr())
 
     var ns = (
@@ -441,11 +441,11 @@ def bench_eigh[n: Int](ctx: DeviceContext) raises:
         ).mean()
         * 1e9
     )
-    var e = eigh[dtype, n](a)
+    var e = eigh(a)
     # `A V - V diag(w)`: the eigen-equation column by column.
-    var av = matmul[dtype, n, n, n](a, e.vectors)
+    var av = matmul(a, e.vectors)
     var d = _diag[n](ctx, e.values)
-    var vd = matmul[dtype, n, n, n](e.vectors, d)
+    var vd = matmul(e.vectors, d)
     var avh = av.to_host()
     var vdh = vd.to_host()
     var worst = Float64(0)
@@ -462,7 +462,7 @@ def bench_svdvals[
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var s = svdvals[dtype, n, n, False, block](a)
+        var s = svdvals[gpu=False, block=block](a)
         keep(s.buffer.unsafe_ptr())
 
     var ns = (
@@ -473,7 +473,7 @@ def bench_svdvals[
     )
     # Singular values admit no trace check; `sum(s^2) == ||A||_F^2` is the
     # identity that plays the same part.
-    var s = svdvals[dtype, n, n, False, block](a)
+    var s = svdvals[gpu=False, block=block](a)
     var host = s.to_host()
     var total = Float64(0)
     for i in range(n):
@@ -491,7 +491,7 @@ def bench_svd[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var f = svd[dtype, n, n](a)
+        var f = svd(a)
         keep(f.u.buffer.unsafe_ptr())
 
     var ns = (
@@ -500,11 +500,11 @@ def bench_svd[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
         ).mean()
         * 1e9
     )
-    var f = svd[dtype, n, n](a)
+    var f = svd(a)
     var d = _diag[n](ctx, f.s)
-    var ud = matmul[dtype, n, n, n](f.u, d)
+    var ud = matmul(f.u, d)
     var vt = transpose(f.v)
-    var back = matmul[dtype, n, n, n](ud, vt)
+    var back = matmul(ud, vt)
     var flops = 14.0 * Float64(n) ** 3 + 8.0 * Float64(n) ** 3
     _row("svd", n, ns, flops, _max_abs_diff[n, _general_entry](back))
 
@@ -515,7 +515,7 @@ def bench_eigvals[
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var w = eigvals[dtype, n, False, block](a)
+        var w = eigvals[gpu=False, block=block](a)
         keep(w.re.buffer.unsafe_ptr())
 
     var ns = (
@@ -524,7 +524,7 @@ def bench_eigvals[
         ).mean()
         * 1e9
     )
-    var w = eigvals[dtype, n, False, block](a)
+    var w = eigvals[gpu=False, block=block](a)
     _row(
         "eigvals",
         n,
@@ -538,7 +538,7 @@ def bench_schur[n: Int](ctx: DeviceContext) raises:
     var a = _general[n](ctx)
 
     def work() raises {mut a}:
-        var f = schur[dtype, n](a)
+        var f = schur(a)
         keep(f.t.buffer.unsafe_ptr())
 
     var ns = (
@@ -547,10 +547,10 @@ def bench_schur[n: Int](ctx: DeviceContext) raises:
         ).mean()
         * 1e9
     )
-    var f = schur[dtype, n](a)
-    var zt = matmul[dtype, n, n, n](f.z, f.t)
+    var f = schur(a)
+    var zt = matmul(f.z, f.t)
     var z_t = transpose(f.z)
-    var back = matmul[dtype, n, n, n](zt, z_t)
+    var back = matmul(zt, z_t)
     _row(
         "schur",
         n,
@@ -577,7 +577,7 @@ def bench_blas1[n: Int](ctx: DeviceContext) raises:
         keep(asum(x))
 
     def axpy_work() raises {mut x, mut y}:
-        var s = axpy(Scalar[dtype](2.5), x, y)
+        var s = axpy(2.5, x, y)
         keep(s.buffer.unsafe_ptr())
 
     var dot_ns = (
@@ -633,7 +633,7 @@ def bench_blas1[n: Int](ctx: DeviceContext) raises:
     var got_dot = Float64(dot(x, y))
     var got_nrm2 = Float64(nrm2(x))
     var got_asum = Float64(asum(x))
-    var summed = axpy(Scalar[dtype](2.5), x, y).to_host()
+    var summed = axpy(2.5, x, y).to_host()
     var worst_axpy = Float64(0)
     for i in range(n):
         var xi = Float64((i * 37 + 11) % 17) - 8.0

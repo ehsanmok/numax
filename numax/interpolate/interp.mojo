@@ -318,8 +318,8 @@ def roots[
     **Tier 2, and `gpu=True` does not compile**, because `eigvals` refuses
     it -- see `numax.linalg.eigvals`.
     """
-    var c = companion[dtype, k, gpu](p)
-    return eigvals[dtype, k - 1, gpu](c)
+    var c = companion[gpu=gpu](p)
+    return eigvals[gpu=gpu](c)
 
 
 def polyfit[
@@ -348,4 +348,4 @@ def polyfit[
     `lstsq[method="svd"]` on `vander(x, deg + 1)` directly.
     """
     var design = vander[cols=deg + 1](x)
-    return lstsq[dtype, n, deg + 1, gpu](design, y)
+    return lstsq[gpu=gpu](design, y)

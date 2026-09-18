@@ -137,7 +137,7 @@ def _damped_step[
 
     var a = Static[dtype, rows, n_params](ctx, entries^)
     var b = Static[dtype, rows](ctx, rhs^)
-    var solved = lstsq[dtype, rows, n_params, gpu, block](a, b).to_host()
+    var solved = lstsq[gpu=gpu, block=block](a, b).to_host()
 
     var step = List[Float64](capacity=n_params)
     for j in range(n_params):

@@ -25,10 +25,11 @@ from max.gpu.host import DeviceContext
 from std.sys.info import align_of
 from std.utils import IndexList
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, zeros_dyn
 
 from .blas import _target
-from .common import _Dense
+from .common import _mut_view, _mut_view_as, _Dense
 from .panel import (
     _View,
     gemv_sub,
@@ -93,9 +94,13 @@ def _trsv[
                 ]
             ](a, x, Int32(k), Int32(nb), grid_dim=1, block_dim=1)
         else:
-            trsv_diag[dtype, ALayout, XLayout, upper, unit, trans](
-                a, x, Int32(k), Int32(nb)
-            )
+            trsv_diag[
+                ALayout=ALayout,
+                XLayout=XLayout,
+                upper=upper,
+                unit=unit,
+                trans=trans,
+            ](a, x, Int32(k), Int32(nb))
 
         # Everything not yet solved, updated by the block just solved.
         comptime if upper:
@@ -212,16 +217,23 @@ def _trsm[
 
 
 def solve_triangular[
-    dtype: DType,
-    n: Int,
+    A: TensorLike,
+    B: TensorLike,
     upper: Bool = False,
     unit: Bool = False,
     trans: Bool = False,
     gpu: Bool = False,
     block: Int = 16,
-](mut a: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
-    dtype, n
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """**Tier 2.** Solve `A @ x = b` for triangular `A`.
     `scipy.linalg.solve_triangular`.
 
@@ -243,29 +255,61 @@ def solve_triangular[
     `TileTensor`; neither operand is modified. `b` is copied, so the
     caller's vector survives.
     """
+    return _solve_triangular_vector[
+        upper=upper, unit=unit, trans=trans, gpu=gpu, block=block
+    ](a, b)
+
+
+def _solve_triangular_vector[
+    A: TensorLike,
+    B: TensorLike,
+    upper: Bool = False,
+    unit: Bool = False,
+    trans: Bool = False,
+    gpu: Bool = False,
+    block: Int = 16,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
+    """Body of the public overload above, under a name a generic caller
+    can pick without the prover having to refute the sibling overload."""
+    comptime n = dim[A, 0]
     var ctx = a.context()
-    var x = Static[dtype, n](ctx)
+    var x = Static[A.dtype, n](ctx)
     var xv = x.view()
-    pack_vector[target=_target[gpu]()](b.view(), xv, 0, n, ctx)
+    pack_vector[target=_target[gpu]()](_mut_view_as[A.dtype](b), xv, 0, n, ctx)
     _trsv[upper=upper, unit=unit, trans=trans, gpu=gpu](
-        a.view(), xv, n, block, ctx
+        _mut_view(a), xv, n, block, ctx
     )
     ctx.synchronize()
     return x^
 
 
 def solve_triangular[
-    dtype: DType,
-    n: Int,
-    rhs: Int,
+    A: TensorLike,
+    B: TensorLike,
     upper: Bool = False,
     unit: Bool = False,
     trans: Bool = False,
     gpu: Bool = False,
     block: Int = 16,
-](mut a: Static[dtype, n, n], mut b: Static[dtype, n, rhs]) raises -> Static[
-    dtype, n, rhs
-] where dtype.is_floating_point():
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 1]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """**Tier 2.** Solve `A @ X = B` for triangular `A` and a matrix `B`.
     `scipy.linalg.solve_triangular` with a two-dimensional right-hand
     side.
@@ -277,13 +321,42 @@ def solve_triangular[
 
     Parameters are the vector overload's. Device-resident throughout.
     """
+    return _solve_triangular_matrix[
+        upper=upper, unit=unit, trans=trans, gpu=gpu, block=block
+    ](a, b)
+
+
+def _solve_triangular_matrix[
+    A: TensorLike,
+    B: TensorLike,
+    upper: Bool = False,
+    unit: Bool = False,
+    trans: Bool = False,
+    gpu: Bool = False,
+    block: Int = 16,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 1]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
+    """Body of the public overload above, under a name a generic caller
+    can pick without the prover having to refute the sibling overload."""
+    comptime n = dim[A, 0]
+    comptime rhs = dim[B, 1]
     var ctx = a.context()
-    var x = Static[dtype, n, rhs](ctx)
-    var xd: _Dense[dtype] = TileTensor(
+    var x = Static[A.dtype, n, rhs](ctx)
+    var xd: _Dense[A.dtype] = TileTensor(
         x.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, rhs))
     )
-    pack_block[target=_target[gpu]()](b.view(), xd, 0, 0, n, rhs, ctx)
+    pack_block[target=_target[gpu]()](
+        _mut_view_as[A.dtype](b), xd, 0, 0, n, rhs, ctx
+    )
     _trsm[upper=upper, unit=unit, trans=trans, gpu=gpu](
-        a.view(), xd, n, rhs, block, ctx
+        _mut_view(a), xd, n, rhs, block, ctx
     )
     return x^

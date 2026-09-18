@@ -131,9 +131,7 @@ def root[
             for i in range(n):
                 negated.append(-residual[i])
             var rhs = _as_tensor[dtype, n](negated, ctx)
-            var direction = _to_list[dtype, n](
-                solve[dtype, n, gpu](jacobian, rhs)
-            )
+            var direction = _to_list[dtype, n](solve[gpu=gpu](jacobian, rhs))
 
             # Backtrack on `||F||^2` until the step is a real decrease.
             var current = _squared_norm(residual, n)

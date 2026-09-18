@@ -53,12 +53,12 @@ def test_inner_equals_matmul_against_an_explicit_transpose() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _a(ctx)
     var b = _b(ctx)
-    var got = inner[dtype, 2, 3, 4](a, b).to_host()
+    var got = inner(a, b).to_host()
 
     var a2 = _a(ctx)
     var b2 = _b(ctx)
     var b_t = transpose(b2)
-    var want = matmul[dtype, 2, 3, 4](a2, b_t).to_host()
+    var want = matmul(a2, b_t).to_host()
 
     for i in range(8):
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
@@ -70,7 +70,7 @@ def test_inner_is_the_gram_matrix_of_the_rows() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _a(ctx)
     var a2 = _a(ctx)
-    var g = inner[dtype, 2, 3, 2](a, a2).to_host()
+    var g = inner(a, a2).to_host()
 
     # Row 0 is (1,2,3): 1+4+9 = 14. Row 1 is (4,5,6): 16+25+36 = 77.
     assert_almost_equal(Float64(g[0]), 14.0, atol=1e-12)
@@ -86,7 +86,7 @@ def test_array_inner_agrees_with_the_tensor_tier() raises:
         ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0]
     )
     var b = _square(ctx)
-    var want = inner[dtype, 3, 3, 3](a, b).to_host()
+    var want = inner(a, b).to_host()
 
     var aa = Array[P, 9](fill=P.constant(0.0))
     var values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0]
@@ -109,7 +109,7 @@ def test_kron_matches_a_hand_written_loop() raises:
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
     var b = Static[dtype, 2, 3](ctx, [5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
-    var got = kron[dtype, 2, 2, 2, 3](a, b).to_host()
+    var got = kron(a, b).to_host()
 
     var a_host = [1.0, 2.0, 3.0, 4.0]
     var b_host = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
@@ -132,7 +132,7 @@ def test_kron_with_the_identity_tiles_the_other_operand() raises:
     var ctx = DeviceContext(api="cpu")
     var eye2 = Static[dtype, 2, 2](ctx, [1.0, 0.0, 0.0, 1.0])
     var b = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
-    var got = kron[dtype, 2, 2, 2, 2](eye2, b).to_host()
+    var got = kron(eye2, b).to_host()
 
     assert_almost_equal(Float64(got[0]), 1.0, atol=1e-12)
     assert_almost_equal(Float64(got[1]), 2.0, atol=1e-12)
@@ -145,7 +145,7 @@ def test_array_kron_agrees_with_the_tensor_tier() raises:
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
     var b = Static[dtype, 2, 2](ctx, [5.0, 6.0, 7.0, 8.0])
-    var want = kron[dtype, 2, 2, 2, 2](a, b).to_host()
+    var want = kron(a, b).to_host()
 
     var aa = Array[P, 4](fill=P.constant(0.0))
     var bb = Array[P, 4](fill=P.constant(0.0))
@@ -166,13 +166,13 @@ def test_array_kron_agrees_with_the_tensor_tier() raises:
 def test_matrix_power_three_equals_two_matmuls() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _square(ctx)
-    var got = matrix_power[dtype, 3, 3](a).to_host()
+    var got = matrix_power[power=3](a).to_host()
 
     var b = _square(ctx)
     var c = _square(ctx)
-    var squared = matmul[dtype, 3, 3, 3](b, c)
+    var squared = matmul(b, c)
     var d = _square(ctx)
-    var want = matmul[dtype, 3, 3, 3](squared, d).to_host()
+    var want = matmul(squared, d).to_host()
 
     for i in range(9):
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-10)
@@ -181,7 +181,7 @@ def test_matrix_power_three_equals_two_matmuls() raises:
 def test_matrix_power_zero_is_the_identity() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _square(ctx)
-    var got = matrix_power[dtype, 3, 0](a).to_host()
+    var got = matrix_power[power=0](a).to_host()
     for i in range(3):
         for j in range(3):
             var want = 1.0 if i == j else 0.0
@@ -191,7 +191,7 @@ def test_matrix_power_zero_is_the_identity() raises:
 def test_matrix_power_one_is_the_matrix() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _square(ctx)
-    var got = matrix_power[dtype, 3, 1](a).to_host()
+    var got = matrix_power[power=1](a).to_host()
     var want = _square(ctx).to_host()
     for i in range(9):
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-14)
@@ -202,15 +202,15 @@ def test_an_even_power_exercises_the_squaring_path() raises:
     branch a purely odd power never reaches."""
     var ctx = DeviceContext(api="cpu")
     var a = _square(ctx)
-    var got = matrix_power[dtype, 3, 4](a).to_host()
+    var got = matrix_power[power=4](a).to_host()
 
     var b = _square(ctx)
     var c = _square(ctx)
-    var squared = matmul[dtype, 3, 3, 3](b, c)
+    var squared = matmul(b, c)
     var d = _square(ctx)
     var e = _square(ctx)
-    var squared_again = matmul[dtype, 3, 3, 3](d, e)
-    var want = matmul[dtype, 3, 3, 3](squared, squared_again).to_host()
+    var squared_again = matmul(d, e)
+    var want = matmul(squared, squared_again).to_host()
 
     for i in range(9):
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-10)
@@ -219,7 +219,7 @@ def test_an_even_power_exercises_the_squaring_path() raises:
 def test_array_matrix_power_agrees_with_the_tensor_tier() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _square(ctx)
-    var want = matrix_power[dtype, 3, 5](a).to_host()
+    var want = matrix_power[power=5](a).to_host()
 
     var aa = Array[P, 9](fill=P.constant(0.0))
     var av = [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0]

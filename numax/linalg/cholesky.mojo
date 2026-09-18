@@ -29,24 +29,31 @@ from max.algorithm.functional import elementwise
 from std.sys.info import align_of
 from std.utils import IndexList
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, tril, zeros, zeros_dyn
 
 from .blas import _target
-from .common import _Dense
+from .common import _mut_view, _mut_view_as, _Dense
 from .panel import _PANEL_THREADS, pack_block, potrf_diag, trsm_right_lower_t
 from .qr import _MIN_GEMM_COLS
-from .triangular import solve_triangular
+from .triangular import (
+    _solve_triangular_matrix,
+    _solve_triangular_vector,
+    solve_triangular,
+)
 
 
 def cholesky[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     gpu: Bool = False,
     block: Int = 32 if gpu else 64,
-    tile: Int = n if gpu else 128,
-](mut a: Static[dtype, n, n]) raises -> Static[
-    dtype, n, n
-] where dtype.is_floating_point():
+    tile: Int = dim[T, 0] if gpu else 128,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """**Tier 2.** The lower-triangular `L` with `L @ L.T == a`, blocked
     and device-resident.
 
@@ -160,23 +167,24 @@ def cholesky[
     diagonal too but has no way to report it, because a tier-1 kernel
     cannot branch on a value.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var work = Static[dtype, n, n](ctx)
+    var work = Static[T.dtype, n, n](ctx)
     var info = zeros[DType.int32, 1](ctx)
     # `L21` made dense for the GEMM. `n x block` covers every step's panel,
     # so it is allocated once rather than per step.
-    var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
+    var operand = zeros_dyn[T.dtype, 2](n, block, ctx=ctx)
     # The GEMM's own output, which nothing reads -- the epilogue subtracts
     # each tile into the trailing block as it is computed. It still has to
     # be the product's full size, since `matmul` writes `c` regardless.
-    var scratch = zeros_dyn[dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
+    var scratch = zeros_dyn[T.dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
 
     var wv = work.view()
     var iv = info.view()
     var ov = operand.view()
     var sv = scratch.view()
 
-    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
     var k = 0
     while k < n:
@@ -185,7 +193,7 @@ def cholesky[
         comptime if gpu:
             ctx.enqueue_function[
                 potrf_diag[
-                    dtype,
+                    T.dtype,
                     ALayout=type_of(wv).LayoutType,
                     ILayout=type_of(iv).LayoutType,
                     gpu=True,
@@ -210,7 +218,7 @@ def cholesky[
             # `L21` made dense once for the whole trailing update. Every
             # tile below is a contiguous row range of it, which is itself
             # dense, so the tiling costs no extra packing.
-            var panel: _Dense[dtype] = TileTensor(
+            var panel: _Dense[T.dtype] = TileTensor(
                 ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
             )
             pack_block[target=_target[gpu]()](wv, panel, base, k, m, nb, ctx)
@@ -229,15 +237,15 @@ def cholesky[
                     # Two views of the packed panel, because `matmul` takes
                     # both operands mutably and rejects two live views that
                     # share an origin.
-                    var left: _Dense[dtype] = TileTensor(
+                    var left: _Dense[T.dtype] = TileTensor(
                         ov.ptr_at_offset(Coord(row0, 0)),
                         row_major(Coord(rows, nb)),
                     )
-                    var right: _Dense[dtype] = TileTensor(
+                    var right: _Dense[T.dtype] = TileTensor(
                         ov.ptr_at_offset(Coord(col0, 0)),
                         row_major(Coord(cols, nb)),
                     )
-                    var product: _Dense[dtype] = TileTensor(
+                    var product: _Dense[T.dtype] = TileTensor(
                         sv.ptr_at_offset(Coord(0, 0)),
                         row_major(Coord(rows, cols)),
                     )
@@ -294,7 +302,7 @@ def cholesky[
                         wv.store[width](
                             at,
                             wv.load[width](at)
-                            - rebind[SIMD[dtype, width]](value),
+                            - rebind[SIMD[T.dtype, width]](value),
                         )
 
                     _max_matmul[
@@ -327,10 +335,20 @@ def cholesky[
 
 
 def cholesky_solve[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut lower: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
-    dtype, n
-] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16,
+](lower: A, b: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """**Tier 2.** Solve `A @ x = b` given `A`'s Cholesky factor `L`,
     blocked and device-resident. `scipy.linalg.cho_solve`.
 
@@ -347,17 +365,30 @@ def cholesky_solve[
     MAX ships neither the factorization nor the solve, so both halves are
     numax's; the cubic work inside them is still MAX's `matmul`.
     """
-    var y = solve_triangular[dtype, n, False, False, False, gpu, block](
-        lower, b
-    )
-    return solve_triangular[dtype, n, True, False, True, gpu, block](lower, y)
+    comptime n = dim[A, 0]
+    var y = _solve_triangular_vector[
+        upper=False, unit=False, trans=False, gpu=gpu, block=block
+    ](lower, b)
+    return _solve_triangular_vector[
+        upper=True, unit=False, trans=True, gpu=gpu, block=block
+    ](lower, y)
 
 
 def cholesky_solve[
-    dtype: DType, n: Int, rhs: Int, gpu: Bool = False, block: Int = 16
-](
-    mut lower: Static[dtype, n, n], mut b: Static[dtype, n, rhs]
-) raises -> Static[dtype, n, rhs] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16,
+](lower: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 1]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """**Tier 2.** Solve `A @ X = B` given `A`'s Cholesky factor `L`, for
     a matrix `B`. `scipy.linalg.cho_solve` with a two-dimensional
     right-hand side.
@@ -367,9 +398,11 @@ def cholesky_solve[
     a Gaussian process wants when it has a batch of right-hand sides
     rather than one.
     """
-    var y = solve_triangular[dtype, n, rhs, False, False, False, gpu, block](
-        lower, b
-    )
-    return solve_triangular[dtype, n, rhs, True, False, True, gpu, block](
-        lower, y
-    )
+    comptime n = dim[A, 0]
+    comptime rhs = dim[B, 1]
+    var y = _solve_triangular_matrix[
+        upper=False, unit=False, trans=False, gpu=gpu, block=block
+    ](lower, b)
+    return _solve_triangular_matrix[
+        upper=True, unit=False, trans=True, gpu=gpu, block=block
+    ](lower, y)

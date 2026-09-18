@@ -454,7 +454,7 @@ def test_cholesky_reconstructs_the_matrix() raises:
     var ctx = _cpu()
     var entries = _spd_5x5()
     var a = Static[DType.float64, 5, 5](ctx, entries.copy())
-    var lower = cholesky[DType.float64, 5, False, 2](a)
+    var lower = cholesky[gpu=False, block=2](a)
     var upper = transpose(lower)
     var reconstructed = matmul(lower, upper).to_host()
 
@@ -465,7 +465,7 @@ def test_cholesky_reconstructs_the_matrix() raises:
 def test_cholesky_is_lower_triangular() raises:
     var ctx = _cpu()
     var a = Static[DType.float64, 5, 5](ctx, _spd_5x5())
-    var lower = cholesky[DType.float64, 5, False, 2](a).to_host()
+    var lower = cholesky[gpu=False, block=2](a).to_host()
     for row in range(5):
         for col in range(row + 1, 5):
             assert_almost_equal(Float64(lower[row * 5 + col]), 0.0, atol=1e-15)
@@ -481,19 +481,19 @@ def test_cholesky_blocking_does_not_change_the_answer() raises:
     """
     var ctx = _cpu()
     var a1 = Static[DType.float64, 5, 5](ctx, _spd_5x5())
-    var unblocked = cholesky[DType.float64, 5, False, 5](a1).to_host()
+    var unblocked = cholesky[gpu=False, block=5](a1).to_host()
 
     for bs in [1, 2, 3, 4]:
         var a2 = Static[DType.float64, 5, 5](ctx, _spd_5x5())
         var blocked: List[Scalar[DType.float64]]
         if bs == 1:
-            blocked = cholesky[DType.float64, 5, False, 1](a2).to_host()
+            blocked = cholesky[gpu=False, block=1](a2).to_host()
         elif bs == 2:
-            blocked = cholesky[DType.float64, 5, False, 2](a2).to_host()
+            blocked = cholesky[gpu=False, block=2](a2).to_host()
         elif bs == 3:
-            blocked = cholesky[DType.float64, 5, False, 3](a2).to_host()
+            blocked = cholesky[gpu=False, block=3](a2).to_host()
         else:
-            blocked = cholesky[DType.float64, 5, False, 4](a2).to_host()
+            blocked = cholesky[gpu=False, block=4](a2).to_host()
         for i in range(25):
             assert_almost_equal(
                 Float64(blocked[i]), Float64(unblocked[i]), atol=1e-12
@@ -514,21 +514,21 @@ def test_cholesky_tiling_does_not_change_the_answer() raises:
     comptime n = 11
     var ctx = _cpu()
     var a1 = Static[DType.float64, n, n](ctx, _spd_n[n]())
-    var whole = cholesky[DType.float64, n, False, 3, 64](a1).to_host()
+    var whole = cholesky[gpu=False, block=3, tile=64](a1).to_host()
 
     for t in [2, 3, 4, 5, 7]:
         var a2 = Static[DType.float64, n, n](ctx, _spd_n[n]())
         var tiled: List[Scalar[DType.float64]]
         if t == 2:
-            tiled = cholesky[DType.float64, n, False, 3, 2](a2).to_host()
+            tiled = cholesky[gpu=False, block=3, tile=2](a2).to_host()
         elif t == 3:
-            tiled = cholesky[DType.float64, n, False, 3, 3](a2).to_host()
+            tiled = cholesky[gpu=False, block=3, tile=3](a2).to_host()
         elif t == 4:
-            tiled = cholesky[DType.float64, n, False, 3, 4](a2).to_host()
+            tiled = cholesky[gpu=False, block=3, tile=4](a2).to_host()
         elif t == 5:
-            tiled = cholesky[DType.float64, n, False, 3, 5](a2).to_host()
+            tiled = cholesky[gpu=False, block=3, tile=5](a2).to_host()
         else:
-            tiled = cholesky[DType.float64, n, False, 3, 7](a2).to_host()
+            tiled = cholesky[gpu=False, block=3, tile=7](a2).to_host()
         for i in range(n * n):
             assert_almost_equal(
                 Float64(tiled[i]), Float64(whole[i]), atol=1e-12
@@ -552,7 +552,7 @@ def test_cholesky_reads_only_the_lower_triangle() raises:
     comptime n = 9
     var ctx = _cpu()
     var clean = Static[DType.float64, n, n](ctx, _spd_n[n]())
-    var want = cholesky[DType.float64, n, False, 3, 4](clean).to_host()
+    var want = cholesky[gpu=False, block=3, tile=4](clean).to_host()
 
     var perturbed = _spd_n[n]()
     for i in range(n):
@@ -561,7 +561,7 @@ def test_cholesky_reads_only_the_lower_triangle() raises:
                 -1000.0 - Float64(i + j)
             )
     var dirty = Static[DType.float64, n, n](ctx, perturbed^)
-    var got = cholesky[DType.float64, n, False, 3, 4](dirty).to_host()
+    var got = cholesky[gpu=False, block=3, tile=4](dirty).to_host()
 
     for i in range(n):
         for j in range(i + 1):
@@ -575,7 +575,7 @@ def test_cholesky_agrees_with_the_array_tier() raises:
     var ctx = _cpu()
     var entries = _spd_5x5()
     var a = Static[DType.float64, 5, 5](ctx, entries.copy())
-    var tensor_factor = cholesky[DType.float64, 5, False, 2](a).to_host()
+    var tensor_factor = cholesky[gpu=False, block=2](a).to_host()
 
     var lifted = array_zeros[P, 25]()
     for i in range(25):
@@ -596,7 +596,7 @@ def test_cholesky_rejects_a_matrix_that_is_not_positive_definite() raises:
     var ctx = _cpu()
     var a = Static[DType.float64, 2, 2](ctx, [1.0, 2.0, 2.0, 1.0])
     with assert_raises(contains="not positive definite"):
-        _ = cholesky[DType.float64, 2, False, 2](a)
+        _ = cholesky[gpu=False, block=2](a)
 
 
 def test_cholesky_reports_a_failure_in_a_later_block() raises:
@@ -629,7 +629,7 @@ def test_cholesky_reports_a_failure_in_a_later_block() raises:
         ],
     )
     with assert_raises(contains="index 3"):
-        _ = cholesky[DType.float64, 4, False, 2](a)
+        _ = cholesky[gpu=False, block=2](a)
 
 
 def _nonsymmetric_4x4() raises -> List[Float64]:
@@ -661,7 +661,7 @@ def test_solve_residual_is_at_machine_precision() raises:
 
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b = Static[DType.float64, 4](ctx, rhs.copy())
-    var x = solve[DType.float64, 4, False, 2](a, b)
+    var x = solve[gpu=False, block=2](a, b)
 
     var a_again = Static[DType.float64, 4, 4](ctx, entries.copy())
     var product = matvec(a_again, x).to_host()
@@ -677,15 +677,15 @@ def test_solve_blocking_does_not_change_the_answer() raises:
 
     var a1 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b1 = Static[DType.float64, 4](ctx, rhs.copy())
-    var unblocked = solve[DType.float64, 4, False, 4](a1, b1).to_host()
+    var unblocked = solve[gpu=False, block=4](a1, b1).to_host()
 
     var a2 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b2 = Static[DType.float64, 4](ctx, rhs.copy())
-    var blocked = solve[DType.float64, 4, False, 2](a2, b2).to_host()
+    var blocked = solve[gpu=False, block=2](a2, b2).to_host()
 
     var a3 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b3 = Static[DType.float64, 4](ctx, rhs.copy())
-    var single = solve[DType.float64, 4, False, 1](a3, b3).to_host()
+    var single = solve[gpu=False, block=1](a3, b3).to_host()
 
     for i in range(4):
         assert_almost_equal(
@@ -709,7 +709,7 @@ def test_solve_agrees_with_the_array_tier() raises:
 
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b = Static[DType.float64, 4](ctx, rhs.copy())
-    var tensor_x = solve[DType.float64, 4, False, 2](a, b).to_host()
+    var tensor_x = solve[gpu=False, block=2](a, b).to_host()
 
     var lifted_a = array_zeros[P, 16]()
     for i in range(16):
@@ -734,7 +734,7 @@ def test_lu_factor_handles_a_zero_leading_pivot() raises:
     """
     var ctx = _cpu()
     var a = Static[DType.float64, 2, 2](ctx, [0.0, 1.0, 1.0, 0.0])
-    var factorization = lu_factor[DType.float64, 2, False, 2](a)
+    var factorization = lu_factor[gpu=False, block=2](a)
 
     assert_almost_equal(Float64(factorization.det()), -1.0, atol=1e-12)
 
@@ -753,7 +753,7 @@ def test_lu_factor_is_reusable_across_right_hand_sides() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var factorization = lu_factor[DType.float64, 4, False, 2](a)
+    var factorization = lu_factor[gpu=False, block=2](a)
 
     var first_rhs: List[Float64] = [1.0, 0.0, 0.0, 0.0]
     var second_rhs: List[Float64] = [0.0, 2.0, 0.0, -1.0]
@@ -765,10 +765,10 @@ def test_lu_factor_is_reusable_across_right_hand_sides() raises:
 
     var a1 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var fresh_b1 = Static[DType.float64, 4](ctx, first_rhs.copy())
-    var fresh_1 = solve[DType.float64, 4, False, 2](a1, fresh_b1).to_host()
+    var fresh_1 = solve[gpu=False, block=2](a1, fresh_b1).to_host()
     var a2 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var fresh_b2 = Static[DType.float64, 4](ctx, second_rhs.copy())
-    var fresh_2 = solve[DType.float64, 4, False, 2](a2, fresh_b2).to_host()
+    var fresh_2 = solve[gpu=False, block=2](a2, fresh_b2).to_host()
 
     for i in range(4):
         assert_almost_equal(
@@ -783,7 +783,7 @@ def test_lu_factor_det_agrees_with_the_array_tier() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var factorization = lu_factor[DType.float64, 4, False, 2](a)
+    var factorization = lu_factor[gpu=False, block=2](a)
     var tensor_det = Float64(factorization.det())
 
     var lifted = array_zeros[P, 16]()
@@ -956,9 +956,9 @@ def test_solve_triangular_agrees_with_forward_substitution() raises:
 
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b = Static[DType.float64, 4](ctx, rhs.copy())
-    var got = solve_triangular[DType.float64, 4, False, False, False, False, 2](
-        a, b
-    ).to_host()
+    var got = solve_triangular[
+        upper=False, unit=False, trans=False, gpu=False, block=2
+    ](a, b).to_host()
 
     var lifted = array_zeros[P, 16]()
     for i in range(16):
@@ -988,9 +988,9 @@ def test_solve_triangular_transposed_solves_against_the_transpose() raises:
 
     var a = Static[DType.float64, 3, 3](ctx, entries.copy())
     var b = Static[DType.float64, 3](ctx, rhs.copy())
-    var got = solve_triangular[DType.float64, 3, True, False, True, False, 2](
-        a, b
-    ).to_host()
+    var got = solve_triangular[
+        upper=True, unit=False, trans=True, gpu=False, block=2
+    ](a, b).to_host()
 
     var transposed = array_zeros[P, 9]()
     for i in range(3):
@@ -1033,18 +1033,18 @@ def test_solve_triangular_matrix_agrees_with_the_vector_overload() raises:
     )
     var a = Static[DType.float64, 3, 3](ctx, entries.copy())
     var got = solve_triangular[
-        DType.float64, 3, 2, False, False, False, False, 2
+        upper=False, unit=False, trans=False, gpu=False, block=2
     ](a, wide).to_host()
 
     var a1 = Static[DType.float64, 3, 3](ctx, entries.copy())
     var b1 = Static[DType.float64, 3](ctx, first.copy())
     var want_first = solve_triangular[
-        DType.float64, 3, False, False, False, False, 2
+        upper=False, unit=False, trans=False, gpu=False, block=2
     ](a1, b1).to_host()
     var a2 = Static[DType.float64, 3, 3](ctx, entries.copy())
     var b2 = Static[DType.float64, 3](ctx, second.copy())
     var want_second = solve_triangular[
-        DType.float64, 3, False, False, False, False, 2
+        upper=False, unit=False, trans=False, gpu=False, block=2
     ](a2, b2).to_host()
 
     for i in range(3):
@@ -1064,9 +1064,9 @@ def test_cholesky_solve_reproduces_the_right_hand_side() raises:
     var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0, 5.0]
 
     var a = Static[DType.float64, 5, 5](ctx, entries.copy())
-    var factor = cholesky[DType.float64, 5, False, 2](a)
+    var factor = cholesky[gpu=False, block=2](a)
     var b = Static[DType.float64, 5](ctx, rhs.copy())
-    var solved = cholesky_solve[DType.float64, 5, False, 2](factor, b).to_host()
+    var solved = cholesky_solve[gpu=False, block=2](factor, b).to_host()
 
     # The product is formed here rather than with `matvec`, which segfaults
     # at `float64` when `n` is not a multiple of four. Five rows of five is
@@ -1084,9 +1084,9 @@ def test_cholesky_solve_agrees_with_the_array_tier() raises:
     var rhs: List[Float64] = [1.0, 2.0, 3.0, 4.0, 5.0]
 
     var a = Static[DType.float64, 5, 5](ctx, entries.copy())
-    var factor = cholesky[DType.float64, 5, False, 2](a)
+    var factor = cholesky[gpu=False, block=2](a)
     var b = Static[DType.float64, 5](ctx, rhs.copy())
-    var got = cholesky_solve[DType.float64, 5, False, 2](factor, b).to_host()
+    var got = cholesky_solve[gpu=False, block=2](factor, b).to_host()
 
     var lifted = array_zeros[P, 25]()
     for i in range(25):
@@ -1110,16 +1110,14 @@ def test_cholesky_solve_matrix_agrees_with_the_vector_overload() raises:
         columns[i] = Scalar[DType.float64](rhs[i])
 
     var a = Static[DType.float64, 5, 5](ctx, entries.copy())
-    var factor = cholesky[DType.float64, 5, False, 2](a)
+    var factor = cholesky[gpu=False, block=2](a)
     var wide = Static[DType.float64, 5, 1](ctx, columns.copy())
-    var got = cholesky_solve[DType.float64, 5, 1, False, 2](
-        factor, wide
-    ).to_host()
+    var got = cholesky_solve[gpu=False, block=2](factor, wide).to_host()
 
     var a2 = Static[DType.float64, 5, 5](ctx, entries.copy())
-    var factor2 = cholesky[DType.float64, 5, False, 2](a2)
+    var factor2 = cholesky[gpu=False, block=2](a2)
     var b = Static[DType.float64, 5](ctx, rhs.copy())
-    var want = cholesky_solve[DType.float64, 5, False, 2](factor2, b).to_host()
+    var want = cholesky_solve[gpu=False, block=2](factor2, b).to_host()
 
     for i in range(5):
         assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-12)
@@ -1134,7 +1132,7 @@ def test_lu_factor_solves_several_right_hand_sides_at_once() raises:
     var second: List[Float64] = [-1.0, 0.5, 2.0, 7.0]
 
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var factorization = lu_factor[DType.float64, 4, False, 2](a)
+    var factorization = lu_factor[gpu=False, block=2](a)
     var wide = Static[DType.float64, 4, 2](
         ctx,
         [
@@ -1148,14 +1146,14 @@ def test_lu_factor_solves_several_right_hand_sides_at_once() raises:
             second[3],
         ],
     )
-    var got = factorization.solve[2, 2](wide).to_host()
+    var got = factorization.solve[block=2](wide).to_host()
 
     var a1 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b1 = Static[DType.float64, 4](ctx, first.copy())
-    var want_first = solve[DType.float64, 4, False, 2](a1, b1).to_host()
+    var want_first = solve[gpu=False, block=2](a1, b1).to_host()
     var a2 = Static[DType.float64, 4, 4](ctx, entries.copy())
     var b2 = Static[DType.float64, 4](ctx, second.copy())
-    var want_second = solve[DType.float64, 4, False, 2](a2, b2).to_host()
+    var want_second = solve[gpu=False, block=2](a2, b2).to_host()
 
     for i in range(4):
         assert_almost_equal(
@@ -1170,7 +1168,7 @@ def test_inverse_times_the_matrix_is_the_identity() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var inverted = inverse[DType.float64, 4, False, 2](a)
+    var inverted = inverse[gpu=False, block=2](a)
 
     var a_again = Static[DType.float64, 4, 4](ctx, entries.copy())
     var product = matmul(a_again, inverted).to_host()
@@ -1187,7 +1185,7 @@ def test_inverse_agrees_with_the_array_tier() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var got = inverse[DType.float64, 4, False, 2](a).to_host()
+    var got = inverse[gpu=False, block=2](a).to_host()
 
     var lifted = array_zeros[P, 16]()
     for i in range(16):
@@ -1204,10 +1202,10 @@ def test_tensor_det_agrees_with_the_reusable_factorization() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var direct = Float64(det[DType.float64, 4, False, 2](a))
+    var direct = Float64(det[gpu=False, block=2](a))
 
     var a2 = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var factorization = lu_factor[DType.float64, 4, False, 2](a2)
+    var factorization = lu_factor[gpu=False, block=2](a2)
     assert_almost_equal(direct, Float64(factorization.det()), atol=1e-12)
 
 
@@ -1215,7 +1213,7 @@ def test_tensor_trace_agrees_with_the_array_trace() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var got = Float64(trace[DType.float64, 4](a))
+    var got = Float64(trace(a))
 
     var lifted = array_zeros[P, 16]()
     for i in range(16):
@@ -1227,7 +1225,7 @@ def test_tensor_frobenius_norm_agrees_with_the_array_norm() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var got = Float64(norm[DType.float64, 4, fro](a))
+    var got = Float64(norm[ord=fro](a))
 
     var lifted = array_zeros[P, 16]()
     for i in range(16):
@@ -1251,14 +1249,14 @@ def test_tensor_induced_norms_agree_with_the_array_norms() raises:
 
     var a1 = Static[DType.float64, 4, 4](ctx, entries.copy())
     assert_almost_equal(
-        Float64(norm[DType.float64, 4, 1](a1)),
+        Float64(norm[ord=1](a1)),
         Float64(array_norm[P, 4, 1](lifted).v),
         atol=1e-12,
     )
 
     var a2 = Static[DType.float64, 4, 4](ctx, entries.copy())
     assert_almost_equal(
-        Float64(norm[DType.float64, 4, inf](a2)),
+        Float64(norm[ord=inf](a2)),
         Float64(array_norm[P, 4, inf](lifted).v),
         atol=1e-12,
     )
@@ -1270,15 +1268,13 @@ def test_tensor_frobenius_norm_is_nrm2_of_the_flattened_matrix() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var got = Float64(norm[DType.float64, 4, fro](a))
+    var got = Float64(norm[ord=fro](a))
 
     var flattened = List[Scalar[DType.float64]](length=16, fill=0)
     for i in range(16):
         flattened[i] = Scalar[DType.float64](entries[i])
     var as_vector = Static[DType.float64, 16](ctx, flattened.copy())
-    assert_almost_equal(
-        got, Float64(nrm2[DType.float64, 16](as_vector)), atol=1e-12
-    )
+    assert_almost_equal(got, Float64(nrm2(as_vector)), atol=1e-12)
 
 
 def _tall_6x3() -> List[Float64]:
@@ -1312,7 +1308,7 @@ def test_tensor_qr_reconstructs_the_matrix() raises:
     var ctx = _cpu()
     var entries = _tall_6x3()
     var a = Static[DType.float64, 6, 3](ctx, entries.copy())
-    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var upper = factorization.r()
     var orthogonal = factorization.q()
 
@@ -1328,7 +1324,7 @@ def test_tensor_qr_q_has_orthonormal_columns() raises:
     identity."""
     var ctx = _cpu()
     var a = Static[DType.float64, 6, 3](ctx, _tall_6x3())
-    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var orthogonal = factorization.q()
 
     var transposed = transpose(orthogonal)
@@ -1342,7 +1338,7 @@ def test_tensor_qr_q_has_orthonormal_columns() raises:
 def test_tensor_qr_r_is_upper_triangular() raises:
     var ctx = _cpu()
     var a = Static[DType.float64, 6, 3](ctx, _tall_6x3())
-    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var r = factorization.r().to_host()
     for i in range(3):
         for j in range(3):
@@ -1358,7 +1354,7 @@ def test_tensor_qr_agrees_with_the_array_tier_up_to_column_signs() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var factorization = qr_factor[DType.float64, 4, 4, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var got = factorization.r().to_host()
 
     var lifted = array_zeros[P, 16]()
@@ -1393,9 +1389,9 @@ def test_tensor_qr_apply_q_transpose_agrees_with_forming_q() raises:
     ]
 
     var a = Static[DType.float64, 6, 3](ctx, _tall_6x3())
-    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var b = Static[DType.float64, 6, 2](ctx, rhs.copy())
-    var applied = factorization.apply_q_transpose[2](b).to_host()
+    var applied = factorization.apply_q_transpose(b).to_host()
 
     var orthogonal = factorization.q()
     var transposed = transpose(orthogonal)
@@ -1422,7 +1418,7 @@ def test_tensor_qr_solve_agrees_with_the_array_lstsq() raises:
 
     var a = Static[DType.float64, 6, 3](ctx, entries.copy())
     var b = Static[DType.float64, 6](ctx, rhs.copy())
-    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var got = factorization.solve(b).to_host()
 
     var lifted = array_zeros[P, 18]()
@@ -1445,11 +1441,11 @@ def test_tensor_qr_block_size_does_not_change_the_answer() raises:
     var entries = _tall_6x3()
 
     var a1 = Static[DType.float64, 6, 3](ctx, entries.copy())
-    var wide = qr_factor[DType.float64, 6, 3, False, 8](a1)
+    var wide = qr_factor[gpu=False, block=8](a1)
     var one = wide.r().to_host()
 
     var a2 = Static[DType.float64, 6, 3](ctx, entries.copy())
-    var narrow = qr_factor[DType.float64, 6, 3, False, 1](a2)
+    var narrow = qr_factor[gpu=False, block=1](a2)
     var other = narrow.r().to_host()
 
     for i in range(9):
@@ -1473,7 +1469,7 @@ def test_tensor_qr_with_a_ragged_last_panel_reconstructs_the_matrix() raises:
         var d = 2.0 if (i % n) == (i // n) else 0.0
         entries.append(Scalar[DType.float64](Float64(h) / 16777216.0 - 0.5 + d))
     var a = Static[DType.float64, m, n](ctx, entries.copy())
-    var factorization = qr_factor[DType.float64, m, n, False, 4](a)
+    var factorization = qr_factor[gpu=False, block=4](a)
     var upper = factorization.r()
     var orthogonal = factorization.q()
 
@@ -1496,7 +1492,7 @@ def test_tensor_qr_of_a_square_matrix_reconstructs_it() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var factorization = qr_factor[DType.float64, 4, 4, False, 2](a)
+    var factorization = qr_factor[gpu=False, block=2](a)
     var upper = factorization.r()
     var orthogonal = factorization.q()
 
@@ -1516,12 +1512,12 @@ def test_lstsq_agrees_with_the_factorization_it_wraps() raises:
 
     var a = Static[DType.float64, 6, 3](ctx, _tall_6x3())
     var b = Static[DType.float64, 6](ctx, rhs.copy())
-    var direct = lstsq[DType.float64, 6, 3, False, 2](a, b).to_host()
+    var direct = lstsq[gpu=False, block=2](a, b).to_host()
 
     var a2 = Static[DType.float64, 6, 3](ctx, _tall_6x3())
     var b2 = Static[DType.float64, 6](ctx, rhs.copy())
-    var factorization = qr_factor[DType.float64, 6, 3, False, 2](a2)
-    var staged = factorization.solve[2](b2).to_host()
+    var factorization = qr_factor[gpu=False, block=2](a2)
+    var staged = factorization.solve[block=2](b2).to_host()
 
     for i in range(3):
         assert_almost_equal(Float64(direct[i]), Float64(staged[i]), atol=1e-12)
@@ -1536,7 +1532,7 @@ def test_lstsq_recovers_an_exact_linear_fit() raises:
         ctx, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0]
     )
     var b = Static[DType.float64, 4](ctx, [1.0, 3.0, 5.0, 7.0])
-    var fit = lstsq[DType.float64, 4, 2, False, 2](design, b).to_host()
+    var fit = lstsq[gpu=False, block=2](design, b).to_host()
     assert_almost_equal(Float64(fit[0]), 1.0, atol=1e-12)
     assert_almost_equal(Float64(fit[1]), 2.0, atol=1e-12)
 

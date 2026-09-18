@@ -59,16 +59,24 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
+from .common import _mut_view, _mut_view_as
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static
 
 from .blas import _target
 
 
 def toeplitz[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut c: Static[dtype, m], mut r: Static[dtype, n]) raises -> Static[
-    dtype, m, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](c: A, r: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 0]] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The Toeplitz matrix with first column `c` and first row `r`.
     `scipy.linalg.toeplitz(c, r)`.
 
@@ -80,10 +88,12 @@ def toeplitz[
     wins. Passing an `r` whose first entry disagrees with `c[0]` is not an
     error and not a silent average -- it is `c[0]`.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[B, 0]
     var ctx = c.context()
-    var out = Static[dtype, m, n]._uninitialized(ctx)
-    var cv = c.view()
-    var rv = r.view()
+    var out = Static[A.dtype, m, n]._uninitialized(ctx)
+    var cv = _mut_view(c)
+    var rv = _mut_view_as[A.dtype](r)
     var ov = out.view()
 
     @always_inline
@@ -101,8 +111,11 @@ def toeplitz[
 
 
 def toeplitz[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut c: Static[dtype, n]) raises -> Static[dtype, n, n]:
+    T: TensorLike,
+    gpu: Bool = False,
+](c: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
+):
     """The **symmetric** Toeplitz matrix with first column and first row
     both `c`. `scipy.linalg.toeplitz(c)`.
 
@@ -111,9 +124,10 @@ def toeplitz[
     shape -- and is what `numax.linalg.banded.solve_toeplitz` expects when
     it is handed a single vector.
     """
+    comptime n = dim[T, 0]
     var ctx = c.context()
-    var out = Static[dtype, n, n]._uninitialized(ctx)
-    var cv = c.view()
+    var out = Static[T.dtype, n, n]._uninitialized(ctx)
+    var cv = _mut_view(c)
     var ov = out.view()
 
     @always_inline
@@ -128,10 +142,16 @@ def toeplitz[
 
 
 def hankel[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut c: Static[dtype, m], mut r: Static[dtype, n]) raises -> Static[
-    dtype, m, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](c: A, r: B) raises -> Static[A.dtype, dim[A, 0], dim[B, 0]] where (
+    A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
     """The Hankel matrix with first column `c` and last row `r`.
     `scipy.linalg.hankel(c, r)`.
 
@@ -143,10 +163,12 @@ def hankel[
     bottom-left corner belongs to both `c`'s end and `r`'s start, and `c`
     wins.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[B, 0]
     var ctx = c.context()
-    var out = Static[dtype, m, n]._uninitialized(ctx)
-    var cv = c.view()
-    var rv = r.view()
+    var out = Static[A.dtype, m, n]._uninitialized(ctx)
+    var cv = _mut_view(c)
+    var rv = _mut_view_as[A.dtype](r)
     var ov = out.view()
 
     @always_inline
@@ -163,8 +185,11 @@ def hankel[
 
 
 def circulant[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut c: Static[dtype, n]) raises -> Static[dtype, n, n]:
+    T: TensorLike,
+    gpu: Bool = False,
+](c: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
+):
     """The circulant matrix whose first column is `c`.
     `scipy.linalg.circulant(c)`.
 
@@ -176,9 +201,10 @@ def circulant[
     The index is written `(i - j + n) % n` rather than `(i - j) % n` so the
     negative case does not depend on how Mojo rounds a modulus.
     """
+    comptime n = dim[T, 0]
     var ctx = c.context()
-    var out = Static[dtype, n, n]._uninitialized(ctx)
-    var cv = c.view()
+    var out = Static[T.dtype, n, n]._uninitialized(ctx)
+    var cv = _mut_view(c)
     var ov = out.view()
 
     @always_inline
@@ -191,9 +217,12 @@ def circulant[
 
 
 def companion[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n]) raises -> Static[dtype, n - 1, n - 1] where (
-    dtype.is_floating_point() and n >= 2
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0] - 1, dim[T, 0] - 1] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 2)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The companion matrix of the polynomial with coefficients `a`, highest
     degree first. `scipy.linalg.companion(a)`.
@@ -213,9 +242,10 @@ def companion[
     something to do silently: the two readings give different-sized
     matrices.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var out = Static[dtype, n - 1, n - 1]._uninitialized(ctx)
-    var av = a.view()
+    var out = Static[T.dtype, n - 1, n - 1]._uninitialized(ctx)
+    var av = _mut_view(a)
     var ov = out.view()
 
     @always_inline
@@ -226,9 +256,9 @@ def companion[
         if i == 0:
             ov.store[1](coord, -av[Coord(j + 1)] / av[Coord(0)])
         elif i == j + 1:
-            ov.store[1](coord, Scalar[dtype](1))
+            ov.store[1](coord, Scalar[T.dtype](1))
         else:
-            ov.store[1](coord, Scalar[dtype](0))
+            ov.store[1](coord, Scalar[T.dtype](0))
 
     elementwise[simd_width=1, target=_target[gpu]()](
         step, Coord(n - 1, n - 1), ctx
@@ -274,15 +304,18 @@ def hilbert[
 
 
 def block_diag[
-    dtype: DType,
-    rows_a: Int,
-    cols_a: Int,
-    rows_b: Int,
-    cols_b: Int,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](
-    mut a: Static[dtype, rows_a, cols_a], mut b: Static[dtype, rows_b, cols_b]
-) raises -> Static[dtype, rows_a + rows_b, cols_a + cols_b]:
+](a: A, b: B) raises -> Static[
+    A.dtype, dim[A, 0] + dim[B, 0], dim[A, 1] + dim[B, 1]
+] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+):
     """`a` and `b` on the diagonal of a larger matrix, zeros elsewhere.
     `scipy.linalg.block_diag(a, b)`.
 
@@ -292,12 +325,16 @@ def block_diag[
     costs one extra pass over the first result and is the composition SciPy
     is doing internally anyway.
     """
+    comptime rows_a = dim[A, 0]
+    comptime cols_a = dim[A, 1]
+    comptime rows_b = dim[B, 0]
+    comptime cols_b = dim[B, 1]
     var ctx = a.context()
-    var out = Static[dtype, rows_a + rows_b, cols_a + cols_b]._uninitialized(
+    var out = Static[A.dtype, rows_a + rows_b, cols_a + cols_b]._uninitialized(
         ctx
     )
-    var av = a.view()
-    var bv = b.view()
+    var av = _mut_view(a)
+    var bv = _mut_view_as[A.dtype](b)
     var ov = out.view()
 
     @always_inline
@@ -310,7 +347,7 @@ def block_diag[
         elif i >= rows_a and j >= cols_a:
             ov.store[1](coord, bv[Coord(i - rows_a, j - cols_a)])
         else:
-            ov.store[1](coord, Scalar[dtype](0))
+            ov.store[1](coord, Scalar[A.dtype](0))
 
     elementwise[simd_width=1, target=_target[gpu]()](
         step, Coord(rows_a + rows_b, cols_a + cols_b), ctx
@@ -319,10 +356,19 @@ def block_diag[
 
 
 def khatri_rao[
-    dtype: DType, m: Int, p: Int, k: Int, gpu: Bool = False
-](mut a: Static[dtype, m, k], mut b: Static[dtype, p, k]) raises -> Static[
-    dtype, m * p, k
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Static[
+    A.dtype, dim[A, 0] * dim[B, 0], dim[A, 1]
+] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 1] == dim[A, 1]
+):
     """The column-wise Kronecker product of `a` and `b`.
     `scipy.linalg.khatri_rao(a, b)`.
 
@@ -332,10 +378,13 @@ def khatri_rao[
     entry of `b`; here the pairing is only within a column, which is what
     makes it the building block of a CP tensor decomposition.
     """
+    comptime m = dim[A, 0]
+    comptime k = dim[A, 1]
+    comptime p = dim[B, 0]
     var ctx = a.context()
-    var out = Static[dtype, m * p, k]._uninitialized(ctx)
-    var av = a.view()
-    var bv = b.view()
+    var out = Static[A.dtype, m * p, k]._uninitialized(ctx)
+    var av = _mut_view(a)
+    var bv = _mut_view_as[A.dtype](b)
     var ov = out.view()
 
     @always_inline
@@ -350,8 +399,12 @@ def khatri_rao[
 
 
 def convolution_matrix[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m]) raises -> Static[dtype, m + n - 1, n]:
+    T: TensorLike,
+    n: Int,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0] + n - 1, n] where (
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
+):
     """The matrix `C` with `C @ v == convolve(a, v)` for any `v` of length
     `n`. `scipy.linalg.convolution_matrix(a, n)`, in its `"full"` mode.
 
@@ -369,9 +422,10 @@ def convolution_matrix[
     `docs/parity.md` lists under what is still missing rather than
     something this module should work around.
     """
+    comptime m = dim[T, 0]
     var ctx = a.context()
-    var out = Static[dtype, m + n - 1, n]._uninitialized(ctx)
-    var av = a.view()
+    var out = Static[T.dtype, m + n - 1, n]._uninitialized(ctx)
+    var av = _mut_view(a)
     var ov = out.view()
 
     @always_inline
@@ -381,7 +435,7 @@ def convolution_matrix[
         if offset >= 0 and offset < m:
             ov.store[1](coord, av[Coord(offset)])
         else:
-            ov.store[1](coord, Scalar[dtype](0))
+            ov.store[1](coord, Scalar[T.dtype](0))
 
     elementwise[simd_width=1, target=_target[gpu]()](
         step, Coord(m + n - 1, n), ctx
@@ -582,16 +636,20 @@ def helmert[
 
 
 def fiedler[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n]) raises -> Static[dtype, n, n] where n >= 1:
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    dim[T, 0] >= 1 and T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
+):
     """The Fiedler matrix of `a`, `out[i, j] = |a[i] - a[j]|`.
     `scipy.linalg.fiedler(a)`. Symmetric with a zero diagonal; for a
     strictly increasing `a` its inverse is tridiagonal and it has one
     positive and `n - 1` negative eigenvalues, the property it is named
     for."""
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var out = Static[dtype, n, n]._uninitialized(ctx)
-    var av = a.view()
+    var out = Static[T.dtype, n, n]._uninitialized(ctx)
+    var av = _mut_view(a)
     var ov = out.view()
 
     @always_inline
@@ -604,9 +662,12 @@ def fiedler[
 
 
 def fiedler_companion[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n]) raises -> Static[dtype, n - 1, n - 1] where (
-    dtype.is_floating_point() and n >= 3
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0] - 1, dim[T, 0] - 1] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 3)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """Fiedler's pentadiagonal companion matrix of the polynomial with
     coefficients `a`, highest degree first. `scipy.linalg.fiedler_companion(a)`.
@@ -620,9 +681,10 @@ def fiedler_companion[
     1]`; on odd rows `i >= 3`, `out[i, i - 2] = 1`. `a[0]` must be
     nonzero, as for `companion`.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var out = Static[dtype, n - 1, n - 1]._uninitialized(ctx)
-    var av = a.view()
+    var out = Static[T.dtype, n - 1, n - 1]._uninitialized(ctx)
+    var av = _mut_view(a)
     var ov = out.view()
 
     @always_inline
@@ -631,20 +693,20 @@ def fiedler_companion[
         var i = at[0]
         var j = at[1]
         var lead = av[Coord(0)]
-        var value = Scalar[dtype](0)
+        var value = Scalar[T.dtype](0)
         if i == 0 and j == 0:
             value = -av[Coord(1)] / lead
         elif i == 1 and j == 0:
-            value = Scalar[dtype](1)
+            value = Scalar[T.dtype](1)
         elif i % 2 == 0:
             if j == i + 1:
                 value = -av[Coord(i + 2)] / lead
             elif j == i + 2:
-                value = Scalar[dtype](1)
+                value = Scalar[T.dtype](1)
             elif i >= 2 and j == i - 1:
                 value = -av[Coord(i + 1)] / lead
         elif i >= 3 and j == i - 2:
-            value = Scalar[dtype](1)
+            value = Scalar[T.dtype](1)
         ov.store[1](coord, value)
 
     elementwise[simd_width=1, target=_target[gpu]()](
@@ -654,18 +716,27 @@ def fiedler_companion[
 
 
 def leslie[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut f: Static[dtype, n], mut s: Static[dtype, n - 1]) raises -> Static[
-    dtype, n, n
-] where (n >= 2):
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](f: A, s: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 0]] where (
+    dim[A, 0] >= 2
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0] - 1
+):
     """The Leslie matrix of fecundities `f` and survivals `s`: `f` along
     the first row, `s` along the first subdiagonal, zero elsewhere.
     `scipy.linalg.leslie(f, s)`. Its dominant eigenvalue is the
     population's asymptotic growth rate."""
+    comptime n = dim[A, 0]
     var ctx = f.context()
-    var out = Static[dtype, n, n]._uninitialized(ctx)
-    var fv = f.view()
-    var sv = s.view()
+    var out = Static[A.dtype, n, n]._uninitialized(ctx)
+    var fv = _mut_view(f)
+    var sv = _mut_view_as[A.dtype](s)
     var ov = out.view()
 
     @always_inline
@@ -678,7 +749,7 @@ def leslie[
         elif j == i - 1:
             ov.store[1](coord, sv[Coord(j)])
         else:
-            ov.store[1](coord, Scalar[dtype](0))
+            ov.store[1](coord, Scalar[A.dtype](0))
 
     elementwise[simd_width=1, target=_target[gpu]()](step, Coord(n, n), ctx)
     return out^

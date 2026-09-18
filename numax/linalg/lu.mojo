@@ -38,10 +38,11 @@ from std.math import log as _log
 from std.sys.info import align_of
 from std.utils import IndexList
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Static, zeros, zeros_dyn
 
 from .blas import _target
-from .common import _Dense
+from .common import _mut_view, _mut_view_as, _Dense
 from .panel import (
     _PANEL_THREADS,
     getrf2,
@@ -145,10 +146,15 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return out^
 
     def solve[
-        block: Int = 16 if Self.gpu else 32
-    ](mut self, mut b: Static[Self.dtype, Self.n]) raises -> Static[
-        Self.dtype, Self.n
-    ] where Self.dtype.is_floating_point():
+        T: TensorLike,
+        block: Int = 16 if Self.gpu else 32,
+    ](mut self, b: T) raises -> Static[Self.dtype, Self.n] where (
+        Self.dtype.is_floating_point()
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
+        and dim[T, 0] == Self.n
+    ):
         """`x` with `A @ x == b`, reusing this factorization.
 
         `scipy.linalg.lu_solve`. Three steps, all on the factorization's
@@ -162,13 +168,29 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         factor stays where the factorization left it, which is the point of
         `lu_factor` returning this object rather than a matrix.
         """
+        return self._solve_vector[block=block](b)
+
+    def _solve_vector[
+        T: TensorLike,
+        block: Int = 16 if Self.gpu else 32,
+    ](mut self, b: T) raises -> Static[Self.dtype, Self.n] where (
+        Self.dtype.is_floating_point()
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
+        and dim[T, 0] == Self.n
+    ):
+        """Body of the public overload above, under a name a generic caller
+        can pick without the prover having to refute the sibling overload."""
         var ctx = self.factored.context()
         var x = Static[Self.dtype, Self.n](ctx)
         var fv = self.factored.view()
         var xv = x.view()
         var pv = self.pivots.view()
 
-        pack_vector[target=_target[Self.gpu]()](b.view(), xv, 0, Self.n, ctx)
+        pack_vector[target=_target[Self.gpu]()](
+            _mut_view_as[Self.dtype](b), xv, 0, Self.n, ctx
+        )
 
         comptime if Self.gpu:
             ctx.enqueue_function[
@@ -203,10 +225,15 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         return x^
 
     def solve[
-        rhs: Int, block: Int = 16 if Self.gpu else 32
-    ](mut self, mut b: Static[Self.dtype, Self.n, rhs]) raises -> Static[
-        Self.dtype, Self.n, rhs
-    ] where Self.dtype.is_floating_point():
+        T: TensorLike,
+        block: Int = 16 if Self.gpu else 32,
+    ](mut self, b: T) raises -> Static[Self.dtype, Self.n, dim[T, 1]] where (
+        Self.dtype.is_floating_point()
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 2
+        and T.LayoutType.all_dims_known
+        and dim[T, 0] == Self.n
+    ):
         """`X` with `A @ X == B`, for a matrix `B`, reusing this
         factorization. `scipy.linalg.lu_solve` with a two-dimensional
         right-hand side.
@@ -221,6 +248,21 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
         `inverse` is this with `B` the identity.
         """
+        return self._solve_matrix[block=block](b)
+
+    def _solve_matrix[
+        T: TensorLike,
+        block: Int = 16 if Self.gpu else 32,
+    ](mut self, b: T) raises -> Static[Self.dtype, Self.n, dim[T, 1]] where (
+        Self.dtype.is_floating_point()
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 2
+        and T.LayoutType.all_dims_known
+        and dim[T, 0] == Self.n
+    ):
+        """Body of the public overload above, under a name a generic caller
+        can pick without the prover having to refute the sibling overload."""
+        comptime rhs = dim[T, 1]
         var ctx = self.factored.context()
         var x = Static[Self.dtype, Self.n, rhs](ctx)
         var fv = self.factored.view()
@@ -231,7 +273,7 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         )
 
         pack_block[target=_target[Self.gpu]()](
-            b.view(), xd, 0, 0, Self.n, rhs, ctx
+            _mut_view_as[Self.dtype](b), xd, 0, 0, Self.n, rhs, ctx
         )
         laswp_matrix[target=_target[Self.gpu]()](xd, pv, Self.n, rhs, ctx)
 
@@ -331,14 +373,16 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
 
 
 def lu_factor[
-    dtype: DType,
-    n: Int,
+    T: TensorLike,
     gpu: Bool = False,
     block: Int = 16 if gpu else 32,
     base: Int = 16,
-](mut a: Static[dtype, n, n]) raises -> TensorLU[
-    dtype, n, gpu
-] where dtype.is_floating_point():
+](a: T) raises -> TensorLU[T.dtype, dim[T, 0], gpu] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """**Tier 2.** Factor `a` into `P @ L @ U`, blocked.
     `scipy.linalg.lu_factor`.
 
@@ -355,7 +399,7 @@ def lu_factor[
     See `TensorLU` for what pivoting costs and what it buys, and
     `cholesky` for the same blocking on a symmetric matrix, where pivoting
     is unnecessary. The `Array[T, n*n]` sibling `lu_factor` is the one to
-    call at a conformer other than a raw `dtype`.
+    call at a conformer other than a raw `T.dtype`.
 
     **Nothing leaves the device.** As in `cholesky`, the matrix crosses to
     the host once on the way in and once on the way out: the panel is a
@@ -430,15 +474,16 @@ def lu_factor[
     (4.6-4.8 GFLOP/s at `n = 512`, 16.1-18.6 at `1024`), so `16` stands
     there rather than being tuned to a difference that is not there.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
-    var work = Static[dtype, n, n](ctx)
+    var work = Static[T.dtype, n, n](ctx)
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
     # `L21` and `U12` made dense for the GEMM, and the GEMM's own output,
     # which nothing reads. All three are allocated once.
-    var left_operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
-    var right_operand = zeros_dyn[dtype, 2](block, n, ctx=ctx)
-    var scratch = zeros_dyn[dtype, 2](n, n, ctx=ctx)
+    var left_operand = zeros_dyn[T.dtype, 2](n, block, ctx=ctx)
+    var right_operand = zeros_dyn[T.dtype, 2](block, n, ctx=ctx)
+    var scratch = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
 
     var wv = work.view()
     var pv = pivots.view()
@@ -447,23 +492,22 @@ def lu_factor[
     var rv = right_operand.view()
     var sv = scratch.view()
 
-    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
     var k = 0
     while k < n:
         var nb = min(block, n - k)
 
-        var panel_left: _Dense[dtype] = TileTensor(
+        var panel_left: _Dense[T.dtype] = TileTensor(
             lv.ptr_at_offset(Coord(0, 0)), row_major(Coord(n, block))
         )
-        var panel_right: _Dense[dtype] = TileTensor(
+        var panel_right: _Dense[T.dtype] = TileTensor(
             rv.ptr_at_offset(Coord(0, 0)), row_major(Coord(block, n))
         )
-        var panel_product: _Dense[dtype] = TileTensor(
+        var panel_product: _Dense[T.dtype] = TileTensor(
             sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
         )
         getrf2[
-            dtype,
             ALayout=type_of(wv).LayoutType,
             PLayout=type_of(pv).LayoutType,
             ILayout=type_of(iv).LayoutType,
@@ -488,16 +532,16 @@ def lu_factor[
         if m > 0:
             var base = k + nb
 
-            var left: _Dense[dtype] = TileTensor(
+            var left: _Dense[T.dtype] = TileTensor(
                 lv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
             )
-            var right: _Dense[dtype] = TileTensor(
+            var right: _Dense[T.dtype] = TileTensor(
                 rv.ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, m))
             )
             pack_block[target=_target[gpu]()](wv, left, base, k, m, nb, ctx)
             pack_block[target=_target[gpu]()](wv, right, k, base, nb, m, ctx)
 
-            var product: _Dense[dtype] = TileTensor(
+            var product: _Dense[T.dtype] = TileTensor(
                 sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, m))
             )
 
@@ -513,7 +557,7 @@ def lu_factor[
                 var at = Coord(base + idx[0], base + idx[1])
                 wv.store[width](
                     at,
-                    wv.load[width](at) - rebind[SIMD[dtype, width]](value),
+                    wv.load[width](at) - rebind[SIMD[T.dtype, width]](value),
                 )
 
             _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
@@ -546,14 +590,19 @@ def lu_factor[
             sign = -sign
     trimmed.copy_from_host(head^)
 
-    return TensorLU[dtype, n, gpu](work^, trimmed^, sign)
+    return TensorLU[T.dtype, n, gpu](work^, trimmed^, sign)
 
 
 def slogdet[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
-](mut a: Static[dtype, n, n]) raises -> Tuple[
-    Scalar[dtype], Scalar[dtype]
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> Tuple[Scalar[T.dtype], Scalar[T.dtype]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """`(sign, ln|det(a)|)`. `numpy.linalg.slogdet`.
 
     The one-shot form: factors `a` and reads the pair off, exactly as `det`
@@ -567,15 +616,21 @@ def slogdet[
     a sum of logarithms cannot. `TensorLU.slogdet` carries the full
     reasoning and the singular-matrix convention.
     """
-    var factored = lu_factor[dtype, n, gpu, block](a)
+    comptime n = dim[T, 0]
+    var factored = lu_factor[gpu=gpu, block=block](a)
     return factored.slogdet()
 
 
 def det[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
-](mut a: Static[dtype, n, n]) raises -> Scalar[
-    dtype
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """**Tier 2.** The determinant, pivoted. `scipy.linalg.det`.
 
     `lu_factor` and `TensorLU.det`, thrown away afterwards. Reach for the
@@ -586,5 +641,6 @@ def det[
     Pivoted, unlike the `Array[T, n*n]` sibling, so the swap parity is
     folded into the sign and a matrix with a zero leading entry is fine.
     """
-    var factorization = lu_factor[dtype, n, gpu, block](a)
+    comptime n = dim[T, 0]
+    var factorization = lu_factor[gpu=gpu, block=block](a)
     return factorization.det()

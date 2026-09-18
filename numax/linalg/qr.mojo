@@ -32,11 +32,19 @@ from std.utils import IndexList
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.array import Dynamic, Static, transpose, zeros, zeros_dyn
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.array import (
+    _canonical,
+    Dynamic,
+    Static,
+    transpose,
+    zeros,
+    zeros_dyn,
+)
 
 from .basic import pinv
 from .blas import _target, matvec
-from .common import _Dense
+from .common import _mut_view, _mut_view_as, _Dense
 from .panel import (
     _PANEL_THREADS,
     _View,
@@ -45,7 +53,7 @@ from .panel import (
     pack_block,
     pack_reflectors,
 )
-from .triangular import solve_triangular
+from .triangular import _solve_triangular_vector, solve_triangular
 
 
 comptime _MIN_GEMM_COLS = 2
@@ -425,10 +433,14 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         return out^
 
     def apply_q_transpose[
-        rhs: Int
-    ](mut self, mut b: Static[Self.dtype, Self.m, rhs]) raises -> Static[
-        Self.dtype, Self.m, rhs
-    ] where Self.dtype.is_floating_point():
+        T: TensorLike,
+    ](mut self, b: T) raises -> Static[Self.dtype, Self.m, dim[T, 1]] where (
+        Self.dtype.is_floating_point()
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 2
+        and T.LayoutType.all_dims_known
+        and dim[T, 0] == Self.m
+    ):
         """`Q^T @ B`, without forming `Q`.
 
         The reflectors in factorization order, each panel through the
@@ -440,11 +452,12 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         thin `Q^T B` means; the rows below them are the part of `B` that
         the discarded columns of the full `Q` see.
         """
+        comptime rhs = dim[T, 1]
         var ctx = self.factored.context()
         var out = Static[Self.dtype, Self.m, rhs](ctx)
         var ov = out.view()
         pack_block[target=_target[Self.gpu]()](
-            b.view(), ov, 0, 0, Self.m, rhs, ctx
+            _mut_view_as[Self.dtype](b), ov, 0, 0, Self.m, rhs, ctx
         )
 
         var work = _ReflectorWork[Self.dtype](Self.m, rhs, self.block, ctx)
@@ -472,10 +485,15 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         return out^
 
     def solve[
-        block: Int = 16
-    ](mut self, mut b: Static[Self.dtype, Self.m]) raises -> Static[
-        Self.dtype, Self.n
-    ] where Self.dtype.is_floating_point():
+        T: TensorLike,
+        block: Int = 16,
+    ](mut self, b: T) raises -> Static[Self.dtype, Self.n] where (
+        Self.dtype.is_floating_point()
+        and T.dtype == Self.dtype
+        and T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
+        and dim[T, 0] == Self.m
+    ):
         """The least-squares solution of `A @ x ~= b`, reusing this
         factorization. `scipy.linalg.lstsq`'s first return value.
 
@@ -491,7 +509,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         var ctx = self.factored.context()
         var wide = zeros[Self.dtype, Self.m, 1](ctx)
         var wv = wide.view()
-        var bv = b.view()
+        var bv = _mut_view_as[Self.dtype](b)
 
         @always_inline
         def widen[w: Int, alignment: Int = 1](coord: Coord) {var bv, var wv}:
@@ -502,7 +520,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
             widen, Coord(Self.m), ctx
         )
 
-        var projected = self.apply_q_transpose[1](wide)
+        var projected = self.apply_q_transpose(wide)
         var head = zeros[Self.dtype, Self.n](ctx)
         var hv = head.view()
         var pv = projected.view()
@@ -524,15 +542,19 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         _ = projected^
 
         var upper = self.r()
-        return solve_triangular[
-            Self.dtype, Self.n, True, False, False, Self.gpu, block
+        return _solve_triangular_vector[
+            upper=True, unit=False, trans=False, gpu=Self.gpu, block=block
         ](upper, head)
 
 
 def qr_factor[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Static[dtype, m, n]) raises -> TensorQR[dtype, m, n, gpu] where (
-    dtype.is_floating_point() and m >= n
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16,
+](a: T) raises -> TensorQR[T.dtype, dim[T, 0], dim[T, 1], gpu] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1])
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """**Tier 2.** Blocked Householder QR of an `m x n` matrix with
     `m >= n`, device-resident. LAPACK's `geqrf`.
@@ -558,7 +580,7 @@ def qr_factor[
     `linalg.qr_factorization` is `LayoutTensor`-only, and numax's interop
     is `TileTensor`-only so that the library has one owning tensor type
     and one view type. Three other things would argue against it anyway:
-    it is monomorphic in `dtype`, it is a CPU-only scalar-loop reference
+    it is monomorphic in `T.dtype`, it is a CPU-only scalar-loop reference
     rather than a tuned kernel, and its `apply_q`/`form_q` companions are
     `LayoutTensor` too.
 
@@ -572,18 +594,20 @@ def qr_factor[
     reflector (`tau = 0`, correctly the identity) and a zero on `R`'s
     diagonal; `cond` on the original matrix is the check for it.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     var ctx = a.context()
-    var factored = Static[dtype, m, n](ctx)
-    var taus = zeros[dtype, n](ctx)
-    var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
+    var factored = Static[T.dtype, m, n](ctx)
+    var taus = zeros[T.dtype, n](ctx)
+    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
 
     var fv = factored.view()
     var tv = taus.view()
     var sv = scratch.view()
 
-    pack_block[target=_target[gpu]()](a.view(), fv, 0, 0, m, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(a), fv, 0, 0, m, n, ctx)
 
-    var work = _ReflectorWork[dtype](m, n, block, ctx)
+    var work = _ReflectorWork[T.dtype](m, n, block, ctx)
     var k = 0
     while k < n:
         var nb = min(block, n - k)
@@ -591,7 +615,7 @@ def qr_factor[
         comptime if gpu:
             ctx.enqueue_function[
                 geqr2_panel[
-                    dtype,
+                    T.dtype,
                     ALayout=type_of(fv).LayoutType,
                     TauLayout=type_of(tv).LayoutType,
                     SLayout=type_of(sv).LayoutType,
@@ -633,19 +657,24 @@ def qr_factor[
     # and destruction is ASAP, the same hazard `TensorQR.solve` names.
     _ = scratch^
 
-    return TensorQR[dtype, m, n, gpu](factored^, taus^, block)
+    return TensorQR[T.dtype, m, n, gpu](factored^, taus^, block)
 
 
 def lstsq[
-    dtype: DType,
-    m: Int,
-    n: Int,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
     block: Int = 16,
     method: StaticString = "qr",
-](mut a: Static[dtype, m, n], mut b: Static[dtype, m]) raises -> Static[
-    dtype, n
-] where (dtype.is_floating_point() and m >= n and n >= 1):
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 1]] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= dim[A, 1] and dim[A, 1] >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """The least-squares solution of the overdetermined `A x = b`: the `x`
     minimizing `||A x - b||`. `numpy.linalg.lstsq`, first return value, and
     the name `scipy.linalg` puts on this algorithm.
@@ -673,12 +702,14 @@ def lstsq[
     unrecognized `method` raises rather than failing to compile; see
     `numax.optimize.minimize` for why.
     """
+    comptime m = dim[A, 0]
+    comptime n = dim[A, 1]
     comptime if method == "qr":
-        var factored = qr_factor[dtype, m, n, gpu, block](a)
-        return factored.solve[block](b)
+        var factored = qr_factor[gpu=gpu, block=block](a)
+        return factored.solve[block=block](b)
     elif method == "svd":
-        var pseudo = pinv[dtype, m, n, gpu](a)
-        return matvec[gpu=gpu](pseudo, b)
+        var pseudo = pinv[gpu=gpu](a)
+        return matvec[gpu=gpu](pseudo, _canonical[m](b))
     else:
         raise Error(
             "lstsq: unknown method '", method, "'; expected 'qr' or 'svd'"
@@ -715,21 +746,30 @@ struct TensorRQ[dtype: DType, n: Int](
 
 
 def _reverse_rows[
-    dtype: DType, n: Int
-](a: Static[dtype, n, n]) raises -> Static[dtype, n, n]:
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """`J A`, with `J` the reversal permutation: row `i` becomes row
     `n - 1 - i`. Host-side, `n` row copies."""
+    comptime n = dim[T, 0]
     var source = a.to_host()
-    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    var values = List[Scalar[T.dtype]](length=n * n, fill=0)
     for i in range(n):
         for j in range(n):
             values[(n - 1 - i) * n + j] = source[i * n + j]
-    return Static[dtype, n, n](a.context(), values^)
+    return Static[T.dtype, n, n](a.context(), values^)
 
 
 def _reverse_both[
-    dtype: DType, n: Int
-](a: Static[dtype, n, n]) raises -> Static[dtype, n, n]:
+    T: TensorLike,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """`J A J`: both index orders reversed, so `(i, j)` becomes
     `(n - 1 - i, n - 1 - j)`.
 
@@ -737,18 +777,24 @@ def _reverse_both[
     triangular one, which is what makes the reversal trick below produce
     an `R` rather than an `L`.
     """
+    comptime n = dim[T, 0]
     var source = a.to_host()
-    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    var values = List[Scalar[T.dtype]](length=n * n, fill=0)
     for i in range(n):
         for j in range(n):
             values[(n - 1 - i) * n + (n - 1 - j)] = source[i * n + j]
-    return Static[dtype, n, n](a.context(), values^)
+    return Static[T.dtype, n, n](a.context(), values^)
 
 
 def rq[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
-](mut a: Static[dtype, n, n]) raises -> TensorRQ[dtype, n] where (
-    dtype.is_floating_point() and n >= n and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16,
+](a: T) raises -> TensorRQ[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 0] and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The RQ factorization of a square `a`: `a = R Q` with `R` upper
     triangular and `Q` orthogonal. `scipy.linalg.rq`.
@@ -779,9 +825,10 @@ def rq[
     transposes are `O(n^2)` on the host, against the factorization's
     `O(n^3)` on the device.
     """
+    comptime n = dim[T, 0]
     var reversed = _reverse_rows(a)
     var transposed = transpose[gpu=gpu](reversed)
-    var factored = qr_factor[dtype, n, n, gpu, block](transposed)
+    var factored = qr_factor[gpu=gpu, block=block](transposed)
 
     var rb = factored.r()
     var qb = factored.q()
@@ -789,4 +836,4 @@ def rq[
     var rb_t = transpose[gpu=gpu](rb)
     var qb_t = transpose[gpu=gpu](qb)
 
-    return TensorRQ[dtype, n](_reverse_both(rb_t), _reverse_rows(qb_t))
+    return TensorRQ[T.dtype, n](_reverse_both(rb_t), _reverse_rows(qb_t))

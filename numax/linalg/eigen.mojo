@@ -44,9 +44,10 @@ from std.math import copysign as _copysign, hypot as _hypot, sqrt as _sqrt
 from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import Dynamic, Static, zeros, zeros_dyn
 from .blas import _target, dot, inner, matmul, matvec
-from .common import _Dense, _device_identity
+from .common import _mut_view, _mut_view_as, _Dense, _device_identity
 from .panel import (
     _PANEL_THREADS,
     gebd2_col,
@@ -131,15 +132,20 @@ struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
         than `n` matrix-vector launches. A caller who only wants
         eigenvalues should not call this; `eigvalsh` does not.
         """
-        return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
+        return _accumulate_reflectors[gpu=Self.gpu](
             self.reflectors, self.taus, Self.n - 2, self.block
         )
 
 
 def sytrd[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, n, n]) raises -> TensorTridiagonal[dtype, n, gpu] where (
-    dtype.is_floating_point() and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> TensorTridiagonal[T.dtype, dim[T, 0], gpu] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """**Tier 2.** Reduce a symmetric `a` to tridiagonal form by
     Householder reflections, device-resident and blocked. LAPACK's
@@ -219,21 +225,22 @@ def sytrd[
     this: cyclic Jacobi at a fixed sweep count, differentiable, and
     launchable inside a GPU thread.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "sytrd: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     comptime width = min(block, n)
     var ctx = a.context()
-    var work = zeros[dtype, n, n](ctx)
-    var taus = zeros[dtype, n](ctx)
-    var vpad = zeros[dtype, n](ctx)
-    var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
-    var left = zeros[dtype, n, 2 * width](ctx)
-    var right = zeros[dtype, n, 2 * width](ctx)
+    var work = zeros[T.dtype, n, n](ctx)
+    var taus = zeros[T.dtype, n](ctx)
+    var vpad = zeros[T.dtype, n](ctx)
+    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
+    var left = zeros[T.dtype, n, 2 * width](ctx)
+    var right = zeros[T.dtype, n, 2 * width](ctx)
     # `latrd_w`'s reductions and the scalar it folds out of them.
-    var red = zeros[dtype, 2 * width + 2](ctx)
-    var product = zeros[dtype, n, n](ctx)
+    var red = zeros[T.dtype, 2 * width + 2](ctx)
+    var product = zeros[T.dtype, n, n](ctx)
 
     var wv = work.view()
     var tv = taus.view()
@@ -244,7 +251,7 @@ def sytrd[
     var redv = red.view()
     var pv = product.view()
 
-    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
     var k0 = 0
     while k0 < n - 2:
@@ -261,8 +268,8 @@ def sytrd[
             def clear[
                 w: Int, alignment: Int = 1
             ](coord: Coord) {var lv, var rv}:
-                lv.store[1](coord, Scalar[dtype](0))
-                rv.store[1](coord, Scalar[dtype](0))
+                lv.store[1](coord, Scalar[T.dtype](0))
+                rv.store[1](coord, Scalar[T.dtype](0))
 
             elementwise[simd_width=1, target=_target[gpu]()](
                 clear, Coord(n, 2 * width), ctx
@@ -274,7 +281,7 @@ def sytrd[
             comptime if gpu:
                 ctx.enqueue_function[
                     sytd2_column[
-                        dtype,
+                        T.dtype,
                         ALayout=type_of(wv).LayoutType,
                         VLayout=type_of(vv).LayoutType,
                         TauLayout=type_of(tv).LayoutType,
@@ -333,8 +340,8 @@ def sytrd[
     _ = red^
     _ = product^
 
-    var d = zeros[dtype, n](ctx)
-    var e = zeros[dtype, n](ctx)
+    var d = zeros[T.dtype, n](ctx)
+    var e = zeros[T.dtype, n](ctx)
     var dv = d.view()
     var ev = e.view()
 
@@ -344,7 +351,7 @@ def sytrd[
     def band[w: Int, alignment: Int = 1](coord: Coord) {var wv, var dv, var ev}:
         var at = coord_to_index_list(coord)[0]
         dv.store[1](coord, wv[Coord(at, at)])
-        var below = Scalar[dtype](0)
+        var below = Scalar[T.dtype](0)
         if at + 1 < n:
             below = wv[Coord(at + 1, at)]
         ev.store[1](coord, below)
@@ -352,7 +359,7 @@ def sytrd[
     elementwise[simd_width=1, target=_target[gpu]()](band, Coord(n), ctx)
     ctx.synchronize()
 
-    return TensorTridiagonal[dtype, n, gpu](d^, e^, work^, taus^, block)
+    return TensorTridiagonal[T.dtype, n, gpu](d^, e^, work^, taus^, block)
 
 
 def _subtract_panel[
@@ -981,9 +988,14 @@ def _tql[
 
 
 def eigvalsh[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """**Tier 2.** The eigenvalues of a symmetric `a`, ascending, without
     the eigenvectors. `numpy.linalg.eigvalsh` / `scipy.linalg.eigvalsh`.
@@ -1018,20 +1030,21 @@ def eigvalsh[
 
     `a` is read as symmetric and not checked; see `sytrd`.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "eigvalsh: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var reduced = sytrd[dtype, n, gpu, block](a)
+    var reduced = sytrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
     # `vectors=False` pushes nothing, so the batch is three one-element
     # allocations and its `block` never decides anything.
-    var acc = _RotationBatch[dtype, n, gpu, False](1, ctx)
-    _tql[dtype, n, gpu, False](d, e, acc, ctx)
+    var acc = _RotationBatch[T.dtype, n, gpu, False](1, ctx)
+    _tql[N=n, gpu=gpu, vectors=False](d, e, acc, ctx)
     _std_sort(d)
-    return Static[dtype, n](ctx, d^)
+    return Static[T.dtype, n](ctx, d^)
 
 
 struct TensorEigh[dtype: DType, n: Int](
@@ -1063,9 +1076,14 @@ struct TensorEigh[dtype: DType, n: Int](
 
 
 def eigh[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, n, n]) raises -> TensorEigh[dtype, n] where (
-    dtype.is_floating_point() and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> TensorEigh[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """**Tier 2.** The eigendecomposition of a symmetric `a`: eigenvalues
     ascending and orthonormal eigenvectors as columns.
@@ -1105,17 +1123,18 @@ def eigh[
 
     `a` is read as symmetric and not checked; see `sytrd`.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "eigh: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var reduced = sytrd[dtype, n, gpu, block](a)
+    var reduced = sytrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
 
-    var acc = _RotationBatch[dtype, n, gpu, True](block, ctx)
-    _tql[dtype, n, gpu, True](d, e, acc, ctx)
+    var acc = _RotationBatch[T.dtype, n, gpu, True](block, ctx)
+    _tql[N=n, gpu=gpu, vectors=True](d, e, acc, ctx)
     acc.finish(ctx)
 
     # Sort ascending. `O(n^2)` scalar host work on `n` numbers, beside the
@@ -1131,18 +1150,18 @@ def eigh[
             order[j - 1] = tmp
             j -= 1
 
-    var sorted_values = List[Scalar[dtype]](capacity=n)
+    var sorted_values = List[Scalar[T.dtype]](capacity=n)
     var perm_host = List[Scalar[DType.int64]](capacity=n)
     for j in range(n):
         sorted_values.append(d[order[j]])
         perm_host.append(Scalar[DType.int64](order[j]))
-    var values = Static[dtype, n](ctx, sorted_values^)
+    var values = Static[T.dtype, n](ctx, sorted_values^)
     var perm = Static[DType.int64, n](ctx, perm_host^)
 
     # Row `j` of `zt` is eigenvector `j`, so the sort is a row gather --
     # source and destination are the same shape, which is what keeps a
     # cross-shape `elementwise` read out of it.
-    var zt_sorted = Static[dtype, n, n]._uninitialized(ctx)
+    var zt_sorted = Static[T.dtype, n, n]._uninitialized(ctx)
     var src = acc.zt.view()
     var dst = zt_sorted.view()
     var pv = perm.view()
@@ -1164,20 +1183,28 @@ def eigh[
 
     var q = reduced.q()
     var vectors = inner[gpu=gpu](q, zt_sorted)
-    return TensorEigh[dtype, n](values^, vectors^)
+    return TensorEigh[T.dtype, n](values^, vectors^)
 
 
 # --------------------------------------------------- Hessenberg and Schur
 
 
 def _accumulate_reflectors[
-    dtype: DType, n: Int, gpu: Bool = False
-](
-    mut reflectors: Static[dtype, n, n],
-    mut taus: Static[dtype, n],
-    count: Int,
-    block: Int,
-) raises -> Static[dtype, n, n] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](reflectors: A, taus: B, count: Int, block: Int) raises -> Static[
+    A.dtype, dim[A, 0], dim[A, 0]
+] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """`Q = H_0 H_1 ... H_{count-1}` from `count` reflectors held in LAPACK's
     packed form -- column `k` carries `v` below row `k + 1` with its leading
     `1` implicit -- applied to the identity in panels of `block`, last panel
@@ -1201,22 +1228,23 @@ def _accumulate_reflectors[
 
     A caller who only wants eigenvalues never calls this.
     """
+    comptime n = dim[A, 0]
     var ctx = reflectors.context()
-    var result = Static[dtype, n, n]._uninitialized(ctx)
-    var out: _Dense[dtype] = TileTensor(
-        result.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    var result = Static[A.dtype, n, n]._uninitialized(ctx)
+    var out: _Dense[A.dtype] = TileTensor(
+        result.view().ptr, row_major(Coord(n, n))
     )
-    _device_identity[dtype, gpu](out, n, n, ctx)
+    _device_identity[gpu=gpu](out, n, n, ctx)
     if count <= 0:
         ctx.synchronize()
         return result^
 
-    var shifted: _Dense[dtype] = TileTensor(
-        reflectors.view().ptr_at_offset(Coord(1, 0)),
+    var shifted: _Dense[A.dtype] = TileTensor(
+        _mut_view(reflectors).ptr + n,
         row_major(Coord(n - 1, n)),
     )
-    var tv = taus.view()
-    var work = _ReflectorWork[dtype](n - 1, n, block, ctx)
+    var tv = _mut_view_as[A.dtype](taus)
+    var work = _ReflectorWork[A.dtype](n - 1, n, block, ctx)
     var steps = (count + block - 1) // block
     for step in range(steps):
         var k = (steps - 1 - step) * block
@@ -1241,16 +1269,22 @@ def _accumulate_reflectors[
 
 
 def _store_column[
-    dtype: DType, n: Int, gpu: Bool = False
-](
-    mut dst: Static[dtype, n, n],
-    mut v: Static[dtype, n],
-    k: Int,
-    ctx: DeviceContext,
-) raises:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](dst: A, v: B, k: Int, ctx: DeviceContext) raises where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """`dst[:, k] = v`, on the device."""
-    var dv = dst.view()
-    var vv = v.view()
+    comptime n = dim[A, 0]
+    var dv = _mut_view(dst)
+    var vv = _mut_view_as[A.dtype](v)
 
     @always_inline
     def fill[w: Int, alignment: Int = 1](coord: Coord) {var dv, var vv, var k}:
@@ -1261,12 +1295,18 @@ def _store_column[
 
 
 def _zero_column_below[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n], k: Int, first: Int, ctx: DeviceContext) raises:
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, k: Int, first: Int, ctx: DeviceContext) raises where (
+    T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """`a[first.., k] = 0`, on the device: the entries a reflector
     annihilates, written as the exact zeros they are rather than left to
     the update that never touches its own column."""
-    var av = a.view()
+    comptime n = dim[T, 0]
+    var av = _mut_view(a)
 
     @always_inline
     def fill[
@@ -1274,7 +1314,7 @@ def _zero_column_below[
     ](coord: Coord) {var av, var k, var first}:
         var i = coord_to_index_list(coord)[0]
         if i >= first:
-            av.store[1](Coord(i, k), Scalar[dtype](0))
+            av.store[1](Coord(i, k), Scalar[T.dtype](0))
 
     elementwise[simd_width=1, target=_target[gpu]()](fill, Coord(n), ctx)
 
@@ -1331,15 +1371,20 @@ struct TensorHessenberg[dtype: DType, n: Int, gpu: Bool = False](
         and `larft` gives a zero `tau` a zero column of `T`, so the panel
         never sees that reflector again.
         """
-        return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
+        return _accumulate_reflectors[gpu=Self.gpu](
             self.reflectors, self.taus, Self.n - 2, self.block
         )
 
 
 def hessenberg[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, n, n]) raises -> TensorHessenberg[dtype, n, gpu] where (
-    dtype.is_floating_point() and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> TensorHessenberg[T.dtype, dim[T, 0], gpu] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """**Tier 2.** Reduce a general square `a` to upper Hessenberg form by
     Householder reflections, device-resident and blocked. LAPACK's
@@ -1406,24 +1451,25 @@ def hessenberg[
     `numax.linalg.array.hessenberg` is the `FloatLike`-generic sibling for
     matrices small enough to live in registers.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "hessenberg: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     comptime width = min(block, n)
     var ctx = a.context()
-    var work = zeros[dtype, n, n](ctx)
-    var reflectors = zeros[dtype, n, n](ctx)
-    var taus = zeros[dtype, n](ctx)
-    var vpad = zeros[dtype, n](ctx)
-    var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
+    var work = zeros[T.dtype, n, n](ctx)
+    var reflectors = zeros[T.dtype, n, n](ctx)
+    var taus = zeros[T.dtype, n](ctx)
+    var vpad = zeros[T.dtype, n](ctx)
+    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
     # The panel's `Y`, its dense `V` for the trailing GEMM, its triangular
     # factor, and the reductions `lahr2_column`/`lahr2_y` share.
-    var yy = zeros[dtype, n, width](ctx)
-    var vp = zeros[dtype, n, width](ctx)
-    var tt = zeros[dtype, width, width](ctx)
-    var red = zeros[dtype, 2 * width + 2](ctx)
-    var product = zeros[dtype, n, n](ctx)
+    var yy = zeros[T.dtype, n, width](ctx)
+    var vp = zeros[T.dtype, n, width](ctx)
+    var tt = zeros[T.dtype, width, width](ctx)
+    var red = zeros[T.dtype, 2 * width + 2](ctx)
+    var product = zeros[T.dtype, n, n](ctx)
 
     var wv = work.view()
     var rfv = reflectors.view()
@@ -1436,9 +1482,9 @@ def hessenberg[
     var redv = red.view()
     var pv = product.view()
 
-    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, n, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
-    var lwork = _ReflectorWork[dtype](max(n - 1, 1), n, width, ctx)
+    var lwork = _ReflectorWork[T.dtype](max(n - 1, 1), n, width, ctx)
 
     var k0 = 0
     while k0 < n - 2:
@@ -1453,7 +1499,7 @@ def hessenberg[
 
             @always_inline
             def clear[w: Int, alignment: Int = 1](coord: Coord) {var yv}:
-                yv.store[1](coord, Scalar[dtype](0))
+                yv.store[1](coord, Scalar[T.dtype](0))
 
             elementwise[simd_width=1, target=_target[gpu]()](
                 clear, Coord(n, width), ctx
@@ -1469,7 +1515,7 @@ def hessenberg[
             comptime if gpu:
                 ctx.enqueue_function[
                     sytd2_column[
-                        dtype,
+                        T.dtype,
                         ALayout=type_of(wv).LayoutType,
                         VLayout=type_of(vv).LayoutType,
                         TauLayout=type_of(tv).LayoutType,
@@ -1518,7 +1564,7 @@ def hessenberg[
         # The unit sits at row `k + 1` here and at row `k` in QR's frame,
         # so the reflectors reach `larfb` through a view shifted one row
         # down -- `_accumulate_reflectors`' adapter, the same one.
-        var shifted: _Dense[dtype] = TileTensor(
+        var shifted: _Dense[T.dtype] = TileTensor(
             rfv.ptr_at_offset(Coord(1, 0)), row_major(Coord(n - 1, n))
         )
         _apply_block_reflector[transposed=True, gpu=gpu](
@@ -1549,7 +1595,7 @@ def hessenberg[
     _ = product^
     _ = lwork^
 
-    return TensorHessenberg[dtype, n, gpu](work^, reflectors^, taus^, block)
+    return TensorHessenberg[T.dtype, n, gpu](work^, reflectors^, taus^, block)
 
 
 comptime _MAX_QR_SWEEPS_PER_N = 30
@@ -1843,9 +1889,9 @@ def _hqr[
                 r = r / p
                 var j_last = n if wantt else en + 1
                 if notlast:
-                    _chase_rows[dtype, True](h, k, n, k, j_last, x, y, zz, q, r)
+                    _chase_rows[order3=True](h, k, n, k, j_last, x, y, zz, q, r)
                 else:
-                    _chase_rows[dtype, False](
+                    _chase_rows[order3=False](
                         h, k, n, k, j_last, x, y, zz, q, r
                     )
                 var i_last = en if en < k + 3 else k + 3
@@ -1896,9 +1942,14 @@ struct Eigenvalues[dtype: DType, n: Int](
 
 
 def eigvals[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, n, n]) raises -> Eigenvalues[dtype, n] where (
-    dtype.is_floating_point() and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> Eigenvalues[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """**Tier 2.** The eigenvalues of a general square `a`, real or
     complex, as a `(re, im)` pair. `numpy.linalg.eigvals`,
@@ -1926,21 +1977,22 @@ def eigvals[
     and a different panel width moves `H` in the last bits, so two widths
     may report the same spectrum in a different order.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "eigvals: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var reduced = hessenberg[dtype, n, gpu, block](a)
+    var reduced = hessenberg[gpu=gpu, block=block](a)
     var h = reduced.h.to_host()
     # `wantz=False` makes the batch's `vectors` false, which shrinks every
     # buffer in it to one element; the values-only route pushes nothing and
     # allocates nothing for vectors it never forms.
-    var acc = _RotationBatch[dtype, n, gpu, False, 2, True](1, ctx)
-    var values = _hqr[dtype, False, False, n, gpu](h, acc, n, ctx)
-    var re = Static[dtype, n](ctx, values[0].copy())
-    var im = Static[dtype, n](ctx, values[1].copy())
-    return Eigenvalues[dtype, n](re^, im^)
+    var acc = _RotationBatch[T.dtype, n, gpu, False, 2, True](1, ctx)
+    var values = _hqr[wantt=False, wantz=False, N=n, gpu=gpu](h, acc, n, ctx)
+    var re = Static[T.dtype, n](ctx, values[0].copy())
+    var im = Static[T.dtype, n](ctx, values[1].copy())
+    return Eigenvalues[T.dtype, n](re^, im^)
 
 
 struct TensorSchur[dtype: DType, n: Int](
@@ -1969,10 +2021,17 @@ struct TensorSchur[dtype: DType, n: Int](
 
 
 def _q_times_zt[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut q: Static[dtype, n, n], mut zt: Dynamic[dtype, 2]) raises -> Static[
-    dtype, n, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](q: A, zt: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 0]] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and not B.LayoutType.all_dims_known
+):
     """`Q Z`, where `zt` holds `Z^T` in a rotation batch's own buffer.
 
     `inner`'s body -- `matmul` under `transpose_b=True`, so `Z` is never
@@ -1980,16 +2039,17 @@ def _q_times_zt[
     `zt` is `Dynamic` and copying it into a `Static` just to reach `inner`
     would be an `n x n` pass for nothing.
     """
+    comptime n = dim[A, 0]
     var ctx = q.context()
-    var result = Static[dtype, n, n](ctx)
-    var out: _Dense[dtype] = TileTensor(
-        result.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    var result = Static[A.dtype, n, n](ctx)
+    var out: _Dense[A.dtype] = TileTensor(
+        result.view().ptr, row_major(Coord(n, n))
     )
-    var left: _Dense[dtype] = TileTensor(
-        q.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    var left: _Dense[A.dtype] = TileTensor(
+        _mut_view(q).ptr, row_major(Coord(n, n))
     )
-    var right: _Dense[dtype] = TileTensor(
-        zt.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+    var right: _Dense[A.dtype] = TileTensor(
+        _mut_view_as[A.dtype](zt).ptr, row_major(Coord(n, n))
     )
     _max_matmul[transpose_b=True, target=_target[gpu]()](out, left, right, ctx)
     ctx.synchronize()
@@ -1997,9 +2057,14 @@ def _q_times_zt[
 
 
 def schur[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, n, n]) raises -> TensorSchur[dtype, n] where (
-    dtype.is_floating_point() and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> TensorSchur[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """**Tier 2.** The real Schur decomposition `a = Z T Z^T`.
     `scipy.linalg.schur(a, output="real")`.
@@ -2058,53 +2123,68 @@ def schur[
     This is the form every matrix function in `numax.linalg.matfuncs`
     beyond `expm` is built on.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "schur: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var reduced = hessenberg[dtype, n, gpu, block](a)
+    var reduced = hessenberg[gpu=gpu, block=block](a)
     var h = reduced.h.to_host()
-    var acc = _RotationBatch[dtype, n, gpu, True, 2, True](block, ctx)
-    _ = _hqr[dtype, True, True, n, gpu](h, acc, n, ctx)
+    var acc = _RotationBatch[T.dtype, n, gpu, True, 2, True](block, ctx)
+    _ = _hqr[wantt=True, wantz=True, N=n, gpu=gpu](h, acc, n, ctx)
     acc.finish(ctx)
-    var t = Static[dtype, n, n](ctx, h^)
+    var t = Static[T.dtype, n, n](ctx, h^)
     var q = reduced.q()
-    var vectors = _q_times_zt[dtype, n, gpu](q, acc.zt)
+    var vectors = _q_times_zt[gpu=gpu](q, acc.zt)
     _ = acc^
-    return TensorSchur[dtype, n](t^, vectors^)
+    return TensorSchur[T.dtype, n](t^, vectors^)
 
 
 # ----------------------------------------------------------------- SVD
 
 
 def _left_products[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m, n], mut v: Static[dtype, m]) raises -> Static[
-    dtype, n
-]:
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, v: B) raises -> Static[A.dtype, dim[A, 1]] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """`v^T A` as an `n`-vector: `v` read as a `1 x m` row against `A`."""
+    comptime m = dim[A, 0]
+    comptime n = dim[A, 1]
     var ctx = a.context()
-    var result = zeros[dtype, n](ctx)
-    var row: _Dense[dtype] = TileTensor(
-        v.view().ptr_at_offset(Coord(0)), row_major(Coord(1, m))
+    var result = zeros[A.dtype, n](ctx)
+    var row: _Dense[A.dtype] = TileTensor(
+        _mut_view_as[A.dtype](v).ptr_at_offset(Coord(0)), row_major(Coord(1, m))
     )
-    var out: _Dense[dtype] = TileTensor(
+    var out: _Dense[A.dtype] = TileTensor(
         result.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
     )
-    _max_matmul[target=_target[gpu]()](out, row, a.view(), ctx)
+    _max_matmul[target=_target[gpu]()](out, row, _mut_view(a), ctx)
     ctx.synchronize()
     return result^
 
 
 def _column_of[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut dense: Static[dtype, m, n], k: Int) raises -> Static[dtype, m]:
+    T: TensorLike,
+    gpu: Bool = False,
+](dense: T, k: Int) raises -> Static[T.dtype, dim[T, 0]] where (
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
+):
     """Column `k` of a dense `m x n` as its own vector, gathered on the
     device."""
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     var ctx = dense.context()
-    var out = zeros[dtype, m](ctx)
-    var src = dense.view()
+    var out = zeros[T.dtype, m](ctx)
+    var src = _mut_view(dense)
     var dst = out.view()
 
     @always_inline
@@ -2119,16 +2199,21 @@ def _column_of[
 
 
 def _row_of[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut dense: Static[dtype, m, n], k: Int) raises -> Static[dtype, n]:
+    T: TensorLike,
+    gpu: Bool = False,
+](dense: T, k: Int) raises -> Static[T.dtype, dim[T, 1]] where (
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
+):
     """Row `k` of a dense `m x n` as its own vector, on the device -- a
     contiguous copy, so a `pack_block` of one row."""
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     var ctx = dense.context()
-    var out = zeros[dtype, n](ctx)
-    var dst: _Dense[dtype] = TileTensor(
+    var out = zeros[T.dtype, n](ctx)
+    var dst: _Dense[T.dtype] = TileTensor(
         out.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
     )
-    pack_block[target=_target[gpu]()](dense.view(), dst, k, 0, 1, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(dense), dst, k, 0, 1, n, ctx)
     ctx.synchronize()
     return out^
 
@@ -2263,16 +2348,25 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         pack_block[trans=True, target=_target[Self.gpu]()](
             self.right.view(), pv, 0, 0, Self.n, Self.n, ctx
         )
-        return _accumulate_reflectors[Self.dtype, Self.n, Self.gpu](
+        return _accumulate_reflectors[gpu=Self.gpu](
             packed, self.taus_right, Self.n - 2, self.block
         )
 
 
 def gebrd[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, m, n]) raises -> TensorBidiagonal[
-    dtype, m, n, gpu
-] where (dtype.is_floating_point() and m >= n and n >= 1 and block >= 1):
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> TensorBidiagonal[T.dtype, dim[T, 0], dim[T, 1], gpu] where (
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= dim[T, 1]
+        and dim[T, 1] >= 1
+        and block >= 1
+    )
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+):
     """**Tier 2.** Reduce an `m x n` matrix, `m >= n`, to upper bidiagonal
     form by alternating left and right Householder reflections,
     device-resident and blocked. LAPACK's `gebrd` over `labrd` panels.
@@ -2323,26 +2417,28 @@ def gebrd[
     staging it dense, and LAPACK's `dgebrd` is half BLAS-2 for the same
     reason. Closing that needs a two-stage reduction, not a wider panel.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "gebrd: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     comptime width = min(block, n)
     var ctx = a.context()
-    var work = zeros[dtype, m, n](ctx)
-    var left = zeros[dtype, m, n](ctx)
-    var right = zeros[dtype, n, n](ctx)
-    var taus_left = zeros[dtype, n](ctx)
-    var taus_right = zeros[dtype, n](ctx)
-    var scratch = zeros[dtype, _PANEL_THREADS + 1](ctx)
+    var work = zeros[T.dtype, m, n](ctx)
+    var left = zeros[T.dtype, m, n](ctx)
+    var right = zeros[T.dtype, n, n](ctx)
+    var taus_left = zeros[T.dtype, n](ctx)
+    var taus_right = zeros[T.dtype, n](ctx)
+    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
     # The panel's two corrections, the two operands the trailing GEMMs
     # read them against, and the reductions `labrd_y`/`labrd_x` share.
-    var yy = zeros[dtype, n, width](ctx)
-    var xx = zeros[dtype, m, width](ctx)
-    var vp = zeros[dtype, m, width](ctx)
-    var ut = zeros[dtype, n, width](ctx)
-    var red = zeros[dtype, 2 * width + 2](ctx)
-    var product = zeros[dtype, m, n](ctx)
+    var yy = zeros[T.dtype, n, width](ctx)
+    var xx = zeros[T.dtype, m, width](ctx)
+    var vp = zeros[T.dtype, m, width](ctx)
+    var ut = zeros[T.dtype, n, width](ctx)
+    var red = zeros[T.dtype, 2 * width + 2](ctx)
+    var product = zeros[T.dtype, m, n](ctx)
 
     var wv = work.view()
     var lv = left.view()
@@ -2357,7 +2453,7 @@ def gebrd[
     var redv = red.view()
     var pv = product.view()
 
-    pack_block[target=_target[gpu]()](a.view(), wv, 0, 0, m, n, ctx)
+    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, m, n, ctx)
 
     var k0 = 0
     while k0 < n:
@@ -2372,11 +2468,11 @@ def gebrd[
 
             @always_inline
             def clear_y[w: Int, alignment: Int = 1](coord: Coord) {var yv}:
-                yv.store[1](coord, Scalar[dtype](0))
+                yv.store[1](coord, Scalar[T.dtype](0))
 
             @always_inline
             def clear_x[w: Int, alignment: Int = 1](coord: Coord) {var xv}:
-                xv.store[1](coord, Scalar[dtype](0))
+                xv.store[1](coord, Scalar[T.dtype](0))
 
             elementwise[simd_width=1, target=_target[gpu]()](
                 clear_y, Coord(n, width), ctx
@@ -2395,7 +2491,7 @@ def gebrd[
             comptime if gpu:
                 ctx.enqueue_function[
                     gebd2_col[
-                        dtype,
+                        T.dtype,
                         ALayout=type_of(wv).LayoutType,
                         VLayout=type_of(lv).LayoutType,
                         TauLayout=type_of(tlv).LayoutType,
@@ -2438,7 +2534,7 @@ def gebrd[
                 comptime if gpu:
                     ctx.enqueue_function[
                         gebd2_row[
-                            dtype,
+                            T.dtype,
                             ALayout=type_of(wv).LayoutType,
                             ULayout=type_of(rv).LayoutType,
                             TauLayout=type_of(trv).LayoutType,
@@ -2494,8 +2590,8 @@ def gebrd[
     _ = red^
     _ = product^
 
-    var d = zeros[dtype, n](ctx)
-    var e = zeros[dtype, n](ctx)
+    var d = zeros[T.dtype, n](ctx)
+    var e = zeros[T.dtype, n](ctx)
     var dv = d.view()
     var ev = e.view()
 
@@ -2505,7 +2601,7 @@ def gebrd[
     def band[w: Int, alignment: Int = 1](coord: Coord) {var wv, var dv, var ev}:
         var at = coord_to_index_list(coord)[0]
         dv.store[1](coord, wv[Coord(at, at)])
-        var above = Scalar[dtype](0)
+        var above = Scalar[T.dtype](0)
         if at + 1 < n:
             above = wv[Coord(at, at + 1)]
         ev.store[1](coord, above)
@@ -2518,7 +2614,7 @@ def gebrd[
     # `findings.mdc` on the `.view()` lifetime bug that `print` hides.
     _ = work^
 
-    return TensorBidiagonal[dtype, m, n, gpu](
+    return TensorBidiagonal[T.dtype, m, n, gpu](
         d^, e^, left^, right^, taus_left^, taus_right^, block
     )
 
@@ -2568,7 +2664,7 @@ def _golub_kahan[
         ge[2 * i] = d[i]
         if i + 1 < n:
             ge[2 * i + 1] = e[i]
-    _tql[dtype, size, gpu, vectors](gd, ge, acc, ctx)
+    _tql[N=size, gpu=gpu, vectors=vectors](gd, ge, acc, ctx)
     acc.finish(ctx)
     return gd^
 
@@ -2912,9 +3008,18 @@ def _top_n_descending[
 
 
 def svdvals[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, m, n]) raises -> Static[dtype, n] where (
-    dtype.is_floating_point() and m >= n and n >= 1 and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> Static[T.dtype, dim[T, 1]] where (
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= dim[T, 1]
+        and dim[T, 1] >= 1
+        and block >= 1
+    )
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """**Tier 2.** The singular values of an `m x n` matrix, `m >= n`,
     descending. `scipy.linalg.svdvals`.
@@ -2933,30 +3038,32 @@ def svdvals[
     it decides here: the rotation window it also names costs nothing when
     no rotation is ever logged.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "svdvals: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var reduced = gebrd[dtype, m, n, gpu, block](a)
+    var reduced = gebrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
-    var uacc = _RotationBatch[dtype, n, gpu, False, 1, True](block, ctx)
-    var vacc = _RotationBatch[dtype, n, gpu, False, 1, True](block, ctx)
-    _bdsqr[dtype, n, gpu, False](d, e, uacc, vacc, ctx)
+    var uacc = _RotationBatch[T.dtype, n, gpu, False, 1, True](block, ctx)
+    var vacc = _RotationBatch[T.dtype, n, gpu, False, 1, True](block, ctx)
+    _bdsqr[n=n, gpu=gpu, vectors=False](d, e, uacc, vacc, ctx)
     uacc.finish(ctx)
     vacc.finish(ctx)
 
     # `_bdsqr` leaves the values unsorted and of either sign; a singular
     # value is the magnitude.
-    var mags = List[Scalar[dtype]](capacity=n)
+    var mags = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         mags.append(abs(d[i]))
-    var order = _top_n_descending[dtype, n](mags)
-    var out = List[Scalar[dtype]](capacity=n)
+    var order = _top_n_descending[n=n](mags)
+    var out = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         out.append(mags[order[i]])
-    return Static[dtype, n](ctx, out^)
+    return Static[T.dtype, n](ctx, out^)
 
 
 struct TensorSVD[dtype: DType, m: Int, n: Int](
@@ -2992,9 +3099,18 @@ struct TensorSVD[dtype: DType, m: Int, n: Int](
 
 
 def svd[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False, block: Int = 32
-](mut a: Static[dtype, m, n]) raises -> TensorSVD[dtype, m, n] where (
-    dtype.is_floating_point() and m >= n and n >= 1 and block >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> TensorSVD[T.dtype, dim[T, 0], dim[T, 1]] where (
+    (
+        T.dtype.is_floating_point()
+        and dim[T, 0] >= dim[T, 1]
+        and dim[T, 1] >= 1
+        and block >= 1
+    )
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """**Tier 2.** The thin singular value decomposition of an `m x n`
     matrix, `m >= n`: `A = U diag(s) V^T` with `s` descending.
@@ -3041,45 +3157,49 @@ def svd[
     Rectangular, unlike the `Array` tier's square-only one-sided Jacobi,
     and descending where that one is unsorted; both docstrings say so.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "svd: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var reduced = gebrd[dtype, m, n, gpu, block](a)
+    var reduced = gebrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
-    var uacc = _RotationBatch[dtype, n, gpu, True, 1, True](block, ctx)
-    var vacc = _RotationBatch[dtype, n, gpu, True, 1, True](block, ctx)
-    _bdsqr[dtype, n, gpu, True](d, e, uacc, vacc, ctx)
+    var uacc = _RotationBatch[T.dtype, n, gpu, True, 1, True](block, ctx)
+    var vacc = _RotationBatch[T.dtype, n, gpu, True, 1, True](block, ctx)
+    _bdsqr[n=n, gpu=gpu, vectors=True](d, e, uacc, vacc, ctx)
     uacc.finish(ctx)
     vacc.finish(ctx)
 
-    var mags = List[Scalar[dtype]](capacity=n)
+    var mags = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         mags.append(abs(d[i]))
-    var order = _top_n_descending[dtype, n](mags)
+    var order = _top_n_descending[n=n](mags)
 
-    var s_host = List[Scalar[dtype]](capacity=n)
+    var s_host = List[Scalar[T.dtype]](capacity=n)
     var row_host = List[Scalar[DType.int64]](capacity=n)
-    var sign_host = List[Scalar[dtype]](capacity=n)
+    var sign_host = List[Scalar[T.dtype]](capacity=n)
     for j in range(n):
         var at = order[j]
         s_host.append(mags[at])
         row_host.append(Scalar[DType.int64](at))
         # A negative value is made positive by flipping its right singular
         # vector, which is `dbdsqr`'s own sign fix.
-        sign_host.append(Scalar[dtype](-1) if d[at] < 0 else Scalar[dtype](1))
+        sign_host.append(
+            Scalar[T.dtype](-1) if d[at] < 0 else Scalar[T.dtype](1)
+        )
     var rows = Static[DType.int64, n](ctx, row_host^)
-    var signs = Static[dtype, n](ctx, sign_host^)
+    var signs = Static[T.dtype, n](ctx, sign_host^)
 
     # The gather is `eigh`'s: source and destination are both `(n, n)` and
     # only the index tensors are rank 1, which is the cross-shape case
     # `findings.mdc` records as sound. The batches' `zt` is a run-time
     # `Dynamic`, so it is read through a compile-time `row_major[n, n]`
     # view over the same dense buffer.
-    var ub_t = Static[dtype, n, n]._uninitialized(ctx)
-    var vb_t = Static[dtype, n, n]._uninitialized(ctx)
+    var ub_t = Static[T.dtype, n, n]._uninitialized(ctx)
+    var vb_t = Static[T.dtype, n, n]._uninitialized(ctx)
     var ut = TileTensor(
         uacc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
     )
@@ -3114,14 +3234,17 @@ def svd[
     var p = reduced.p()
     var u = inner[gpu=gpu](q, ub_t)
     var v = inner[gpu=gpu](p, vb_t)
-    return TensorSVD[dtype, m, n](u^, Static[dtype, n](ctx, s_host^), v^)
+    return TensorSVD[T.dtype, m, n](u^, Static[T.dtype, n](ctx, s_host^), v^)
 
 
 def matrix_rank[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](
-    mut a: Static[dtype, m, n], tol: Optional[Float64] = None
-) raises -> Int where (dtype.is_floating_point() and m >= n and n >= 1):
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, tol: Optional[Float64] = None) raises -> Int where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1] and dim[T, 1] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+):
     """**Tier 2.** How many singular values exceed `tol`.
     `numpy.linalg.matrix_rank`.
 
@@ -3129,7 +3252,7 @@ def matrix_rank[
     and `svdvals` refuses it.
 
     `tol` defaults to NumPy's: the largest singular value times
-    `max(m, n)` times the machine epsilon of `dtype`, which is the noise
+    `max(m, n)` times the machine epsilon of `T.dtype`, which is the noise
     floor an SVD of that size can be expected to carry. Pass an explicit
     `tol` to ask a different question -- "how many directions carry more
     than one part in a thousand" is `tol = 1e-3 * s_max`.
@@ -3137,13 +3260,15 @@ def matrix_rank[
     An `Int`, where the `Array` tier returns `T`: one `Tensor` is one
     matrix, so there is one rank, and nothing here needs to stay branchless.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "matrix_rank: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var s = svdvals[gpu=gpu](a).to_host()
     var eps: Float64
-    comptime if dtype == DType.float32:
+    comptime if T.dtype == DType.float32:
         eps = 1.1920929e-07
     else:
         eps = 2.220446049250313e-16

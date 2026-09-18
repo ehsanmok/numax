@@ -29,7 +29,9 @@ nothing here delegates.
 from layout import Coord
 from layout.tile_layout import TensorLayout, row_major
 
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
 from ..core.array import (
+    _canonical,
     Dynamic,
     Static,
     Tensor,
@@ -44,10 +46,20 @@ from .lu import lu_factor
 
 
 def solve[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
-](mut a: Static[dtype, n, n], mut b: Static[dtype, n]) raises -> Static[
-    dtype, n
-] where dtype.is_floating_point():
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+):
     """**Tier 2.** `x` with `a @ x == b`. `scipy.linalg.solve`.
 
     Factors with `lu_factor` -- blocked, partially pivoted, trailing update
@@ -62,15 +74,21 @@ def solve[
     factorization and the two substitutions alike, since `TensorLU` carries
     `gpu` in its type and cannot be solved against on the wrong device.
     """
-    var factorization = lu_factor[dtype, n, gpu, block](a)
-    return factorization.solve[block](b)
+    comptime n = dim[A, 0]
+    var factorization = lu_factor[gpu=gpu, block=block](a)
+    return factorization._solve_vector[block=block](b)
 
 
 def inverse[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
-](mut a: Static[dtype, n, n]) raises -> Static[
-    dtype, n, n
-] where dtype.is_floating_point():
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """**Tier 2.** `A^-1`, by factoring once and solving against the whole
     identity at once. `scipy.linalg.inv`.
 
@@ -87,16 +105,22 @@ def inverse[
     definite. This exists for the cases that genuinely need the entries of
     `A^-1` -- a covariance matrix's precision, for instance.
     """
-    var factorization = lu_factor[dtype, n, gpu, block](a)
-    var identity = eye[n, dtype](a.context())
-    return factorization.solve[n, block](identity)
+    comptime n = dim[T, 0]
+    var factorization = lu_factor[gpu=gpu, block=block](a)
+    var identity = eye[n, T.dtype](a.context())
+    return factorization._solve_matrix[block=block](identity)
 
 
 def pinv[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](mut a: Static[dtype, m, n], rcond: Float64 = 1e-15) raises -> Static[
-    dtype, n, m
-] where (dtype.is_floating_point() and m >= n and n >= 1):
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, rcond: Float64 = 1e-15) raises -> Static[
+    T.dtype, dim[T, 1], dim[T, 0]
+] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1] and dim[T, 1] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+):
     """**Tier 2.** The Moore-Penrose pseudoinverse, `V diag(1/s) U^T`, with
     singular values below `rcond` times the largest dropped.
     `numpy.linalg.pinv`, and `scipy.linalg.pinv`'s shape.
@@ -117,6 +141,8 @@ def pinv[
     defaults to NumPy's `1e-15`; the `Array` tier uses `1e-12`, because at
     a fixed Jacobi sweep count its small singular values carry more noise.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "pinv: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
@@ -127,12 +153,12 @@ def pinv[
 
     var v_scaled = factored.v.to_host()
     for j in range(n):
-        var inv = Scalar[dtype](0)
+        var inv = Scalar[T.dtype](0)
         if Float64(s[j]) > threshold:
-            inv = Scalar[dtype](1) / s[j]
+            inv = Scalar[T.dtype](1) / s[j]
         for i in range(n):
             v_scaled[i * n + j] = v_scaled[i * n + j] * inv
-    var scaled = Static[dtype, n, n](a.context(), v_scaled^)
+    var scaled = Static[T.dtype, n, n](a.context(), v_scaled^)
     return inner[gpu=gpu](scaled, factored.u)
 
 
@@ -160,11 +186,12 @@ def _svd_tolerance[
 
 
 def orth[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](
-    mut a: Static[dtype, m, n], rcond: Optional[Float64] = None
-) raises -> Dynamic[dtype, 2] where (
-    dtype.is_floating_point() and m >= n and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, rcond: Optional[Float64] = None) raises -> Dynamic[T.dtype, 2] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1] and dim[T, 1] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """An orthonormal basis for the range of `a`, as columns.
     `scipy.linalg.orth`.
@@ -182,6 +209,8 @@ def orth[
 
     **Tier 2, and `gpu=True` does not compile**, since `svd` refuses it.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "orth: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
@@ -197,7 +226,7 @@ def orth[
 
     var u = factored.u.to_host()
     var rank = len(keep)
-    var values = List[Scalar[dtype]](length=m * rank, fill=0)
+    var values = List[Scalar[T.dtype]](length=m * rank, fill=0)
     for i in range(m):
         for c in range(rank):
             values[i * rank + c] = u[i * n + keep[c]]
@@ -205,17 +234,18 @@ def orth[
     var extents = List[Int](capacity=2)
     extents.append(m)
     extents.append(rank)
-    return Dynamic[dtype, 2](
+    return Dynamic[T.dtype, 2](
         a.context(), row_major(_dyn_shape_from[2](extents)), values^
     )
 
 
 def null_space[
-    dtype: DType, m: Int, n: Int, gpu: Bool = False
-](
-    mut a: Static[dtype, m, n], rcond: Optional[Float64] = None
-) raises -> Dynamic[dtype, 2] where (
-    dtype.is_floating_point() and m >= n and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, rcond: Optional[Float64] = None) raises -> Dynamic[T.dtype, 2] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1] and dim[T, 1] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
 ):
     """An orthonormal basis for the null space of `a`, as columns.
     `scipy.linalg.null_space`.
@@ -228,6 +258,8 @@ def null_space[
     which is SciPy's behavior and the useful one -- the emptiness is the
     answer.
     """
+    comptime m = dim[T, 0]
+    comptime n = dim[T, 1]
     comptime assert not gpu, (
         "null_space: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
@@ -246,7 +278,7 @@ def null_space[
     # `Vh` makes it a row.
     var v = factored.v.to_host()
     var nullity = len(drop)
-    var values = List[Scalar[dtype]](length=n * nullity, fill=0)
+    var values = List[Scalar[T.dtype]](length=n * nullity, fill=0)
     for i in range(n):
         for c in range(nullity):
             values[i * nullity + c] = v[i * n + drop[c]]
@@ -254,7 +286,7 @@ def null_space[
     var extents = List[Int](capacity=2)
     extents.append(n)
     extents.append(nullity)
-    return Dynamic[dtype, 2](
+    return Dynamic[T.dtype, 2](
         a.context(), row_major(_dyn_shape_from[2](extents)), values^
     )
 
@@ -287,9 +319,15 @@ struct Polar[dtype: DType, n: Int](
 
 
 def polar[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Polar[dtype, n] where (
-    dtype.is_floating_point() and n >= n and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Polar[T.dtype, dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 0] and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+    and dim[T, 0] >= dim[T, 1]
+    and dim[T, 1] >= 1
 ):
     """The right polar decomposition `a = U P`: `U` orthogonal, `P`
     symmetric positive semidefinite. `scipy.linalg.polar`, `side="right"`.
@@ -314,6 +352,7 @@ def polar[
 
     **Tier 2, and `gpu=True` does not compile**, since `svd` refuses it.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "polar: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
@@ -331,10 +370,14 @@ def polar[
     for j in range(n):
         for i in range(n):
             v_scaled[i * n + j] = v_scaled[i * n + j] * s[j]
-    var scaled = Static[dtype, n, n](a.context(), v_scaled^)
+    var scaled = Static[T.dtype, n, n](a.context(), v_scaled^)
     var positive = inner[gpu=gpu](scaled, factored.v)
 
-    return Polar[dtype, n](orthogonal^, positive^)
+    # The products are typed through `dim[..]` of their operands, which the
+    # checker does not fold to `n`; `static_view` re-types them, zero-copy.
+    return Polar[T.dtype, n](
+        orthogonal^.static_view[n, n](), positive^.static_view[n, n]()
+    )
 
 
 # ---------------------------------------------- tensorsolve and tensorinv
@@ -361,14 +404,15 @@ def _static_size[LayoutType: TensorLayout]() -> Int:
 
 
 def tensorsolve[
-    dtype: DType,
-    ALayout: TensorLayout,
-    BLayout: TensorLayout,
+    A: TensorLike,
+    B: TensorLike,
     gpu: Bool = False,
-](
-    mut a: Tensor[dtype, ALayout], mut b: Tensor[dtype, BLayout]
-) raises -> Dynamic[dtype, ALayout.rank - BLayout.rank] where (
-    dtype.is_floating_point() and ALayout.rank - BLayout.rank >= 1
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, A.LayoutType.rank - B.LayoutType.rank
+] where (
+    A.dtype == B.dtype
+    and A.dtype.is_floating_point()
+    and A.LayoutType.rank - B.LayoutType.rank >= 1
 ):
     """Solve `tensordot(a, x, axes=x.ndim) == b` for `x`.
     `numpy.linalg.tensorsolve(a, b)`.
@@ -381,6 +425,8 @@ def tensorsolve[
     element count, fixed at compile time from its layout; `b`'s size and
     `a`'s leading extents are checked against it at run time.
     """
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
     comptime total = _static_size[ALayout]()
     comptime m = _isqrt(total)
     comptime assert (
@@ -403,31 +449,25 @@ def tensorsolve[
             m,
             " its element count implies",
         )
-    var square = Static[dtype, m, m](
-        a.buffer.copy(),
-        rebind[_LayoutOf[m, m]](row_major[m, m]()),
-        a.host_addressable,
-    )
-    var rhs = Static[dtype, m](
-        b.buffer.copy(),
-        rebind[_LayoutOf[m]](row_major[m]()),
-        b.host_addressable,
-    )
-    var x = solve[dtype, m, gpu](square, rhs)
+    var square = _canonical[m, m](a)
+    var rhs = _canonical[m](b)
+    var x = solve[gpu=gpu](square, rhs)
     var extents = List[Int](capacity=rank_x)
     for d in range(rank_b, rank_b + rank_x):
         extents.append(a.dim_at(d))
-    return Dynamic[dtype, rank_x](
+    return Dynamic[A.dtype, rank_x](
         x.buffer.copy(),
         row_major(_dyn_shape_from[rank_x](extents)),
-        x.host_addressable,
+        x.on_host(),
     )
 
 
 def tensorinv[
-    dtype: DType, ALayout: TensorLayout, ind: Int = 2, gpu: Bool = False
-](mut a: Tensor[dtype, ALayout]) raises -> Dynamic[dtype, ALayout.rank] where (
-    dtype.is_floating_point() and ind >= 1 and ind < ALayout.rank
+    T: TensorLike,
+    ind: Int = 2,
+    gpu: Bool = False,
+](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
+    T.dtype.is_floating_point() and ind >= 1 and ind < T.LayoutType.rank
 ):
     """The inverse of `a` with respect to `tensordot` at `ind` axes:
     `tensordot(tensorinv(a), a, ind)` is the identity.
@@ -439,6 +479,7 @@ def tensorinv[
     inverted with `inverse` and the result read back with the two halves
     of the shape swapped, so it contracts against `a`'s leading axes.
     """
+    comptime ALayout = T.LayoutType
     comptime total = _static_size[ALayout]()
     comptime m = _isqrt(total)
     comptime assert (
@@ -458,19 +499,15 @@ def tensorinv[
             m,
             " the element count implies",
         )
-    var square = Static[dtype, m, m](
-        a.buffer.copy(),
-        rebind[_LayoutOf[m, m]](row_major[m, m]()),
-        a.host_addressable,
-    )
-    var inv = inverse[dtype, m, gpu](square)
+    var square = _canonical[m, m](a)
+    var inv = inverse[gpu=gpu](square)
     var extents = List[Int](capacity=rank)
     for d in range(ind, rank):
         extents.append(a.dim_at(d))
     for d in range(ind):
         extents.append(a.dim_at(d))
-    return Dynamic[dtype, rank](
+    return Dynamic[T.dtype, rank](
         inv.buffer.copy(),
         row_major(_dyn_shape_from[rank](extents)),
-        inv.host_addressable,
+        inv.on_host(),
     )

@@ -56,10 +56,10 @@ def _as_array(values: Array[Float64, 9]) -> Array[P, 9]:
 def test_slogdet_reproduces_det() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _m(ctx)
-    var pair = slogdet[dtype, 3](a)
+    var pair = slogdet(a)
 
     var b = _m(ctx)
-    var reference = Float64(det[dtype, 3](b))
+    var reference = Float64(det(b))
 
     var rebuilt = Float64(pair[0]) * exp_f64(Float64(pair[1]))
     assert_almost_equal(rebuilt, reference, atol=1e-9)
@@ -68,10 +68,10 @@ def test_slogdet_reproduces_det() raises:
 def test_slogdet_reports_the_sign_separately() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _m(ctx)
-    var pair = slogdet[dtype, 3](a)
+    var pair = slogdet(a)
 
     var b = _m(ctx)
-    var reference = Float64(det[dtype, 3](b))
+    var reference = Float64(det(b))
     assert_true(reference < 0)
     assert_almost_equal(Float64(pair[0]), -1.0, atol=0.0)
     assert_almost_equal(Float64(pair[1]), log_f64(abs(reference)), atol=1e-9)
@@ -82,7 +82,7 @@ def test_a_singular_matrix_gives_sign_zero_and_minus_infinity() raises:
     a zero for."""
     var ctx = DeviceContext(api="cpu")
     var a = _singular(ctx)
-    var pair = slogdet[dtype, 3](a)
+    var pair = slogdet(a)
 
     assert_equal(Float64(pair[0]), 0.0)
     assert_true(Float64(pair[1]) < -1e300)
@@ -100,7 +100,7 @@ def test_slogdet_survives_where_det_overflows() raises:
         entries[i * n + i] = 40.0
     var a = Static[dtype, n, n](ctx, entries^)
 
-    var pair = slogdet[dtype, n](a)
+    var pair = slogdet(a)
     var want = Float64(n) * log_f64(40.0)
     assert_almost_equal(Float64(pair[0]), 1.0, atol=0.0)
     assert_almost_equal(Float64(pair[1]), want, atol=1e-8)
@@ -109,7 +109,7 @@ def test_slogdet_survives_where_det_overflows() raises:
     for i in range(n):
         entries_again[i * n + i] = 40.0
     var b = Static[dtype, n, n](ctx, entries_again^)
-    var overflowed = Float64(det[dtype, n](b))
+    var overflowed = Float64(det(b))
     assert_true(
         overflowed > 1e308 or overflowed != overflowed,
         "det must overflow here, or this test is not testing anything",
@@ -119,7 +119,7 @@ def test_slogdet_survives_where_det_overflows() raises:
 def test_the_two_tiers_agree() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _m(ctx)
-    var want = slogdet[dtype, 3](a)
+    var want = slogdet(a)
 
     var values = [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0]
     var got = array_slogdet[DType.float64, 3](_as_array(values))
@@ -140,7 +140,7 @@ def test_the_factor_can_be_reused_for_both() raises:
     numbers from one factorization."""
     var ctx = DeviceContext(api="cpu")
     var a = _m(ctx)
-    var factored = lu_factor[dtype, 3](a)
+    var factored = lu_factor(a)
     var pair = factored.slogdet()
     var determinant = Float64(factored.det())
 

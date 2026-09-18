@@ -420,9 +420,7 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
 
             var band = Static[Self.dtype, 3, Self.n](ctx, ab^)
             var right = Static[Self.dtype, Self.n](ctx, rhs^)
-            var solved = solve_banded[Self.dtype, 1, 1, Self.n](
-                band, right
-            ).to_host()
+            var solved = solve_banded[l=1, u=1](band, right).to_host()
             for i in range(Self.n):
                 d[i] = Float64(solved[i])
 

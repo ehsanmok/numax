@@ -162,6 +162,7 @@ from .gradient import Gradient
 from .numeric import FloatLike
 from .plain import Plain
 from .tensorlike import TensorLike, View, ViewOver, dim, is_row_major
+from ._drive import _require_contiguous
 from .ops import (
     add as _add,
     divide as _divide,
@@ -815,10 +816,8 @@ are not spells `Dynamic`; the factories take the same `*dims`.
 
 
 def _canonical[
-    T: TensorLike, //, *dims: Int
-](a: T) raises -> ViewOver[
-    T.dtype, _LayoutOf[*dims], MutUntrackedOrigin
-] where (T.LayoutType.all_dims_known and is_row_major[T]):
+    T: TensorLike, //, *dims: Int, dtype: DType = T.dtype
+](a: T) raises -> ViewOver[dtype, _LayoutOf[*dims], MutUntrackedOrigin]:
     """`a` re-viewed at the canonical row-major layout type of `dims`.
 
     For a generic routine that has to call an axis routine whose `where`
@@ -837,14 +836,56 @@ def _canonical[
     only read. For a call expression inside a routine that holds `a` that
     is no loss; do not store the result past `a`, and do not write through
     it.
+
+    Contiguity is checked at compile time where the layout is static and at
+    run time otherwise, so a rank-generic caller (`tensorsolve`) can use it
+    on a `Tensor[dtype, SomeLayout]` it has already sized at run time.
     """
+    comptime if T.LayoutType.all_dims_known:
+        comptime assert is_row_major[
+            T
+        ], "_canonical: a strided view cannot be re-viewed row-major"
+    else:
+        _require_contiguous(a)
     var v = a.view()
     return View(
-        TileTensor[T.dtype, _LayoutOf[*dims], MutUntrackedOrigin](
-            ptr=v.ptr.unsafe_mut_cast[True]().unsafe_origin_cast[
-                MutUntrackedOrigin
-            ](),
+        TileTensor[dtype, _LayoutOf[*dims], MutUntrackedOrigin](
+            ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
             layout=row_major[*dims](),
+        ),
+        a.context(),
+    )
+
+
+def _canonical_dyn[
+    T: TensorLike, //, rank: Int, dtype: DType = T.dtype
+](a: T, *extents: Int) raises -> ViewOver[
+    dtype, _DynLayoutOf[rank], MutUntrackedOrigin
+]:
+    """`_canonical` at a run-time shape: `a`'s contiguous elements re-viewed
+    as a rank-`rank` row-major tensor of `extents`, which must multiply to
+    `a.size()` (checked). What `tensordot` uses to hand a rank-k tensor to
+    `matmul`'s run-time overload without a copy."""
+    comptime if T.LayoutType.all_dims_known:
+        comptime assert is_row_major[
+            T
+        ], "_canonical_dyn: a strided view cannot be re-viewed row-major"
+    else:
+        _require_contiguous(a)
+    var count = 1
+    for d in range(rank):
+        count *= extents[d]
+    if count != a.size():
+        raise Error("_canonical_dyn: ", count, " elements asked of ", a.size())
+    var v = a.view()
+    return View(
+        TileTensor[dtype, _DynLayoutOf[rank], MutUntrackedOrigin](
+            ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            layout=row_major(_dyn_shape[rank](*extents)),
         ),
         a.context(),
     )
@@ -1155,7 +1196,7 @@ def transpose[
     T: TensorLike,
     gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 1], dim[T, 0]] where (
-    T.rank == 2 and T.LayoutType.all_dims_known
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
     """An owned-copy transpose of a 2D tensor, on `a`'s own device.
 
@@ -1333,7 +1374,7 @@ def _transpose_by[
 def squeeze[
     T: TensorLike,
 ](a: T) raises -> Static[T.dtype, dim[T, 1]] where (
-    T.rank == 2 and T.LayoutType.all_dims_known and dim[T, 0] == 1
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known and dim[T, 0] == 1
 ):
     """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
     comptime dtype = T.dtype
@@ -1344,7 +1385,7 @@ def squeeze[
 def squeeze[
     T: TensorLike,
 ](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
-    T.rank == 2 and T.LayoutType.all_dims_known and dim[T, 1] == 1
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known and dim[T, 1] == 1
 ):
     """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
     comptime dtype = T.dtype
@@ -1499,10 +1540,10 @@ def stack[
     A: TensorLike,
     B: TensorLike,
 ](a: A, b: B) raises -> Static[A.dtype, 2, dim[A, 0]] where (
-    A.rank == 1
+    A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
     and B.dtype == A.dtype
-    and B.rank == 1
+    and B.LayoutType.rank == 1
     and B.LayoutType.all_dims_known
     and dim[B, 0] == dim[A, 0]
 ):
@@ -1535,7 +1576,9 @@ def reshape[
     rows: Int,
     cols: Int,
 ](a: T) raises -> Static[T.dtype, rows, cols] where (
-    rows * cols == dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
+    rows * cols == dim[T, 0]
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """A rank-2 copy of a rank-1 tensor, in row-major order.
 
@@ -1563,7 +1606,9 @@ def reshape[
     d1: Int,
     d2: Int,
 ](a: T) raises -> Static[T.dtype, d0, d1, d2] where (
-    d0 * d1 * d2 == dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
+    d0 * d1 * d2 == dim[T, 0]
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
@@ -1935,10 +1980,10 @@ def concatenate[
     A: TensorLike,
     B: TensorLike,
 ](a: A, b: B) raises -> Static[A.dtype, dim[A, 0] + dim[B, 0]] where (
-    A.rank == 1
+    A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
     and B.dtype == A.dtype
-    and B.rank == 1
+    and B.LayoutType.rank == 1
     and B.LayoutType.all_dims_known
 ):
     """Join two rank-1 tensors end to end: `numpy.concatenate` at `axis=0`.
@@ -1976,7 +2021,10 @@ def split[
 ](a: T) raises -> Tuple[
     Static[T.dtype, at], Static[T.dtype, dim[T, 0] - at]
 ] where (
-    at >= 0 and at <= dim[T, 0] and T.rank == 1 and T.LayoutType.all_dims_known
+    at >= 0
+    and at <= dim[T, 0]
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """Cut a rank-1 tensor in two at comptime index `at`: elements
     `[0, at)` and `[at, n)`. The inverse of `concatenate`.
@@ -2108,7 +2156,7 @@ def identity[
 def diag[
     T: TensorLike,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
-    T.rank == 1 and T.LayoutType.all_dims_known
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
 ):
     """A square matrix with `a` on its main diagonal. `numpy.diag`.
 
@@ -2126,7 +2174,9 @@ def diag[
 def diagonal[
     T: TensorLike,
 ](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
-    T.rank == 2 and T.LayoutType.all_dims_known and dim[T, 1] == dim[T, 0]
+    T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The main diagonal of a square matrix. `numpy.diagonal`."""
     comptime dtype = T.dtype
@@ -2190,7 +2240,7 @@ def _band_part[
     gpu: Bool,
 ](a: T, lower: Int, upper: Int) raises -> Static[
     T.dtype, dim[T, 0], dim[T, 1]
-] where (T.rank == 2 and T.LayoutType.all_dims_known):
+] where (T.LayoutType.rank == 2 and T.LayoutType.all_dims_known):
     """`linalg.matrix_band_part` with the counts staged the way MAX wants.
 
     MAX reads `num_lower`, `num_upper` and `exclude` out of scalar tensors
@@ -2246,7 +2296,7 @@ def tril[
     T: TensorLike,
     gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
-    T.rank == 2 and T.LayoutType.all_dims_known
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
     """`a` with everything above the diagonal zeroed. `numpy.tril` at `k=0`.
 
@@ -2266,7 +2316,7 @@ def triu[
     T: TensorLike,
     gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
-    T.rank == 2 and T.LayoutType.all_dims_known
+    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
     """`a` with everything below the diagonal zeroed. `numpy.triu` at `k=0`.
 
@@ -2359,7 +2409,7 @@ def pad[
 ] where (
     (mode == pad_constant or mode == pad_reflect or mode == pad_edge)
     and (mode == pad_constant or not gpu)
-    and T.rank == 1
+    and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
 ):
     """`a` widened by `before` elements in front and `after` behind.
@@ -2400,7 +2450,7 @@ def pad[
 ] where (
     (mode == pad_constant or mode == pad_reflect or mode == pad_edge)
     and (mode == pad_constant or not gpu)
-    and T.rank == 2
+    and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
 ):
     """`a` widened by `top`/`bottom` rows and `left`/`right` columns.
@@ -2815,7 +2865,9 @@ def vander[
     T: TensorLike,
     cols: Int,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], cols] where (
-    T.dtype.is_floating_point() and T.rank == 1 and T.LayoutType.all_dims_known
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
 ):
     """The Vandermonde matrix of `a`: `out[i, j] = a[i] ** (cols - 1 - j)`.
     `numpy.vander` with its default `increasing=False`."""
@@ -2837,10 +2889,10 @@ def meshgrid[
 ](x: A, y: B) raises -> Tuple[
     Static[A.dtype, dim[B, 0], dim[A, 0]], Static[A.dtype, dim[B, 0], dim[A, 0]]
 ] where (
-    A.rank == 1
+    A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
     and B.dtype == A.dtype
-    and B.rank == 1
+    and B.LayoutType.rank == 1
     and B.LayoutType.all_dims_known
 ):
     """Coordinate matrices from two coordinate vectors. `numpy.meshgrid`
@@ -2866,7 +2918,7 @@ def meshgrid[
 def flip[
     T: TensorLike,
 ](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
-    T.rank == 1 and T.LayoutType.all_dims_known
+    T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
 ):
     """A rank-1 tensor reversed. `numpy.flip` at `axis=0`."""
     comptime dtype = T.dtype
@@ -2897,10 +2949,10 @@ def vstack[
 ](a: A, b: B) raises -> Static[
     A.dtype, dim[A, 0] + dim[B, 0], dim[A, 1]
 ] where (
-    A.rank == 2
+    A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
     and B.dtype == A.dtype
-    and B.rank == 2
+    and B.LayoutType.rank == 2
     and B.LayoutType.all_dims_known
     and dim[B, 1] == dim[A, 1]
 ):
@@ -2927,10 +2979,10 @@ def dstack[
     A: TensorLike,
     B: TensorLike,
 ](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 1], 2] where (
-    A.rank == 2
+    A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
     and B.dtype == A.dtype
-    and B.rank == 2
+    and B.LayoutType.rank == 2
     and B.LayoutType.all_dims_known
     and dim[B, 0] == dim[A, 0]
     and dim[B, 1] == dim[A, 1]
@@ -2958,7 +3010,7 @@ def rot90[
     T: TensorLike,
     k: Int = 1,
 ](a: T) raises -> Static[T.dtype, dim[T, 1], dim[T, 0]] where (
-    k == 1 or k == 3 and T.rank == 2 and T.LayoutType.all_dims_known
+    k == 1 or k == 3 and T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
     """A matrix rotated `90 * k` degrees counterclockwise, for an odd `k`.
     `numpy.rot90`.
@@ -2994,7 +3046,7 @@ def rot90[
     T: TensorLike,
     k: Int = 1,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
-    k == 0 or k == 2 and T.rank == 2 and T.LayoutType.all_dims_known
+    k == 0 or k == 2 and T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
     """A matrix rotated `90 * k` degrees counterclockwise, for an even `k`.
     `numpy.rot90`.
@@ -3026,10 +3078,10 @@ def hstack[
 ](a: A, b: B) raises -> Static[
     A.dtype, dim[A, 0], dim[A, 1] + dim[B, 1]
 ] where (
-    A.rank == 2
+    A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
     and B.dtype == A.dtype
-    and B.rank == 2
+    and B.LayoutType.rank == 2
     and B.LayoutType.all_dims_known
     and dim[B, 0] == dim[A, 0]
 ):

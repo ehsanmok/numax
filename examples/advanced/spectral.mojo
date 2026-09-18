@@ -141,12 +141,12 @@ def main() raises:
     print("----------------------------")
 
     var a1 = symmetric(ctx)
-    var values = eigvalsh[dtype, n](a1)
+    var values = eigvalsh(a1)
     show_row("  eigvalsh(A)  w =", values)
     print("    ascending, and they sum to trace(A) = 20")
 
     var a2 = symmetric(ctx)
-    var decomposition = eigh[dtype, n](a2)
+    var decomposition = eigh(a2)
     show_row("  eigh(A).values  ", decomposition.values)
 
     # `A V == V diag(w)`, the eigen-equation column by column. `diag(w)` is
@@ -171,12 +171,12 @@ def main() raises:
     print("----------------------------")
 
     var b1 = general(ctx)
-    var singular = svdvals[dtype, n, n](b1)
+    var singular = svdvals(b1)
     show_row("  svdvals(A)   s =", singular)
     print("    descending, unlike the Array tier's, which is unsorted")
 
     var b2 = general(ctx)
-    var factored = svd[dtype, n, n](b2)
+    var factored = svd(b2)
     # `A == U diag(s) V^T`. `v` holds the right singular vectors as columns,
     # so SciPy's `Vh` is `transpose(v)` -- stated in `TensorSVD`'s docstring
     # and worth seeing once.
@@ -196,15 +196,15 @@ def main() raises:
     )
 
     var b3 = general(ctx)
-    print("  cond(A)      =", cond[dtype, n, n](b3))
+    print("  cond(A)      =", cond(b3))
     var b4 = general(ctx)
-    print("  matrix_rank(A) =", matrix_rank[dtype, n, n](b4))
+    print("  matrix_rank(A) =", matrix_rank(b4))
 
     # `pinv` is the SVD's first dependent: `V diag(1/s) U^T`, with the
     # singular values below `rcond` dropped. On a nonsingular matrix it is
     # the inverse, so `A^+ A` is the identity.
     var b5 = general(ctx)
-    var pseudo = pinv[dtype, n, n](b5)
+    var pseudo = pinv(b5)
     var b6 = general(ctx)
     var back = matmul(pseudo, b6)
     var identity_error = Float64(0)
@@ -226,14 +226,14 @@ def main() raises:
     # tensors, the same answer `numax.fft`'s `Spectrum` gives to the same
     # constraint.
     var b7 = general(ctx)
-    var spectrum = eigvals[dtype, n](b7)
+    var spectrum = eigvals(b7)
     var re = spectrum.re.to_host()
     var im = spectrum.im.to_host()
     for i in range(n):
         print("  lambda =", re[i], "+", im[i], "i")
 
     var b8 = general(ctx)
-    var form = schur[dtype, n](b8)
+    var form = schur(b8)
     # `A == Z T Z^T` with `T` quasi-triangular: a complex pair leaves a
     # `2 x 2` block on the diagonal rather than splitting into two real
     # eigenvalues that do not exist.
@@ -251,8 +251,8 @@ def main() raises:
     # the two are independent implementations (inverse scaling and squaring
     # against scaling and squaring), so agreement is evidence.
     var b9 = general(ctx)
-    var logarithm = logm[dtype, n](b9)
-    var exponentiated = expm[dtype, n](logarithm)
+    var logarithm = logm(b9)
+    var exponentiated = expm(logarithm)
     var original_again = general(ctx)
     print(
         "  max |expm(logm(A)) - A| =",
@@ -262,9 +262,9 @@ def main() raises:
     # `sqrtm` over `Tensor` is the general one -- the Bjorck-Hammarling
     # recurrence on the real Schur form -- not the SPD-only Array version.
     var b10 = general(ctx)
-    var root = sqrtm[dtype, n](b10)
+    var root = sqrtm(b10)
     var b11 = general(ctx)
-    var root_again = sqrtm[dtype, n](b11)
+    var root_again = sqrtm(b11)
     var squared = matmul(root, root_again)
     var third = general(ctx)
     print("  max |sqrtm(A)^2 - A| =", worst_difference(squared, third))
@@ -272,9 +272,9 @@ def main() raises:
     # `funm` takes the scalar function as a compile-time parameter, so
     # `funm[f=exp_of]` and `expm` must agree.
     var b12 = general(ctx)
-    var through_funm = funm[dtype, n, f=exp_of](b12)
+    var through_funm = funm[f=exp_of](b12)
     var b13 = general(ctx)
-    var through_expm = expm[dtype, n](b13)
+    var through_expm = expm(b13)
     print(
         "  max |funm(A, exp) - expm(A)| =",
         worst_difference(through_funm, through_expm),

@@ -294,21 +294,21 @@ def _bfgs_update[
     var s = _as_tensor[dtype, n](s_host, ctx)
     var y = _as_tensor[dtype, n](y_host, ctx)
 
-    var hy = matvec[dtype, n, n, gpu](h, y)
+    var hy = matvec[gpu=gpu](h, y)
     var hy_host = _to_list[dtype, n](hy)
 
     var yhy = 0.0
     for i in range(n):
         yhy += y_host[i] * hy_host[i]
 
-    var s_hy = outer[dtype, n, n, gpu](s, hy)
-    var hy_s = outer[dtype, n, n, gpu](hy, s)
+    var s_hy = outer[gpu=gpu](s, hy)
+    var hy_s = outer[gpu=gpu](hy, s)
 
     # `s s^T` needs a second binding for the same vector: `outer` takes
     # both operands `mut` and Mojo will not pass one binding twice. `O(n)`
     # against the `O(n^2)` product it feeds.
     var s_again = _as_tensor[dtype, n](s_host, ctx)
-    var s_s = outer[dtype, n, n, gpu](s, s_again)
+    var s_s = outer[gpu=gpu](s, s_again)
 
     var correction = multiply(add(s_hy, hy_s), Scalar[dtype](-1.0 / sy))
     var rank_one = multiply(s_s, Scalar[dtype]((1 + yhy / sy) / sy))
@@ -905,9 +905,7 @@ def _descend[
         comptime if method == "bfgs":
             # p = -H g, on the device.
             var g = _as_tensor[dtype, n_vars](reduced, ctx)
-            var hg = _to_list[dtype, n_vars](
-                matvec[dtype, n_vars, n_vars, gpu](h, g)
-            )
+            var hg = _to_list[dtype, n_vars](matvec[gpu=gpu](h, g))
             for i in range(n_vars):
                 direction[i] = -hg[i]
         elif method == "l-bfgs":

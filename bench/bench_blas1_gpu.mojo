@@ -72,16 +72,16 @@ def bench_blas1[n: Int](ctx: DeviceContext) raises:
     # `keep` matters most for the three that return a scalar the caller
     # drops, which is the shape an optimizer is likeliest to fold away.
     def dot_work() raises {mut x, mut y}:
-        keep(dot[dtype, n, True](x, y))
+        keep(dot[gpu=True](x, y))
 
     def nrm2_work() raises {mut x}:
-        keep(nrm2[dtype, n, True](x))
+        keep(nrm2[gpu=True](x))
 
     def asum_work() raises {mut x}:
-        keep(asum[dtype, n, True](x))
+        keep(asum[gpu=True](x))
 
     def axpy_work() raises {mut x, mut y, imm ctx}:
-        var s = axpy[dtype, n, True](Scalar[dtype](2.5), x, y)
+        var s = axpy[gpu=True](2.5, x, y)
         keep(s.buffer.unsafe_ptr())
         ctx.synchronize()
 
@@ -137,10 +137,10 @@ def bench_blas1[n: Int](ctx: DeviceContext) raises:
         want_abs += abs(xi)
     var want_nrm2 = sqrt(want_sq)
 
-    var got_dot = Float64(dot[dtype, n, True](x, y))
-    var got_nrm2 = Float64(nrm2[dtype, n, True](x))
-    var got_asum = Float64(asum[dtype, n, True](x))
-    var summed = axpy[dtype, n, True](Scalar[dtype](2.5), x, y).to_host()
+    var got_dot = Float64(dot[gpu=True](x, y))
+    var got_nrm2 = Float64(nrm2[gpu=True](x))
+    var got_asum = Float64(asum[gpu=True](x))
+    var summed = axpy[gpu=True](2.5, x, y).to_host()
     var worst_axpy = Float64(0)
     for i in range(n):
         var xi = Float64((i * 37 + 11) % 17) - 8.0

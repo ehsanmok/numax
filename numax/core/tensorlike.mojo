@@ -134,6 +134,22 @@ trait TensorLike:
         logical shape. The bulk write path on either device."""
         ...
 
+    def view_as[
+        dtype: DType
+    ](ref self) -> TileTensor[dtype, Self.LayoutType, origin_of(self)]:
+        """`view()` with its lanes typed `dtype`, a same-width bitcast.
+
+        For a routine over two conformers `A` and `B` under `where A.dtype
+        == B.dtype`: the checker types `b.view()`'s lanes `Scalar[B.dtype]`
+        and will not rewrite that into `Scalar[A.dtype]` from the clause,
+        so the body reads `b.view_as[A.dtype]()` instead. The bitcast is the
+        identity at equal dtypes, which the clause guarantees.
+        """
+        var v = self.view()
+        return TileTensor[dtype, Self.LayoutType, origin_of(self)](
+            ptr=v.ptr.unsafe_bitcast[Scalar[dtype]](), layout=v.layout
+        )
+
     def size(self) -> Int:
         """The run-time element count, read from the layout."""
         return self.view().layout.size()

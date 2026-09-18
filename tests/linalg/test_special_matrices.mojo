@@ -56,7 +56,7 @@ def test_toeplitz_two_argument_form() raises:
     var ctx = DeviceContext(api="cpu")
     var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
     var r = Static[dtype, 4](ctx, [9.0, 4.0, 5.0, 6.0])
-    var got = toeplitz[dtype, 3, 4](c, r).to_host()
+    var got = toeplitz(c, r).to_host()
 
     # r[0] is ignored: the corner is c[0].
     var want = [
@@ -80,7 +80,7 @@ def test_toeplitz_two_argument_form() raises:
 def test_toeplitz_symmetric_form() raises:
     var ctx = DeviceContext(api="cpu")
     var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var got = toeplitz[dtype, 3](c).to_host()
+    var got = toeplitz(c).to_host()
     var want = [1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 2.0, 1.0]
     for i in range(9):
         assert_almost_equal(Float64(got[i]), want[i], atol=0.0)
@@ -89,10 +89,10 @@ def test_toeplitz_symmetric_form() raises:
 def test_the_symmetric_form_equals_the_two_argument_one() raises:
     var ctx = DeviceContext(api="cpu")
     var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var one_arg = toeplitz[dtype, 3](c).to_host()
+    var one_arg = toeplitz(c).to_host()
     var c2 = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
     var r2 = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var two_arg = toeplitz[dtype, 3, 3](c2, r2).to_host()
+    var two_arg = toeplitz(c2, r2).to_host()
     for i in range(9):
         assert_almost_equal(Float64(one_arg[i]), Float64(two_arg[i]), atol=0.0)
 
@@ -104,10 +104,10 @@ def test_hankel_is_constant_along_antidiagonals() raises:
     var ctx = DeviceContext(api="cpu")
     var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
     var r = Static[dtype, 3](ctx, [3.0, 4.0, 5.0])
-    var got = toeplitz[dtype, 3, 3](c, r).to_host()
+    var got = toeplitz(c, r).to_host()
     var hc = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
     var hr = Static[dtype, 3](ctx, [3.0, 4.0, 5.0])
-    var h = hankel[dtype, 3, 3](hc, hr).to_host()
+    var h = hankel(hc, hr).to_host()
     var want = [1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]
     for i in range(9):
         assert_almost_equal(Float64(h[i]), want[i], atol=0.0)
@@ -121,7 +121,7 @@ def test_hankel_is_constant_along_antidiagonals() raises:
 def test_circulant_rotates_each_column() raises:
     var ctx = DeviceContext(api="cpu")
     var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var got = circulant[dtype, 3](c).to_host()
+    var got = circulant(c).to_host()
     var want = [1.0, 3.0, 2.0, 2.0, 1.0, 3.0, 3.0, 2.0, 1.0]
     for i in range(9):
         assert_almost_equal(Float64(got[i]), want[i], atol=0.0)
@@ -133,9 +133,9 @@ def test_a_symmetric_circulant_is_its_own_toeplitz() raises:
     independent check on both index rules at once."""
     var ctx = DeviceContext(api="cpu")
     var c = Static[dtype, 4](ctx, [1.0, 5.0, 9.0, 5.0])
-    var circ = circulant[dtype, 4](c).to_host()
+    var circ = circulant(c).to_host()
     var c2 = Static[dtype, 4](ctx, [1.0, 5.0, 9.0, 5.0])
-    var toep = toeplitz[dtype, 4](c2).to_host()
+    var toep = toeplitz(c2).to_host()
     for i in range(16):
         assert_almost_equal(Float64(circ[i]), Float64(toep[i]), atol=0.0)
 
@@ -148,7 +148,7 @@ def test_companion_eigenvalues_are_the_polynomial_roots() raises:
     1, 2 and 3, so the companion matrix's eigenvalues must be those."""
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 4](ctx, [1.0, -6.0, 11.0, -6.0])
-    var c = companion[dtype, 4](a)
+    var c = companion(a)
 
     var as_array = to_array[P](c)
     var roots = eigvals[P, 3](as_array)
@@ -171,7 +171,7 @@ def test_companion_eigenvalues_are_the_polynomial_roots() raises:
 def test_companion_has_the_documented_shape() raises:
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 4](ctx, [2.0, -4.0, 6.0, -8.0])
-    var got = companion[dtype, 4](a).to_host()
+    var got = companion(a).to_host()
     # First row is -a[1:]/a[0]; ones on the first subdiagonal.
     var want = [2.0, -3.0, 4.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
     for i in range(9):
@@ -207,7 +207,7 @@ def test_block_diag_places_the_blocks_and_zeros_the_rest() raises:
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 1, 2](ctx, [1.0, 2.0])
     var b = Static[dtype, 2, 1](ctx, [3.0, 4.0])
-    var got = block_diag[dtype, 1, 2, 2, 1](a, b).to_host()
+    var got = block_diag(a, b).to_host()
     # 3x3: [[1,2,0],[0,0,3],[0,0,4]]
     var want = [1.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 4.0]
     for i in range(9):
@@ -221,7 +221,7 @@ def test_khatri_rao_is_kron_column_by_column() raises:
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
     var b = Static[dtype, 2, 2](ctx, [5.0, 6.0, 7.0, 8.0])
-    var got = khatri_rao[dtype, 2, 2, 2](a, b).to_host()
+    var got = khatri_rao(a, b).to_host()
 
     var a_host = [1.0, 2.0, 3.0, 4.0]
     var b_host = [5.0, 6.0, 7.0, 8.0]
@@ -242,9 +242,9 @@ def test_convolution_matrix_times_a_vector_is_a_convolution() raises:
     `numax.signal.convolve`, which shares no code with this."""
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 3](ctx, [1.0, -2.0, 3.0])
-    var c = convolution_matrix[dtype, 3, 4](a)
+    var c = convolution_matrix[n=4](a)
     var v = Static[dtype, 4](ctx, [2.0, 0.0, -1.0, 5.0])
-    var got = matvec[dtype, 6, 4](c, v).to_host()
+    var got = matvec(c, v).to_host()
 
     var a_arr = Array[P, 3](fill=P.constant(0.0))
     var a_values = [1.0, -2.0, 3.0]

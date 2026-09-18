@@ -205,8 +205,8 @@ def _normal_equations[
     """`(A^T A, A^T b)` formed on the device and read back."""
     var at = transpose[gpu=gpu](a)
     var at_again = transpose[gpu=gpu](a)
-    var gram = matmul[dtype, n, m, n, gpu](at, a)
-    var rhs = matvec[dtype, n, m, gpu](at_again, b)
+    var gram = matmul[gpu=gpu](at, a)
+    var rhs = matvec[gpu=gpu](at_again, b)
     var g_host = gram.to_host()
     var g = List[Float64](capacity=n * n)
     for i in range(n * n):
@@ -223,7 +223,7 @@ def _residual_norm[
     ctx: DeviceContext,
 ) raises -> Float64:
     var xs = _as_tensor[dtype, n](x, ctx)
-    var ax = _to_list[dtype, m](matvec[dtype, m, n, gpu](a, xs))
+    var ax = _to_list[dtype, m](matvec[gpu=gpu](a, xs))
     var bh = _to_list[dtype, m](b)
     var total = 0.0
     for i in range(m):

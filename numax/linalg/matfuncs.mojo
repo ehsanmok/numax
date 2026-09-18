@@ -76,7 +76,8 @@ from std.math import ceil as _ceil, log2 as _log2, sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static, copy, eye, transpose
+from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.array import _canonical, Static, copy, eye, transpose
 from ..core.complex import Complex
 from ..core.numeric import FloatLike
 from ..core.ops import add, multiply, subtract
@@ -85,7 +86,7 @@ from ..core.plain import Plain
 from .blas import matmul
 from .eigen import schur
 from .lu import lu_factor
-from .misc import norm
+from .misc import _matrix_norm, norm
 
 
 comptime _B0 = 64764752532480000.0
@@ -126,9 +127,14 @@ approximant's own truncation error."""
 
 
 def expm[
-    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16 if gpu else 32
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The matrix exponential of `a`. `scipy.linalg.expm`.
 
@@ -162,79 +168,80 @@ def expm[
     `expm(a + b) == expm(a) @ expm(b)` is **not** generally true and holds
     only when `a` and `b` commute.
     """
+    comptime n = dim[T, 0]
     var ctx = a.context()
 
     # 1. Scale.
-    var magnitude = Float64(norm[dtype, n, 1, gpu](a))
+    var magnitude = Float64(_matrix_norm[ord=1, gpu=gpu](_canonical[n, n](a)))
     var squarings = 0
     if magnitude > _THETA13:
         squarings = Int(_ceil(_log2(magnitude / _THETA13)))
-    var scale = Scalar[dtype](1.0 / Float64(1 << squarings))
-    var scaled = multiply(a, scale)
+    var scale = Scalar[T.dtype](1.0 / Float64(1 << squarings))
+    var scaled = multiply(_canonical[n, n](a), scale)
 
     # 2. The approximant. `a2`, `a4` and `a6` are shared by both halves,
     # which is what makes degree 13 six products rather than thirteen. A
     # squaring needs a second named copy: `matmul` takes both operands
     # `mut` and Mojo will not pass one binding twice.
     var scaled_again = copy(scaled)
-    var a2 = matmul[dtype, n, n, n, gpu](scaled, scaled_again)
+    var a2 = matmul[gpu=gpu](scaled, scaled_again)
     var a2_again = copy(a2)
-    var a4 = matmul[dtype, n, n, n, gpu](a2, a2_again)
+    var a4 = matmul[gpu=gpu](a2, a2_again)
     var a2_third = copy(a2)
-    var a6 = matmul[dtype, n, n, n, gpu](a4, a2_third)
-    var identity = eye[n, dtype](ctx)
+    var a6 = matmul[gpu=gpu](a4, a2_third)
+    var identity = eye[n, T.dtype](ctx)
 
     var odd_inner = add(
         add(
-            multiply(a6, Scalar[dtype](_B13)),
-            multiply(a4, Scalar[dtype](_B11)),
+            multiply(a6, Scalar[T.dtype](_B13)),
+            multiply(a4, Scalar[T.dtype](_B11)),
         ),
-        multiply(a2, Scalar[dtype](_B9)),
+        multiply(a2, Scalar[T.dtype](_B9)),
     )
     var odd_outer = add(
         add(
             add(
-                multiply(a6, Scalar[dtype](_B7)),
-                multiply(a4, Scalar[dtype](_B5)),
+                multiply(a6, Scalar[T.dtype](_B7)),
+                multiply(a4, Scalar[T.dtype](_B5)),
             ),
-            multiply(a2, Scalar[dtype](_B3)),
+            multiply(a2, Scalar[T.dtype](_B3)),
         ),
-        multiply(identity, Scalar[dtype](_B1)),
+        multiply(identity, Scalar[T.dtype](_B1)),
     )
-    var odd_part = add(matmul[dtype, n, n, n, gpu](a6, odd_inner), odd_outer)
-    var u = matmul[dtype, n, n, n, gpu](scaled, odd_part)
+    var odd_part = add(matmul[gpu=gpu](a6, odd_inner), odd_outer)
+    var u = matmul[gpu=gpu](scaled, odd_part)
 
     var even_inner = add(
         add(
-            multiply(a6, Scalar[dtype](_B12)),
-            multiply(a4, Scalar[dtype](_B10)),
+            multiply(a6, Scalar[T.dtype](_B12)),
+            multiply(a4, Scalar[T.dtype](_B10)),
         ),
-        multiply(a2, Scalar[dtype](_B8)),
+        multiply(a2, Scalar[T.dtype](_B8)),
     )
     var even_outer = add(
         add(
             add(
-                multiply(a6, Scalar[dtype](_B6)),
-                multiply(a4, Scalar[dtype](_B4)),
+                multiply(a6, Scalar[T.dtype](_B6)),
+                multiply(a4, Scalar[T.dtype](_B4)),
             ),
-            multiply(a2, Scalar[dtype](_B2)),
+            multiply(a2, Scalar[T.dtype](_B2)),
         ),
-        multiply(identity, Scalar[dtype](_B0)),
+        multiply(identity, Scalar[T.dtype](_B0)),
     )
-    var v = add(matmul[dtype, n, n, n, gpu](a6, even_inner), even_outer)
+    var v = add(matmul[gpu=gpu](a6, even_inner), even_outer)
 
     # `(V - U) r = V + U`, solved against the whole right-hand side at once
     # so the update between diagonal blocks is a GEMM rather than `n`
     # separate `gemv`s.
     var denominator = subtract(v, u)
     var numerator = add(v, u)
-    var factored = lu_factor[dtype, n, gpu, block](denominator)
-    var result = factored.solve[n, block](numerator)
+    var factored = lu_factor[gpu=gpu, block=block](denominator)
+    var result = factored._solve_matrix[block=block](numerator)
 
     # 3. Undo the scaling.
     for _ in range(squarings):
         var mirror = copy(result)
-        result = matmul[dtype, n, n, n, gpu](result, mirror)
+        result = matmul[gpu=gpu](result, mirror)
     return result^
 
 
@@ -459,7 +466,7 @@ def _funm_host[
                 i0,
                 2,
                 2,
-                _complex_block[dtype, f](_take(t, n, i0, i0, 2, 2)),
+                _complex_block[f=f](_take(t, n, i0, i0, 2, 2)),
             )
     for sep in range(1, m):
         for bi in range(m - sep):
@@ -554,7 +561,7 @@ def _sqrtm_host[
                 i0,
                 2,
                 2,
-                _complex_block[dtype, _sqrt_f](_take(t, n, i0, i0, 2, 2)),
+                _complex_block[f=_sqrt_f](_take(t, n, i0, i0, 2, 2)),
             )
     for sep in range(1, m):
         for bi in range(m - sep):
@@ -677,22 +684,33 @@ def _logm_host[
 
 
 def _similar[
-    dtype: DType, n: Int, gpu: Bool
-](
-    mut z: Static[dtype, n, n], f_host: List[Scalar[dtype]], ctx: DeviceContext
-) raises -> Static[dtype, n, n]:
+    T: TensorLike,
+    gpu: Bool,
+](z: T, f_host: List[Scalar[T.dtype]], ctx: DeviceContext) raises -> Static[
+    T.dtype, dim[T, 0], dim[T, 0]
+] where (
+    T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
     """`Z F Z^T` on the device, the step every Schur-based function ends
     with."""
-    var f = Static[dtype, n, n](ctx, f_host.copy())
+    comptime n = dim[T, 0]
+    var f = Static[T.dtype, n, n](ctx, f_host.copy())
     var zt = transpose[gpu=gpu](z)
-    var half = matmul[dtype, n, n, n, gpu](z, f)
-    return matmul[dtype, n, n, n, gpu](half, zt)
+    var half = matmul[gpu=gpu](z, f)
+    return matmul[gpu=gpu](half, zt)
 
 
 def funm[
-    dtype: DType, n: Int, f: def[T: FloatLike](T) thin -> T, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    f: def[T: FloatLike](T) thin -> T,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """`f(a)` for a scalar `FloatLike` function `f`, as a function of the
     matrix. `scipy.linalg.funm(a, f)`.
@@ -717,21 +735,26 @@ def funm[
     var b = funm[f=my_f](a)
     ```
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "funm: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var decomposed = schur[dtype, n, gpu](a)
+    var decomposed = schur[gpu=gpu](a)
     var t = decomposed.t.to_host()
-    var f_t = _funm_host[dtype, f](t, n)
-    return _similar[dtype, n, gpu](decomposed.z, f_t, ctx)
+    var f_t = _funm_host[f=f](t, n)
+    return _similar[gpu=gpu](decomposed.z, f_t, ctx)
 
 
 def sqrtm[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The principal matrix square root, `X @ X == a`. `scipy.linalg.sqrtm`.
 
@@ -747,21 +770,26 @@ def sqrtm[
     loud. `numax.linalg.array.sqrtm` is the symmetric positive definite
     route through `eigh` for matrices small enough to live in registers.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "sqrtm: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var decomposed = schur[dtype, n, gpu](a)
+    var decomposed = schur[gpu=gpu](a)
     var t = decomposed.t.to_host()
     var u = _sqrtm_host(t, n)
-    return _similar[dtype, n, gpu](decomposed.z, u, ctx)
+    return _similar[gpu=gpu](decomposed.z, u, ctx)
 
 
 def logm[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The principal matrix logarithm, `expm(logm(a)) == a`.
     `scipy.linalg.logm`.
@@ -776,15 +804,16 @@ def logm[
     docstring has the ceiling. Real for a matrix with no eigenvalue on the
     closed negative real axis, NaN otherwise.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "logm: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
     var ctx = a.context()
-    var decomposed = schur[dtype, n, gpu](a)
+    var decomposed = schur[gpu=gpu](a)
     var t = decomposed.t.to_host()
     var l = _logm_host(t, n)
-    return _similar[dtype, n, gpu](decomposed.z, l, ctx)
+    return _similar[gpu=gpu](decomposed.z, l, ctx)
 
 
 def _cos_f[T: FloatLike](x: T) -> T:
@@ -796,42 +825,56 @@ def _sin_f[T: FloatLike](x: T) -> T:
 
 
 def cosm[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The matrix cosine, `funm` at `cos`. `scipy.linalg.cosm`. `cosm(a) @
     cosm(a) + sinm(a) @ sinm(a)` is the identity.
 
     **`gpu=True` does not compile**, since this reaches
     `schur` and `schur` refuses it."""
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "cosm: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
-    return funm[dtype, n, _cos_f, gpu](a)
+    return funm[f=_cos_f, gpu=gpu](a)
 
 
 def sinm[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`.
 
     **`gpu=True` does not compile**, since this reaches
     `schur` and `schur` refuses it."""
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "sinm: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
-    return funm[dtype, n, _sin_f, gpu](a)
+    return funm[f=_sin_f, gpu=gpu](a)
 
 
 def tanm[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """The matrix tangent, `sinm(a) @ inverse(cosm(a))`.
     `scipy.linalg.tanm`.
@@ -846,26 +889,31 @@ def tanm[
     **`gpu=True` does not compile**, since this reaches `schur` through
     `funm` and `schur` refuses it.
     """
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "tanm: gpu=True is a known-wrong device path and is refused;"
         " run the default gpu=False. See the docstring."
     )
-    var s = sinm[dtype, n, gpu](a)
-    var c = cosm[dtype, n, gpu](a)
+    var s = sinm[gpu=gpu](a)
+    var c = cosm[gpu=gpu](a)
     # `X C = S` is not a form `lu_factor` solves, so transpose it into
     # `C^T X^T = S^T`, which is the many-right-hand-sides shape, and
     # transpose the answer back. Three permutations, one factorization.
     var ct = transpose[gpu=gpu](c)
     var st = transpose[gpu=gpu](s)
-    var factorization = lu_factor[dtype, n, gpu](ct)
-    var xt = factorization.solve[n](st)
+    var factorization = lu_factor[gpu=gpu](ct)
+    var xt = factorization._solve_matrix(st)
     return transpose[gpu=gpu](xt)
 
 
 def fractional_matrix_power[
-    dtype: DType, n: Int, gpu: Bool = False
-](mut a: Static[dtype, n, n], t: Float64) raises -> Static[dtype, n, n] where (
-    dtype.is_floating_point() and n >= 1
+    T: TensorLike,
+    gpu: Bool = False,
+](a: T, t: Float64) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 1)
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
 ):
     """`a^t` for real `t`, as `expm(t logm(a))`.
     `scipy.linalg.fractional_matrix_power`. Real for a matrix with no
@@ -875,10 +923,11 @@ def fractional_matrix_power[
 
     **`gpu=True` does not compile**, since this reaches
     `logm` and so `schur`, which refuses it."""
+    comptime n = dim[T, 0]
     comptime assert not gpu, (
         "fractional_matrix_power: gpu=True is a known-wrong device path and is"
         " refused; run the default gpu=False. See the docstring."
     )
-    var l = logm[dtype, n, gpu](a)
-    var scaled = multiply(l, Scalar[dtype](t))
-    return expm[dtype, n, gpu](scaled)
+    var l = logm[gpu=gpu](a)
+    var scaled = multiply(l, Scalar[T.dtype](t))
+    return expm[gpu=gpu](scaled)
