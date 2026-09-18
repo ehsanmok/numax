@@ -66,7 +66,7 @@ Every method added is one more thing every future conformer must
 implement.
 
 ```mojo
-trait FloatLike(Copyable, Movable, Deinitable):
+trait FloatLike(Copyable, Deinitable):
     @staticmethod
     def one() -> Self: ...
     def __add__(self, rhs: Self) -> Self: ...

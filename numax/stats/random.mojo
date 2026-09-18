@@ -309,7 +309,7 @@ def seed(value: Int):
     _std_seed(value)
 
 
-struct Generator(Copyable, Movable):
+struct Generator(Copyable):
     """A named, reproducible source of draws. `numpy.random.Generator`.
 
     ```mojo

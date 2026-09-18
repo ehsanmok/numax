@@ -45,7 +45,7 @@ comptime _P = Plain[DType.float64]
 
 
 @fieldwise_init
-struct TestResult(Copyable, Movable):
+struct TestResult(Copyable):
     """What every test here returns: SciPy's `statistic` and `pvalue`, and
     the degrees of freedom `df` where the test has one (`0` where it does
     not)."""

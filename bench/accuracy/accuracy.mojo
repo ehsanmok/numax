@@ -114,7 +114,7 @@ def ulps_between(a: Float64, b: Float64) -> Float64:
     return Float64(abs(ia - ib))
 
 
-struct Stats(Copyable, Movable):
+struct Stats(Copyable):
     var max_abs: Float64
     var max_abs_at: Float64
     var max_rel: Float64

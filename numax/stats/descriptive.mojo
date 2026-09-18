@@ -245,7 +245,7 @@ def trim_mean[
 
 
 @fieldwise_init
-struct Description(Copyable, Movable):
+struct Description(Copyable):
     """What `describe` returns: `scipy.stats.describe`'s six fields --
     the count, the extremes, the mean, the `ddof=1` variance, and the
     skewness and Fisher kurtosis."""

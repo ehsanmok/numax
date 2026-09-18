@@ -68,7 +68,7 @@ comptime _P = Plain[DType.float64, 1]
 
 
 @fieldwise_init
-struct QuadResult(Copyable, Movable):
+struct QuadResult(Copyable):
     """The integral, plus how confident to be about it.
 
     `error` is the sum of the accepted panels' own error estimates -- a
@@ -240,7 +240,7 @@ def quad_vec[
 
 
 @fieldwise_init
-struct IVPResult(Copyable, Movable):
+struct IVPResult(Copyable):
     """The outcome of an adaptive ODE integration.
 
     `accepted` and `rejected` are the step counts, and they are the two

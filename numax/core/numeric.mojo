@@ -19,7 +19,7 @@ is one more thing every future `FloatLike` type must implement.
 """
 
 
-trait FloatLike(Copyable, Deinitable, Movable):
+trait FloatLike(Copyable, Deinitable):
     """The minimal arithmetic a real-valued vectorized kernel needs."""
 
     @staticmethod

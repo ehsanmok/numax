@@ -455,7 +455,7 @@ def corrcoef[
 
 
 @fieldwise_init
-struct CorrelationResult(Copyable, Movable):
+struct CorrelationResult(Copyable):
     """What `pearsonr`, `spearmanr` and `kendalltau` return: the
     correlation `statistic` and the two-sided `pvalue` of the test that it
     is zero, SciPy's result shape."""
@@ -650,7 +650,7 @@ def _tie_sums(values: List[Float64]) -> Tuple[Float64, Float64, Float64]:
 
 
 @fieldwise_init
-struct LinregressResult(Copyable, Movable):
+struct LinregressResult(Copyable):
     """What `linregress` returns: `scipy.stats.linregress`'s result fields,
     the fitted line, its correlation, the two-sided p-value of a zero
     slope, and the standard errors of slope and intercept."""

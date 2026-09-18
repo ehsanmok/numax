@@ -323,7 +323,7 @@ def _chebyshev_cosine_table[n: Int]() -> Array[Float64, n * n]:
 
 
 @fieldwise_init
-struct CubicSpline[T: FloatLike, n: Int](Copyable, Movable):
+struct CubicSpline[T: FloatLike, n: Int](Copyable):
     """A natural cubic spline through `n` uniformly spaced knots, built
     once and called many times. `scipy.interpolate.CubicSpline`.
 
@@ -359,7 +359,7 @@ struct CubicSpline[T: FloatLike, n: Int](Copyable, Movable):
 
 
 @fieldwise_init
-struct Chebyshev[T: FloatLike, n: Int](Copyable, Movable):
+struct Chebyshev[T: FloatLike, n: Int](Copyable):
     """A Chebyshev series on `[a, b]`, built once and called many times.
     `numpy.polynomial.chebyshev.Chebyshev`.
 

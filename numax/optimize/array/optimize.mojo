@@ -78,7 +78,7 @@ comptime _P = Plain[DType.float64]
 
 
 @fieldwise_init
-struct OptimizeResult(Copyable, Movable):
+struct OptimizeResult(Copyable):
     """The outcome of a tier-2 iteration: the answer, plus whether it is
     one.
 
@@ -95,7 +95,7 @@ struct OptimizeResult(Copyable, Movable):
 
 
 @fieldwise_init
-struct MinimizeResult[n_vars: Int](Copyable, Movable):
+struct MinimizeResult[n_vars: Int](Copyable):
     """`OptimizeResult` for a multi-variable minimization: `x` is the
     argument vector, `grad_norm` the infinity-norm of the gradient at it
     (the quantity the convergence test actually looks at)."""
@@ -539,7 +539,7 @@ comptime _MINIMIZER_TOL = 1.48e-8
 
 
 @fieldwise_init
-struct _Bracket(Copyable, Movable):
+struct _Bracket(Copyable):
     """Three points with `f(b)` below both `f(a)` and `f(c)`, which is what
     guarantees a minimum lies between `a` and `c`. `found` is false when the
     search ran out of expansions, which means `f` decreased monotonically
