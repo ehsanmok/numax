@@ -34,6 +34,7 @@ from numax.linalg import (
     outer,
     lstsq,
     qr_factor,
+    rq,
     solve,
     solve_triangular,
     trace,
@@ -1475,6 +1476,100 @@ def test_lstsq_recovers_an_exact_linear_fit() raises:
     var fit = lstsq[DType.float64, 4, 2, False, 2](design, b).to_host()
     assert_almost_equal(Float64(fit[0]), 1.0, atol=1e-12)
     assert_almost_equal(Float64(fit[1]), 2.0, atol=1e-12)
+
+
+# ------------------------------------------------------------------
+# rq
+# ------------------------------------------------------------------
+
+
+def test_rq_reconstructs_the_matrix() raises:
+    """scipy.linalg.rq: a == r @ q."""
+    comptime n = 4
+    var ctx = _cpu()
+    var values = List[Scalar[DType.float64]](capacity=n * n)
+    # A well-conditioned nonsymmetric matrix.
+    var raw = [
+        4.0,
+        1.0,
+        -2.0,
+        0.5,
+        1.0,
+        5.0,
+        0.0,
+        -1.0,
+        -2.0,
+        0.0,
+        6.0,
+        2.0,
+        0.5,
+        -1.0,
+        2.0,
+        7.0,
+    ]
+    for i in range(n * n):
+        values.append(Scalar[DType.float64](raw[i]))
+    var a = Static[DType.float64, n, n](ctx, values.copy())
+    var original = Static[DType.float64, n, n](ctx, values^)
+
+    var factored = rq(a)
+    var product = matmul(factored.r, factored.q)
+    var got = product.to_host()
+    var want = original.to_host()
+    for i in range(n * n):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-11)
+
+
+def test_rq_r_is_upper_triangular_and_q_is_orthogonal() raises:
+    comptime n = 4
+    var ctx = _cpu()
+    var values = List[Scalar[DType.float64]](capacity=n * n)
+    var raw = [
+        3.0,
+        -1.0,
+        2.0,
+        1.0,
+        0.5,
+        4.0,
+        -2.0,
+        0.0,
+        1.0,
+        1.0,
+        5.0,
+        -3.0,
+        -2.0,
+        0.5,
+        1.0,
+        6.0,
+    ]
+    for i in range(n * n):
+        values.append(Scalar[DType.float64](raw[i]))
+    var a = Static[DType.float64, n, n](ctx, values^)
+
+    var factored = rq(a)
+
+    # R upper triangular: everything strictly below the diagonal is zero.
+    var r = factored.r.to_host()
+    for i in range(n):
+        for j in range(i):
+            assert_almost_equal(Float64(r[i * n + j]), 0.0, atol=1e-12)
+
+    # Q orthogonal: Q Q^T is the identity. RQ gives orthonormal *rows*.
+    var q = factored.q.to_host()
+    for r1 in range(n):
+        for r2 in range(n):
+            var acc = 0.0
+            for k in range(n):
+                acc += Float64(q[r1 * n + k]) * Float64(q[r2 * n + k])
+            assert_almost_equal(acc, 1.0 if r1 == r2 else 0.0, atol=1e-11)
+
+
+def test_rq_of_a_one_by_one_is_the_scalar() raises:
+    var ctx = _cpu()
+    var a = Static[DType.float64, 1, 1](ctx, [3.0])
+    var factored = rq(a)
+    var product = matmul(factored.r, factored.q).to_host()
+    assert_almost_equal(Float64(product[0]), 3.0, atol=1e-12)
 
 
 def main() raises:

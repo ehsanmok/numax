@@ -32,7 +32,7 @@ from std.utils import IndexList
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.array import Dynamic, Static, zeros, zeros_dyn
+from ..core.array import Dynamic, Static, transpose, zeros, zeros_dyn
 
 from .basic import pinv
 from .blas import _target, matvec
@@ -688,3 +688,110 @@ def lstsq[
         raise Error(
             "lstsq: unknown method '", method, "'; expected 'qr' or 'svd'"
         )
+
+
+struct TensorRQ[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point() and n >= 1
+):
+    """`rq`'s result: `A = R Q` with `R` upper triangular and `Q`
+    orthogonal.
+
+    Both factors are formed, unlike `TensorQR`, which holds reflectors and
+    forms `Q` on request. The reason is that the reflectors here belong to
+    a *different* matrix -- the reversed transpose `rq` factors -- so they
+    say nothing directly about this `A`, and keeping them would hand a
+    caller something whose meaning needs a paragraph. Two matrices is the
+    honest shape.
+    """
+
+    var r: Static[Self.dtype, Self.n, Self.n]
+    """The upper triangular factor."""
+
+    var q: Static[Self.dtype, Self.n, Self.n]
+    """The orthogonal factor."""
+
+    def __init__(
+        out self,
+        var r: Static[Self.dtype, Self.n, Self.n],
+        var q: Static[Self.dtype, Self.n, Self.n],
+    ):
+        self.r = r^
+        self.q = q^
+
+
+def _reverse_rows[
+    dtype: DType, n: Int
+](a: Static[dtype, n, n]) raises -> Static[dtype, n, n]:
+    """`J A`, with `J` the reversal permutation: row `i` becomes row
+    `n - 1 - i`. Host-side, `n` row copies."""
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        for j in range(n):
+            values[(n - 1 - i) * n + j] = source[i * n + j]
+    return Static[dtype, n, n](a.context(), values^)
+
+
+def _reverse_both[
+    dtype: DType, n: Int
+](a: Static[dtype, n, n]) raises -> Static[dtype, n, n]:
+    """`J A J`: both index orders reversed, so `(i, j)` becomes
+    `(n - 1 - i, n - 1 - j)`.
+
+    This is the step that turns a lower triangular matrix into an upper
+    triangular one, which is what makes the reversal trick below produce
+    an `R` rather than an `L`.
+    """
+    var source = a.to_host()
+    var values = List[Scalar[dtype]](length=n * n, fill=0)
+    for i in range(n):
+        for j in range(n):
+            values[(n - 1 - i) * n + (n - 1 - j)] = source[i * n + j]
+    return Static[dtype, n, n](a.context(), values^)
+
+
+def rq[
+    dtype: DType, n: Int, gpu: Bool = False, block: Int = 16
+](mut a: Static[dtype, n, n]) raises -> TensorRQ[dtype, n] where (
+    dtype.is_floating_point() and n >= n and n >= 1
+):
+    """The RQ factorization of a square `a`: `a = R Q` with `R` upper
+    triangular and `Q` orthogonal. `scipy.linalg.rq`.
+
+    The `n >= n` in the `where` clause is not a typo: `qr_factor` requires
+    `m >= n`, and the prover does no arithmetic on evidence, so a square
+    call restates that clause with both sides spelled `n` (`findings.mdc`).
+
+    LAPACK has `gerqf` for this; numax does not, and does not need one.
+    With `J` the reversal permutation (`J J == I`), take the QR of
+    `(J a)^T`:
+
+        (J a)^T = Qb Rb   so   J a = Rb^T Qb^T
+
+    and therefore `a = (J Rb^T J)(J Qb^T)`. The right factor is a product
+    of orthogonal matrices and so orthogonal; the left one is `Rb^T`
+    conjugated by `J`, and conjugating a *lower* triangular matrix by the
+    reversal gives an *upper* triangular one, which is the whole trick.
+    So `R = J Rb^T J` and `Q = J Qb^T`, and the actual factorization work
+    is `qr_factor`'s -- blocked, device-resident, trailing update in MAX.
+
+    Square only. SciPy takes a rectangular `a`, but the reversal identity
+    above needs `J` on both sides of `R`, so a non-square case wants two
+    different reversals and a shape argument that changes the return type;
+    deferred rather than guessed at.
+
+    **Tier 2**, like `qr_factor`. The three permutations and the two
+    transposes are `O(n^2)` on the host, against the factorization's
+    `O(n^3)` on the device.
+    """
+    var reversed = _reverse_rows(a)
+    var transposed = transpose[gpu=gpu](reversed)
+    var factored = qr_factor[dtype, n, n, gpu, block](transposed)
+
+    var rb = factored.r()
+    var qb = factored.q()
+
+    var rb_t = transpose[gpu=gpu](rb)
+    var qb_t = transpose[gpu=gpu](qb)
+
+    return TensorRQ[dtype, n](_reverse_both(rb_t), _reverse_rows(qb_t))

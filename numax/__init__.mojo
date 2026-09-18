@@ -371,6 +371,8 @@ from .special.struve import struve
 # re-exported here: it shares these names, so a flat surface carrying both
 # would resolve `cholesky` by a type the reader has to look up.
 from .linalg import (
+    Polar,
+    TensorRQ,
     asum,
     axpy,
     batched_matmul,
@@ -412,9 +414,13 @@ from .linalg import (
     neg_inf,
     norm,
     nrm2,
+    null_space,
+    orth,
     outer,
     pinv,
+    polar,
     qr_factor,
+    rq,
     schur,
     sinm,
     slogdet,
@@ -429,6 +435,7 @@ from .linalg import (
     svdvals,
     sytrd,
     TensorBidiagonal,
+    tanm,
     tensordot,
     TensorEigh,
     tensorinv,

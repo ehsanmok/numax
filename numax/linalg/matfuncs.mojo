@@ -831,6 +831,40 @@ def sinm[
     return funm[dtype, n, _sin_f, gpu](a)
 
 
+def tanm[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> Static[dtype, n, n] where (
+    dtype.is_floating_point() and n >= 1
+):
+    """The matrix tangent, `sinm(a) @ inverse(cosm(a))`.
+    `scipy.linalg.tanm`.
+
+    A *matrix* quotient, not an elementwise one, and the order matters:
+    this is the right quotient SciPy computes, so it solves
+    `X @ cosm(a) == sinm(a)` rather than forming an inverse. A matrix whose
+    cosine is singular -- an eigenvalue at an odd multiple of `pi / 2` --
+    has no tangent, and `solve`'s pivoting reports that rather than
+    returning a large finite answer.
+
+    **`gpu=True` does not compile**, since this reaches `schur` through
+    `funm` and `schur` refuses it.
+    """
+    comptime assert not gpu, (
+        "tanm: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
+    var s = sinm[dtype, n, gpu](a)
+    var c = cosm[dtype, n, gpu](a)
+    # `X C = S` is not a form `lu_factor` solves, so transpose it into
+    # `C^T X^T = S^T`, which is the many-right-hand-sides shape, and
+    # transpose the answer back. Three permutations, one factorization.
+    var ct = transpose[gpu=gpu](c)
+    var st = transpose[gpu=gpu](s)
+    var factorization = lu_factor[dtype, n, gpu](ct)
+    var xt = factorization.solve[n](st)
+    return transpose[gpu=gpu](xt)
+
+
 def fractional_matrix_power[
     dtype: DType, n: Int, gpu: Bool = False
 ](mut a: Static[dtype, n, n], t: Float64) raises -> Static[dtype, n, n] where (

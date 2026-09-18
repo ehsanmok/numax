@@ -34,11 +34,11 @@ modules matter when reading or extending.
 | `banded` | `solve_banded`, `solveh_banded`, `cholesky_banded`, `cho_solve_banded`, `solve_toeplitz`, `solve_circulant` | `_banded`, `_solve_toeplitz` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
 | `lu` | `lu_factor`, `TensorLU`, `det`, `slogdet` | `_decomp_lu` |
-| `qr` | `qr_factor`, `TensorQR`, `lstsq` | `_decomp_qr` |
-| `basic` | `solve`, `inverse`, `pinv` | `_basic` |
+| `qr` | `qr_factor`, `TensorQR`, `lstsq`, `rq`, `TensorRQ` | `_decomp_qr` |
+| `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `fro`, `inf`, `neg_inf` | `_misc` |
 | `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD`, `matrix_rank`, `hessenberg`, `TensorHessenberg`, `eigvals`, `Eigenvalues`, `schur`, `TensorSchur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
-| `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `fractional_matrix_power` | `_matfuncs` |
+| `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `tanm`, `fractional_matrix_power` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
@@ -195,7 +195,17 @@ from .banded import (
     solveh_banded,
     solve_toeplitz,
 )
-from .basic import inverse, pinv, solve, tensorinv, tensorsolve
+from .basic import (
+    Polar,
+    inverse,
+    null_space,
+    orth,
+    pinv,
+    polar,
+    solve,
+    tensorinv,
+    tensorsolve,
+)
 from .blas import (
     asum,
     axpy,
@@ -240,9 +250,10 @@ from .matfuncs import (
     logm,
     sinm,
     sqrtm,
+    tanm,
 )
 from .misc import cond, fro, inf, neg_inf, norm, trace
-from .qr import TensorQR, lstsq, qr_factor
+from .qr import TensorQR, TensorRQ, lstsq, qr_factor, rq
 from .special_matrices import (
     block_diag,
     circulant,

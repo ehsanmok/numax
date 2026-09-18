@@ -39,6 +39,7 @@ from numax.linalg.eigen import (
     _golub_kahan,
     _top_n_descending,
 )
+from numax.linalg.basic import null_space, orth, polar
 from numax.linalg.array import eigvalsh as array_eigvalsh
 from numax.linalg.array import svdvals as array_svdvals
 
@@ -1480,6 +1481,106 @@ def test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient() raise
     ]
     for i in range(3):
         assert_almost_equal(x[i], Scalar[dtype](expected[i]), atol=1e-10)
+
+
+# ------------------------------------------------------------------
+# The SVD-derived bases: orth, null_space, polar
+# ------------------------------------------------------------------
+
+
+def _rank_deficient() raises -> Static[dtype, 3, 3]:
+    """Column 2 is column 0 plus column 1, so the rank is 2 and the null
+    space is spanned by (1, 1, -1)."""
+    var ctx = DeviceContext(api="cpu")
+    var a = zeros[dtype, 3, 3](ctx)
+    var host = a.to_host()
+    var values = [1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0]
+    for i in range(9):
+        host[i] = Scalar[dtype](values[i])
+    a.copy_from_host(host)
+    return a^
+
+
+def test_orth_returns_a_basis_of_the_right_width_and_is_orthonormal() raises:
+    var a = _rank_deficient()
+    var q = orth(a)
+    assert_equal(q.dim_at(0), 3)
+    # Rank 2, so two columns -- a run-time width, which is why the result
+    # is Dynamic.
+    assert_equal(q.dim_at(1), 2)
+
+    # Q^T Q is the 2x2 identity.
+    var h = q.to_host()
+    for c1 in range(2):
+        for c2 in range(2):
+            var dot = 0.0
+            for r in range(3):
+                dot += Float64(h[r * 2 + c1]) * Float64(h[r * 2 + c2])
+            assert_almost_equal(dot, 1.0 if c1 == c2 else 0.0, atol=1e-12)
+
+
+def test_orth_of_a_full_rank_matrix_has_every_column() raises:
+    var a = _hilbert[4]()
+    var q = orth(a)
+    assert_equal(q.dim_at(1), 4)
+
+
+def test_null_space_is_annihilated_by_the_matrix() raises:
+    var a = _rank_deficient()
+    var original = _copy_of(a)
+    var z = null_space(a)
+    assert_equal(z.dim_at(0), 3)
+    # Rank 2 of 3, so a one-dimensional null space.
+    assert_equal(z.dim_at(1), 1)
+
+    # a @ z == 0 to rounding.
+    var av = original.to_host()
+    var zv = z.to_host()
+    for r in range(3):
+        var acc = 0.0
+        for k in range(3):
+            acc += Float64(av[r * 3 + k]) * Float64(zv[k])
+        assert_almost_equal(acc, 0.0, atol=1e-12)
+
+
+def test_null_space_of_a_full_rank_matrix_is_empty() raises:
+    var a = _hilbert[4]()
+    var z = null_space(a)
+    assert_equal(z.dim_at(1), 0)
+
+
+def test_polar_factors_reconstruct_and_have_their_defining_properties() raises:
+    var a = _hilbert[4]()
+    var original = _copy_of(a)
+    var factored = polar(a)
+
+    var u = factored.u.to_host()
+    var pp = factored.p.to_host()
+    var av = original.to_host()
+
+    # a == u @ p
+    for r in range(4):
+        for c in range(4):
+            var acc = 0.0
+            for k in range(4):
+                acc += Float64(u[r * 4 + k]) * Float64(pp[k * 4 + c])
+            assert_almost_equal(acc, Float64(av[r * 4 + c]), atol=1e-11)
+
+    # u is orthogonal.
+    for c1 in range(4):
+        for c2 in range(4):
+            var dot = 0.0
+            for r in range(4):
+                dot += Float64(u[r * 4 + c1]) * Float64(u[r * 4 + c2])
+            assert_almost_equal(dot, 1.0 if c1 == c2 else 0.0, atol=1e-11)
+
+    # p is symmetric, and positive semidefinite because a Hilbert matrix
+    # is: its polar p is a itself up to rounding when a is already SPD.
+    for r in range(4):
+        for c in range(4):
+            assert_almost_equal(
+                Float64(pp[r * 4 + c]), Float64(pp[c * 4 + r]), atol=1e-11
+            )
 
 
 def main() raises:

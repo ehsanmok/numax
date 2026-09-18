@@ -262,8 +262,10 @@ from .special.beta import beta
 # `numax.linalg.array` and shares these names, so it stays out of the
 # prelude for the same reason the builtin-shadowing reductions do.
 from .linalg import (
+    Polar,
     TensorLU,
     TensorQR,
+    TensorRQ,
     asum,
     axpy,
     batched_matmul,
@@ -285,6 +287,10 @@ from .linalg import (
     hankel,
     hessenberg,
     hilbert,
+    null_space,
+    orth,
+    polar,
+    rq,
     schur,
     dot,
     fro,
@@ -314,6 +320,7 @@ from .linalg import (
     svd,
     svdvals,
     sytrd,
+    tanm,
     tensordot,
     tensorinv,
     tensorsolve,

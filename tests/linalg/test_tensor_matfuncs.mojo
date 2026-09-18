@@ -1,5 +1,6 @@
 """Tests for the Schur-based matrix functions over `Tensor`: `sqrtm`,
-`logm`, `funm`, `cosm`, `sinm` and `fractional_matrix_power`, against
+`logm`, `funm`, `cosm`, `sinm`, `tanm` and `fractional_matrix_power`,
+against
 `scipy.linalg` on two matrices -- one with a real spectrum, one with two
 complex pairs -- and against the identities that define them (`X @ X ==
 a`, `expm(logm(a)) == a`, `cos^2 + sin^2 == I`), plus the repeated and
@@ -20,6 +21,7 @@ from numax.linalg import (
     matmul,
     sinm,
     sqrtm,
+    tanm,
 )
 
 comptime dtype = DType.float64
@@ -404,6 +406,43 @@ def test_fractional_matrix_power_matches_scipy_and_sqrtm() raises:
     var root = sqrtm(a4).to_host()
     for i in range(16):
         assert_almost_equal(Float64(half[i]), Float64(root[i]), atol=1e-12)
+
+
+def test_tanm_is_the_matrix_quotient_of_sinm_by_cosm() raises:
+    """scipy.linalg.tanm(a) satisfies tanm(a) @ cosm(a) == sinm(a).
+
+    A *matrix* quotient, so the check is the defining product rather than
+    an elementwise ratio -- which is the whole reason the name exists.
+    """
+    comptime n = 3
+    var a = _matrix[n]([0.3, 0.1, 0.0, 0.1, 0.2, 0.05, 0.0, 0.05, 0.4])
+    var original = _matrix[n]([0.3, 0.1, 0.0, 0.1, 0.2, 0.05, 0.0, 0.05, 0.4])
+    var for_sin = _matrix[n]([0.3, 0.1, 0.0, 0.1, 0.2, 0.05, 0.0, 0.05, 0.4])
+    var for_cos = _matrix[n]([0.3, 0.1, 0.0, 0.1, 0.2, 0.05, 0.0, 0.05, 0.4])
+
+    var t = tanm(a)
+    var s = sinm(for_sin)
+    var c = cosm(for_cos)
+
+    var product = matmul(t, c)
+    var want = s.to_host()
+    var got = product.to_host()
+    for i in range(n * n):
+        assert_almost_equal(Float64(got[i]), Float64(want[i]), atol=1e-10)
+    _ = original^
+
+
+def test_tanm_of_a_diagonal_matrix_is_the_scalar_tangent() raises:
+    """A diagonal matrix's matrix functions are elementwise on the
+    diagonal, which pins the orientation of the quotient."""
+    comptime n = 2
+    var a = _matrix[n]([0.5, 0.0, 0.0, -0.25])
+    var t = tanm(a).to_host()
+    # tan(0.5) = 0.5463024898437905, tan(-0.25) = -0.25534192122103627
+    assert_almost_equal(Float64(t[0]), 0.5463024898437905, atol=1e-12)
+    assert_almost_equal(Float64(t[1]), 0.0, atol=1e-12)
+    assert_almost_equal(Float64(t[2]), 0.0, atol=1e-12)
+    assert_almost_equal(Float64(t[3]), -0.25534192122103627, atol=1e-12)
 
 
 def main() raises:

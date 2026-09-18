@@ -136,6 +136,207 @@ def pinv[
     return inner[gpu=gpu](scaled, factored.u)
 
 
+def _svd_tolerance[
+    dtype: DType
+](s: List[Scalar[dtype]], m: Int, n: Int, rcond: Optional[Float64]) -> Float64:
+    """The singular-value cutoff `orth` and `null_space` share.
+
+    SciPy's default: the largest singular value times `max(m, n)` times the
+    machine epsilon of `dtype`. An explicit `rcond` is used as a multiplier
+    of the largest singular value instead, which is `pinv`'s convention in
+    this module.
+    """
+    var largest = Float64(s[0])
+    if rcond:
+        return largest * rcond.value()
+    # The same two constants `matrix_rank` uses, for the same reason: this
+    # has to be the cutoff that routine reports a rank against.
+    var eps: Float64
+    comptime if dtype == DType.float32:
+        eps = 1.1920929e-07
+    else:
+        eps = 2.220446049250313e-16
+    return largest * Float64(max(m, n)) * eps
+
+
+def orth[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](
+    mut a: Static[dtype, m, n], rcond: Optional[Float64] = None
+) raises -> Dynamic[dtype, 2] where (
+    dtype.is_floating_point() and m >= n and n >= 1
+):
+    """An orthonormal basis for the range of `a`, as columns.
+    `scipy.linalg.orth`.
+
+    The columns of `U` whose singular value clears the tolerance, so the
+    result is `m x rank`. **`rank` is a run-time fact**, which is why this
+    returns a `Dynamic` where `svd` returns a statically shaped
+    `TensorSVD`: the number of columns depends on the matrix's *values*,
+    and nothing in the type system can see it. `matrix_rank` is the same
+    count on its own.
+
+    `rcond` defaults to SciPy's cutoff -- the largest singular value times
+    `max(m, n)` times the machine epsilon -- and an explicit one is read as
+    a multiplier of the largest singular value, matching `pinv` above.
+
+    **Tier 2, and `gpu=True` does not compile**, since `svd` refuses it.
+    """
+    comptime assert not gpu, (
+        "orth: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
+    var factored = svd[gpu=gpu](a)
+    var s = factored.s.to_host()
+    var cutoff = _svd_tolerance(s, m, n, rcond)
+
+    var keep = List[Int](capacity=n)
+    for j in range(n):
+        if Float64(s[j]) > cutoff:
+            keep.append(j)
+
+    var u = factored.u.to_host()
+    var rank = len(keep)
+    var values = List[Scalar[dtype]](length=m * rank, fill=0)
+    for i in range(m):
+        for c in range(rank):
+            values[i * rank + c] = u[i * n + keep[c]]
+
+    var extents = List[Int](capacity=2)
+    extents.append(m)
+    extents.append(rank)
+    return Dynamic[dtype, 2](
+        a.context(), row_major(_dyn_shape_from[2](extents)), values^
+    )
+
+
+def null_space[
+    dtype: DType, m: Int, n: Int, gpu: Bool = False
+](
+    mut a: Static[dtype, m, n], rcond: Optional[Float64] = None
+) raises -> Dynamic[dtype, 2] where (
+    dtype.is_floating_point() and m >= n and n >= 1
+):
+    """An orthonormal basis for the null space of `a`, as columns.
+    `scipy.linalg.null_space`.
+
+    `orth`'s complement: the columns of `V` whose singular value falls
+    *below* the tolerance, so the result is `n x (n - rank)` and is
+    `Dynamic` for the same reason. `a @ null_space(a)` is zero to rounding.
+
+    A full-rank `a` gives a basis with zero columns rather than an error,
+    which is SciPy's behavior and the useful one -- the emptiness is the
+    answer.
+    """
+    comptime assert not gpu, (
+        "null_space: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
+    var factored = svd[gpu=gpu](a)
+    var s = factored.s.to_host()
+    var cutoff = _svd_tolerance(s, m, n, rcond)
+
+    var drop = List[Int](capacity=n)
+    for j in range(n):
+        if Float64(s[j]) <= cutoff:
+            drop.append(j)
+
+    # `v` holds the right singular vectors as columns, so a null-space
+    # basis vector is a column of `v` -- no transpose, unlike SciPy, whose
+    # `Vh` makes it a row.
+    var v = factored.v.to_host()
+    var nullity = len(drop)
+    var values = List[Scalar[dtype]](length=n * nullity, fill=0)
+    for i in range(n):
+        for c in range(nullity):
+            values[i * nullity + c] = v[i * n + drop[c]]
+
+    var extents = List[Int](capacity=2)
+    extents.append(n)
+    extents.append(nullity)
+    return Dynamic[dtype, 2](
+        a.context(), row_major(_dyn_shape_from[2](extents)), values^
+    )
+
+
+struct Polar[dtype: DType, n: Int](
+    Movable where dtype.is_floating_point() and n >= 1
+):
+    """`polar`'s result: `A = U P` with `U` orthogonal and `P` symmetric
+    positive semidefinite.
+
+    A struct rather than SciPy's `(u, p)` tuple, for the reason `TensorQR`
+    and `TensorSVD` are structs: Mojo 1.0 cannot destructure a `Tuple` of
+    two `Tensor`s.
+    """
+
+    var u: Static[Self.dtype, Self.n, Self.n]
+    """The orthogonal factor -- the closest orthogonal matrix to `A` in
+    the Frobenius norm, which is what makes `polar` an orthogonalizer."""
+
+    var p: Static[Self.dtype, Self.n, Self.n]
+    """The symmetric positive semidefinite factor, `sqrtm(A^T A)`."""
+
+    def __init__(
+        out self,
+        var u: Static[Self.dtype, Self.n, Self.n],
+        var p: Static[Self.dtype, Self.n, Self.n],
+    ):
+        self.u = u^
+        self.p = p^
+
+
+def polar[
+    dtype: DType, n: Int, gpu: Bool = False
+](mut a: Static[dtype, n, n]) raises -> Polar[dtype, n] where (
+    dtype.is_floating_point() and n >= n and n >= 1
+):
+    """The right polar decomposition `a = U P`: `U` orthogonal, `P`
+    symmetric positive semidefinite. `scipy.linalg.polar`, `side="right"`.
+
+    The `n >= n` in the `where` clause is not a typo. `svd` requires
+    `m >= n` and the prover does no arithmetic on evidence, so a square
+    call has to restate that clause with both sides spelled `n` for it to
+    be discharged (`findings.mdc`).
+
+    From the SVD, which is how SciPy computes it too: with `a = W S V^T`,
+    `U` is `W V^T` and `P` is `V S V^T`. Both are two products over the
+    factors `svd` already returns, so this adds a name and no algorithm.
+
+    Square only. SciPy takes a rectangular `a`, but the left and right
+    factors then have different shapes and only one of them is square, so
+    the general form wants a `side` parameter changing the return type --
+    deferred until a caller needs it rather than guessed at.
+
+    `sqrtm(a^T a)` is the same `P` by definition and is the slower route;
+    `P` here never forms `a^T a`, so it does not square the condition
+    number.
+
+    **Tier 2, and `gpu=True` does not compile**, since `svd` refuses it.
+    """
+    comptime assert not gpu, (
+        "polar: gpu=True is a known-wrong device path and is refused;"
+        " run the default gpu=False. See the docstring."
+    )
+    var factored = svd[gpu=gpu](a)
+
+    # U = W V^T, with `inner` supplying the transpose of its second
+    # operand rather than materializing one.
+    var orthogonal = inner[gpu=gpu](factored.u, factored.v)
+
+    # P = V S V^T: scale V's columns by the singular values first, then
+    # the same transposed product.
+    var s = factored.s.to_host()
+    var v_scaled = factored.v.to_host()
+    for j in range(n):
+        for i in range(n):
+            v_scaled[i * n + j] = v_scaled[i * n + j] * s[j]
+    var scaled = Static[dtype, n, n](a.context(), v_scaled^)
+    var positive = inner[gpu=gpu](scaled, factored.v)
+
+    return Polar[dtype, n](orthogonal^, positive^)
+
+
 # ---------------------------------------------- tensorsolve and tensorinv
 
 
