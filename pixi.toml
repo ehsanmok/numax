@@ -2,7 +2,7 @@
 authors = ["ehsanmok <ehsanmok@users.noreply.github.com>"]
 channels = ["https://conda.modular.com/max", "conda-forge"]
 name = "numax"
-version = "0.1.0"
+version = "0.2.0"
 preview = ["pixi-build"]
 
 # Below this, the aliased platform entries need a newer pixi; an older one
@@ -25,7 +25,7 @@ platforms = [
 
 [package]
 name = "numax"
-version = "0.1.0"
+version = "0.2.0"
 
 [package.build]
 # ">=0.4" is the floor that solves; 0.3.x has no candidates left.
