@@ -49,7 +49,7 @@ from std.sys.info import size_of
 from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout, row_major
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Dynamic, Static, Tensor, _context, _dyn_shape_from
 
 

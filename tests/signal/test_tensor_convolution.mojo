@@ -12,7 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Static
-from numax.core.tensorlike import View
+from numax.core.tensorlike import TensorView
 from numax.signal import (
     bartlett,
     blackman,
@@ -302,11 +302,11 @@ def test_get_window_names_the_factories() raises:
 
 
 def test_convolve_accepts_views_of_both_operands() raises:
-    """A `View` is the same argument as the tensor it borrows."""
+    """A `TensorView` is the same argument as the tensor it borrows."""
     var a = _from[7](_a())
     var b = _from[3](_b())
     var want = convolve(a, b).to_host()
-    var got = convolve(View(a.view()), View(b.view())).to_host()
+    var got = convolve(TensorView(a.view()), TensorView(b.view())).to_host()
     for i in range(9):
         assert_almost_equal(Float64(got[i]), Float64(want[i]))
 

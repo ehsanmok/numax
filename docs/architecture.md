@@ -254,9 +254,9 @@ survey of what MAX does ship.
   a `TileTensor` at all, because a view owns nothing to adopt.
   `Tensor` conforms to `TensorLike` (`numax/core/tensorlike.mojo`), the
   bound every `Tensor`-tier routine takes its tensors through, and so does
-  `View`, a borrowed `TileTensor` plus its device: one generic routine,
+  `TensorView`, a borrowed `TileTensor` plus its device: one generic routine,
   `def f[T: TensorLike](a: T)`, runs on a whole tensor or on
-  `View(a.view().tile[4, 4](0, 0), a.context())` without a copy. `view()`
+  `TensorView(a.view().tile[4, 4](0, 0), a.context())` without a copy. `view()`
   borrows `self` at the mutability of the binding (`ref self`, origin
   tracked), so a read-only routine can take a `Tensor` by borrow and still
   view it; MAX's implicit origin cast erases to the `MutAnyOrigin` the
@@ -360,7 +360,7 @@ first.
 `TileTensor`, which is the type every MAX kernel accepts; a parallel numax
 array type would have to be converted at every boundary into MAX. The
 compile-time/runtime distinction lives in the *layout*, where MAX already
-put it, not in a numax-owned wrapper. `View` is not a second owner either:
+put it, not in a numax-owned wrapper. `TensorView` is not a second owner either:
 it is a `TileTensor` with the device it lives on attached, so that the
 `TensorLike` bound has a borrowed conformer beside the owned one. Making
 `Tensor` *be* a `TileTensor` with an owning engine is not expressible --

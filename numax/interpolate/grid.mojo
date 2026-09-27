@@ -33,7 +33,7 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from std.utils.numerics import nan as _nan
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static
 from .interp import _interval
 

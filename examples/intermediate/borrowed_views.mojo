@@ -1,18 +1,18 @@
-"""One routine, owned or borrowed: `Tensor`, `View` and the `TensorLike` bound.
+"""One routine, owned or borrowed: `Tensor`, `TensorView` and the `TensorLike` bound.
 
 Every routine in the `Tensor` tier takes its tensors through `TensorLike`
-(`numax.core.tensorlike`), which `Tensor` and `View` both conform to. A
-`View` is a `TileTensor` someone else owns plus the device it lives on, so a
+(`numax.core.tensorlike`), which `Tensor` and `TensorView` both conform to. A
+`TensorView` is a `TileTensor` someone else owns plus the device it lives on, so a
 sub-block of a matrix is an argument in its own right: `cholesky` on the
 leading quadrant of a larger matrix runs on the quadrant in place, with no
 copy and no second `cholesky`.
 
 The example builds a 4x4 whose leading 2x2 block is symmetric positive
-definite, factors and solves against that block through a `View`, sums a
-row of a matrix the same way, writes through a `View` and shows the parent
+definite, factors and solves against that block through a `TensorView`, sums a
+row of a matrix the same way, writes through a `TensorView` and shows the parent
 change, and ends with a routine written once against the bound and called
 with both conformers. Nothing here names `TileTensor` except to take the
-block: `a.view().tile[2, 2](0, 0)` is MAX's own tiling, and `View` is what
+block: `a.view().tile[2, 2](0, 0)` is MAX's own tiling, and `TensorView` is what
 lets `numax` accept it.
 """
 
@@ -20,7 +20,7 @@ from layout import Coord
 
 from numax.core.array import Static, arange, reshape, zeros
 from numax.core.elementwise import exp
-from numax.core.tensorlike import TensorLike, View, dim
+from numax.core.tensorlike import TensorLike, TensorView, dim
 from numax.linalg import cholesky, det, solve
 from numax.stats import mean, sum
 
@@ -35,7 +35,7 @@ def largest_row_mean[
     """The largest row mean of a matrix, written once for any conformer.
 
     `dim[T, i]` is the compile-time extent, `a.view()` the tile; on a
-    `Tensor` the tile borrows the tensor, on a `View` it is the borrowed
+    `Tensor` the tile borrows the tensor, on a `TensorView` it is the borrowed
     tile itself.
     """
     var v = a.view()
@@ -64,10 +64,10 @@ def main() raises:
     print("--- the parent matrix ---")
     print(big)
 
-    # 1. Factor and solve against the quadrant, through a View. `View`
+    # 1. Factor and solve against the quadrant, through a TensorView. `TensorView`
     #    takes the tile and the device it lives on; the context is optional
     #    and means the host when omitted, like every factory.
-    var block = View(big.view().tile[2, 2](0, 0), big.context())
+    var block = TensorView(big.view().tile[2, 2](0, 0), big.context())
     print("--- cholesky of the leading 2x2 block, no copy ---")
     print(cholesky(block))  # [[2, 0], [1, sqrt(2)]]
     var rhs = Static[f64, 2](big.context(), [1.0, 2.0])
@@ -78,22 +78,22 @@ def main() raises:
     var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
     print("det(owned):", det(owned))
 
-    # 3. Reductions and elementwise math take a View too.
+    # 3. Reductions and elementwise math take a TensorView too.
     var m = reshape[rows=3, cols=4](arange[12, f64]())
-    var row1 = View(m.view().tile[1, 4](1, 0), m.context())
-    print("--- stats on one row of a 3x4, through a View ---")
+    var row1 = TensorView(m.view().tile[1, 4](1, 0), m.context())
+    print("--- stats on one row of a 3x4, through a TensorView ---")
     print("sum(row 1):", sum(row1), " mean(row 1):", mean(row1))
-    print("exp(row 1):", exp(View(m.view())).to_host()[4])
+    print("exp(row 1):", exp(TensorView(m.view())).to_host()[4])
 
-    # 4. Writing through a View lands in the parent.
-    var corner = View(big.view().tile[2, 2](1, 1), big.context())
+    # 4. Writing through a TensorView lands in the parent.
+    var corner = TensorView(big.view().tile[2, 2](1, 1), big.context())
     var cv = corner.view()
     for i in range(2):
         for j in range(2):
             cv[Coord(i, j)] = Float64(-1)
-    print("--- after writing -1 into the trailing 2x2 through a View ---")
+    print("--- after writing -1 into the trailing 2x2 through a TensorView ---")
     print(big)
 
     # 5. One generic routine, both conformers.
     print("--- largest row mean: Tensor", largest_row_mean(m), end="")
-    print(", View", largest_row_mean(View(m.view())))
+    print(", TensorView", largest_row_mean(TensorView(m.view())))

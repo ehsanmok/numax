@@ -34,9 +34,9 @@ view as its device type, so the tensor itself can be the argument to
 `enqueue_function` and the kernel receives the tile.
 
 **Owned or borrowed, one bound.** `Tensor` conforms to `TensorLike`
-(`numax.core.tensorlike`), as does `View`, which wraps a `TileTensor` someone
+(`numax.core.tensorlike`), as does `TensorView`, which wraps a `TileTensor` someone
 else owns. Every public routine in the `Tensor` tier takes its tensors
-through that trait, so `cholesky(a)` and `cholesky(View(a.view().tile[4,
+through that trait, so `cholesky(a)` and `cholesky(TensorView(a.view().tile[4,
 4](0, 0), a.context()))` are one `cholesky`: the second factors a quadrant
 in place, no copy, no second kernel.
 
@@ -161,7 +161,13 @@ from .dual import Dual
 from .gradient import Gradient
 from .numeric import FloatLike
 from .plain import Plain
-from .tensorlike import TensorLike, View, ViewOver, dim, is_row_major
+from .tensorlike import (
+    TensorLike,
+    TensorView,
+    TensorViewOver,
+    dim,
+    is_row_major,
+)
 from ._drive import _require_contiguous
 from .ops import (
     add as _add,
@@ -817,7 +823,7 @@ are not spells `Dynamic`; the factories take the same `*dims`.
 
 def _canonical[
     T: TensorLike, //, *dims: Int, dtype: DType = T.dtype
-](a: T) raises -> ViewOver[dtype, _LayoutOf[*dims], MutUntrackedOrigin]:
+](a: T) raises -> TensorViewOver[dtype, _LayoutOf[*dims], MutUntrackedOrigin]:
     """`a` re-viewed at the canonical row-major layout type of `dims`.
 
     For a generic routine that has to call an axis routine whose `where`
@@ -832,7 +838,7 @@ def _canonical[
     Untracked, because a value carrying `origin_of(a)` cannot be returned
     from a function generic over `a`'s type ("might expand to a
     RegisterPassable type"), and taken by borrow with the mutability added
-    back, because `View` wants a mutable tile and the routines this feeds
+    back, because `TensorView` wants a mutable tile and the routines this feeds
     only read. For a call expression inside a routine that holds `a` that
     is no loss; do not store the result past `a`, and do not write through
     it.
@@ -848,7 +854,7 @@ def _canonical[
     else:
         _require_contiguous(a)
     var v = a.view()
-    return View(
+    return TensorView(
         TileTensor[dtype, _LayoutOf[*dims], MutUntrackedOrigin](
             ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
             .unsafe_mut_cast[True]()
@@ -861,7 +867,7 @@ def _canonical[
 
 def _canonical_dyn[
     T: TensorLike, //, rank: Int, dtype: DType = T.dtype
-](a: T, *extents: Int) raises -> ViewOver[
+](a: T, *extents: Int) raises -> TensorViewOver[
     dtype, _DynLayoutOf[rank], MutUntrackedOrigin
 ]:
     """`_canonical` at a run-time shape: `a`'s contiguous elements re-viewed
@@ -880,7 +886,7 @@ def _canonical_dyn[
     if count != a.size():
         raise Error("_canonical_dyn: ", count, " elements asked of ", a.size())
     var v = a.view()
-    return View(
+    return TensorView(
         TileTensor[dtype, _DynLayoutOf[rank], MutUntrackedOrigin](
             ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
             .unsafe_mut_cast[True]()

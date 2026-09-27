@@ -25,7 +25,7 @@ from max.gpu.host import DeviceContext
 from std.sys.info import align_of
 from std.utils import IndexList
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static, zeros_dyn
 
 from .blas import _target

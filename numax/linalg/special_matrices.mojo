@@ -60,7 +60,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from .common import _mut_view, _mut_view_as
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static
 
 from .blas import _target

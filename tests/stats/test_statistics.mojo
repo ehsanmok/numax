@@ -23,7 +23,7 @@ from max.gpu.host import DeviceContext
 
 from numax import Compensated, Plain
 from numax.core.array import Static, Tensor, full, reshape, arange
-from numax.core.tensorlike import View
+from numax.core.tensorlike import TensorView
 from numax.core.numeric import FloatLike
 from numax.stats import (
     argmax,
@@ -351,10 +351,10 @@ def test_mean_reduces_the_first_axis() raises:
 
 
 def test_reductions_accept_a_view_and_agree_with_the_tensor() raises:
-    """One `sum`, one `mean`, one `variance`: the owned tensor and a `View`
+    """One `sum`, one `mean`, one `variance`: the owned tensor and a `TensorView`
     over it are the same argument to the `TensorLike` bound."""
     var xs = reshape[rows=3, cols=4](arange[12, dtype]())
-    var v = View(xs.view())
+    var v = TensorView(xs.view())
     assert_almost_equal(sum(v), sum(xs))
     assert_almost_equal(mean(v), mean(xs))
     assert_almost_equal(variance(v), variance(xs))

@@ -121,7 +121,7 @@ def _require_contiguous[T: TensorLike](a: T) raises:
 
     `is_row_major[T]` settles this at compile time for a static layout. For
     a run-time layout it only checks the stride *types*, which every layout
-    `numax` builds satisfies, so a `View` over a strided run-time tile
+    `numax` builds satisfies, so a `TensorView` over a strided run-time tile
     would slip through and be flattened wrong; this is the check that
     stops it, O(rank) per launch.
     """
@@ -210,7 +210,7 @@ def _dense[T: TensorLike](a: T) raises -> _DenseIn[T.dtype, T.LayoutType]:
     is the spelling for a kernel whose parameter is fixed at
     `ImmutAnyOrigin`, at the tensor's rank rather than `_flat`'s rank 1 --
     what the axis reductions want, since they need the extents. Strides
-    are kept, so a strided `View` reads correctly here.
+    are kept, so a strided `TensorView` reads correctly here.
     """
     var v = a.view()
     return _DenseIn[T.dtype, T.LayoutType](

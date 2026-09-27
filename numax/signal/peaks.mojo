@@ -11,7 +11,7 @@ distance sort. MAX has nothing for this; **extend**.
 
 from std.builtin.sort import sort as _sort
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static
 
 

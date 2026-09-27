@@ -54,7 +54,7 @@ from layout.tile_layout import TensorLayout, row_major
 from linalg.matmul import matmul as _max_matmul
 from layout.tile_tensor import DefaultEngine
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from max.algorithm.functional import elementwise, parallelize
 from max.gpu import barrier
 from max.gpu.host import DeviceContext

@@ -1,8 +1,8 @@
 """Tests for `numax.core.tensorlike`: the `TensorLike` bound, the borrowed
-`View`, and `Tensor`'s tracked-origin `view()`.
+`TensorView`, and `Tensor`'s tracked-origin `view()`.
 
 The claims checked are the ones the design rests on: one generic routine
-runs unchanged on an owned `Tensor` and on a `View`; a `View` over a
+runs unchanged on an owned `Tensor` and on a `TensorView`; a `TensorView` over a
 sub-block of a tensor is zero-copy and writes land in the parent; a
 read-only routine can take a `Tensor` by borrow and still call `view()`;
 the tracked view erases to `MutAnyOrigin` where a kernel asks for it; and
@@ -28,7 +28,7 @@ from numax.core.logic import greater
 from numax.core.ops import add, multiply
 from numax.core.sorting import extract, sort
 from numax.core.tensor import add_combine, map, reduce
-from numax.core.tensorlike import TensorLike, View, dim, is_row_major
+from numax.core.tensorlike import TensorLike, TensorView, dim, is_row_major
 
 comptime f64 = DType.float64
 
@@ -57,7 +57,7 @@ def _double[w: Int](x: SIMD[f64, w]) -> SIMD[f64, w]:
 
 def test_tensor_and_view_conform_and_agree() raises:
     var m = reshape[rows=3, cols=4](arange[12, f64]())
-    var w = View(m.view())
+    var w = TensorView(m.view())
     assert_equal(_total(m), 66.0)
     assert_equal(_total(w), 66.0)
     assert_equal(dim[type_of(m), 0], 3)
@@ -66,7 +66,7 @@ def test_tensor_and_view_conform_and_agree() raises:
 
 def test_view_over_a_block_writes_into_the_parent() raises:
     var a = zeros[f64, 4, 4]()
-    var block = View(a.view().tile[2, 2](0, 0), a.context())
+    var block = TensorView(a.view().tile[2, 2](0, 0), a.context())
     _fill(block, 7.0)
     # The top-left quadrant changed and nothing else did.
     assert_equal(a[0, 0], 7.0)
@@ -101,7 +101,7 @@ def test_tracked_view_erases_to_any_origin_for_kernels() raises:
 
 def test_view_without_a_context_is_a_host_view() raises:
     var a = zeros[f64, 2, 2]()
-    var w = View(a.view())
+    var w = TensorView(a.view())
     assert_equal(w.context().api(), "cpu")
     assert_equal(w.size(), 4)
     assert_equal(w.dim[0](), 2)
@@ -109,8 +109,8 @@ def test_view_without_a_context_is_a_host_view() raises:
 
 def test_is_row_major_refuses_a_strided_block() raises:
     var a = zeros[f64, 4, 4]()
-    var block = View(a.view().tile[2, 2](0, 0))
-    var whole = View(a.view())
+    var block = TensorView(a.view().tile[2, 2](0, 0))
+    var whole = TensorView(a.view())
     assert_true(is_row_major[type_of(a)])
     assert_true(is_row_major[type_of(whole)])
     assert_false(is_row_major[type_of(block)])
@@ -131,8 +131,8 @@ def test_core_surface_accepts_a_view_and_agrees_with_the_tensor() raises:
     # One routine, two conformers: the public surface takes either.
     var a = arange[6, f64]()
     var m = reshape[rows=2, cols=3](arange[6, f64]())
-    var v = View(a.view())
-    var vm = View(m.view())
+    var v = TensorView(a.view())
+    var vm = TensorView(m.view())
     var e_t = exp(a).to_host()
     var e_v = exp(v).to_host()
     for i in range(6):
@@ -150,7 +150,7 @@ def test_core_surface_accepts_a_view_and_agrees_with_the_tensor() raises:
 
 def test_view_to_host_reads_a_strided_block_in_its_own_order() raises:
     var m = reshape[rows=4, cols=4](arange[16, f64]())
-    var block = View(m.view().tile[2, 2](1, 1))
+    var block = TensorView(m.view().tile[2, 2](1, 1))
     var got = block.to_host()
     # Rows 2..3, columns 2..3 of the 4x4 arange: 10 11 / 14 15.
     assert_equal(got[0], 10.0)

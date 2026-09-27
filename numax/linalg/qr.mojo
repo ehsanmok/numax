@@ -32,7 +32,7 @@ from std.utils import IndexList
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import (
     _canonical,
     Dynamic,

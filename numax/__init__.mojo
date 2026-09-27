@@ -33,7 +33,7 @@ lane load is consecutive (`examples/advanced/batched_solve.mojo`, 4096 SPD
 `DeviceContext` passed to a factory decides host or device memory: the
 same kernel, any accelerator, unmodified. Nothing else changes, and
 `.view()` yields the `TileTensor` every MAX kernel takes, borrowing the
-tensor at the mutability of the binding. `Tensor` and the borrowed `View`
+tensor at the mutability of the binding. `Tensor` and the borrowed `TensorView`
 both conform to `TensorLike`, so a routine written once against that bound
 runs on a whole tensor or on a sub-block of one without a copy, and a
 `Tensor` is `DevicePassable`: `enqueue_function` takes it directly and the
@@ -277,7 +277,13 @@ from .core.logic import (
     not_equal,
 )
 from .core.numeric import FloatLike
-from .core.tensorlike import TensorLike, View, dim, is_row_major
+from .core.tensorlike import (
+    TensorLike,
+    TensorView,
+    TensorViewOver,
+    dim,
+    is_row_major,
+)
 from .core.ops import (
     add,
     invert,

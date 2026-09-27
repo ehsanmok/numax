@@ -76,7 +76,7 @@ from std.math import ceil as _ceil, log2 as _log2, sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import _canonical, Static, copy, eye, transpose
 from ..core.complex import Complex
 from ..core.numeric import FloatLike

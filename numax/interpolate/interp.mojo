@@ -50,7 +50,7 @@ from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout
 from max.algorithm.functional import elementwise
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static, vander
 from ..linalg.eigen import Eigenvalues, eigvals
 from ..linalg.qr import lstsq

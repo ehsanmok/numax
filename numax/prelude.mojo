@@ -42,7 +42,13 @@ subsystem.
 
 # The trait and its conformers.
 from .core.numeric import FloatLike
-from .core.tensorlike import TensorLike, View, dim, is_row_major
+from .core.tensorlike import (
+    TensorLike,
+    TensorView,
+    TensorViewOver,
+    dim,
+    is_row_major,
+)
 from .core.plain import Plain
 from .core.dtypes import (
     bf16,

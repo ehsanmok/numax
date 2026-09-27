@@ -1,15 +1,15 @@
-"""`TensorLike`: one bound over an owned `Tensor` and a borrowed `View`.
+"""`TensorLike`: one bound over an owned `Tensor` and a borrowed `TensorView`.
 
 **This module is tier-agnostic.** It defines no kernel; it names what a
 kernel may be handed. `Tensor` (`numax.core.array`) owns its storage and
-`View` borrows a `TileTensor` someone else owns, and every public routine in
+`TensorView` borrows a `TileTensor` someone else owns, and every public routine in
 the `Tensor` tier takes either through this one trait, so a factorization
 runs on a whole tensor or on a sub-block of one without a copy:
 
 ```mojo
 var a = zeros[DType.float64, 8, 8]()
 var l = cholesky(a)                                   # owned
-var block = View(a.view().tile[4, 4](0, 0), a.context())
+var block = TensorView(a.view().tile[4, 4](0, 0), a.context())
 var lb = cholesky(block)                              # borrowed, no copy
 ```
 
@@ -38,20 +38,20 @@ at the call site and with parameter inference intact. `context()` names the
 device the storage lives on, so a kernel can allocate its result beside its
 input without being told twice.
 
-**`View` tracks its owner immutably and writes through the binding.** It
+**`TensorView` tracks its owner immutably and writes through the binding.** It
 accepts any mutable `TileTensor` and stores it at the *immutable* form of
 that tile's origin. Tracked, so the owner stays alive for as long as the
-`View` is used (an untracked spelling was tried and dangled the moment the
-owner's last mention passed). Immutable, so two `View`s over one tensor, or
+`TensorView` is used (an untracked spelling was tried and dangled the moment the
+owner's last mention passed). Immutable, so two `TensorView`s over one tensor, or
 the same one passed twice to `add`, are immutable aliases the exclusivity
 checker accepts, where a tracked mutable origin made `add(v, v)` an error a
-`Tensor` never raises. Mutability then comes from how the `View` itself is
-bound: `view(ref self)` on a `var` or `mut` `View` re-adds it, on an
+`Tensor` never raises. Mutability then comes from how the `TensorView` itself is
+bound: `view(ref self)` on a `var` or `mut` `TensorView` re-adds it, on an
 immutable binding it does not, the same rule `Tensor` follows. Wrapping an
 immutable tile is refused at compile time rather than quietly producing a
 writable view over read-only storage.
 
-A `View` built without a context is a host view, matching every factory in
+A `TensorView` built without a context is a host view, matching every factory in
 `numax.core.array`: the `DeviceContext` comes last, optional, and its
 absence means the CPU. Pass the owning tensor's `context()` for a view
 over device memory.
@@ -65,7 +65,7 @@ from max.gpu.host import DeviceContext
 
 trait TensorLike:
     """Something a `Tensor`-tier kernel can be handed: an owned `Tensor` or a
-    borrowed `View`.
+    borrowed `TensorView`.
 
     Conformers name their element type and layout as associated members, so
     a generic routine spells `T.dtype`, `T.LayoutType.static_shape[0]` and
@@ -193,7 +193,7 @@ comptime is_row_major[T: TensorLike] = TileTensor[
 """Whether `T`'s strides are the contiguous row-major ones, at compile time.
 
 The `where` clause every routine that flattens its argument must carry: a
-`View` over `a.view().tile[2, 2](0, 0)` of a 4x4 has stride 4 on its first
+`TensorView` over `a.view().tile[2, 2](0, 0)` of a 4x4 has stride 4 on its first
 axis, and a walk that treats it as eight contiguous elements reads the
 wrong ones. `numax.core.tensor`'s walks already require this; the trait
 makes it one spelling for the public tier too. For a run-time layout the
@@ -202,14 +202,14 @@ satisfies, and the flattening helpers verify the values at run time.
 """
 
 
-comptime ViewOver[
+comptime TensorViewOver[
     dtype: DType, LayoutType: TensorLayout, src: MutOrigin
-] = View[dtype, LayoutType, ImmOrigin(src)]
-"""The `View` type built over a mutable tile at origin `src`, for a
-signature that returns one: `ViewOver[T.dtype, L, origin_of(a)]`."""
+] = TensorView[dtype, LayoutType, ImmOrigin(src)]
+"""The `TensorView` type built over a mutable tile at origin `src`, for a
+signature that returns one: `TensorViewOver[T.dtype, L, origin_of(a)]`."""
 
 
-struct View[
+struct TensorView[
     dtype_: DType,
     LayoutType_: TensorLayout,
     origin: ImmOrigin,
@@ -218,22 +218,24 @@ struct View[
 
     The `TensorLike` conformer for storage `numax` does not own -- a
     sub-block of a `Tensor`, a `List`'s span, a tile another library handed
-    over. It is what lets `cholesky(View(a.view().tile[4, 4](0, 0),
+    over. It is what lets `cholesky(TensorView(a.view().tile[4, 4](0, 0),
     a.context()))` factor one quadrant of `a` in place, with no copy and no
     second `cholesky`.
 
-    Copying a `View` copies a pointer and a layout, so it is
+    Copying a `TensorView` copies a pointer and a layout, so it is
     `ImplicitlyCopyable` like the tile it wraps. It owns nothing: dropping
     it frees nothing, and `origin` keeps the storage it was built over
-    alive for as long as the `View` is used.
+    alive for as long as the `TensorView` is used.
     """
 
     comptime dtype = Self.dtype_
     comptime LayoutType = Self.LayoutType_
     comptime rank = Self.LayoutType.rank
     comptime TileType = TileTensor[Self.dtype, Self.LayoutType, Self.origin]
-    comptime Over[src: MutOrigin] = ViewOver[Self.dtype_, Self.LayoutType_, src]
-    """The `View` type built over a mutable tile at origin `src`."""
+    comptime Over[src: MutOrigin] = TensorViewOver[
+        Self.dtype_, Self.LayoutType_, src
+    ]
+    """The `TensorView` type built over a mutable tile at origin `src`."""
 
     var tile: Self.TileType
     """The borrowed storage."""
@@ -254,7 +256,7 @@ struct View[
         The tile must be mutable: `a.view()` on a `mut`-bound or `var`
         tensor is one, `a.view().tile[...](...)` is one, a tile over an
         immutable borrow is not and is refused where it is written. The
-        `View` records the immutable form of its origin; the module
+        `TensorView` records the immutable form of its origin; the module
         docstring says why.
         """
         self.tile = tile.as_immut()
@@ -266,9 +268,9 @@ struct View[
     ) -> TileTensor[Self.dtype, Self.LayoutType, origin_of(self)]:
         """The wrapped tile, at the mutability of this borrow of `self`.
 
-        An immutable `View` yields a read-only tile; a `var` or `mut` one
+        An immutable `TensorView` yields a read-only tile; a `var` or `mut` one
         yields a writable tile over storage that was mutable when the
-        `View` was built. The lifetime it names is this borrow's, which the
+        `TensorView` was built. The lifetime it names is this borrow's, which the
         tracked `origin` keeps inside the owner's.
         """
         return TileTensor[Self.dtype, Self.LayoutType, origin_of(self)](
@@ -306,8 +308,8 @@ struct View[
             return out^
         if not is_row_major[Self]:
             raise Error(
-                "View.to_host: a strided view over device memory cannot be"
-                " copied as one block"
+                "TensorView.to_host: a strided view over device memory cannot"
+                " be copied as one block"
             )
         var host = self.ctx.enqueue_create_host_buffer[Self.dtype](n)
         self.ctx.enqueue_copy(host, self.tile.ptr.as_imm())
@@ -328,7 +330,7 @@ struct View[
             return
         if not is_row_major[Self]:
             raise Error(
-                "View.copy_from_host: a strided view over device memory"
+                "TensorView.copy_from_host: a strided view over device memory"
                 " cannot be written as one block"
             )
         var host = self.ctx.enqueue_create_host_buffer[Self.dtype](n)

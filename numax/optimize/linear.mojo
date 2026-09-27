@@ -36,7 +36,7 @@ from std.math import sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import _canonical, Static, transpose
 from ..linalg.blas import matmul, matvec
 

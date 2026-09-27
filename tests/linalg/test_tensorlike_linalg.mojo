@@ -1,17 +1,17 @@
-"""`numax.linalg` over the `TensorLike` bound: a `View` of a sub-block is
+"""`numax.linalg` over the `TensorLike` bound: a `TensorView` of a sub-block is
 the same argument as an owned `Tensor`.
 
 The claim the design makes is that one `cholesky` runs on a whole matrix or
 on a quadrant of one without a copy. These tests build a 4x4 whose leading
 2x2 block is symmetric positive definite, factor that block through a
-`View`, and check the factor against the owned copy, then do the same for
+`TensorView`, and check the factor against the owned copy, then do the same for
 `solve`, `det`, `matmul` and `transpose`.
 """
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from numax.core.array import Static, arange, reshape, transpose, zeros
-from numax.core.tensorlike import View
+from numax.core.tensorlike import TensorView
 from numax.linalg import cholesky, det, matmul, solve
 
 comptime f64 = DType.float64
@@ -33,7 +33,7 @@ def _big() raises -> Static[f64, 4, 4]:
 
 def test_cholesky_of_a_view_block_matches_the_owned_block() raises:
     var big = _big()
-    var block = View(big.view().tile[2, 2](0, 0), big.context())
+    var block = TensorView(big.view().tile[2, 2](0, 0), big.context())
     var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
     var from_view = cholesky(block).to_host()
     var from_owned = cholesky(owned).to_host()
@@ -46,7 +46,7 @@ def test_cholesky_of_a_view_block_matches_the_owned_block() raises:
 
 def test_solve_and_det_accept_a_view() raises:
     var big = _big()
-    var block = View(big.view().tile[2, 2](0, 0), big.context())
+    var block = TensorView(big.view().tile[2, 2](0, 0), big.context())
     var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
     var rhs = Static[f64, 2](big.context(), [1.0, 2.0])
     var x_view = solve(block, rhs).to_host()
@@ -59,11 +59,11 @@ def test_solve_and_det_accept_a_view() raises:
 
 def test_matmul_and_transpose_accept_views() raises:
     var m = reshape[rows=2, cols=3](arange[6, f64]())
-    var vm = View(m.view())
+    var vm = TensorView(m.view())
     var t_owned = transpose(m)
     var t_view = transpose(vm)
     var p_owned = matmul(m, t_owned).to_host()
-    var p_view = matmul(vm, View(t_view.view())).to_host()
+    var p_view = matmul(vm, TensorView(t_view.view())).to_host()
     for i in range(4):
         assert_almost_equal(p_owned[i], p_view[i])
     assert_almost_equal(p_view[0], 5.0)

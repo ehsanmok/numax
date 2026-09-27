@@ -145,13 +145,13 @@ Two rules hold the boundary. **Interop is `TileTensor`-only**: a MAX API that
 takes the older `LayoutTensor` is denied, not bridged — `linalg.qr_factorization`
 (with `apply_q`/`form_q`) and `outer_product_acc` are the ones met so far, and
 `rg LayoutTensor numax/` stays free of code. And **the user-facing tensor
-types are `Tensor` and `View`, both `TensorLike`** (`numax/core/tensorlike.mojo`):
-`Tensor` owns a `DeviceBuffer`, `View` borrows a `TileTensor` plus the device
+types are `Tensor` and `TensorView`, both `TensorLike`** (`numax/core/tensorlike.mojo`):
+`Tensor` owns a `DeviceBuffer`, `TensorView` borrows a `TileTensor` plus the device
 it lives on, and a public routine takes either through the trait bound
 (`def f[T: TensorLike](a: T)`, spelling extents as `dim[T, i]` and guarding a
 flattening walk with `is_row_major[T]`). A bare `TileTensor` appears at the
 interop boundary (`.view()`, which borrows at the mutability of the binding
-and erases to `MutAnyOrigin` through MAX's implicit cast), inside `View`, and
+and erases to `MutAnyOrigin` through MAX's implicit cast), inside `TensorView`, and
 in the kernel-author primitives of `numax/core/tensor.mojo`, never as the
 thing a user of `numax.linalg` passes. `Tensor` is also `DevicePassable`, so
 `enqueue_function` takes the tensor and the kernel receives its view.

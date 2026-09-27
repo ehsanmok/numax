@@ -74,7 +74,7 @@ about:
     derivative needs no separate implementation. Tensors own MAX
     DeviceBuffers and carry their shape in their layout type, with extents
     either compiled in or supplied at run time, so numax.core.tensor drives
-    any of it across MAX's TileTensor on CPU or GPU. A borrowed View
+    any of it across MAX's TileTensor on CPU or GPU. A borrowed TensorView
     conforms to the same TensorLike bound as Tensor, so a routine written
     once takes a whole tensor or a sub-block of one without a copy, and a
     Tensor is DevicePassable: a kernel launch takes the tensor itself.

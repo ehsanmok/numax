@@ -29,7 +29,7 @@ nothing here delegates.
 from layout import Coord
 from layout.tile_layout import TensorLayout, row_major
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import (
     _canonical,
     Dynamic,

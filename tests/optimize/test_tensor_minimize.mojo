@@ -26,7 +26,7 @@ from max.gpu.host import DeviceContext
 
 from numax import FloatLike
 from numax.core.array import Static
-from numax.core.tensorlike import View
+from numax.core.tensorlike import TensorView
 from numax.optimize import TensorMinimizeResult, minimize
 from numax.optimize.array import minimize as array_minimize
 
@@ -219,7 +219,7 @@ def test_minimize_starts_from_a_view() raises:
     owned `Static`, and the answer is the one the tensor start gives."""
     var start = Static[dtype, 2](DeviceContext(api="cpu"), [-1.2, 1.0])
     var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac](
-        View(start.view())
+        TensorView(start.view())
     )
     var x = result.x.to_host()
     assert_almost_equal(Float64(x[0]), 1.0, atol=1e-5)

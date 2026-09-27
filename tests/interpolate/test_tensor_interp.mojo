@@ -12,7 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.array import Static
-from numax.core.tensorlike import View
+from numax.core.tensorlike import TensorView
 from numax.interpolate import (
     horner,
     interp,
@@ -246,7 +246,9 @@ def test_interp_accepts_views() raises:
     var xp = _from[5](_knots())
     var fp = _from[5](_samples())
     var want = interp(x, xp, fp).to_host()
-    var got = interp(View(x.view()), View(xp.view()), View(fp.view())).to_host()
+    var got = interp(
+        TensorView(x.view()), TensorView(xp.view()), TensorView(fp.view())
+    ).to_host()
     for i in range(10):
         assert_almost_equal(Float64(got[i]), Float64(want[i]))
 

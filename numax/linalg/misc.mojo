@@ -28,7 +28,7 @@ from std.math import sqrt as _sqrt
 from std.utils import IndexList
 
 from .common import _mut_view, _mut_view_as
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static
 from ..core.rowwise import max_axis, reduce_all, sum_axis
 

@@ -138,15 +138,15 @@ which on CUDA returns a *device* pointer that segfaults a host read.
 
 | Surface | Where |
 |---|---|
-| `TensorLike` — the bound over owned and borrowed: associated `dtype`, `LayoutType`, `Engine`, `rank`, plus `view(ref self)` and `context()`. `Tensor` and `View` conform; a routine `def f[T: TensorLike](a: T)` takes either | [`core/tensorlike.mojo`](../numax/core/tensorlike.mojo), [`test_tensorlike.mojo`](../tests/core/test_tensorlike.mojo) |
-| `View` — a `TileTensor` plus the device it lives on; `View(a.view().tile[2, 2](0, 0), a.context())` is a quadrant of `a` a routine can write into, no copy. Host when the context is omitted, like every factory | same |
+| `TensorLike` — the bound over owned and borrowed: associated `dtype`, `LayoutType`, `Engine`, `rank`, plus `view(ref self)` and `context()`. `Tensor` and `TensorView` conform; a routine `def f[T: TensorLike](a: T)` takes either | [`core/tensorlike.mojo`](../numax/core/tensorlike.mojo), [`test_tensorlike.mojo`](../tests/core/test_tensorlike.mojo) |
+| `TensorView` — a `TileTensor` plus the device it lives on; `TensorView(a.view().tile[2, 2](0, 0), a.context())` is a quadrant of `a` a routine can write into, no copy. Host when the context is omitted, like every factory | same |
 | `dim[T, i]`, `is_row_major[T]` — a compile-time extent for a signature, and the `where` clause a flattening walk carries so a strided block is refused where it is written | same |
 | `Tensor` is `DevicePassable` with its `MutAnyOrigin` view as `device_type`: `ctx.enqueue_function[map[...]](xs, ys, ...)` takes the tensors and the kernel receives the tiles | [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo), [`unified_tensor_gpu.mojo`](../examples/advanced/unified_tensor_gpu.mojo) |
 
 ## `numax.core` — arrays and the NumPy-named surface
 
 Every routine in this section takes its tensor arguments through the
-`TensorLike` bound, so a `View` over a sub-block of a tensor is accepted
+`TensorLike` bound, so a `TensorView` over a sub-block of a tensor is accepted
 wherever a `Tensor` is, and only routines that write into their argument
 (`put`) take it `mut`. Extents that used to be explicit parameters are read
 from the argument's layout (`dim[T, i]`), so `transpose(m)` is the whole
@@ -233,8 +233,8 @@ The `Tensor` tier takes its matrices through the `TensorLike` bound, by
 borrow, and reads their extents from the layout: `cholesky(a)` is the whole
 spelling, `cholesky[gpu=True, block=32](a)` the tuned one, and
 `cholesky[dtype, n](a)` is no longer a spelling. Every factorization and
-solve accepts a `View` of a sub-block in place of a tensor -- the panel
-kernels read through the layout, so `cholesky(View(a.view().tile[4, 4](0,
+solve accepts a `TensorView` of a sub-block in place of a tensor -- the panel
+kernels read through the layout, so `cholesky(TensorView(a.view().tile[4, 4](0,
 0), a.context()))` factors a quadrant with no copy
 (`tests/linalg/test_tensorlike_linalg.mojo`, [`borrowed_views.mojo`](../examples/intermediate/borrowed_views.mojo)). The two routines that flatten
 an argument by pointer, `matvec`'s vector and the matrix `norm`, carry
@@ -313,7 +313,7 @@ runs MAX's GPU kernels.
 
 ## `numax.optimize`
 
-The `Tensor` tier takes `x0` (and `curve_fit`'s data) through the `TensorLike` bound, so a `View` starts a minimization; the callbacks still receive an owned `Static`, since that is what a user writes them against. `minimize[f=f, jac=jac](x0)` infers everything else from the tensor and the callbacks.
+The `Tensor` tier takes `x0` (and `curve_fit`'s data) through the `TensorLike` bound, so a `TensorView` starts a minimization; the callbacks still receive an owned `Static`, since that is what a user writes them against. `minimize[f=f, jac=jac](x0)` infers everything else from the tensor and the callbacks.
 
 Two tiers, one import each. `numax.optimize` is the `Tensor` one and holds
 the nonlinear fits; `numax.optimize.array` holds everything that works on a
@@ -412,7 +412,7 @@ run one per GPU thread with solution sensitivities from the same integrator.
 
 ## `numax.interpolate`
 
-The `Tensor` tier takes its nodes, coefficients and query points through the `TensorLike` bound, by borrow, so `interp(View(...), xp, fp)` is one `interp`.
+The `Tensor` tier takes its nodes, coefficients and query points through the `TensorLike` bound, by borrow, so `interp(TensorView(...), xp, fp)` is one `interp`.
 
 Two tiers, one import each, on the `numax.linalg` pattern. MAX has no
 interpolation at arbitrary points — its `nn.resize_*` kernels resample a
@@ -445,7 +445,7 @@ interval depend on.
 
 ## `numax.fft`
 
-The transforms that *consume* their argument (`fft`, `rfft`, `irfft`, `fftshift`, `dct` and their siblings, all spelled `var x`) still take an owned `Tensor` or `Spectrum`: they reuse its storage and hand it back, which a borrowed `View` has no storage to give. Their `[dtype, n]` parameters are inferred from the argument as before.
+The transforms that *consume* their argument (`fft`, `rfft`, `irfft`, `fftshift`, `dct` and their siblings, all spelled `var x`) still take an owned `Tensor` or `Spectrum`: they reuse its storage and hand it back, which a borrowed `TensorView` has no storage to give. Their `[dtype, n]` parameters are inferred from the argument as before.
 
 Radix-2 Cooley-Tukey at a power of two; over `Tensor`, Bluestein's chirp-z
 at every other length, so the `Tensor` tier takes any `n > 0` and the
@@ -491,7 +491,7 @@ transform and its derivative with no adjoint rule written anywhere.
 
 ## `numax.signal`
 
-Every routine takes its signals through the `TensorLike` bound, by borrow, with the filter taps and the signal as separate conformers, so `lfilter(b, a, View(...))` filters a sub-block of a recording in place of a copy.
+Every routine takes its signals through the `TensorLike` bound, by borrow, with the filter taps and the signal as separate conformers, so `lfilter(b, a, TensorView(...))` filters a sub-block of a recording in place of a copy.
 
 Two tiers, one import each, on the `numax.linalg` pattern. MAX ships the
 neural-network convolution (`nn.conv`: NHWC, channels and filters,
@@ -528,7 +528,7 @@ route.
 ## `numax.stats`
 
 Every routine here takes its tensor arguments through the `TensorLike`
-bound (`sum(v)` on a `View` is `sum(a)` on its tensor, checked by
+bound (`sum(v)` on a `TensorView` is `sum(a)` on its tensor, checked by
 `tests/stats/test_statistics.mojo`), reads extents from the argument's
 layout (`cov(m)` rather than `cov[dtype, rows, n](m)`), and takes them by
 borrow. Reductions that flatten carry `where is_row_major[T]`.
@@ -561,7 +561,7 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 
 ## `numax.io`
 
-`nmx.save` and `numpy.save` take any `TensorLike`, so a `View` of a sub-block writes as a file of that block's shape.
+`nmx.save` and `numpy.save` take any `TensorLike`, so a `TensorView` of a sub-block writes as a file of that block's shape.
 
 | Surface | Where |
 |---|---|

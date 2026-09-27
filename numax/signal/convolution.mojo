@@ -55,7 +55,7 @@ without changing the answer.
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
-from ..core.tensorlike import TensorLike, View, dim, is_row_major
+from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.array import Static
 from ..fft.fft import Spectrum, _rfft, irfft, next_fast_len
 
