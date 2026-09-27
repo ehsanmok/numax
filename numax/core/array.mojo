@@ -414,7 +414,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """Take ownership of an existing buffer and describe it with
         `layout`.
 
-        The retyping constructor, which is what `dynamic` and `static_view`
+        The retyping constructor, which is what `as_dynamic` and `as_static`
         hand the buffer to: the elements do not move, only the type saying
         what shape they are. `DeviceBuffer` is a reference-counted handle,
         so this shares the allocation rather than copying it, and both
@@ -567,7 +567,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             values.append(src[unsafe_offset=i])
         return Self(device, v.layout, values^)
 
-    def dynamic(var self) raises -> Dynamic[Self.dtype, Self.rank]:
+    def as_dynamic(var self) raises -> Dynamic[Self.dtype, Self.rank]:
         """The same storage, with the shape moved out of the type and into
         the value.
 
@@ -583,7 +583,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         launch, which is what `map[gpu=True]` is. The NumPy-named surface
         and `numax.stats`'s distributions still reach the device from here:
         they launch through `max.algorithm.elementwise`, whose grid comes
-        from a run-time `Coord`. Going back is `static_view`.
+        from a run-time `Coord`. Going back is `as_static`.
         """
         var extents = List[Int](capacity=Self.rank)
         for d in range(Self.rank):
@@ -594,7 +594,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             self.host_addressable,
         )
 
-    def static_view[
+    def as_static[
         *dims: Int
     ](var self) raises -> Static[Self.dtype, *dims] where (
         _LayoutOf[*dims].rank == Self.rank
@@ -607,7 +607,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         rather than reading past the end of the buffer; past it the result
         is an ordinary static tensor, GPU launch and all.
 
-        Consumes `self` for the same reason `dynamic` does. Naming a shape
+        Consumes `self` for the same reason `as_dynamic` does. Naming a shape
         the tensor does not have is a run-time error, not a compile-time
         one -- that is the whole point, since the compiler is exactly what
         cannot see the extent being checked.
@@ -615,7 +615,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         comptime for i in range(Self.rank):
             if self.dim_at(i) != dims[i]:
                 raise Error(
-                    "static_view: axis ",
+                    "as_static: axis ",
                     i,
                     " is ",
                     self.dim_at(i),
@@ -3265,7 +3265,7 @@ def to_array[
     so there is nothing to read a run-time extent into. A run-time-shaped
     tensor does not raise here, it fails to compile: its `static_product`
     is negative and an `Array` of negative length is rejected outright.
-    Name the shape with `static_view` first.
+    Name the shape with `as_static` first.
     """
     comptime LayoutType = X.LayoutType
     comptime n = LayoutType.static_product

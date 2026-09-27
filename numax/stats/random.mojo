@@ -167,8 +167,8 @@ def _fill[
     one thread per element with `gpu=True`.
 
     The fill runs over a rank-1 tensor of the same element count and the
-    result is that tensor's buffer retyped to `*dims` -- the `dynamic` /
-    `static_view` move, no copy -- because a compile-time shape pack is not
+    result is that tensor's buffer retyped to `*dims` -- the `as_dynamic` /
+    `as_static` move, no copy -- because a compile-time shape pack is not
     something the layout prover can show `coalesce`'s `all_dims_known` for,
     while a single extent is a view it can store through directly.
     """

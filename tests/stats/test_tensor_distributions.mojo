@@ -171,8 +171,8 @@ def test_every_family_agrees_between_static_and_run_time_shapes() raises:
     comptime n = 11
     var xs = _ramp[n](0.1, 0.9)
     var ks = _ramp[n](0.0, 10.0)
-    var dx = _ramp[n](0.1, 0.9).dynamic()
-    var dk = _ramp[n](0.0, 10.0).dynamic()
+    var dx = _ramp[n](0.1, 0.9).as_dynamic()
+    var dk = _ramp[n](0.0, 10.0).as_dynamic()
 
     var one = Scalar[dtype](1.0)
     var two = Scalar[dtype](2.0)

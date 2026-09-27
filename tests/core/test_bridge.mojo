@@ -1,6 +1,6 @@
 """Tests for the seams out of `Tensor`: `to_array`/`to_tensor` between
 numax's two arrays, `view`/`from_tile` between owned storage and a borrowed
-one, and `dynamic`/`static_view` between a shape the compiler can see and
+one, and `as_dynamic`/`as_static` between a shape the compiler can see and
 one it cannot.
 
 `Tensor` carries shape and device; `Array[T, n]` carries the `FloatLike`
@@ -206,11 +206,11 @@ def test_widening_a_shape_and_naming_it_again_is_the_identity() raises:
     var a = _matrix()
     var elements = a.to_host()
 
-    var widened = a^.dynamic()
+    var widened = a^.as_dynamic()
     assert_equal(widened.dim_at(0), 2)
     assert_equal(widened.dim_at(1), 2)
 
-    var narrowed = widened^.static_view[2, 2]()
+    var narrowed = widened^.as_static[2, 2]()
     assert_equal(narrowed.num_elements, 4)
     for i in range(4):
         assert_equal(narrowed[i], elements[i])
@@ -221,7 +221,7 @@ def test_naming_the_wrong_shape_raises_rather_than_reading_past_the_end() raises
     var a = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     var raised = False
     try:
-        _ = a^.static_view[3, 2]()
+        _ = a^.as_static[3, 2]()
     except:
         raised = True
     assert_true(raised)
@@ -235,7 +235,7 @@ def test_a_named_run_time_shape_matches_the_static_tensor_element_for_element() 
         built_dynamic[i] = Scalar[dtype](i) * 0.5
         built_static[i] = Scalar[dtype](i) * 0.5
 
-    var named = built_dynamic^.static_view[2, 3]()
+    var named = built_dynamic^.as_static[2, 3]()
     var from_named = named.tile()
     var from_static = built_static.tile()
     for r in range(2):

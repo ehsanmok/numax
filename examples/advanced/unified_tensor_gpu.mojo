@@ -183,7 +183,7 @@ def main() raises:
     # the type, which is why `map[gpu=True]` above still wants a `Static` ----
     var mu = Scalar[dtype](0.0)
     var sigma = Scalar[dtype](1.0)
-    var dyn_xs = linspace[n, dtype](-2.0, 2.0, ctx=gpu).dynamic()
+    var dyn_xs = linspace[n, dtype](-2.0, 2.0, ctx=gpu).as_dynamic()
     var dyn_exp = exp[gpu=True](dyn_xs).to_host()
     var dyn_cdf = norm.cdf[gpu=True](dyn_xs, mu, sigma).to_host()
     var host_cdf = norm.cdf(cpu_xs, mu, sigma).to_host()

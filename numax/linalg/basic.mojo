@@ -374,9 +374,9 @@ def polar[
     var positive = inner[gpu=gpu](scaled, factored.v)
 
     # The products are typed through `dim[..]` of their operands, which the
-    # checker does not fold to `n`; `static_view` re-types them, zero-copy.
+    # checker does not fold to `n`; `as_static` re-types them, zero-copy.
     return Polar[T.dtype, n](
-        orthogonal^.static_view[n, n](), positive^.static_view[n, n]()
+        orthogonal^.as_static[n, n](), positive^.as_static[n, n]()
     )
 
 
