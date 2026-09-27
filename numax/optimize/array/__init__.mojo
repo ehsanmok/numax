@@ -15,7 +15,7 @@ export the `Tensor` tier; this subpackage is the other one, the same split
 | Module | Holds |
 | --- | --- |
 | `solve` | `newton`, `halley`, `bisection` |
-| `optimize` | `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`), `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `least_squares`, `curve_fit`, `OptimizeResult`, `MinimizeResult` |
+| `optimize` | `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`), `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `least_squares`, `curve_fit`, `OptimizeResult`, `ArrayMinimizeResult` |
 
 Two halves, split by whether the iteration count is known up front.
 `solve`'s `newton`/`halley`/`bisection` run a fixed number of steps with no
@@ -54,7 +54,7 @@ wanting only one tier -- which is nearly all of them -- pay nothing.
 """
 
 from .optimize import (
-    MinimizeResult,
+    ArrayMinimizeResult,
     OptimizeResult,
     bfgs,
     bisect_tol,

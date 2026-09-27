@@ -7,9 +7,9 @@ explicitly and returns `(R, Q)`, which is the wasteful choice at large `n`
 and the right one at the sizes an `Array` holds.
 
 The blocked `Tensor` tier is `numax.linalg.qr`, and it is shaped
-differently on purpose: `qr_factor` keeps the reflectors in a `TensorQR`
+differently on purpose: `qr_factor` keeps the reflectors in a `QR`
 so `Q` need never be formed. `lstsq` has no `Tensor` overload of its own
-because `TensorQR.solve` is it.
+because `QR.solve` is it.
 """
 
 from std.collections import Array

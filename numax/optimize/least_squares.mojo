@@ -67,7 +67,7 @@ from ..linalg.qr import lstsq
 from .common import _as_tensor
 
 
-struct TensorFitResult[dtype: DType, n_params: Int](Movable):
+struct FitResult[dtype: DType, n_params: Int](Movable):
     """What a `Tensor`-tier fit returns.
 
     `x` is the parameter vector, `cost` is `sum(r**2) / 2` at it (SciPy's
@@ -165,7 +165,7 @@ def least_squares[
     ) raises thin -> Static[T.dtype, n_resid, dim[T, 0]],
     gpu: Bool = False,
     block: Int = 16,
-](x0: T, tol: Float64 = 1e-10, max_iter: Int = 100) raises -> TensorFitResult[
+](x0: T, tol: Float64 = 1e-10, max_iter: Int = 100) raises -> FitResult[
     T.dtype, dim[T, 0]
 ] where (
     (
@@ -236,7 +236,7 @@ def least_squares[
                 slope += jac[k * n_params + j] * residual[k]
             grad_norm = max(grad_norm, abs(slope))
         if grad_norm < tol:
-            return TensorFitResult[dtype, n_params](
+            return FitResult[dtype, n_params](
                 _as_tensor[dtype, n_params](current, ctx),
                 cost,
                 grad_norm,
@@ -268,7 +268,7 @@ def least_squares[
             damping = damping * 3
 
         if not accepted:
-            return TensorFitResult[dtype, n_params](
+            return FitResult[dtype, n_params](
                 _as_tensor[dtype, n_params](current, ctx),
                 cost,
                 grad_norm,
@@ -277,7 +277,7 @@ def least_squares[
             )
         current = candidate^
 
-    return TensorFitResult[dtype, n_params](
+    return FitResult[dtype, n_params](
         _as_tensor[dtype, n_params](current, ctx),
         cost,
         grad_norm,
@@ -300,7 +300,7 @@ def curve_fit[
     block: Int = 16,
 ](
     xdata: A, ydata: B, p0: C, tol: Float64 = 1e-10, max_iter: Int = 100
-) raises -> TensorFitResult[A.dtype, dim[C, 0]] where (
+) raises -> FitResult[A.dtype, dim[C, 0]] where (
     (
         A.dtype.is_floating_point()
         and dim[A, 0] >= dim[C, 0]
@@ -368,7 +368,7 @@ def curve_fit[
                 slope += jac[k * n_params + j] * residual[k]
             grad_norm = max(grad_norm, abs(slope))
         if grad_norm < tol:
-            return TensorFitResult[dtype, n_params](
+            return FitResult[dtype, n_params](
                 _as_tensor[dtype, n_params](current, ctx),
                 cost,
                 grad_norm,
@@ -400,7 +400,7 @@ def curve_fit[
             damping = damping * 3
 
         if not accepted:
-            return TensorFitResult[dtype, n_params](
+            return FitResult[dtype, n_params](
                 _as_tensor[dtype, n_params](current, ctx),
                 cost,
                 grad_norm,
@@ -409,7 +409,7 @@ def curve_fit[
             )
         current = candidate^
 
-    return TensorFitResult[dtype, n_params](
+    return FitResult[dtype, n_params](
         _as_tensor[dtype, n_params](current, ctx),
         cost,
         grad_norm,

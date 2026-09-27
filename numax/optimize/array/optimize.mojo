@@ -88,7 +88,7 @@ struct OptimizeResult(Copyable):
 
 
 @fieldwise_init
-struct MinimizeResult[n_vars: Int](Copyable):
+struct ArrayMinimizeResult[n_vars: Int](Copyable):
     """`OptimizeResult` for a multi-variable minimization: `x` is the
     argument vector, `grad_norm` the infinity-norm of the gradient at it
     (the quantity the convergence test actually looks at)."""
@@ -924,7 +924,7 @@ def bfgs[
     x0: Array[Float64, n_vars],
     tol: Float64 = 1e-8,
     max_iter: Int = 200,
-) -> MinimizeResult[n_vars]:
+) -> ArrayMinimizeResult[n_vars]:
     """Minimize `f` by BFGS with a backtracking line search.
 
     **The gradient is exact.** `f` is evaluated once per iteration at
@@ -947,7 +947,7 @@ def bfgs[
     convergence on badly scaled problems is slower than a production
     implementation would manage.
 
-    Convergence is `max|grad| < tol`. `MinimizeResult.grad_norm` reports
+    Convergence is `max|grad| < tol`. `ArrayMinimizeResult.grad_norm` reports
     that quantity so a caller can see how close a non-converged run got.
     """
 
@@ -971,7 +971,9 @@ def bfgs[
         for i in range(n_vars):
             grad_norm = max(grad_norm, abs(grad[i]))
         if grad_norm < tol:
-            return MinimizeResult[n_vars](x^, f_x, grad_norm, iteration, True)
+            return ArrayMinimizeResult[n_vars](
+                x^, f_x, grad_norm, iteration, True
+            )
 
         # Search direction p = -H @ grad.
         var p = Array[Float64, n_vars](fill=0)
@@ -1001,7 +1003,7 @@ def bfgs[
         if not accepted:
             # The direction is not a descent direction any more, which
             # means `H` has gone bad. Report rather than spin.
-            return MinimizeResult[n_vars](
+            return ArrayMinimizeResult[n_vars](
                 x^, f_x, grad_norm, iteration + 1, False
             )
 
@@ -1051,7 +1053,7 @@ def bfgs[
                 updated += s[i] * s[j] * (1 + yhy / sy) / sy
                 h[i * n_vars + j] = updated
 
-    return MinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
 
 
 def cg[
@@ -1061,7 +1063,7 @@ def cg[
     x0: Array[Float64, n_vars],
     tol: Float64 = 1e-8,
     max_iter: Int = 200,
-) -> MinimizeResult[n_vars]:
+) -> ArrayMinimizeResult[n_vars]:
     """Minimize `f` by nonlinear conjugate gradients (Polak-Ribiere).
     `scipy.optimize.minimize(method="CG")`.
 
@@ -1123,7 +1125,9 @@ def cg[
 
     for iteration in range(max_iter):
         if grad_norm < tol:
-            return MinimizeResult[n_vars](x^, f_x, grad_norm, iteration, True)
+            return ArrayMinimizeResult[n_vars](
+                x^, f_x, grad_norm, iteration, True
+            )
 
         var directional: Float64 = 0
         for i in range(n_vars):
@@ -1155,7 +1159,7 @@ def cg[
 
         var step = _wolfe_step[n_vars, f](x, direction, f_x, directional, guess)
         if step <= 0:
-            return MinimizeResult[n_vars](
+            return ArrayMinimizeResult[n_vars](
                 x^, f_x, grad_norm, iteration + 1, False
             )
         var candidate = Array[Float64, n_vars](fill=0)
@@ -1187,7 +1191,7 @@ def cg[
         for i in range(n_vars):
             grad_norm = max(grad_norm, abs(grad[i]))
 
-    return MinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
 
 
 def nelder_mead[
@@ -1197,7 +1201,7 @@ def nelder_mead[
     x0: Array[Float64, n_vars],
     tol: Float64 = 1e-10,
     max_iter: Int = 1000,
-) -> MinimizeResult[n_vars]:
+) -> ArrayMinimizeResult[n_vars]:
     """Minimize `f` by the Nelder-Mead simplex method.
     `scipy.optimize.minimize(method="Nelder-Mead")`.
 
@@ -1221,7 +1225,7 @@ def nelder_mead[
     derivative to look at, and it is why `tol` here is not comparable to
     `bfgs`'s gradient tolerance.
 
-    `MinimizeResult.grad_norm` is still filled in, by one extra evaluation
+    `ArrayMinimizeResult.grad_norm` is still filled in, by one extra evaluation
     at `Gradient` after the loop. Nelder-Mead does not use it, but a
     caller deserves to know how flat the point it stopped at actually is --
     a large gradient norm at a converged simplex means the simplex
@@ -1338,7 +1342,7 @@ def nelder_mead[
     for i in range(n_vars):
         grad_norm = max(grad_norm, abs(evaluated.grad[i].v))
 
-    return MinimizeResult[n_vars](
+    return ArrayMinimizeResult[n_vars](
         best^, values[0], grad_norm, iteration, converged
     )
 
@@ -1351,7 +1355,7 @@ def minimize[
     x0: Array[Float64, n_vars],
     tol: Optional[Float64] = None,
     max_iter: Optional[Int] = None,
-) raises -> MinimizeResult[n_vars]:
+) raises -> ArrayMinimizeResult[n_vars]:
     """Minimize `f` from `x0`. `scipy.optimize.minimize`.
 
     The SciPy-shaped entry point over the minimizers in this module, with
@@ -1556,7 +1560,7 @@ def root[
     x0: Array[Float64, n],
     tol: Optional[Float64] = None,
     max_iter: Optional[Int] = None,
-) raises -> MinimizeResult[n]:
+) raises -> ArrayMinimizeResult[n]:
     """Solve `f(x) = 0` for a vector `x`. `scipy.optimize.root`.
 
     `"lm"`, the only method, is `least_squares` applied to `f` itself: a
@@ -1713,7 +1717,7 @@ def least_squares[
     x0: Array[Float64, n_params],
     tol: Float64 = 1e-10,
     max_iter: Int = 100,
-) -> MinimizeResult[n_params]:
+) -> ArrayMinimizeResult[n_params]:
     """Minimize `sum(residuals(x)**2) / 2` by Levenberg-Marquardt.
     `scipy.optimize.least_squares`.
 
@@ -1734,7 +1738,7 @@ def least_squares[
     diverges.
 
     Convergence is `max|J.T r| < tol`, the same first-order condition
-    `bfgs` uses, reported in `MinimizeResult.grad_norm`. `f_x` is the cost
+    `bfgs` uses, reported in `ArrayMinimizeResult.grad_norm`. `f_x` is the cost
     `sum(r**2) / 2`, matching what SciPy reports rather than the raw sum.
 
     Bounds, robust loss functions and a sparse Jacobian are all out of
@@ -1772,7 +1776,7 @@ def least_squares[
                 slope += jacobian[k * n_params + j] * residual[k]
             grad_norm = max(grad_norm, abs(slope))
         if grad_norm < tol:
-            return MinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params](
                 x^, cost, grad_norm, iteration, True
             )
 
@@ -1798,14 +1802,14 @@ def least_squares[
                 break
             damping = damping * 3
         if not accepted:
-            return MinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params](
                 x^, cost, grad_norm, iteration + 1, False
             )
 
         for i in range(n_params):
             x[i] = candidate[i]
 
-    return MinimizeResult[n_params](x^, cost, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_params](x^, cost, grad_norm, max_iter, False)
 
 
 def curve_fit[
@@ -1818,7 +1822,7 @@ def curve_fit[
     p0: Array[Float64, n_params],
     tol: Float64 = 1e-10,
     max_iter: Int = 100,
-) -> MinimizeResult[n_params]:
+) -> ArrayMinimizeResult[n_params]:
     """Fit `model(x, params)` to `(xdata, ydata)` by least squares.
     `scipy.optimize.curve_fit`, first return value.
 
@@ -1872,7 +1876,7 @@ def curve_fit[
                 slope += jacobian[k * n_params + j] * residual[k]
             grad_norm = max(grad_norm, abs(slope))
         if grad_norm < tol:
-            return MinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params](
                 p^, cost, grad_norm, iteration, True
             )
 
@@ -1900,11 +1904,11 @@ def curve_fit[
                 break
             damping = damping * 3
         if not accepted:
-            return MinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params](
                 p^, cost, grad_norm, iteration + 1, False
             )
 
         for i in range(n_params):
             p[i] = candidate[i]
 
-    return MinimizeResult[n_params](p^, cost, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_params](p^, cost, grad_norm, max_iter, False)

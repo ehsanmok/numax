@@ -3,7 +3,7 @@
 
 MAX ships no LU at any size, so everything here is numax's.
 
-**The `Tensor` tier**, which is `TensorLU` and the `lu_factor` that
+**The `Tensor` tier**, which is `LU` and the `lu_factor` that
 returns it. `numax.linalg.array.lu` has the other two of the three forms
 this operation takes, and the reason there are three is that pivoting is a
 branch on data: `lu` there is tier 1 and unpivoted, so it runs at any
@@ -12,12 +12,12 @@ when that matrix is well conditioned; `PivotedLU` there pivots and gives
 that up, being `Plain[dtype, 1]` at width 1 because a SIMD `T` holds
 several matrices whose lanes would want different pivot orders.
 
-`TensorLU` pivots too and is blocked and device-resident: the factors and the pivot vector stay in
+`LU` pivots too and is blocked and device-resident: the factors and the pivot vector stay in
 device memory, the panel and the two substitutions are `panel.mojo`
 kernels, and the trailing `L21 @ U12` update is fused into
 `linalg.matmul`'s epilogue.
 
-`TensorLU` carries `gpu` in its type, so a factorization built on the
+`LU` carries `gpu` in its type, so a factorization built on the
 accelerator cannot be solved against by host code -- the mismatch is a
 compile error rather than a device-pointer read.
 
@@ -56,7 +56,7 @@ from .panel import (
 from .triangular import _trsm, _trsv
 
 
-struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
+struct LU[dtype: DType, n: Int, gpu: Bool = False](
     Movable where dtype.is_floating_point()
 ):
     """**Tier 2.** A blocked `LU` factorization of a `Tensor`, with partial
@@ -377,7 +377,7 @@ def lu_factor[
     gpu: Bool = False,
     block: Int = 16 if gpu else 32,
     base: Int = 16,
-](a: T) raises -> TensorLU[T.dtype, dim[T, 0], gpu] where (
+](a: T) raises -> LU[T.dtype, dim[T, 0], gpu] where (
     T.dtype.is_floating_point()
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -396,7 +396,7 @@ def lu_factor[
     they are chosen, rather than being recorded and replayed over the
     columns outside the panel afterwards. Same result, one less pass.
 
-    See `TensorLU` for what pivoting costs and what it buys, and
+    See `LU` for what pivoting costs and what it buys, and
     `cholesky` for the same blocking on a symmetric matrix, where pivoting
     is unnecessary. The `Array[T, n*n]` sibling `lu_factor` is the one to
     call at a conformer other than a raw `T.dtype`.
@@ -590,7 +590,7 @@ def lu_factor[
             sign = -sign
     trimmed.copy_from_host(head^)
 
-    return TensorLU[T.dtype, n, gpu](work^, trimmed^, sign)
+    return LU[T.dtype, n, gpu](work^, trimmed^, sign)
 
 
 def slogdet[
@@ -606,14 +606,14 @@ def slogdet[
     """`(sign, ln|det(a)|)`. `numpy.linalg.slogdet`.
 
     The one-shot form: factors `a` and reads the pair off, exactly as `det`
-    below does for the determinant itself. Hold the `TensorLU` and call
+    below does for the determinant itself. Hold the `LU` and call
     `.slogdet()` on it when both this and a solve are wanted from one
     factorization.
 
     Prefer this to `det` for anything but a small matrix. `det` forms the
     product of `n` diagonal entries, which overflows or underflows for
     perfectly ordinary matrices well before the answer stops being useful;
-    a sum of logarithms cannot. `TensorLU.slogdet` carries the full
+    a sum of logarithms cannot. `LU.slogdet` carries the full
     reasoning and the singular-matrix convention.
     """
     comptime n = dim[T, 0]
@@ -633,9 +633,9 @@ def det[
 ):
     """**Tier 2.** The determinant, pivoted. `scipy.linalg.det`.
 
-    `lu_factor` and `TensorLU.det`, thrown away afterwards. Reach for the
+    `lu_factor` and `LU.det`, thrown away afterwards. Reach for the
     factorization directly if the determinant is not the only thing wanted
-    from it -- `TensorLU` carries `solve` too, and this spelling discards
+    from it -- `LU` carries `solve` too, and this spelling discards
     a cubic-cost object to return one number.
 
     Pivoted, unlike the `Array[T, n*n]` sibling, so the swap parity is

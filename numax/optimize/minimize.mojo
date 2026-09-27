@@ -89,7 +89,7 @@ from ..linalg.blas import matvec, outer
 from .common import _as_tensor
 
 
-struct TensorMinimizeResult[dtype: DType, n_vars: Int](Movable):
+struct MinimizeResult[dtype: DType, n_vars: Int](Movable):
     """What a `Tensor`-tier minimization returns.
 
     `x` is the argument vector, `f_x` the objective at it, and `grad_norm`
@@ -97,8 +97,8 @@ struct TensorMinimizeResult[dtype: DType, n_vars: Int](Movable):
     test actually looks at, reported so a caller can see how close a
     non-converged run got.
 
-    The field names are `MinimizeResult`'s, so the two tiers read the same.
-    `TensorFitResult` next door says `cost` rather than `f_x` because a
+    The field names are `ArrayMinimizeResult`'s, so the two tiers read the same.
+    `FitResult` next door says `cost` rather than `f_x` because a
     least-squares cost is `sum(r**2) / 2` and genuinely a different
     quantity; an objective value is not.
 
@@ -595,7 +595,7 @@ def _powell[
     lower: List[Float64],
     upper: List[Float64],
     bounded: Bool,
-) raises -> TensorMinimizeResult[dtype, n_vars] where dtype.is_floating_point():
+) raises -> MinimizeResult[dtype, n_vars] where dtype.is_floating_point():
     """Powell's direction-set method (Numerical Recipes `powell`): a Brent
     line minimization along each direction, then the direction of largest
     decrease replaced by the net displacement, with the extrapolation test
@@ -651,7 +651,7 @@ def _powell[
         var scale = abs(f_start) + abs(f_x)
         last_decrease = 2 * abs(f_start - f_x) / (scale + 1e-300)
         if 2 * abs(f_start - f_x) <= tol * scale + 1e-20:
-            return TensorMinimizeResult[dtype, n_vars](
+            return MinimizeResult[dtype, n_vars](
                 _as_tensor[dtype, n_vars](x, ctx),
                 f_x,
                 last_decrease,
@@ -693,7 +693,7 @@ def _powell[
                 f_x = found[1]
                 directions[biggest_index] = directions[n_vars - 1].copy()
                 directions[n_vars - 1] = displacement^
-    return TensorMinimizeResult[dtype, n_vars](
+    return MinimizeResult[dtype, n_vars](
         _as_tensor[dtype, n_vars](x, ctx), f_x, last_decrease, max_iter, False
     )
 
@@ -711,7 +711,7 @@ def minimize[
     memory: Int = 10,
 ](
     x0: T, tol: Optional[Float64] = None, max_iter: Optional[Int] = None
-) raises -> TensorMinimizeResult[T.dtype, dim[T, 0]] where (
+) raises -> MinimizeResult[T.dtype, dim[T, 0]] where (
     T.dtype.is_floating_point()
     and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
@@ -798,7 +798,7 @@ def minimize[
     upper: C,
     tol: Optional[Float64] = None,
     max_iter: Optional[Int] = None,
-) raises -> TensorMinimizeResult[A.dtype, dim[A, 0]] where (
+) raises -> MinimizeResult[A.dtype, dim[A, 0]] where (
     A.dtype.is_floating_point()
     and A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
@@ -866,7 +866,7 @@ def _descend[
     lower: List[Float64],
     upper: List[Float64],
     bounded: Bool,
-) raises -> TensorMinimizeResult[dtype, n_vars] where dtype.is_floating_point():
+) raises -> MinimizeResult[dtype, n_vars] where dtype.is_floating_point():
     """The shared driver. The gradient methods take the same steps --
     evaluate, test, choose a direction, back-track, update -- and differ
     only in how the direction is produced, which is the `comptime if`
@@ -911,7 +911,7 @@ def _descend[
 
     for iteration in range(max_iter):
         if grad_norm < tol:
-            return TensorMinimizeResult[dtype, n_vars](
+            return MinimizeResult[dtype, n_vars](
                 _as_tensor[dtype, n_vars](x, ctx),
                 f_x,
                 grad_norm,
@@ -969,7 +969,7 @@ def _descend[
                 directional += grad[i] * direction[i]
             if directional >= 0:
                 # Nothing to move: every descent component is blocked.
-                return TensorMinimizeResult[dtype, n_vars](
+                return MinimizeResult[dtype, n_vars](
                     _as_tensor[dtype, n_vars](x, ctx),
                     f_x,
                     grad_norm,
@@ -1035,7 +1035,7 @@ def _descend[
                 step = step / 2
 
         if not accepted:
-            return TensorMinimizeResult[dtype, n_vars](
+            return MinimizeResult[dtype, n_vars](
                 _as_tensor[dtype, n_vars](x, ctx),
                 f_x,
                 grad_norm,
@@ -1104,7 +1104,7 @@ def _descend[
             x, grad, lower, upper, n_vars, bounded
         )
 
-    return TensorMinimizeResult[dtype, n_vars](
+    return MinimizeResult[dtype, n_vars](
         _as_tensor[dtype, n_vars](x, ctx),
         f_x,
         grad_norm,

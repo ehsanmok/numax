@@ -178,7 +178,7 @@ def main() raises:
     var b2 = general(ctx)
     var factored = svd(b2)
     # `A == U diag(s) V^T`. `v` holds the right singular vectors as columns,
-    # so SciPy's `Vh` is `transpose(v)` -- stated in `TensorSVD`'s docstring
+    # so SciPy's `Vh` is `transpose(v)` -- stated in `SVD`'s docstring
     # and worth seeing once.
     var u_host = factored.u.to_host()
     var s_host = factored.s.to_host()

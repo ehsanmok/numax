@@ -67,7 +67,7 @@ from .panel import (
 from .qr import _apply_block_reflector, _MIN_GEMM_COLS, _ReflectorWork
 
 
-struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
+struct Tridiagonal[dtype: DType, n: Int, gpu: Bool = False](
     Movable where dtype.is_floating_point() and n >= 1
 ):
     """The symmetric tridiagonal reduction `A = Q T Q^T`, device-resident.
@@ -125,7 +125,7 @@ struct TensorTridiagonal[dtype: DType, n: Int, gpu: Bool = False](
         `Q = H_0 H_1 ... H_{n-3}` applied to the identity, panels of
         `block` reflectors in reverse order, each panel one block
         reflector -- `larft` then `C := (I - V T V^T) C` as three matrix
-        products. That is `_accumulate_reflectors`, and it is `TensorQR`'s
+        products. That is `_accumulate_reflectors`, and it is `QR`'s
         `orgqr` walk over the same kernels.
 
         Still `O(n^3)`, but the cubic term is `linalg.matmul`'s rather
@@ -141,7 +141,7 @@ def sytrd[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 32,
-](a: T) raises -> TensorTridiagonal[T.dtype, dim[T, 0], gpu] where (
+](a: T) raises -> Tridiagonal[T.dtype, dim[T, 0], gpu] where (
     (T.dtype.is_floating_point() and block >= 1)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -359,7 +359,7 @@ def sytrd[
     elementwise[simd_width=1, target=_target[gpu]()](band, Coord(n), ctx)
     ctx.synchronize()
 
-    return TensorTridiagonal[T.dtype, n, gpu](d^, e^, work^, taus^, block)
+    return Tridiagonal[T.dtype, n, gpu](d^, e^, work^, taus^, block)
 
 
 def _subtract_panel[
@@ -911,7 +911,7 @@ def _tql[
     only changes how many commuting rotations ride in one product, which is
     why the blocking tests pin every size against every other.
 
-    `e` is read as the `n` entries `TensorTridiagonal` carries, with
+    `e` is read as the `n` entries `Tridiagonal` carries, with
     `e[n-1]` unused and treated as zero. Numerical Recipes' `tqli`, which
     is also Golub and Van Loan's Algorithm 8.3.3 read left to right.
     """
@@ -1047,13 +1047,13 @@ def eigvalsh[
     return Static[T.dtype, n](ctx, d^)
 
 
-struct TensorEigh[dtype: DType, n: Int](
+struct Eigh[dtype: DType, n: Int](
     Movable where dtype.is_floating_point() and n >= 1
 ):
     """`eigh`'s result: eigenvalues ascending, eigenvectors as columns.
 
     A struct rather than the `(w, v)` tuple SciPy returns, for the reason
-    `qr_factor` returns a `TensorQR`: a `Tuple` of two `Tensor`s cannot be
+    `qr_factor` returns a `QR`: a `Tuple` of two `Tensor`s cannot be
     destructured in Mojo 1.0, so a tuple-shaped return would hand back a
     pair no caller could take apart. `numax.linalg.array.eigh` returns the
     tuple because `Array` copies.
@@ -1079,7 +1079,7 @@ def eigh[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 32,
-](a: T) raises -> TensorEigh[T.dtype, dim[T, 0]] where (
+](a: T) raises -> Eigh[T.dtype, dim[T, 0]] where (
     (T.dtype.is_floating_point() and block >= 1)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -1183,7 +1183,7 @@ def eigh[
 
     var q = reduced.q()
     var vectors = inner[gpu=gpu](q, zt_sorted)
-    return TensorEigh[T.dtype, n](values^, vectors^)
+    return Eigh[T.dtype, n](values^, vectors^)
 
 
 # --------------------------------------------------- Hessenberg and Schur
@@ -1210,7 +1210,7 @@ def _accumulate_reflectors[
     `1` implicit -- applied to the identity in panels of `block`, last panel
     first. LAPACK's `orgtr` and `orghr` are both this.
 
-    The panel walk is `TensorQR.q()`'s and so are the kernels:
+    The panel walk is `QR.q()`'s and so are the kernels:
     `larft_panel` builds the panel's `T`, `pack_reflectors` materializes
     `V` and `V^T`, and `_apply_block_reflector` applies `I - V T V^T` as
     `W = V^T C`, `Y = T W`, `C -= V Y`. Three GEMMs and two small launches
@@ -1319,7 +1319,7 @@ def _zero_column_below[
     elementwise[simd_width=1, target=_target[gpu]()](fill, Coord(n), ctx)
 
 
-struct TensorHessenberg[dtype: DType, n: Int, gpu: Bool = False](
+struct Hessenberg[dtype: DType, n: Int, gpu: Bool = False](
     Movable where dtype.is_floating_point() and n >= 1
 ):
     """The Hessenberg reduction `A = Q H Q^T`, device-resident: `H` upper
@@ -1334,7 +1334,7 @@ struct TensorHessenberg[dtype: DType, n: Int, gpu: Bool = False](
 
     var reflectors: Static[Self.dtype, Self.n, Self.n]
     """Column `k` holds `v` for reflector `k` below row `k + 1`, its
-    leading `1` implicit -- LAPACK's packed form, `TensorTridiagonal`'s."""
+    leading `1` implicit -- LAPACK's packed form, `Tridiagonal`'s."""
 
     var taus: Static[Self.dtype, Self.n]
     """One Householder scale per column; zero where the column was already
@@ -1380,7 +1380,7 @@ def hessenberg[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 32,
-](a: T) raises -> TensorHessenberg[T.dtype, dim[T, 0], gpu] where (
+](a: T) raises -> Hessenberg[T.dtype, dim[T, 0], gpu] where (
     (T.dtype.is_floating_point() and block >= 1)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -1595,7 +1595,7 @@ def hessenberg[
     _ = product^
     _ = lwork^
 
-    return TensorHessenberg[T.dtype, n, gpu](work^, reflectors^, taus^, block)
+    return Hessenberg[T.dtype, n, gpu](work^, reflectors^, taus^, block)
 
 
 comptime _MAX_QR_SWEEPS_PER_N = 30
@@ -1995,12 +1995,12 @@ def eigvals[
     return Eigenvalues[T.dtype, n](re^, im^)
 
 
-struct TensorSchur[dtype: DType, n: Int](
+struct Schur[dtype: DType, n: Int](
     Movable where dtype.is_floating_point() and n >= 1
 ):
     """`schur`'s result: `a = z t z^T` with `t` real quasi-triangular and
     `z` orthogonal. A struct rather than SciPy's `(T, Z)` tuple, for the
-    reason `qr_factor` returns a `TensorQR`.
+    reason `qr_factor` returns a `QR`.
     """
 
     var t: Static[Self.dtype, Self.n, Self.n]
@@ -2060,7 +2060,7 @@ def schur[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 32,
-](a: T) raises -> TensorSchur[T.dtype, dim[T, 0]] where (
+](a: T) raises -> Schur[T.dtype, dim[T, 0]] where (
     (T.dtype.is_floating_point() and block >= 1)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -2138,7 +2138,7 @@ def schur[
     var q = reduced.q()
     var vectors = _q_times_zt[gpu=gpu](q, acc.zt)
     _ = acc^
-    return TensorSchur[T.dtype, n](t^, vectors^)
+    return Schur[T.dtype, n](t^, vectors^)
 
 
 # ----------------------------------------------------------------- SVD
@@ -2218,7 +2218,7 @@ def _row_of[
     return out^
 
 
-struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
+struct Bidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
     Movable where dtype.is_floating_point() and m >= n and n >= 1
 ):
     """The bidiagonal reduction `A = Q B P^T` of an `m x n` matrix with
@@ -2226,7 +2226,7 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
     `B` is upper bidiagonal: `d` on the diagonal, `e[0 .. n-2]` on the
     superdiagonal (`e[n-1]` is unused and zero, for the reason
-    `TensorTridiagonal` gives). `Q` (`m x n`, the thin form) and `P`
+    `Tridiagonal` gives). `Q` (`m x n`, the thin form) and `P`
     (`n x n`) are orthogonal and held as their Householder vectors -- one
     full-length vector per column of `left` and per row of `right` -- so
     `.q()` and `.p()` materialize them and `svdvals` never asks.
@@ -2279,7 +2279,7 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         first `n` columns of the identity, panels of `block` reflectors in
         reverse order. LAPACK's `orgbr` with `vect='Q'`.
 
-        This is `TensorQR.q()`'s walk unchanged, because `left` is already
+        This is `QR.q()`'s walk unchanged, because `left` is already
         in QR's packed form: `gebd2_col` writes the reflector's unit at row
         `k` -- the row a QR puts it on -- so no row-shifted view is needed
         here, unlike `orgtr`'s. `pack_reflectors` forces the diagonal to
@@ -2357,7 +2357,7 @@ def gebrd[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 32,
-](a: T) raises -> TensorBidiagonal[T.dtype, dim[T, 0], dim[T, 1], gpu] where (
+](a: T) raises -> Bidiagonal[T.dtype, dim[T, 0], dim[T, 1], gpu] where (
     (
         T.dtype.is_floating_point()
         and dim[T, 0] >= dim[T, 1]
@@ -2614,7 +2614,7 @@ def gebrd[
     # `findings.mdc` on the `.tile()` lifetime bug that `print` hides.
     _ = work^
 
-    return TensorBidiagonal[T.dtype, m, n, gpu](
+    return Bidiagonal[T.dtype, m, n, gpu](
         d^, e^, left^, right^, taus_left^, taus_right^, block
     )
 
@@ -3066,13 +3066,13 @@ def svdvals[
     return Static[T.dtype, n](ctx, out^)
 
 
-struct TensorSVD[dtype: DType, m: Int, n: Int](
+struct SVD[dtype: DType, m: Int, n: Int](
     Movable where dtype.is_floating_point() and m >= n and n >= 1
 ):
     """`svd`'s result: `A = U diag(s) V^T`, singular values descending.
 
     A struct rather than SciPy's `(U, s, Vh)` tuple, for the reason
-    `qr_factor` returns a `TensorQR`. The fields follow the `Array` tier's
+    `qr_factor` returns a `QR`. The fields follow the `Array` tier's
     `svd` -- `v` holds the right singular vectors as *columns*, so SciPy's
     `Vh` is `transpose(v)`, and `A == U @ diag(s) @ V^T` reads the way the
     reconstruction is written.
@@ -3102,7 +3102,7 @@ def svd[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 32,
-](a: T) raises -> TensorSVD[T.dtype, dim[T, 0], dim[T, 1]] where (
+](a: T) raises -> SVD[T.dtype, dim[T, 0], dim[T, 1]] where (
     (
         T.dtype.is_floating_point()
         and dim[T, 0] >= dim[T, 1]
@@ -3234,7 +3234,7 @@ def svd[
     var p = reduced.p()
     var u = inner[gpu=gpu](q, ub_t)
     var v = inner[gpu=gpu](p, vb_t)
-    return TensorSVD[T.dtype, m, n](u^, Static[T.dtype, n](ctx, s_host^), v^)
+    return SVD[T.dtype, m, n](u^, Static[T.dtype, n](ctx, s_host^), v^)
 
 
 def matrix_rank[

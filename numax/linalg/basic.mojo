@@ -8,7 +8,7 @@
 `solve` factors with the blocked pivoted `lu_factor` -- whose trailing
 update is MAX's GEMM -- and substitutes. It pivots, so it solves systems
 the `Array` overload cannot start on. Tier 2. Reach for `lu_factor`
-directly and reuse the `TensorLU` when there is more than one right-hand
+directly and reuse the `LU` when there is more than one right-hand
 side; this spelling throws the factorization away.
 
 `inverse` factors once rather than calling `solve` `n` times, and sends
@@ -64,14 +64,14 @@ def solve[
 
     Factors with `lu_factor` -- blocked, partially pivoted, trailing update
     in MAX -- and substitutes. Call `lu_factor` directly and reuse the
-    `TensorLU` when there is more than one right-hand side; this spelling
+    `LU` when there is more than one right-hand side; this spelling
     throws the factorization away.
 
     Unlike the `Array[T, n*n]` sibling, this pivots, so it solves systems
     that one cannot start on. The trade is the generic `T`: picking a row
     by magnitude is a branch on data, so there is no conformer axis here.
     Both halves do run on the accelerator at `gpu=True` -- the
-    factorization and the two substitutions alike, since `TensorLU` carries
+    factorization and the two substitutions alike, since `LU` carries
     `gpu` in its type and cannot be solved against on the wrong device.
     """
     comptime n = dim[A, 0]
@@ -92,7 +92,7 @@ def inverse[
     """**Tier 2.** `A^-1`, by factoring once and solving against the whole
     identity at once. `scipy.linalg.inv`.
 
-    One `lu_factor` and one `TensorLU.solve` with `n` right-hand sides, so
+    One `lu_factor` and one `LU.solve` with `n` right-hand sides, so
     the substitutions are `trsm` rather than `n` separate `trsv`s: the
     update between diagonal blocks is a matrix product and goes to MAX's
     `matmul`. That is the difference from the `Array[T, n*n]` sibling,
@@ -199,7 +199,7 @@ def orth[
     The columns of `U` whose singular value clears the tolerance, so the
     result is `m x rank`. **`rank` is a run-time fact**, which is why this
     returns a `Dynamic` where `svd` returns a statically shaped
-    `TensorSVD`: the number of columns depends on the matrix's *values*,
+    `SVD`: the number of columns depends on the matrix's *values*,
     and nothing in the type system can see it. `matrix_rank` is the same
     count on its own.
 
@@ -297,8 +297,8 @@ struct Polar[dtype: DType, n: Int](
     """`polar`'s result: `A = U P` with `U` orthogonal and `P` symmetric
     positive semidefinite.
 
-    A struct rather than SciPy's `(u, p)` tuple, for the reason `TensorQR`
-    and `TensorSVD` are structs: Mojo 1.0 cannot destructure a `Tuple` of
+    A struct rather than SciPy's `(u, p)` tuple, for the reason `QR`
+    and `SVD` are structs: Mojo 1.0 cannot destructure a `Tuple` of
     two `Tensor`s.
     """
 

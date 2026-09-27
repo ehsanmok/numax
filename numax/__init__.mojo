@@ -394,7 +394,7 @@ from .special.struve import struve
 # `numax.linalg.array` and shares these names, so it is not re-exported.
 from .linalg import (
     Polar,
-    TensorRQ,
+    RQ,
     asum,
     axpy,
     batched_matmul,
@@ -456,16 +456,16 @@ from .linalg import (
     svd,
     svdvals,
     sytrd,
-    TensorBidiagonal,
+    Bidiagonal,
     tanm,
     tensordot,
-    TensorEigh,
+    Eigh,
     tensorinv,
-    TensorLU,
-    TensorQR,
+    LU,
+    QR,
     tensorsolve,
-    TensorSVD,
-    TensorTridiagonal,
+    SVD,
+    Tridiagonal,
     toeplitz,
     trace,
 )
@@ -473,16 +473,16 @@ from .linalg import (
 # Minimization and least-squares fitting -- `numax.optimize`, the `Tensor`
 # tier. The scalar root finders and minimizers, the vector `root`,
 # `nelder_mead` and the `Gradient`-exact fits are `numax.optimize.array`.
-from .optimize.least_squares import TensorFitResult, curve_fit, least_squares
-from .optimize.linear import TensorLinearResult, lsq_linear, nnls
-from .optimize.minimize import TensorMinimizeResult, minimize
-from .optimize.root import TensorRootResult, root
+from .optimize.least_squares import FitResult, curve_fit, least_squares
+from .optimize.linear import LinearResult, lsq_linear, nnls
+from .optimize.minimize import MinimizeResult, minimize
+from .optimize.root import RootResult, root
 
 # Quadrature and ODE solvers -- `numax.integrate`.
 from .integrate.integrate import (
-    IVPResult,
+    ScalarIVPResult,
     QuadResult,
-    TensorIVPResult,
+    IVPResult,
     dblquad,
     fixed_quad,
     quad,
@@ -490,7 +490,7 @@ from .integrate.integrate import (
     solve_ivp,
     solve_ivp_stiff,
 )
-from .integrate.ode import TensorStep, dopri5, dopri5_step, rk4_system
+from .integrate.ode import Step, dopri5, dopri5_step, rk4_system
 from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
 
 # Interpolation -- `numax.interpolate`, the `Tensor` tier. The `FloatLike`

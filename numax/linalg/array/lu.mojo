@@ -8,7 +8,7 @@ magnitude is a branch on data -- which buys the matrices unpivoted `lu`
 cannot factor at the cost of the GPU and of differentiability.
 
 The blocked, device-resident `Tensor` tier is `numax.linalg.lu`, whose
-`TensorLU` is this module's `PivotedLU` with its factors in device memory.
+`LU` is this module's `PivotedLU` with its factors in device memory.
 """
 
 from std.collections import Array

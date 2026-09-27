@@ -40,7 +40,7 @@ from .least_squares import least_squares
 from .minimize import _infinity_norm, _to_list
 
 
-struct TensorRootResult[dtype: DType, n: Int](Movable):
+struct RootResult[dtype: DType, n: Int](Movable):
     """What `root` returns: the point, the infinity norm of `F` there, the
     iteration count and whether the tolerance was met. Movable but not
     `Copyable`: `x` owns a `DeviceBuffer`."""
@@ -82,7 +82,7 @@ def root[
     gpu: Bool = False,
 ](
     x0: T, tol: Optional[Float64] = None, max_iter: Optional[Int] = None
-) raises -> TensorRootResult[T.dtype, dim[T, 0]] where (
+) raises -> RootResult[T.dtype, dim[T, 0]] where (
     (
         T.dtype.is_floating_point()
         and dim[T, 0] >= 1
@@ -118,10 +118,10 @@ def root[
         )
         var at = f(fit.x, ctx)
         var norm = _infinity_norm(_to_list(at), n)
-        # `TensorFitResult` is `Movable` and cannot be taken apart field by
+        # `FitResult` is `Movable` and cannot be taken apart field by
         # field, so the solution is re-staged from its host copy: `O(n)`.
         var solution = _as_tensor[dtype, n](_to_list(fit.x), ctx)
-        return TensorRootResult[dtype, n](
+        return RootResult[dtype, n](
             solution^, norm, fit.iterations, norm < tolerance
         )
     elif method == "newton":
@@ -131,7 +131,7 @@ def root[
         var norm = _infinity_norm(residual, n)
         for iteration in range(limit):
             if norm < tolerance:
-                return TensorRootResult[dtype, n](
+                return RootResult[dtype, n](
                     _as_tensor[dtype, n](x, ctx), norm, iteration, True
                 )
             var here = _as_tensor[dtype, n](x, ctx)
@@ -161,13 +161,13 @@ def root[
                     break
                 step = step / 2
             if not accepted:
-                return TensorRootResult[dtype, n](
+                return RootResult[dtype, n](
                     _as_tensor[dtype, n](x, ctx), norm, iteration + 1, False
                 )
             x = candidate^
             residual = next_residual^
             norm = _infinity_norm(residual, n)
-        return TensorRootResult[dtype, n](
+        return RootResult[dtype, n](
             _as_tensor[dtype, n](x, ctx), norm, limit, norm < tolerance
         )
     else:

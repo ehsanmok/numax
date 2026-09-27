@@ -1197,7 +1197,7 @@ def test_inverse_agrees_with_the_array_tier() raises:
 
 
 def test_tensor_det_agrees_with_the_reusable_factorization() raises:
-    """The free `det` throws the factorization away; `TensorLU.det` keeps
+    """The free `det` throws the factorization away; `LU.det` keeps
     it. Same number either way."""
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
@@ -1504,7 +1504,7 @@ def test_tensor_qr_of_a_square_matrix_reconstructs_it() raises:
 
 
 def test_lstsq_agrees_with_the_factorization_it_wraps() raises:
-    """`lstsq` is `qr_factor` followed by `TensorQR.solve`, so the two
+    """`lstsq` is `qr_factor` followed by `QR.solve`, so the two
     spellings must produce the same vector bit for bit -- the convenience
     exists to hide the factorization, not to run a different algorithm."""
     var ctx = _cpu()

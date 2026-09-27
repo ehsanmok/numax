@@ -136,7 +136,7 @@ def test_the_array_tier_reports_a_singular_matrix_too() raises:
 
 
 def test_the_factor_can_be_reused_for_both() raises:
-    """`slogdet` free-standing factors; holding the `TensorLU` gives both
+    """`slogdet` free-standing factors; holding the `LU` gives both
     numbers from one factorization."""
     var ctx = DeviceContext(api="cpu")
     var a = _m(ctx)

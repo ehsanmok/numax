@@ -270,9 +270,9 @@ from .special.beta import beta, betaln
 # prelude for the same reason the builtin-shadowing reductions do.
 from .linalg import (
     Polar,
-    TensorLU,
-    TensorQR,
-    TensorRQ,
+    LU,
+    QR,
+    RQ,
     asum,
     axpy,
     batched_matmul,

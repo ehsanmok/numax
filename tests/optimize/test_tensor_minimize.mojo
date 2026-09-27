@@ -27,7 +27,7 @@ from max.gpu.host import DeviceContext
 from numax import FloatLike
 from numax.core.tensor import Static
 from numax.core.tensorlike import TensorView
-from numax.optimize import TensorMinimizeResult, minimize
+from numax.optimize import MinimizeResult, minimize
 from numax.optimize.array import minimize as array_minimize
 
 comptime dtype = DType.float64

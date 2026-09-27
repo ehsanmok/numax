@@ -913,7 +913,7 @@ def labrd_column[
         A[i:, i] -= V[i:, :j] Y[i, :j]^T + X[i:, :j] U[i, :j]^T
 
     `V` is the left reflectors as columns of `left` and `U` the right
-    reflectors as rows of `right`, both in the layout `TensorBidiagonal`
+    reflectors as rows of `right`, both in the layout `Bidiagonal`
     documents; `Y` and `X` are the corrections `labrd_y` and `labrd_x`
     accumulate. Nothing happens at `j == 0`, where the pair
     (`labrd_column`, `gebd2_col`) degenerates to `gebd2_col` alone, which

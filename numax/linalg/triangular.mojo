@@ -2,7 +2,7 @@
 `scipy.linalg`'s `solve_triangular` and the banded solvers.
 
 **The `Tensor` tier**, and **tier 2**: the blocked `solve_triangular`
-here is what `TensorLU.solve`, `cholesky_solve` and `TensorQR.solve`
+here is what `LU.solve`, `cholesky_solve` and `QR.solve`
 finish with. `numax.linalg.array.triangular` has the tier-1 `Array`
 substitutions and `tridiagonal_solve`.
 
@@ -11,7 +11,7 @@ cuBLAS/rocBLAS FFI -- so nothing here delegates. The blocked, device-
 resident `_trsv` pair is numax's: each step solves one `block x block`
 diagonal system with a `numax.linalg.panel` kernel and then updates the
 rest of the vector with a `gemv_sub`, which is where the `O(n^2)` is and
-which MAX's `elementwise` parallelizes. `TensorLU.solve` is their caller.
+which MAX's `elementwise` parallelizes. `LU.solve` is their caller.
 
 With several right-hand sides `_trsm` takes over and the update between
 diagonal blocks becomes a GEMM, which is why `inverse` solves against a

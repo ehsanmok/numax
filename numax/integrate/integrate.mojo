@@ -241,7 +241,7 @@ def quad_vec[
 
 
 @fieldwise_init
-struct IVPResult(Copyable):
+struct ScalarIVPResult(Copyable):
     """The outcome of an adaptive ODE integration.
 
     `accepted` and `rejected` are the step counts, and they are the two
@@ -271,7 +271,7 @@ def solve_ivp[
     rtol: Float64 = 1e-8,
     atol: Float64 = 1e-10,
     max_steps: Int = 10000,
-) -> IVPResult:
+) -> ScalarIVPResult:
     """Integrate `dy/dt = f(t, y)` from `t0` to `t1` with adaptive step
     control. The tier-2 counterpart of `numax.integrate.dopri5`.
 
@@ -301,7 +301,7 @@ def solve_ivp[
     `examples/advanced/ode.mojo`, which runs an ensemble that way.
     """
     if t0 == t1:
-        return IVPResult(t0, y0, 0, 0, True)
+        return ScalarIVPResult(t0, y0, 0, 0, True)
 
     var direction = 1.0 if t1 > t0 else -1.0
     var span = abs(t1 - t0)
@@ -319,7 +319,7 @@ def solve_ivp[
 
     for _ in range(max_steps):
         if abs(t - t1) <= 0.0:
-            return IVPResult(t, y, accepted, rejected, True)
+            return ScalarIVPResult(t, y, accepted, rejected, True)
 
         # Never step past the endpoint.
         if abs(h) > abs(t1 - t):
@@ -341,7 +341,7 @@ def solve_ivp[
             y = y_next
             accepted += 1
             if abs(t - t1) <= 0.0:
-                return IVPResult(t, y, accepted, rejected, True)
+                return ScalarIVPResult(t, y, accepted, rejected, True)
         else:
             rejected += 1
 
@@ -357,7 +357,7 @@ def solve_ivp[
             scale = min(5.0, max(0.2, scale))
         h = h * scale
 
-    return IVPResult(t, y, accepted, rejected, False)
+    return ScalarIVPResult(t, y, accepted, rejected, False)
 
 
 def _max_abs_ratio[
@@ -388,11 +388,9 @@ def _max_abs_ratio[
     return worst
 
 
-struct TensorIVPResult[dtype: DType, n: Int](
-    Movable where dtype.is_floating_point()
-):
+struct IVPResult[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
     """The outcome of an adaptive integration over a `Tensor` state: the
-    `Tensor` form of `IVPResult`, with the same fields and the same meaning
+    `Tensor` form of `ScalarIVPResult`, with the same fields and the same meaning
     for `accepted`, `rejected` and `converged`."""
 
     var t: Float64
@@ -429,7 +427,7 @@ def solve_ivp[
     rtol: Float64 = 1e-8,
     atol: Float64 = 1e-10,
     max_steps: Int = 10000,
-) raises -> TensorIVPResult[T.dtype, dim[T, 0]] where (
+) raises -> IVPResult[T.dtype, dim[T, 0]] where (
     T.dtype.is_floating_point()
     and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
@@ -449,7 +447,7 @@ def solve_ivp[
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     if t0 == t1:
-        return TensorIVPResult[dtype, n](
+        return IVPResult[dtype, n](
             t0, Static[dtype, n](y0.context(), y0.to_host()), 0, 0, True
         )
 
@@ -463,7 +461,7 @@ def solve_ivp[
 
     for _ in range(max_steps):
         if abs(t - t1) <= 0.0:
-            return TensorIVPResult[dtype, n](t, y^, accepted, rejected, True)
+            return IVPResult[dtype, n](t, y^, accepted, rejected, True)
         if abs(h) > abs(t1 - t):
             h = t1 - t
 
@@ -475,9 +473,7 @@ def solve_ivp[
             y = copy(stepped.y)
             accepted += 1
             if abs(t - t1) <= 0.0:
-                return TensorIVPResult[dtype, n](
-                    t, y^, accepted, rejected, True
-                )
+                return IVPResult[dtype, n](t, y^, accepted, rejected, True)
         else:
             rejected += 1
 
@@ -489,7 +485,7 @@ def solve_ivp[
             scale = min(5.0, max(0.2, scale))
         h = h * scale
 
-    return TensorIVPResult[dtype, n](t, y^, accepted, rejected, False)
+    return IVPResult[dtype, n](t, y^, accepted, rejected, False)
 
 
 def _trapezoid_step[
@@ -532,7 +528,7 @@ def solve_ivp_stiff[
     rtol: Float64 = 1e-8,
     atol: Float64 = 1e-10,
     max_steps: Int = 10000,
-) -> IVPResult:
+) -> ScalarIVPResult:
     """Integrate a *stiff* `dy/dt = f(t, y)` from `t0` to `t1`. The
     A-stable counterpart of `solve_ivp`.
 
@@ -565,7 +561,7 @@ def solve_ivp_stiff[
     a redesign.
     """
     if t0 == t1:
-        return IVPResult(t0, y0, 0, 0, True)
+        return ScalarIVPResult(t0, y0, 0, 0, True)
 
     var direction = 1.0 if t1 > t0 else -1.0
     var span = abs(t1 - t0)
@@ -579,7 +575,7 @@ def solve_ivp_stiff[
 
     for _ in range(max_steps):
         if abs(t - t1) <= 0.0:
-            return IVPResult(t, y, accepted, rejected, True)
+            return ScalarIVPResult(t, y, accepted, rejected, True)
 
         if abs(h) > abs(t1 - t):
             h = t1 - t
@@ -599,7 +595,7 @@ def solve_ivp_stiff[
             y = fine
             accepted += 1
             if abs(t - t1) <= 0.0:
-                return IVPResult(t, y, accepted, rejected, True)
+                return ScalarIVPResult(t, y, accepted, rejected, True)
         else:
             rejected += 1
 
@@ -611,7 +607,7 @@ def solve_ivp_stiff[
             scale = min(5.0, max(0.2, scale))
         h = h * scale
 
-    return IVPResult(t, y, accepted, rejected, False)
+    return ScalarIVPResult(t, y, accepted, rejected, False)
 
 
 def fixed_quad[

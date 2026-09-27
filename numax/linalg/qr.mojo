@@ -16,7 +16,7 @@ rather than a tuned kernel, and its `apply_q`/`form_q` companions are
 `LayoutTensor` too.
 
 The least-squares solve lives here rather than in `basic` (where SciPy
-puts `lstsq`) because it *is* this algorithm: `TensorQR.solve` applies the
+puts `lstsq`) because it *is* this algorithm: `QR.solve` applies the
 reflectors to `b` and back-substitutes, never forming `Q`, which is both
 cheaper and better conditioned than the normal equations
 `A^T A x = A^T b`. Keeping them together means the Householder code is in
@@ -312,7 +312,7 @@ def _apply_block_reflector[
         )
 
 
-struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
+struct QR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
     Movable where dtype.is_floating_point() and m >= n
 ):
     """A blocked Householder QR of an `m x n` matrix, held on its device.
@@ -551,7 +551,7 @@ def qr_factor[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 16,
-](a: T) raises -> TensorQR[T.dtype, dim[T, 0], dim[T, 1], gpu] where (
+](a: T) raises -> QR[T.dtype, dim[T, 0], dim[T, 1], gpu] where (
     (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 1])
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -567,7 +567,7 @@ def qr_factor[
     only thing numax runs by hand is the `O(m * block^2)` panel.
 
     Returns a factorization rather than `(R, Q)`, which is what
-    `TensorQR` is for: `.r()` and `.q()` materialize either factor, and
+    `QR` is for: `.r()` and `.q()` materialize either factor, and
     `.solve` and `.apply_q_transpose` skip forming `Q` altogether. There
     is no `Tensor` overload of `qr` returning both factors as a tuple, and
     that is a Mojo limit rather than a choice -- a `Tuple` of two
@@ -654,10 +654,10 @@ def qr_factor[
     ctx.synchronize()
 
     # `tile()` erases the origin, so `scratch` is not kept alive by `sv`
-    # and destruction is ASAP, the same hazard `TensorQR.solve` names.
+    # and destruction is ASAP, the same hazard `QR.solve` names.
     _ = scratch^
 
-    return TensorQR[T.dtype, m, n, gpu](factored^, taus^, block)
+    return QR[T.dtype, m, n, gpu](factored^, taus^, block)
 
 
 def lstsq[
@@ -682,16 +682,16 @@ def lstsq[
     `A` is `m x n` with `m >= n`, the overdetermined shape a fit has; an
     underdetermined system has a solution space rather than a solution.
 
-    This is `qr_factor` followed by `TensorQR.solve`, and it exists because
+    This is `qr_factor` followed by `QR.solve`, and it exists because
     a caller fitting once should not have to know that the route goes
-    through a factorization object. Hold the `TensorQR` instead when several
+    through a factorization object. Hold the `QR` instead when several
     right-hand sides share one `A` -- the factorization is the expensive
     half and `solve` is the cheap one, so this convenience is exactly the
     wrong shape for a loop.
 
     | `method` | Route | Reach for it when |
     | --- | --- | --- |
-    | `"qr"` (default) | `qr_factor` then `TensorQR.solve` | `A` has full column rank, which is the fit's usual case |
+    | `"qr"` (default) | `qr_factor` then `QR.solve` | `A` has full column rank, which is the fit's usual case |
     | `"svd"` | `pinv(A) @ b` | `A` may be rank deficient: the answer is the minimum-norm solution, as `scipy.linalg.lstsq`'s default driver returns |
 
     At `"qr"` rank deficiency is not detected, the same limit the `Array`
@@ -716,13 +716,13 @@ def lstsq[
         )
 
 
-struct TensorRQ[dtype: DType, n: Int](
+struct RQ[dtype: DType, n: Int](
     Movable where dtype.is_floating_point() and n >= 1
 ):
     """`rq`'s result: `A = R Q` with `R` upper triangular and `Q`
     orthogonal.
 
-    Both factors are formed, unlike `TensorQR`, which holds reflectors and
+    Both factors are formed, unlike `QR`, which holds reflectors and
     forms `Q` on request. The reason is that the reflectors here belong to
     a *different* matrix -- the reversed transpose `rq` factors -- so they
     say nothing directly about this `A`, and keeping them would hand a
@@ -790,7 +790,7 @@ def rq[
     T: TensorLike,
     gpu: Bool = False,
     block: Int = 16,
-](a: T) raises -> TensorRQ[T.dtype, dim[T, 0]] where (
+](a: T) raises -> RQ[T.dtype, dim[T, 0]] where (
     (T.dtype.is_floating_point() and dim[T, 0] >= dim[T, 0] and dim[T, 0] >= 1)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -836,4 +836,4 @@ def rq[
     var rb_t = transpose[gpu=gpu](rb)
     var qb_t = transpose[gpu=gpu](qb)
 
-    return TensorRQ[T.dtype, n](_reverse_both(rb_t), _reverse_rows(qb_t))
+    return RQ[T.dtype, n](_reverse_both(rb_t), _reverse_rows(qb_t))

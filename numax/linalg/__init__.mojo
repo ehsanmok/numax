@@ -33,11 +33,11 @@ modules matter when reading or extending.
 | `triangular` | `solve_triangular` | `_basic`'s `solve_triangular` |
 | `banded` | `solve_banded`, `solveh_banded`, `cholesky_banded`, `cho_solve_banded`, `solve_toeplitz`, `solve_circulant` | `_banded`, `_solve_toeplitz` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
-| `lu` | `lu_factor`, `TensorLU`, `det`, `slogdet` | `_decomp_lu` |
-| `qr` | `qr_factor`, `TensorQR`, `lstsq`, `rq`, `TensorRQ` | `_decomp_qr` |
+| `lu` | `lu_factor`, `LU`, `det`, `slogdet` | `_decomp_lu` |
+| `qr` | `qr_factor`, `QR`, `lstsq`, `rq`, `RQ` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `fro`, `inf`, `neg_inf` | `_misc` |
-| `eigen` | `sytrd`, `TensorTridiagonal`, `eigvalsh`, `eigh`, `TensorEigh`, `gebrd`, `TensorBidiagonal`, `svdvals`, `svd`, `TensorSVD`, `matrix_rank`, `hessenberg`, `TensorHessenberg`, `eigvals`, `Eigenvalues`, `schur`, `TensorSchur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
+| `eigen` | `sytrd`, `Tridiagonal`, `eigvalsh`, `eigh`, `Eigh`, `gebrd`, `Bidiagonal`, `svdvals`, `svd`, `SVD`, `matrix_rank`, `hessenberg`, `Hessenberg`, `eigvals`, `Eigenvalues`, `schur`, `Schur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
 | `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `tanm`, `fractional_matrix_power` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
@@ -51,11 +51,11 @@ once per tier and never twice within one.
 
 `matmul` (compile-time and run-time shapes), `matvec`, `batched_matmul`,
 the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`, `outer`), blocked
-`cholesky`, `lu_factor` (returning a reusable `TensorLU`), `qr_factor`
-(returning a reusable `TensorQR`), `sytrd` (returning a reusable
-`TensorTridiagonal`) and `solve`, the solves those unlock --
+`cholesky`, `lu_factor` (returning a reusable `LU`), `qr_factor`
+(returning a reusable `QR`), `sytrd` (returning a reusable
+`Tridiagonal`) and `solve`, the solves those unlock --
 `solve_triangular`, `cholesky_solve`, `inverse`, `det`, `slogdet`, and the
-least-squares `TensorQR.solve` -- and the scalar summaries `norm`
+least-squares `QR.solve` -- and the scalar summaries `norm`
 (`fro`/`1`/`inf` over a matrix, `2`/`1`/`inf`/`neg_inf` over a vector) and
 `trace`. Each takes a `gpu: Bool` parameter that
 chooses MAX's target, and everything blocked a `block` size that tunes the
@@ -66,12 +66,12 @@ convenience: with one right-hand side the update between diagonal blocks
 is a `gemv`, with several it is a matrix product and goes to
 `linalg.matmul`. That is why `inverse` solves against the whole identity
 in one call rather than looping the columns, and why `cholesky_solve` and
-`TensorLU.solve` each have both spellings.
+`LU.solve` each have both spellings.
 
 All three factorizations are device-resident -- their panel steps are
 `panel.mojo` kernels addressing the matrix in place and their trailing
 updates are fused into `matmul`'s epilogue, so nothing crosses to the host
-between the copy in and the copy out. `TensorLU` and `TensorQR` hold their
+between the copy in and the copy out. `LU` and `QR` hold their
 factors in device memory and carry `gpu` in their type, which is what
 makes solving a device factorization from host code a compile error rather
 than a device-pointer read. `tril`/`triu` are `numax.core`'s, also
@@ -178,10 +178,10 @@ different algorithm, filed for 0.3, with the measured split in `schur`'s
 own docstring.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
-returns a `TensorQR` rather than a `(R, Q)` tuple, because a `Tuple` of
+returns a `QR` rather than a `(R, Q)` tuple, because a `Tuple` of
 two `Tensor`s cannot be destructured in Mojo 1.0 -- `Tensor` is `Movable`,
 tuple unpacking wants `ImplicitlyCopyable` -- so a tuple-shaped overload
-would hand back a pair no caller could take apart. `TensorQR.r()` and
+would hand back a pair no caller could take apart. `QR.r()` and
 `.q()` materialize either factor and `.apply_q_transpose`/`.solve` skip
 `Q` entirely, which is LAPACK's split and the more useful surface anyway.
 `numax.linalg.array.qr` is the tuple-returning one.
@@ -224,12 +224,12 @@ from .blas import (
 from .cholesky import cholesky, cholesky_solve
 from .eigen import (
     Eigenvalues,
-    TensorBidiagonal,
-    TensorEigh,
-    TensorHessenberg,
-    TensorSVD,
-    TensorSchur,
-    TensorTridiagonal,
+    Bidiagonal,
+    Eigh,
+    Hessenberg,
+    SVD,
+    Schur,
+    Tridiagonal,
     eigh,
     eigvals,
     eigvalsh,
@@ -241,7 +241,7 @@ from .eigen import (
     svdvals,
     sytrd,
 )
-from .lu import TensorLU, det, lu_factor, slogdet
+from .lu import LU, det, lu_factor, slogdet
 from .matfuncs import (
     cosm,
     expm,
@@ -253,7 +253,7 @@ from .matfuncs import (
     tanm,
 )
 from .misc import cond, fro, inf, neg_inf, norm, trace
-from .qr import TensorQR, TensorRQ, lstsq, qr_factor, rq
+from .qr import QR, RQ, lstsq, qr_factor, rq
 from .special_matrices import (
     block_diag,
     circulant,

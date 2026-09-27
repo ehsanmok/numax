@@ -156,9 +156,7 @@ def rk4_system[
     return y^
 
 
-struct TensorStep[dtype: DType, n: Int](
-    Movable where dtype.is_floating_point()
-):
+struct Step[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
     """One Dormand-Prince step's result: the 5th-order state and the
     embedded 4th-order one, whose disagreement is the local error
     estimate. A struct rather than a tuple because a `Tuple` of two
@@ -193,9 +191,7 @@ def dopri5_step[
         Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
     ) raises thin -> Static[T.dtype, dim[T, 0]],
     gpu: Bool = False,
-](t: Float64, y_in: T, h: Float64) raises -> TensorStep[
-    T.dtype, dim[T, 0]
-] where (
+](t: Float64, y_in: T, h: Float64) raises -> Step[T.dtype, dim[T, 0]] where (
     T.dtype.is_floating_point()
     and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
@@ -262,7 +258,7 @@ def dopri5_step[
     _axpy_into[gpu=gpu](y4, k6, hs * Scalar[dtype](_BH6), ctx)
     _axpy_into[gpu=gpu](y4, k7, hs * Scalar[dtype](_BH7), ctx)
 
-    return TensorStep[dtype, n](y5^, y4^)
+    return Step[dtype, n](y5^, y4^)
 
 
 def dopri5[

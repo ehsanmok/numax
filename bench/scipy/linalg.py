@@ -129,7 +129,7 @@ def bench_solve(n: int) -> None:
 
 def bench_qr(n: int) -> None:
     a = general(n)
-    # `mode="economic"` matches numax's `TensorQR`: `Q` is `m x n`, not
+    # `mode="economic"` matches numax's `QR`: `Q` is `m x n`, not
     # `m x m`, and for a square matrix the two agree anyway.
     ns = time_call(lambda: sla.qr(a, mode="economic"), iters(4 * n**3 // 3))
     q, r = sla.qr(a, mode="economic")

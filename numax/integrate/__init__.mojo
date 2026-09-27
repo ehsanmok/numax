@@ -29,9 +29,9 @@ than a formula.
 """
 
 from .integrate import (
-    IVPResult,
+    ScalarIVPResult,
     QuadResult,
-    TensorIVPResult,
+    IVPResult,
     quad,
     dblquad,
     fixed_quad,
@@ -39,5 +39,5 @@ from .integrate import (
     solve_ivp,
     solve_ivp_stiff,
 )
-from .ode import TensorStep, dopri5, dopri5_step, rk4_system
+from .ode import Step, dopri5, dopri5_step, rk4_system
 from .quadrature import cumulative_trapezoid, simpson, trapezoid

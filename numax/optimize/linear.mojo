@@ -44,7 +44,7 @@ from .common import _as_tensor
 from .minimize import _to_list
 
 
-struct TensorLinearResult[dtype: DType, n: Int](Movable):
+struct LinearResult[dtype: DType, n: Int](Movable):
     """What `nnls` and `lsq_linear` return: the solution, `||A x - b||_2`
     at it, the iteration count and whether the projected gradient met the
     tolerance. Movable but not `Copyable`: `x` owns a `DeviceBuffer`."""
@@ -262,7 +262,7 @@ def lsq_linear[
     upper: D,
     tol: Optional[Float64] = None,
     max_iter: Optional[Int] = None,
-) raises -> TensorLinearResult[A.dtype, dim[A, 1]] where (
+) raises -> LinearResult[A.dtype, dim[A, 1]] where (
     (A.dtype.is_floating_point() and dim[A, 0] >= 1 and dim[A, 1] >= 1)
     and A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
@@ -307,7 +307,7 @@ def lsq_linear[
     var norm = _residual_norm[gpu=gpu](
         _canonical[m, n](a), _canonical[m](b), solved[0], ctx
     )
-    return TensorLinearResult[A.dtype, n](
+    return LinearResult[A.dtype, n](
         _as_tensor[A.dtype, n](solved[0], ctx), norm, solved[1], solved[2]
     )
 
@@ -318,7 +318,7 @@ def nnls[
     gpu: Bool = False,
 ](
     a: A, b: B, tol: Optional[Float64] = None, max_iter: Optional[Int] = None
-) raises -> TensorLinearResult[A.dtype, dim[A, 1]] where (
+) raises -> LinearResult[A.dtype, dim[A, 1]] where (
     (A.dtype.is_floating_point() and dim[A, 0] >= 1 and dim[A, 1] >= 1)
     and A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
@@ -353,6 +353,6 @@ def nnls[
     var norm = _residual_norm[gpu=gpu](
         _canonical[m, n](a), _canonical[m](b), solved[0], ctx
     )
-    return TensorLinearResult[A.dtype, n](
+    return LinearResult[A.dtype, n](
         _as_tensor[A.dtype, n](solved[0], ctx), norm, solved[1], solved[2]
     )
