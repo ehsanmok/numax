@@ -1,9 +1,11 @@
-"""Gap-only NumPy-named creation and manipulation surface over `TileTensor`.
+"""`Tensor`, its factories, and the NumPy-named manipulation surface.
 
-**This module is tier 2.** Every manipulation here walks a host copy of the
-elements, and several of them raise on a shape the compiler cannot check.
-The tensor itself is tier-agnostic -- it is storage -- but these functions
-are host-side. `numax.core.functional` holds the GPU-launchable walks.
+**The tensor is tier-agnostic; the manipulation walks are tier 2.** `Tensor`
+is storage, host or device. `transpose`, `tril`, `triu` and constant-mode
+`pad` launch on the tensor's device; the factories and the other
+manipulations walk a host copy of the elements, and several raise on a
+shape the compiler cannot check. `numax.core.functional` holds the
+GPU-launchable walks.
 
 `docs/parity.md` picks array creation/manipulation as a genuine
 `numax` gap: MAX's `layout` package ships `TileTensor` itself (slicing,
@@ -18,8 +20,9 @@ over `TileTensor` -- not a competing array type. Any array-level work in
 numax builds as a thin layer over `TileTensor`, because that is what every
 MAX kernel already takes.
 
-**One tensor type, CPU and GPU.** `Static[dtype, *dims]` is the only owning
-tensor in `numax`, and it works on either kind of device because its storage
+**One tensor type, CPU and GPU.** `Tensor` is the only owning tensor in
+`numax` -- `Static[dtype, *dims]` and `Dynamic[dtype, rank]` are its
+compile-time- and run-time-shaped spellings -- and it works on either kind of device because its storage
 is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
 `DeviceContext(api="cpu")` and the buffer is host memory, pass
 `DeviceContext()` and it is device memory. Nothing else about the type
@@ -65,16 +68,16 @@ pointer, and the host read segfaults the process (verified on an A10G --
 a crash, not a catchable error). `map_to_host` is the one accessor correct on
 both devices (on a CPU context it maps the same memory; on a GPU it stages a
 transfer and flushes writes back on scope exit), so the two methods below
-wrap it and there is deliberately no `__getitem__`/`__setitem__` on `Tensor`
-to be reached for by accident.
+wrap it. Scalar `a[i]` and `a[r, c]` go through the same mapping, one per
+access: correct on both devices, and a staged transfer per element on a GPU.
 
-**Comptime shape only.** `row_major[*dims: Int]()` (compile-time variadic)
-is what satisfies `numax.core.functional`'s `where all_dims_known and is_row_major`
-clause; the runtime-shape sibling `row_major(Coord)` produces
-`all_dims_known=False` and fails that same clause. So every function here
-takes a compile-time `*dims: Int` shape, matching `numax.core.functional`'s existing
-contract exactly. Dynamic-shape creation is out of scope; `numax.core.functional`'s
-runtime-shape overloads take a `TileTensor` the caller has laid out.
+**Compile-time and run-time shapes.** A `Static` carries `row_major[*dims]()`,
+which satisfies `numax.core.functional`'s `where all_dims_known and
+is_row_major` clause and so reaches `map[gpu=True]`. A `Dynamic` carries
+`row_major(Coord)`, built by the `_dyn` factories (`zeros_dyn` and
+siblings) or by `as_dynamic()`; the NumPy-named surface reaches the device
+from it through `elementwise`, and `as_static[*dims]()` checks the extents
+once to cross back.
 
 **Two parameter shapes, and why.** The fixed-arity factories put the count
 first with `dtype` defaulted -- `linspace[5](0, 1)`, `eye[3]()`, and
@@ -109,21 +112,16 @@ walk requires, and `numax.core.functional.map_strided` walks exactly that (see
 `tests/core/test_bridge.mojo`). `numax.stats.argmax`/`argmin` already route
 into `nn.argmaxmin`.
 
-**Manipulation scope, stated plainly.** `TileTensor.transpose()` already
-gives a zero-copy *view* with every axis reversed (not merely the last two);
-`transpose` here is a genuinely different thing -- an owned-copy 2D matrix
-transpose, useful when the result needs to outlive the source or be handed
-to something that wants its own storage. `squeeze` covers the two concrete
-directions a matrix collapses to a vector (`(1, n) -> (n,)` and
-`(n, 1) -> (n,)`); a fully general N-dimensional squeeze would need to
-build a new variadic shape parameter pack from an arbitrary subset of an
-existing one, which Mojo's parameter-pack machinery doesn't expose a public
-way to do. `stack` covers exactly two same-shaped tensors along a new
-leading axis (`axis=0`); `axis=1` stacking is not provided -- both are
-real, documented scope limits, not oversights.
+**Static and run-time forms side by side.** `TileTensor.transpose()` already
+gives a zero-copy *view* with every axis reversed; `transpose` here is an
+owned copy, for a result that must outlive its source. `squeeze` and
+`stack` each have fixed-shape overloads that keep the extents in the type
+(`(1, n) -> (n,)`, two vectors to a `(2, n)`) beside a general form taking
+an `axis` and returning a `Dynamic`, since Mojo cannot build a new shape
+pack from an arbitrary subset of an existing one.
 
-Every manipulation here except `transpose` runs its element walk on the
-host, through `to_host`/`copy_from_host`. On a CPU context that is the
+Every manipulation here except `transpose`, `tril`, `triu` and
+constant-mode `pad` runs its element walk on the host, through `to_host`/`copy_from_host`. On a CPU context that is the
 memory itself and costs nothing; on a GPU context it stages a round trip,
 which is the wrong shape for a large device-resident tensor. `transpose`
 is the exception because a blocked factorization needs `L.T` on the device
