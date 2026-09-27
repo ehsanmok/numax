@@ -1,4 +1,4 @@
-"""Binning over `numax.core.array.Tensor`: `histogram`, `histogram2d`,
+"""Binning over `numax.core.tensor.Tensor`: `histogram`, `histogram2d`,
 `histogramdd`, `bincount` and `digitize`, with NumPy's edge rules.
 
 **Tier 2, host-side**, the way `median` and `quantile` are: a histogram
@@ -29,7 +29,7 @@ from layout.tile_layout import TensorLayout
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import Dynamic, Static, Tensor, asarray
+from ..core.tensor import Dynamic, Static, Tensor, asarray
 
 
 def _as_float64[dtype: DType](values: List[Scalar[dtype]]) -> List[Float64]:

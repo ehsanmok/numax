@@ -131,7 +131,7 @@ from ..core._drive import (
     _width,
 )
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import Tensor
+from ..core.tensor import Tensor
 from ..core.plain import Plain
 from ..special.beta import betainc, betaincc
 from ..special.gamma import gammainc, gammaincc, lgamma

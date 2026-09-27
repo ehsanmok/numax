@@ -14,7 +14,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.stats import bincount, digitize, histogram, histogram2d, histogramdd
 
 comptime dtype = DType.float64

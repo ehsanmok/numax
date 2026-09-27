@@ -60,7 +60,7 @@ from std.sys.info import simd_width_of
 from std.utils import IndexList
 
 from .tensorlike import TensorLike, is_row_major
-from .array import (
+from .tensor import (
     Dynamic,
     Tensor,
     _dyn_shape_from,

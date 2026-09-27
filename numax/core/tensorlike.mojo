@@ -1,7 +1,7 @@
 """`TensorLike`: one bound over an owned `Tensor` and a borrowed `TensorView`.
 
 **This module is tier-agnostic.** It defines no kernel; it names what a
-kernel may be handed. `Tensor` (`numax.core.array`) owns its storage and
+kernel may be handed. `Tensor` (`numax.core.tensor`) owns its storage and
 `TensorView` borrows a `TileTensor` someone else owns, and every public routine in
 the `Tensor` tier takes either through this one trait, so a factorization
 runs on a whole tensor or on a sub-block of one without a copy:
@@ -52,7 +52,7 @@ immutable tile is refused at compile time rather than quietly producing a
 writable view over read-only storage.
 
 A `TensorView` built without a context is a host view, matching every factory in
-`numax.core.array`: the `DeviceContext` comes last, optional, and its
+`numax.core.tensor`: the `DeviceContext` comes last, optional, and its
 absence means the CPU. Pass the owning tensor's `context()` for a view
 over device memory.
 """

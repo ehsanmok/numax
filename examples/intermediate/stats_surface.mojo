@@ -30,7 +30,7 @@ from std.math import sin
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.stats import (
     corrcoef,
     cov,

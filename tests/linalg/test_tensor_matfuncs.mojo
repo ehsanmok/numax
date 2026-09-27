@@ -10,7 +10,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_raises
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, zeros
+from numax.core.tensor import Static, zeros
 from numax.core.numeric import FloatLike
 from numax.linalg import (
     cosm,

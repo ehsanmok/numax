@@ -121,7 +121,7 @@ them is one launch instead of thousands. Storage is structure of arrays,
 `(k, batch)`: row `j` holds element `j` of every problem, which is what
 makes a lane load `w` consecutive addresses and adjacent GPU threads read
 adjacent memory; a caller holding `(batch, k)` transposes once with
-`numax.core.array.transpose`, on either target. `examples/advanced/batched_solve.mojo`
+`numax.core.tensor.transpose`, on either target. `examples/advanced/batched_solve.mojo`
 is the worked case. At `k_in = k_out = 1` this is `map`'s contract exactly,
 so a genuinely elementwise kernel stays on `map`.
 
@@ -385,7 +385,7 @@ def map_to[
     reads `float32` and writes `bool` -- and `map` cannot express it,
     because its `step` is `SIMD[dtype, w] -> SIMD[dtype, w]`.
 
-    `numax.core.logic` and `numax.core.array.astype` are built on this.
+    `numax.core.logic` and `numax.core.tensor.astype` are built on this.
     """
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
@@ -612,7 +612,7 @@ def map_blocks[
     every problem, so one lane load is `w` consecutive addresses and
     adjacent GPU threads read adjacent memory. A caller holding the
     problems the other way round -- `(batch, k)`, one problem per row --
-    transposes once with `numax.core.array.transpose`, which runs on both
+    transposes once with `numax.core.tensor.transpose`, which runs on both
     targets, rather than paying a strided gather per block per launch.
 
     Raw `SIMD` in and out, the same contract `map`'s `step` has:

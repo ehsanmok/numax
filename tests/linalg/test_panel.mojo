@@ -17,7 +17,7 @@ from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.array import Static, zeros, zeros_dyn
+from numax.core.tensor import Static, zeros, zeros_dyn
 from numax.linalg.common import _Dense
 from numax.linalg.panel import (
     getrf2,

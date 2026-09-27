@@ -1,4 +1,4 @@
-"""Shape and summary statistics over `numax.core.array.Tensor`: `skew`,
+"""Shape and summary statistics over `numax.core.tensor.Tensor`: `skew`,
 `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `trim_mean` and
 `describe`, with `scipy.stats`' conventions and bias corrections.
 
@@ -22,7 +22,7 @@ from std.utils.numerics import inf as _inf
 from layout.tile_layout import TensorLayout
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import Static, Tensor
+from ..core.tensor import Static, Tensor
 
 
 def _values[T: TensorLike](xs: T) raises -> List[Float64]:

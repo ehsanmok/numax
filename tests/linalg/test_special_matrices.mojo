@@ -20,8 +20,8 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Static, to_array
-from numax.core.array import transpose
+from numax.core.tensor import Static, to_array
+from numax.core.tensor import transpose
 from numax.linalg import eigvals as tensor_eigvals
 from numax.linalg import (
     block_diag,

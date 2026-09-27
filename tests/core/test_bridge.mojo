@@ -26,7 +26,7 @@ from nn.reshape import reshape as nn_reshape
 from std.utils import IndexList
 
 from numax import Dual, Gradient, Plain
-from numax.core.array import (
+from numax.core.tensor import (
     Dynamic,
     Static,
     Tensor,

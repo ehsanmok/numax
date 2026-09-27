@@ -50,7 +50,7 @@ from layout import Coord
 from layout.tile_layout import TensorLayout
 
 from .tensorlike import TensorLike, is_row_major
-from .array import Dynamic, Tensor
+from .tensor import Dynamic, Tensor
 from ._drive import (
     _BroadcastRank,
     _check_device,

@@ -29,7 +29,7 @@ explicit choice.
 The nine `scipy.stats` distribution namespaces are not here either:
 `gamma` and `beta` would collide with the special functions of those names.
 Reach for them as `numax.stats.norm`, `numax.stats.chi2`, and so on.
-`numax.core.array.slice` stays out on the same principle, since `slice` is
+`numax.core.tensor.slice` stays out on the same principle, since `slice` is
 what a reader expects to mean Mojo's own slicing. And `hilbert` is here as
 the `scipy.linalg` matrix only; the `scipy.signal` transform of the same
 name is `numax.signal.hilbert`, because one name means one thing on the
@@ -80,7 +80,7 @@ from .core.constants import e, e_at, pi, pi_at
 
 # The tensor, its creation and manipulation surface, and the seam to
 # `Array[T, n]`.
-from .core.array import (
+from .core.tensor import (
     Dynamic,
     Static,
     Tensor,

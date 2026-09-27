@@ -20,7 +20,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor, full, zeros
+from numax.core.tensor import Static, Tensor, full, zeros
 from numax.io import nmx
 
 comptime dtype = DType.float32

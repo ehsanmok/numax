@@ -1,4 +1,4 @@
-"""Real trigonometric transforms over `numax.core.array.Tensor`: `dct`/`idct`
+"""Real trigonometric transforms over `numax.core.tensor.Tensor`: `dct`/`idct`
 and `dst`/`idst`, types I-IV, with `scipy.fft`'s definitions and its three
 normalizations.
 
@@ -61,7 +61,7 @@ from std.math import cos as _cos, sin as _sin, sqrt as _sqrt
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
-from ..core.array import Static
+from ..core.tensor import Static
 from .fft import _PI, _as_matrix, _dft
 
 comptime _SQRT2 = 1.4142135623730951

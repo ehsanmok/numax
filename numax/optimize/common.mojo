@@ -18,7 +18,7 @@ Nothing is re-exported.
 
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static
+from ..core.tensor import Static
 
 
 def _as_tensor[

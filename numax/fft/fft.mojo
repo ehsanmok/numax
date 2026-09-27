@@ -1,4 +1,4 @@
-"""Discrete Fourier transforms over `numax.core.array.Tensor`.
+"""Discrete Fourier transforms over `numax.core.tensor.Tensor`.
 
 **This module is tier 2.** The stage loop runs on the host and each stage is
 a device kernel, so nothing here is launchable *inside* a kernel body the
@@ -123,7 +123,7 @@ from max.gpu.host import DeviceContext
 from std.collections import Array
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static, Tensor, zeros
+from ..core.tensor import Static, Tensor, zeros
 
 comptime _TWO_PI = 6.283185307179586
 comptime _PI = 3.141592653589793

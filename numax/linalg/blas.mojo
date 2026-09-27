@@ -51,7 +51,7 @@ from std.utils import IndexList
 from ..core.rowwise import reduce_all
 from .common import _mut_view, _mut_view_as
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import (
+from ..core.tensor import (
     _canonical_dyn,
     copy,
     Dynamic,

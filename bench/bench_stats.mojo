@@ -30,7 +30,7 @@ from max.gpu.host import DeviceContext
 from std.benchmark import keep, run
 from std.math import erf, sqrt
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.stats import corrcoef, cov, histogram, norm, quantile
 
 comptime dtype = DType.float32

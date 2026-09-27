@@ -1,4 +1,4 @@
-"""Sorting, searching and counting over `numax.core.array.Tensor`.
+"""Sorting, searching and counting over `numax.core.tensor.Tensor`.
 
 **This module is tier 2.** A comparison sort runs a data-dependent number
 of comparisons and branches per element; `searchsorted` halves an interval
@@ -71,7 +71,7 @@ from std.collections import Array
 from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout, row_major
 from .tensorlike import TensorLike, dim, is_row_major
-from .array import (
+from .tensor import (
     Dynamic,
     Static,
     Tensor,
@@ -98,7 +98,7 @@ def sort[
     predictable if this later grows a key argument.
 
     Returns rank-1 regardless of the input's rank, which is what
-    `axis=None` means. `numax.core.array.reshape` puts a shape back on if one
+    `axis=None` means. `numax.core.tensor.reshape` puts a shape back on if one
     is wanted.
 
     The overload below takes a tensor whose extents are run-time values
@@ -719,7 +719,7 @@ def select[
 
     Named `select` because `where` is a Mojo keyword -- it introduces the
     constraint clauses this library uses throughout (`numax.core.functional`'s
-    `all_dims_known` checks, `numax.core.array.reshape`'s element-count check).
+    `all_dims_known` checks, `numax.core.tensor.reshape`'s element-count check).
     Not merely a style collision: `mojo format` cannot parse `where` as an
     identifier at all. The third such rename in the parity surface, after
     `variance` and `stddev`.

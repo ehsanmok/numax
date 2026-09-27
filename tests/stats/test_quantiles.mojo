@@ -21,7 +21,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from max.gpu.host import DeviceContext
 from std.utils.numerics import nan as _nan
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.stats import (
     average,
     iqr,

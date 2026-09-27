@@ -22,7 +22,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Compensated, Plain
-from numax.core.array import Static, Tensor, full, reshape, arange
+from numax.core.tensor import Static, Tensor, full, reshape, arange
 from numax.core.tensorlike import TensorView
 from numax.core.numeric import FloatLike
 from numax.stats import (

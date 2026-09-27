@@ -17,7 +17,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import (
+from numax.core.tensor import (
     Dynamic,
     Static,
     broadcast_shapes,

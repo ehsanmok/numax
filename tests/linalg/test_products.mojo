@@ -18,7 +18,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from max.gpu.host import DeviceContext
 
 from numax import FloatLike, Plain
-from numax.core.array import Static, transpose
+from numax.core.tensor import Static, transpose
 from numax.linalg import inner, kron, matmul, matrix_power
 from numax.linalg.array import inner as array_inner
 from numax.linalg.array import kron as array_kron

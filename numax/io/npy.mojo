@@ -29,7 +29,7 @@ this writes is indistinguishable from one `numpy.save` wrote, which is
 what `tests/io/test_npy.mojo` asserts against real NumPy bytes.
 
 **A typed load, like `nmx.load`.** `dtype` and `dims` are compile-time
-parameters the caller supplies, matching every other `numax.core.array`
+parameters the caller supplies, matching every other `numax.core.tensor`
 factory, and `numpy.load` raises if the file disagrees. It is not a
 shape-inferring reader: a numax `Tensor`'s shape lives in its type.
 
@@ -50,7 +50,7 @@ from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout, row_major
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Dynamic, Static, Tensor, _context, _dyn_shape_from
+from ..core.tensor import Dynamic, Static, Tensor, _context, _dyn_shape_from
 
 
 # The magic's first byte is 0x93, which is not valid UTF-8 on its own: a
@@ -347,7 +347,7 @@ struct numpy:
         every reason `_read_npy` does. `load_dyn` below is the overload
         that takes the file's own shape instead.
 
-        The `DeviceContext` is what every `numax.core.array` root factory
+        The `DeviceContext` is what every `numax.core.tensor` root factory
         takes, for the same reason: the bytes have to land on a device, and
         the file does not name one.
         """

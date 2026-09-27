@@ -53,7 +53,7 @@ from ..core.plain import Plain
 from .array.ode import dopri5_step
 from .ode import dopri5_step as _tensor_dopri5_step
 from ..core.tensorlike import TensorLike, dim
-from ..core.array import Static, copy
+from ..core.tensor import Static, copy
 from max.gpu.host import DeviceContext
 from .array.quadrature import (
     _gauss_legendre_nodes,

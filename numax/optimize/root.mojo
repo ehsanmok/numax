@@ -1,4 +1,4 @@
-"""Roots of a square nonlinear system over `numax.core.array.Tensor`.
+"""Roots of a square nonlinear system over `numax.core.tensor.Tensor`.
 `scipy.optimize.root`.
 
 **This module is tier 2.** It iterates to a tolerance with a host driver
@@ -32,7 +32,7 @@ from std.math import sqrt as _sqrt
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, dim
-from ..core.array import Static
+from ..core.tensor import Static
 from ..linalg.basic import solve
 
 from .common import _as_tensor

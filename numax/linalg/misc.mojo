@@ -29,7 +29,7 @@ from std.utils import IndexList
 
 from .common import _mut_view, _mut_view_as
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 from ..core.rowwise import max_axis, reduce_all, sum_axis
 
 from .blas import _target, asum as _asum, nrm2 as _nrm2

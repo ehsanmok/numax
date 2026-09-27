@@ -133,7 +133,7 @@ NumPy/SciPy, routes to MAX, or leaves out: `docs/parity.md`.
 # Numeric types: the `FloatLike` trait and its conformers, plus the
 # `Tensor` surface (creation, arithmetic, elementwise math, comparisons,
 # sorting) built over `TileTensor` -- `numax.core`.
-from .core.array import (
+from .core.tensor import (
     Dynamic,
     Static,
     Tensor,
@@ -535,7 +535,7 @@ from .fft.trig import dct, dst, idct, idst
 
 # Convolution, correlation, windows -- `numax.signal`, the `Tensor` tier;
 # the `FloatLike` half is `numax.signal.array`. The mode constants stay
-# behind `numax.signal.`: `full` collides with `core.array.full`.
+# behind `numax.signal.`: `full` collides with `core.tensor.full`.
 from .signal.convolution import convolve, correlate, fftconvolve
 from .signal.windows import (
     bartlett,

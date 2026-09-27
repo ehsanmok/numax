@@ -1,4 +1,4 @@
-"""Binary save/load and configurable printing for `numax.core.array.Tensor`.
+"""Binary save/load and configurable printing for `numax.core.tensor.Tensor`.
 
 **This module is tier 2.** File I/O, host-side by definition.
 
@@ -10,7 +10,7 @@ NumPy interchange, `npy.mojo`'s `numpy.save`/`numpy.load` read and write
 `.npy` directly (no Python and no NumPy: the format is self-contained).
 `NMX1` is the better choice between numax programs, since it carries the
 dtype name in full and has no Python literal to parse. `Plain`-only, axis
-2, the same shape as `numax.core.array`.
+2, the same shape as `numax.core.tensor`.
 
 **Format.** 4-byte magic (`"NMX1"`), a length-prefixed UTF-8 dtype name
 (e.g. `"float32"` -- this is what `nmx.load` checks against the caller's
@@ -20,7 +20,7 @@ rank, `rank` little-endian `Int64` dims, then the raw row-major payload
 bytes, copied out through `Tensor.to_host()` so the format is the same
 whichever device the tensor lives on. This is a
 *typed* load: `dtype`/`dims` are compile-time parameters the caller
-supplies (matching every other `numax.core.array` factory function's
+supplies (matching every other `numax.core.tensor` factory function's
 comptime-shape contract), and `nmx.load` raises if the file's header doesn't
 match them exactly, rather than inferring a shape from the file the way a
 dynamically-shaped reader would.
@@ -37,7 +37,7 @@ from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static, Tensor, _context
+from ..core.tensor import Static, Tensor, _context
 
 
 comptime _MAGIC = "NMX1"
@@ -109,7 +109,7 @@ struct nmx:
 
         Raises if the file's dtype name, rank, or shape doesn't exactly match
         the `dtype`/`dims` requested here. The `DeviceContext` is what every
-        `numax.core.array` root factory takes, for the same reason: the bytes have
+        `numax.core.tensor` root factory takes, for the same reason: the bytes have
         to land on a device, and the file does not name one.
         """
         var f = open(path, "r")

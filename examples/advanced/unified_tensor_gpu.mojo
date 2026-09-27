@@ -1,6 +1,6 @@
 """One `Tensor` type, both devices: the same code on CPU and on GPU.
 
-`numax.core.array.Tensor` owns a MAX `DeviceBuffer`, so which device a tensor
+`numax.core.tensor.Tensor` owns a MAX `DeviceBuffer`, so which device a tensor
 lives on is decided by the `DeviceContext` handed to the factory function
 and by nothing else. `DeviceContext(api="cpu")` puts it in host memory,
 `DeviceContext()` puts it on the accelerator; the type, the shape
@@ -44,7 +44,7 @@ so this is a local/manual example rather than a CI one -- the same reason
 from max.gpu.host import DeviceContext
 
 from numax import Plain, exp, gaussian, greater
-from numax.core.array import Static, Tensor, linspace, zeros
+from numax.core.tensor import Static, Tensor, linspace, zeros
 from numax.core.functional import map
 from numax.stats import norm
 from numax.stats import sum as tensor_sum

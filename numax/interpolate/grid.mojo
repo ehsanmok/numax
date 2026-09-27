@@ -1,4 +1,4 @@
-"""Interpolation on a rectilinear grid over `numax.core.array.Tensor`:
+"""Interpolation on a rectilinear grid over `numax.core.tensor.Tensor`:
 `RegularGridInterpolator` in two dimensions, linear or nearest.
 `scipy.interpolate.RegularGridInterpolator`.
 
@@ -34,7 +34,7 @@ from max.algorithm.functional import elementwise
 from std.utils.numerics import nan as _nan
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 from .interp import _interval
 
 

@@ -340,7 +340,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         the fill, and `__getitem__`'s host-pointer fast path does not order
         itself against queued work the way a host mapping does. Without it,
         a read immediately after construction can see unwritten memory
-        (caught by `tests/core/test_array.mojo`'s zero-content check).
+        (caught by `tests/core/test_tensor.mojo`'s zero-content check).
         """
         self.layout = layout
         self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
@@ -1157,7 +1157,7 @@ def arange[
     `numpy.arange` takes a `stop` and derives the count from it, which makes
     the output extent depend on runtime values; this module's shapes are
     comptime, so the count is the parameter and `stop` is implied
-    (`start + num*step`). `numax.core.array.linspace` is the one to reach for
+    (`start + num*step`). `numax.core.tensor.linspace` is the one to reach for
     when the endpoints are what matter.
     """
     var first = Scalar[dtype](start)

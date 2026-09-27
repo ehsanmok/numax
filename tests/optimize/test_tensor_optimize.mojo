@@ -15,7 +15,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, zeros
+from numax.core.tensor import Static, zeros
 from numax.optimize import lsq_linear, minimize, nnls, root
 
 comptime dtype = DType.float64

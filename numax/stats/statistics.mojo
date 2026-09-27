@@ -51,7 +51,7 @@ two different questions:
   `argmin`, `cumprod`): "what NumPy-shaped
   statistic can I compute over a buffer of raw `dtype` values". These
   compose from MAX's reductions and `numax.core.functional.reduce` the same way
-  `numax.core.array`'s creation
+  `numax.core.tensor`'s creation
   routines compose from `TileTensor` -- a thin, `Plain`-only layer, axis 2
   only. `median` selects with `std.builtin.sort.partition` and `mode` sorts
   with the standard library's `sort` -- the fixed-iteration invariant
@@ -119,7 +119,7 @@ from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 from nn.cumsum import cumsum as _nn_cumsum
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import Dynamic, Static, Tensor, _dyn_shape_from
+from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape_from
 from ..core._drive import _check_device, _dense, _flat, _notice
 from ..core.ops import (
     multiply as _multiply,

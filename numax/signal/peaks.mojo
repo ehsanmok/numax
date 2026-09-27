@@ -1,4 +1,4 @@
-"""Peak finding over `numax.core.array.Tensor`: `find_peaks` with SciPy's
+"""Peak finding over `numax.core.tensor.Tensor`: `find_peaks` with SciPy's
 `height`, `threshold` and `distance` conditions.
 
 **Tier 2, host-side**, and honestly so: the number of peaks is a property
@@ -12,7 +12,7 @@ distance sort. MAX has nothing for this; **extend**.
 from std.builtin.sort import sort as _sort
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 
 
 def find_peaks[

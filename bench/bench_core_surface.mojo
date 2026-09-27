@@ -59,7 +59,7 @@ from std.math import exp as _std_exp
 from std.sys.info import simd_width_of
 
 from numax.core._drive import _THREADED_FROM
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.core.elementwise import exp
 from numax.core.logic import greater
 from numax.core.ops import add, multiply

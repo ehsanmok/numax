@@ -9,204 +9,6 @@ with the tree.
 """
 
 from std.testing import TestSuite
-from test_array import (
-    test_zeros_has_the_requested_shape_and_content as test_array__test_zeros_has_the_requested_shape_and_content,
-)
-from test_array import (
-    test_ones_is_filled_with_one as test_array__test_ones_is_filled_with_one,
-)
-from test_array import (
-    test_full_is_filled_with_the_given_value as test_array__test_full_is_filled_with_the_given_value,
-)
-from test_array import (
-    test_empty_is_zero_initialized_for_memory_safety as test_array__test_empty_is_zero_initialized_for_memory_safety,
-)
-from test_array import (
-    test_eye_is_the_identity_matrix as test_array__test_eye_is_the_identity_matrix,
-)
-from test_array import (
-    test_linspace_matches_numpy_endpoints_and_spacing as test_array__test_linspace_matches_numpy_endpoints_and_spacing,
-)
-from test_array import (
-    test_linspace_of_one_point_returns_start as test_array__test_linspace_of_one_point_returns_start,
-)
-from test_array import (
-    test_logspace_matches_base_to_the_linspace_power as test_array__test_logspace_matches_base_to_the_linspace_power,
-)
-from test_array import (
-    test_zeros_like_matches_source_shape as test_array__test_zeros_like_matches_source_shape,
-)
-from test_array import (
-    test_ones_like_matches_source_shape as test_array__test_ones_like_matches_source_shape,
-)
-from test_array import (
-    test_full_like_uses_the_given_fill_value as test_array__test_full_like_uses_the_given_fill_value,
-)
-from test_array import (
-    test_empty_like_matches_source_shape as test_array__test_empty_like_matches_source_shape,
-)
-from test_array import (
-    test_transpose_swaps_rows_and_columns as test_array__test_transpose_swaps_rows_and_columns,
-)
-from test_array import (
-    test_transpose_is_its_own_inverse as test_array__test_transpose_is_its_own_inverse,
-)
-from test_array import (
-    test_transpose_default_is_the_host_path as test_array__test_transpose_default_is_the_host_path,
-)
-from test_array import (
-    test_squeeze_drops_a_leading_size_one_axis as test_array__test_squeeze_drops_a_leading_size_one_axis,
-)
-from test_array import (
-    test_squeeze_drops_a_trailing_size_one_axis as test_array__test_squeeze_drops_a_trailing_size_one_axis,
-)
-from test_array import (
-    test_stack_along_axis_zero as test_array__test_stack_along_axis_zero,
-)
-from test_array import (
-    test_tensor_survives_the_call_that_built_it as test_array__test_tensor_survives_the_call_that_built_it,
-)
-from test_array import (
-    test_arange_starts_at_start_and_steps_by_step as test_array__test_arange_starts_at_start_and_steps_by_step,
-)
-from test_array import (
-    test_arange_defaults_to_zero_start_unit_step as test_array__test_arange_defaults_to_zero_start_unit_step,
-)
-from test_array import (
-    test_reshape_preserves_row_major_element_order as test_array__test_reshape_preserves_row_major_element_order,
-)
-from test_array import (
-    test_ravel_inverts_reshape as test_array__test_ravel_inverts_reshape,
-)
-from test_array import (
-    test_ravel_flattens_a_2d_tensor_row_by_row as test_array__test_ravel_flattens_a_2d_tensor_row_by_row,
-)
-from test_array import (
-    test_concatenate_joins_two_rank1_tensors_end_to_end as test_array__test_concatenate_joins_two_rank1_tensors_end_to_end,
-)
-from test_array import (
-    test_split_inverts_concatenate as test_array__test_split_inverts_concatenate,
-)
-from test_array import (
-    test_split_at_an_endpoint_gives_one_empty_side as test_array__test_split_at_an_endpoint_gives_one_empty_side,
-)
-from test_array import (
-    test_rank_2_indexing_matches_the_flat_index as test_array__test_rank_2_indexing_matches_the_flat_index,
-)
-from test_array import (
-    test_rank_2_indexing_agrees_with_the_view as test_array__test_rank_2_indexing_agrees_with_the_view,
-)
-from test_array import (
-    test_array_factories_fill_what_they_say as test_array__test_array_factories_fill_what_they_say,
-)
-from test_array import (
-    test_array_eye_agrees_with_lifting_the_tensor_one as test_array__test_array_eye_agrees_with_lifting_the_tensor_one,
-)
-from test_array import (
-    test_the_tensor_factories_still_resolve as test_array__test_the_tensor_factories_still_resolve,
-)
-from test_array import (
-    test_every_dtype_alias_names_the_dtype_it_looks_like as test_array__test_every_dtype_alias_names_the_dtype_it_looks_like,
-)
-from test_array import (
-    test_transpose_permutes_axes_at_rank_three as test_array__test_transpose_permutes_axes_at_rank_three,
-)
-from test_array import (
-    test_transpose_at_rank_two_still_keeps_its_extents_in_the_type as test_array__test_transpose_at_rank_two_still_keeps_its_extents_in_the_type,
-)
-from test_array import (
-    test_transpose_rejects_a_bad_permutation as test_array__test_transpose_rejects_a_bad_permutation,
-)
-from test_array import (
-    test_swapaxes_exchanges_exactly_two_axes as test_array__test_swapaxes_exchanges_exactly_two_axes,
-)
-from test_array import (
-    test_moveaxis_is_not_swapaxes as test_array__test_moveaxis_is_not_swapaxes,
-)
-from test_array import (
-    test_swapaxes_accepts_negative_axes as test_array__test_swapaxes_accepts_negative_axes,
-)
-from test_array import (
-    test_concatenate_along_an_axis_sums_only_that_extent as test_array__test_concatenate_along_an_axis_sums_only_that_extent,
-)
-from test_array import (
-    test_concatenate_along_axis_zero_stacks_rows as test_array__test_concatenate_along_axis_zero_stacks_rows,
-)
-from test_array import (
-    test_concatenate_rejects_a_mismatched_other_axis as test_array__test_concatenate_rejects_a_mismatched_other_axis,
-)
-from test_array import (
-    test_stack_at_an_axis_adds_one_rather_than_growing_one as test_array__test_stack_at_an_axis_adds_one_rather_than_growing_one,
-)
-from test_array import (
-    test_stack_at_the_trailing_position_interleaves as test_array__test_stack_at_the_trailing_position_interleaves,
-)
-from test_array import (
-    test_split_at_an_axis_inverts_concatenate as test_array__test_split_at_an_axis_inverts_concatenate,
-)
-from test_array import (
-    test_split_rejects_a_cut_past_the_axis as test_array__test_split_rejects_a_cut_past_the_axis,
-)
-from test_array import (
-    test_the_rank_one_concatenate_still_keeps_its_length_in_the_type as test_array__test_the_rank_one_concatenate_still_keeps_its_length_in_the_type,
-)
-from test_array import (
-    test_expand_dims_inserts_a_size_one_axis as test_array__test_expand_dims_inserts_a_size_one_axis,
-)
-from test_array import (
-    test_roll_shifts_cyclically_and_inverts as test_array__test_roll_shifts_cyclically_and_inverts,
-)
-from test_array import (
-    test_roll_along_the_outer_axis as test_array__test_roll_along_the_outer_axis,
-)
-from test_array import (
-    test_tile_repeats_the_whole_block as test_array__test_tile_repeats_the_whole_block,
-)
-from test_array import (
-    test_repeat_repeats_each_element_not_the_block as test_array__test_repeat_repeats_each_element_not_the_block,
-)
-from test_array import (
-    test_tile_rejects_a_count_per_missing_axis as test_array__test_tile_rejects_a_count_per_missing_axis,
-)
-from test_array import (
-    test_squeeze_at_an_axis_is_expand_dims_read_backwards as test_array__test_squeeze_at_an_axis_is_expand_dims_read_backwards,
-)
-from test_array import (
-    test_squeeze_rejects_an_axis_that_is_not_size_one as test_array__test_squeeze_rejects_an_axis_that_is_not_size_one,
-)
-from test_array import (
-    test_the_fixed_squeeze_overloads_still_keep_their_type as test_array__test_the_fixed_squeeze_overloads_still_keep_their_type,
-)
-from test_array import (
-    test_atleast_2d_promotes_a_vector_to_a_row_not_a_column as test_array__test_atleast_2d_promotes_a_vector_to_a_row_not_a_column,
-)
-from test_array import (
-    test_atleast_2d_leaves_a_matrix_alone as test_array__test_atleast_2d_leaves_a_matrix_alone,
-)
-from test_array import (
-    test_atleast_1d_is_the_identity_at_the_only_rank_it_takes as test_array__test_atleast_1d_is_the_identity_at_the_only_rank_it_takes,
-)
-from test_array import (
-    test_flatten_agrees_with_ravel as test_array__test_flatten_agrees_with_ravel,
-)
-from test_array import (
-    test_dstack_interleaves_rather_than_appending as test_array__test_dstack_interleaves_rather_than_appending,
-)
-from test_array import (
-    test_rot90_turns_counterclockwise_and_four_turns_is_identity as test_array__test_rot90_turns_counterclockwise_and_four_turns_is_identity,
-)
-from test_array import (
-    test_atleast_3d_uses_numpys_shapes_at_each_rank as test_array__test_atleast_3d_uses_numpys_shapes_at_each_rank,
-)
-from test_array import (
-    test_array_split_divides_evenly_and_unevenly as test_array__test_array_split_divides_evenly_and_unevenly,
-)
-from test_array import (
-    test_array_split_along_a_later_axis_keeps_the_other_extents as test_array__test_array_split_along_a_later_axis_keeps_the_other_extents,
-)
-from test_array import (
-    test_array_split_rejects_a_nonpositive_count as test_array__test_array_split_rejects_a_nonpositive_count,
-)
 from test_bridge import (
     test_rank_1_round_trips as test_bridge__test_rank_1_round_trips,
 )
@@ -1358,6 +1160,204 @@ from test_sqrt import (
 from test_sqrt import (
     test_beats_the_exp_ln_workaround as test_sqrt__test_beats_the_exp_ln_workaround,
 )
+from test_tensor import (
+    test_zeros_has_the_requested_shape_and_content as test_tensor__test_zeros_has_the_requested_shape_and_content,
+)
+from test_tensor import (
+    test_ones_is_filled_with_one as test_tensor__test_ones_is_filled_with_one,
+)
+from test_tensor import (
+    test_full_is_filled_with_the_given_value as test_tensor__test_full_is_filled_with_the_given_value,
+)
+from test_tensor import (
+    test_empty_is_zero_initialized_for_memory_safety as test_tensor__test_empty_is_zero_initialized_for_memory_safety,
+)
+from test_tensor import (
+    test_eye_is_the_identity_matrix as test_tensor__test_eye_is_the_identity_matrix,
+)
+from test_tensor import (
+    test_linspace_matches_numpy_endpoints_and_spacing as test_tensor__test_linspace_matches_numpy_endpoints_and_spacing,
+)
+from test_tensor import (
+    test_linspace_of_one_point_returns_start as test_tensor__test_linspace_of_one_point_returns_start,
+)
+from test_tensor import (
+    test_logspace_matches_base_to_the_linspace_power as test_tensor__test_logspace_matches_base_to_the_linspace_power,
+)
+from test_tensor import (
+    test_zeros_like_matches_source_shape as test_tensor__test_zeros_like_matches_source_shape,
+)
+from test_tensor import (
+    test_ones_like_matches_source_shape as test_tensor__test_ones_like_matches_source_shape,
+)
+from test_tensor import (
+    test_full_like_uses_the_given_fill_value as test_tensor__test_full_like_uses_the_given_fill_value,
+)
+from test_tensor import (
+    test_empty_like_matches_source_shape as test_tensor__test_empty_like_matches_source_shape,
+)
+from test_tensor import (
+    test_transpose_swaps_rows_and_columns as test_tensor__test_transpose_swaps_rows_and_columns,
+)
+from test_tensor import (
+    test_transpose_is_its_own_inverse as test_tensor__test_transpose_is_its_own_inverse,
+)
+from test_tensor import (
+    test_transpose_default_is_the_host_path as test_tensor__test_transpose_default_is_the_host_path,
+)
+from test_tensor import (
+    test_squeeze_drops_a_leading_size_one_axis as test_tensor__test_squeeze_drops_a_leading_size_one_axis,
+)
+from test_tensor import (
+    test_squeeze_drops_a_trailing_size_one_axis as test_tensor__test_squeeze_drops_a_trailing_size_one_axis,
+)
+from test_tensor import (
+    test_stack_along_axis_zero as test_tensor__test_stack_along_axis_zero,
+)
+from test_tensor import (
+    test_tensor_survives_the_call_that_built_it as test_tensor__test_tensor_survives_the_call_that_built_it,
+)
+from test_tensor import (
+    test_arange_starts_at_start_and_steps_by_step as test_tensor__test_arange_starts_at_start_and_steps_by_step,
+)
+from test_tensor import (
+    test_arange_defaults_to_zero_start_unit_step as test_tensor__test_arange_defaults_to_zero_start_unit_step,
+)
+from test_tensor import (
+    test_reshape_preserves_row_major_element_order as test_tensor__test_reshape_preserves_row_major_element_order,
+)
+from test_tensor import (
+    test_ravel_inverts_reshape as test_tensor__test_ravel_inverts_reshape,
+)
+from test_tensor import (
+    test_ravel_flattens_a_2d_tensor_row_by_row as test_tensor__test_ravel_flattens_a_2d_tensor_row_by_row,
+)
+from test_tensor import (
+    test_concatenate_joins_two_rank1_tensors_end_to_end as test_tensor__test_concatenate_joins_two_rank1_tensors_end_to_end,
+)
+from test_tensor import (
+    test_split_inverts_concatenate as test_tensor__test_split_inverts_concatenate,
+)
+from test_tensor import (
+    test_split_at_an_endpoint_gives_one_empty_side as test_tensor__test_split_at_an_endpoint_gives_one_empty_side,
+)
+from test_tensor import (
+    test_rank_2_indexing_matches_the_flat_index as test_tensor__test_rank_2_indexing_matches_the_flat_index,
+)
+from test_tensor import (
+    test_rank_2_indexing_agrees_with_the_view as test_tensor__test_rank_2_indexing_agrees_with_the_view,
+)
+from test_tensor import (
+    test_array_factories_fill_what_they_say as test_tensor__test_array_factories_fill_what_they_say,
+)
+from test_tensor import (
+    test_array_eye_agrees_with_lifting_the_tensor_one as test_tensor__test_array_eye_agrees_with_lifting_the_tensor_one,
+)
+from test_tensor import (
+    test_the_tensor_factories_still_resolve as test_tensor__test_the_tensor_factories_still_resolve,
+)
+from test_tensor import (
+    test_every_dtype_alias_names_the_dtype_it_looks_like as test_tensor__test_every_dtype_alias_names_the_dtype_it_looks_like,
+)
+from test_tensor import (
+    test_transpose_permutes_axes_at_rank_three as test_tensor__test_transpose_permutes_axes_at_rank_three,
+)
+from test_tensor import (
+    test_transpose_at_rank_two_still_keeps_its_extents_in_the_type as test_tensor__test_transpose_at_rank_two_still_keeps_its_extents_in_the_type,
+)
+from test_tensor import (
+    test_transpose_rejects_a_bad_permutation as test_tensor__test_transpose_rejects_a_bad_permutation,
+)
+from test_tensor import (
+    test_swapaxes_exchanges_exactly_two_axes as test_tensor__test_swapaxes_exchanges_exactly_two_axes,
+)
+from test_tensor import (
+    test_moveaxis_is_not_swapaxes as test_tensor__test_moveaxis_is_not_swapaxes,
+)
+from test_tensor import (
+    test_swapaxes_accepts_negative_axes as test_tensor__test_swapaxes_accepts_negative_axes,
+)
+from test_tensor import (
+    test_concatenate_along_an_axis_sums_only_that_extent as test_tensor__test_concatenate_along_an_axis_sums_only_that_extent,
+)
+from test_tensor import (
+    test_concatenate_along_axis_zero_stacks_rows as test_tensor__test_concatenate_along_axis_zero_stacks_rows,
+)
+from test_tensor import (
+    test_concatenate_rejects_a_mismatched_other_axis as test_tensor__test_concatenate_rejects_a_mismatched_other_axis,
+)
+from test_tensor import (
+    test_stack_at_an_axis_adds_one_rather_than_growing_one as test_tensor__test_stack_at_an_axis_adds_one_rather_than_growing_one,
+)
+from test_tensor import (
+    test_stack_at_the_trailing_position_interleaves as test_tensor__test_stack_at_the_trailing_position_interleaves,
+)
+from test_tensor import (
+    test_split_at_an_axis_inverts_concatenate as test_tensor__test_split_at_an_axis_inverts_concatenate,
+)
+from test_tensor import (
+    test_split_rejects_a_cut_past_the_axis as test_tensor__test_split_rejects_a_cut_past_the_axis,
+)
+from test_tensor import (
+    test_the_rank_one_concatenate_still_keeps_its_length_in_the_type as test_tensor__test_the_rank_one_concatenate_still_keeps_its_length_in_the_type,
+)
+from test_tensor import (
+    test_expand_dims_inserts_a_size_one_axis as test_tensor__test_expand_dims_inserts_a_size_one_axis,
+)
+from test_tensor import (
+    test_roll_shifts_cyclically_and_inverts as test_tensor__test_roll_shifts_cyclically_and_inverts,
+)
+from test_tensor import (
+    test_roll_along_the_outer_axis as test_tensor__test_roll_along_the_outer_axis,
+)
+from test_tensor import (
+    test_tile_repeats_the_whole_block as test_tensor__test_tile_repeats_the_whole_block,
+)
+from test_tensor import (
+    test_repeat_repeats_each_element_not_the_block as test_tensor__test_repeat_repeats_each_element_not_the_block,
+)
+from test_tensor import (
+    test_tile_rejects_a_count_per_missing_axis as test_tensor__test_tile_rejects_a_count_per_missing_axis,
+)
+from test_tensor import (
+    test_squeeze_at_an_axis_is_expand_dims_read_backwards as test_tensor__test_squeeze_at_an_axis_is_expand_dims_read_backwards,
+)
+from test_tensor import (
+    test_squeeze_rejects_an_axis_that_is_not_size_one as test_tensor__test_squeeze_rejects_an_axis_that_is_not_size_one,
+)
+from test_tensor import (
+    test_the_fixed_squeeze_overloads_still_keep_their_type as test_tensor__test_the_fixed_squeeze_overloads_still_keep_their_type,
+)
+from test_tensor import (
+    test_atleast_2d_promotes_a_vector_to_a_row_not_a_column as test_tensor__test_atleast_2d_promotes_a_vector_to_a_row_not_a_column,
+)
+from test_tensor import (
+    test_atleast_2d_leaves_a_matrix_alone as test_tensor__test_atleast_2d_leaves_a_matrix_alone,
+)
+from test_tensor import (
+    test_atleast_1d_is_the_identity_at_the_only_rank_it_takes as test_tensor__test_atleast_1d_is_the_identity_at_the_only_rank_it_takes,
+)
+from test_tensor import (
+    test_flatten_agrees_with_ravel as test_tensor__test_flatten_agrees_with_ravel,
+)
+from test_tensor import (
+    test_dstack_interleaves_rather_than_appending as test_tensor__test_dstack_interleaves_rather_than_appending,
+)
+from test_tensor import (
+    test_rot90_turns_counterclockwise_and_four_turns_is_identity as test_tensor__test_rot90_turns_counterclockwise_and_four_turns_is_identity,
+)
+from test_tensor import (
+    test_atleast_3d_uses_numpys_shapes_at_each_rank as test_tensor__test_atleast_3d_uses_numpys_shapes_at_each_rank,
+)
+from test_tensor import (
+    test_array_split_divides_evenly_and_unevenly as test_tensor__test_array_split_divides_evenly_and_unevenly,
+)
+from test_tensor import (
+    test_array_split_along_a_later_axis_keeps_the_other_extents as test_tensor__test_array_split_along_a_later_axis_keeps_the_other_extents,
+)
+from test_tensor import (
+    test_array_split_rejects_a_nonpositive_count as test_tensor__test_array_split_rejects_a_nonpositive_count,
+)
 from test_tensorlike import (
     test_tensor_and_view_conform_and_agree as test_tensorlike__test_tensor_and_view_conform_and_agree,
 )
@@ -1389,97 +1389,6 @@ from test_tensorlike import (
 
 def main() raises:
     var suite = TestSuite()
-    # tests/core/test_array.mojo
-    suite.test[test_array__test_zeros_has_the_requested_shape_and_content]()
-    suite.test[test_array__test_ones_is_filled_with_one]()
-    suite.test[test_array__test_full_is_filled_with_the_given_value]()
-    suite.test[test_array__test_empty_is_zero_initialized_for_memory_safety]()
-    suite.test[test_array__test_eye_is_the_identity_matrix]()
-    suite.test[test_array__test_linspace_matches_numpy_endpoints_and_spacing]()
-    suite.test[test_array__test_linspace_of_one_point_returns_start]()
-    suite.test[test_array__test_logspace_matches_base_to_the_linspace_power]()
-    suite.test[test_array__test_zeros_like_matches_source_shape]()
-    suite.test[test_array__test_ones_like_matches_source_shape]()
-    suite.test[test_array__test_full_like_uses_the_given_fill_value]()
-    suite.test[test_array__test_empty_like_matches_source_shape]()
-    suite.test[test_array__test_transpose_swaps_rows_and_columns]()
-    suite.test[test_array__test_transpose_is_its_own_inverse]()
-    suite.test[test_array__test_transpose_default_is_the_host_path]()
-    suite.test[test_array__test_squeeze_drops_a_leading_size_one_axis]()
-    suite.test[test_array__test_squeeze_drops_a_trailing_size_one_axis]()
-    suite.test[test_array__test_stack_along_axis_zero]()
-    suite.test[test_array__test_tensor_survives_the_call_that_built_it]()
-    suite.test[test_array__test_arange_starts_at_start_and_steps_by_step]()
-    suite.test[test_array__test_arange_defaults_to_zero_start_unit_step]()
-    suite.test[test_array__test_reshape_preserves_row_major_element_order]()
-    suite.test[test_array__test_ravel_inverts_reshape]()
-    suite.test[test_array__test_ravel_flattens_a_2d_tensor_row_by_row]()
-    suite.test[
-        test_array__test_concatenate_joins_two_rank1_tensors_end_to_end
-    ]()
-    suite.test[test_array__test_split_inverts_concatenate]()
-    suite.test[test_array__test_split_at_an_endpoint_gives_one_empty_side]()
-    suite.test[test_array__test_rank_2_indexing_matches_the_flat_index]()
-    suite.test[test_array__test_rank_2_indexing_agrees_with_the_view]()
-    suite.test[test_array__test_array_factories_fill_what_they_say]()
-    suite.test[test_array__test_array_eye_agrees_with_lifting_the_tensor_one]()
-    suite.test[test_array__test_the_tensor_factories_still_resolve]()
-    suite.test[
-        test_array__test_every_dtype_alias_names_the_dtype_it_looks_like
-    ]()
-    suite.test[test_array__test_transpose_permutes_axes_at_rank_three]()
-    suite.test[
-        test_array__test_transpose_at_rank_two_still_keeps_its_extents_in_the_type
-    ]()
-    suite.test[test_array__test_transpose_rejects_a_bad_permutation]()
-    suite.test[test_array__test_swapaxes_exchanges_exactly_two_axes]()
-    suite.test[test_array__test_moveaxis_is_not_swapaxes]()
-    suite.test[test_array__test_swapaxes_accepts_negative_axes]()
-    suite.test[
-        test_array__test_concatenate_along_an_axis_sums_only_that_extent
-    ]()
-    suite.test[test_array__test_concatenate_along_axis_zero_stacks_rows]()
-    suite.test[test_array__test_concatenate_rejects_a_mismatched_other_axis]()
-    suite.test[
-        test_array__test_stack_at_an_axis_adds_one_rather_than_growing_one
-    ]()
-    suite.test[test_array__test_stack_at_the_trailing_position_interleaves]()
-    suite.test[test_array__test_split_at_an_axis_inverts_concatenate]()
-    suite.test[test_array__test_split_rejects_a_cut_past_the_axis]()
-    suite.test[
-        test_array__test_the_rank_one_concatenate_still_keeps_its_length_in_the_type
-    ]()
-    suite.test[test_array__test_expand_dims_inserts_a_size_one_axis]()
-    suite.test[test_array__test_roll_shifts_cyclically_and_inverts]()
-    suite.test[test_array__test_roll_along_the_outer_axis]()
-    suite.test[test_array__test_tile_repeats_the_whole_block]()
-    suite.test[test_array__test_repeat_repeats_each_element_not_the_block]()
-    suite.test[test_array__test_tile_rejects_a_count_per_missing_axis]()
-    suite.test[
-        test_array__test_squeeze_at_an_axis_is_expand_dims_read_backwards
-    ]()
-    suite.test[test_array__test_squeeze_rejects_an_axis_that_is_not_size_one]()
-    suite.test[
-        test_array__test_the_fixed_squeeze_overloads_still_keep_their_type
-    ]()
-    suite.test[
-        test_array__test_atleast_2d_promotes_a_vector_to_a_row_not_a_column
-    ]()
-    suite.test[test_array__test_atleast_2d_leaves_a_matrix_alone]()
-    suite.test[
-        test_array__test_atleast_1d_is_the_identity_at_the_only_rank_it_takes
-    ]()
-    suite.test[test_array__test_flatten_agrees_with_ravel]()
-    suite.test[test_array__test_dstack_interleaves_rather_than_appending]()
-    suite.test[
-        test_array__test_rot90_turns_counterclockwise_and_four_turns_is_identity
-    ]()
-    suite.test[test_array__test_atleast_3d_uses_numpys_shapes_at_each_rank]()
-    suite.test[test_array__test_array_split_divides_evenly_and_unevenly]()
-    suite.test[
-        test_array__test_array_split_along_a_later_axis_keeps_the_other_extents
-    ]()
-    suite.test[test_array__test_array_split_rejects_a_nonpositive_count]()
     # tests/core/test_bridge.mojo
     suite.test[test_bridge__test_rank_1_round_trips]()
     suite.test[test_bridge__test_rank_2_round_trips_row_major]()
@@ -2149,6 +2058,97 @@ def main() raises:
     suite.test[test_sqrt__test_complex_squares_back]()
     suite.test[test_sqrt__test_complex_of_a_positive_real_is_real]()
     suite.test[test_sqrt__test_beats_the_exp_ln_workaround]()
+    # tests/core/test_tensor.mojo
+    suite.test[test_tensor__test_zeros_has_the_requested_shape_and_content]()
+    suite.test[test_tensor__test_ones_is_filled_with_one]()
+    suite.test[test_tensor__test_full_is_filled_with_the_given_value]()
+    suite.test[test_tensor__test_empty_is_zero_initialized_for_memory_safety]()
+    suite.test[test_tensor__test_eye_is_the_identity_matrix]()
+    suite.test[test_tensor__test_linspace_matches_numpy_endpoints_and_spacing]()
+    suite.test[test_tensor__test_linspace_of_one_point_returns_start]()
+    suite.test[test_tensor__test_logspace_matches_base_to_the_linspace_power]()
+    suite.test[test_tensor__test_zeros_like_matches_source_shape]()
+    suite.test[test_tensor__test_ones_like_matches_source_shape]()
+    suite.test[test_tensor__test_full_like_uses_the_given_fill_value]()
+    suite.test[test_tensor__test_empty_like_matches_source_shape]()
+    suite.test[test_tensor__test_transpose_swaps_rows_and_columns]()
+    suite.test[test_tensor__test_transpose_is_its_own_inverse]()
+    suite.test[test_tensor__test_transpose_default_is_the_host_path]()
+    suite.test[test_tensor__test_squeeze_drops_a_leading_size_one_axis]()
+    suite.test[test_tensor__test_squeeze_drops_a_trailing_size_one_axis]()
+    suite.test[test_tensor__test_stack_along_axis_zero]()
+    suite.test[test_tensor__test_tensor_survives_the_call_that_built_it]()
+    suite.test[test_tensor__test_arange_starts_at_start_and_steps_by_step]()
+    suite.test[test_tensor__test_arange_defaults_to_zero_start_unit_step]()
+    suite.test[test_tensor__test_reshape_preserves_row_major_element_order]()
+    suite.test[test_tensor__test_ravel_inverts_reshape]()
+    suite.test[test_tensor__test_ravel_flattens_a_2d_tensor_row_by_row]()
+    suite.test[
+        test_tensor__test_concatenate_joins_two_rank1_tensors_end_to_end
+    ]()
+    suite.test[test_tensor__test_split_inverts_concatenate]()
+    suite.test[test_tensor__test_split_at_an_endpoint_gives_one_empty_side]()
+    suite.test[test_tensor__test_rank_2_indexing_matches_the_flat_index]()
+    suite.test[test_tensor__test_rank_2_indexing_agrees_with_the_view]()
+    suite.test[test_tensor__test_array_factories_fill_what_they_say]()
+    suite.test[test_tensor__test_array_eye_agrees_with_lifting_the_tensor_one]()
+    suite.test[test_tensor__test_the_tensor_factories_still_resolve]()
+    suite.test[
+        test_tensor__test_every_dtype_alias_names_the_dtype_it_looks_like
+    ]()
+    suite.test[test_tensor__test_transpose_permutes_axes_at_rank_three]()
+    suite.test[
+        test_tensor__test_transpose_at_rank_two_still_keeps_its_extents_in_the_type
+    ]()
+    suite.test[test_tensor__test_transpose_rejects_a_bad_permutation]()
+    suite.test[test_tensor__test_swapaxes_exchanges_exactly_two_axes]()
+    suite.test[test_tensor__test_moveaxis_is_not_swapaxes]()
+    suite.test[test_tensor__test_swapaxes_accepts_negative_axes]()
+    suite.test[
+        test_tensor__test_concatenate_along_an_axis_sums_only_that_extent
+    ]()
+    suite.test[test_tensor__test_concatenate_along_axis_zero_stacks_rows]()
+    suite.test[test_tensor__test_concatenate_rejects_a_mismatched_other_axis]()
+    suite.test[
+        test_tensor__test_stack_at_an_axis_adds_one_rather_than_growing_one
+    ]()
+    suite.test[test_tensor__test_stack_at_the_trailing_position_interleaves]()
+    suite.test[test_tensor__test_split_at_an_axis_inverts_concatenate]()
+    suite.test[test_tensor__test_split_rejects_a_cut_past_the_axis]()
+    suite.test[
+        test_tensor__test_the_rank_one_concatenate_still_keeps_its_length_in_the_type
+    ]()
+    suite.test[test_tensor__test_expand_dims_inserts_a_size_one_axis]()
+    suite.test[test_tensor__test_roll_shifts_cyclically_and_inverts]()
+    suite.test[test_tensor__test_roll_along_the_outer_axis]()
+    suite.test[test_tensor__test_tile_repeats_the_whole_block]()
+    suite.test[test_tensor__test_repeat_repeats_each_element_not_the_block]()
+    suite.test[test_tensor__test_tile_rejects_a_count_per_missing_axis]()
+    suite.test[
+        test_tensor__test_squeeze_at_an_axis_is_expand_dims_read_backwards
+    ]()
+    suite.test[test_tensor__test_squeeze_rejects_an_axis_that_is_not_size_one]()
+    suite.test[
+        test_tensor__test_the_fixed_squeeze_overloads_still_keep_their_type
+    ]()
+    suite.test[
+        test_tensor__test_atleast_2d_promotes_a_vector_to_a_row_not_a_column
+    ]()
+    suite.test[test_tensor__test_atleast_2d_leaves_a_matrix_alone]()
+    suite.test[
+        test_tensor__test_atleast_1d_is_the_identity_at_the_only_rank_it_takes
+    ]()
+    suite.test[test_tensor__test_flatten_agrees_with_ravel]()
+    suite.test[test_tensor__test_dstack_interleaves_rather_than_appending]()
+    suite.test[
+        test_tensor__test_rot90_turns_counterclockwise_and_four_turns_is_identity
+    ]()
+    suite.test[test_tensor__test_atleast_3d_uses_numpys_shapes_at_each_rank]()
+    suite.test[test_tensor__test_array_split_divides_evenly_and_unevenly]()
+    suite.test[
+        test_tensor__test_array_split_along_a_later_axis_keeps_the_other_extents
+    ]()
+    suite.test[test_tensor__test_array_split_rejects_a_nonpositive_count]()
     # tests/core/test_tensorlike.mojo
     suite.test[test_tensorlike__test_tensor_and_view_conform_and_agree]()
     suite.test[test_tensorlike__test_view_over_a_block_writes_into_the_parent]()

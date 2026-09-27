@@ -18,7 +18,7 @@ from std.math import sin
 
 from max.gpu.host import DeviceContext
 from numax import Compensated, Plain
-from numax.core.array import full
+from numax.core.tensor import full
 from numax.stats import (
     argmax,
     argmin,

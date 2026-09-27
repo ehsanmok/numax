@@ -14,7 +14,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, to_array, transpose, zeros
+from numax.core.tensor import Static, to_array, transpose, zeros
 from numax.core.plain import Plain
 from numax.linalg import (
     Eigenvalues,

@@ -27,7 +27,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor
+from numax.core.tensor import Static, Tensor
 from numax.io import numpy
 
 comptime _TMP = "/tmp/numax_test_npy"

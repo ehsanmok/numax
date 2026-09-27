@@ -39,7 +39,7 @@ from std.sys.info import align_of
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static, zeros, zeros_dyn
+from ..core.tensor import Static, zeros, zeros_dyn
 
 from .blas import _target
 from .common import _mut_view, _mut_view_as, _Dense

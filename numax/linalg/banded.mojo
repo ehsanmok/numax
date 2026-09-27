@@ -61,7 +61,7 @@ a sequential sweep with data-dependent deflation.
 from std.math import sqrt as _sqrt
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static, copy, zeros
+from ..core.tensor import Static, copy, zeros
 from ..fft.fft import Spectrum, fft, ifft
 
 

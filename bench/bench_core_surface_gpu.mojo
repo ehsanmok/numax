@@ -47,7 +47,7 @@ part of CI, which has no GPU runners. Run with
 from max.gpu.host import DeviceContext
 from std.benchmark import keep, run
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.core.elementwise import exp
 from numax.core.logic import greater
 from numax.core.ops import add, multiply

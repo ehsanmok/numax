@@ -21,7 +21,7 @@ from max.gpu.host import DeviceContext
 from std.collections import Array
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.core.dual import Dual
 from numax.core.plain import Plain
 from numax.core.functional import map_blocks

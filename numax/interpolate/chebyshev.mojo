@@ -1,4 +1,4 @@
-"""Chebyshev series over `numax.core.array.Tensor`: a least-squares fit to
+"""Chebyshev series over `numax.core.tensor.Tensor`: a least-squares fit to
 *data* and Clenshaw evaluation at a tensor of points.
 `numpy.polynomial.chebyshev.Chebyshev.fit` and `chebval`.
 
@@ -30,7 +30,7 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import _canonical, Static
+from ..core.tensor import _canonical, Static
 from ..linalg.qr import lstsq
 
 

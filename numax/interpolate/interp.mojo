@@ -1,4 +1,4 @@
-"""Interpolation over `numax.core.array.Tensor`: NumPy's `interp`, the
+"""Interpolation over `numax.core.tensor.Tensor`: NumPy's `interp`, the
 legacy `numpy.poly*` family, and polynomial evaluation over a tensor of
 query points.
 
@@ -51,7 +51,7 @@ from layout.tile_layout import TensorLayout
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static, vander
+from ..core.tensor import Static, vander
 from ..linalg.eigen import Eigenvalues, eigvals
 from ..linalg.qr import lstsq
 from ..linalg.special_matrices import companion

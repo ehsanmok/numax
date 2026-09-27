@@ -33,7 +33,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import (
+from ..core.tensor import (
     _canonical,
     Dynamic,
     Static,

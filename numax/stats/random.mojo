@@ -1,4 +1,4 @@
-"""Random sampling into `numax.core.array.Tensor`, `Plain`-only, on the host
+"""Random sampling into `numax.core.tensor.Tensor`, `Plain`-only, on the host
 or the device, from one counter-based stream.
 
 **This module is tier 2** in the sense that matters for the rest of the
@@ -74,7 +74,7 @@ from layout.tile_layout import row_major
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static, _LayoutOf, _context, _product
+from ..core.tensor import Static, _LayoutOf, _context, _product
 from .statistics import _target
 
 comptime _TWO_PI = 6.283185307179586

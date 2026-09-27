@@ -23,7 +23,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import FloatLike, Plain
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.integrate import dopri5, rk4_system, solve_ivp
 from numax.integrate.array import rk4_system as array_rk4_system
 

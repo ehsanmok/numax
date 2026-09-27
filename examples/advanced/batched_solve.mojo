@@ -25,7 +25,7 @@ entry `j` of every problem: the 16 entries of `A` row-major, then the 4 of
 `b`, so `k_in = 20` and `k_out = 4`. That is what makes one lane load `w`
 consecutive addresses and adjacent GPU threads read adjacent memory. A
 caller holding the batch the other way round -- one problem per row --
-calls `numax.core.array.transpose` once, on either target, instead of
+calls `numax.core.tensor.transpose` once, on either target, instead of
 paying a strided gather per block per launch.
 
 Two limits, visible rather than hidden:

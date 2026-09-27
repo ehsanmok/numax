@@ -81,7 +81,7 @@ from layout.tile_layout import TensorLayout
 from .libm import exp as _std_exp
 from .libm import log as _std_log
 from .tensorlike import TensorLike, dim, is_row_major
-from .array import Dynamic, Static, Tensor
+from .tensor import Dynamic, Static, Tensor
 from ._drive import (
     _BroadcastRank,
     _check_device,

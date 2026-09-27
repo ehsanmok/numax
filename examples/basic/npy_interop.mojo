@@ -34,7 +34,7 @@ literal to parse.
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor
+from numax.core.tensor import Static, Tensor
 from numax.io import numpy
 
 comptime N_ROWS = 2

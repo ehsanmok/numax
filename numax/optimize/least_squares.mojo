@@ -1,4 +1,4 @@
-"""Nonlinear least squares over `numax.core.array.Tensor`.
+"""Nonlinear least squares over `numax.core.tensor.Tensor`.
 
 **This module is tier 2.** It iterates to a tolerance and its driver loop
 runs on the host, so nothing here is launchable inside a kernel body.
@@ -61,7 +61,7 @@ from std.math import sqrt as _sqrt
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, dim
-from ..core.array import Static
+from ..core.tensor import Static
 from ..linalg.qr import lstsq
 
 from .common import _as_tensor

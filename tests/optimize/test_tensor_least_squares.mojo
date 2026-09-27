@@ -14,7 +14,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from max.gpu.host import DeviceContext
 from std.collections import Array
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.core.numeric import FloatLike
 from numax.optimize import curve_fit, least_squares
 from numax.optimize.array import least_squares as array_least_squares

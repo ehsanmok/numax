@@ -1,4 +1,4 @@
-"""Window functions as `numax.core.array.Tensor` factories: `boxcar`,
+"""Window functions as `numax.core.tensor.Tensor` factories: `boxcar`,
 `hann`, `hamming`, `blackman`, `bartlett`, `kaiser` and `get_window`, with
 `scipy.signal.windows`' symmetric and periodic forms.
 
@@ -28,7 +28,7 @@ delegate and nothing worth a device launch to build.
 from std.math import cos as _cos, sqrt as _sqrt
 from max.gpu.host import DeviceContext
 
-from ..core.array import Static
+from ..core.tensor import Static
 
 comptime _TWO_PI = 6.283185307179586
 

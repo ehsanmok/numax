@@ -10,7 +10,7 @@ on a quadrant of one without a copy. These tests build a 4x4 whose leading
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.array import Static, arange, reshape, transpose, zeros
+from numax.core.tensor import Static, arange, reshape, transpose, zeros
 from numax.core.tensorlike import TensorView
 from numax.linalg import cholesky, det, matmul, solve
 

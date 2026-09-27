@@ -1,4 +1,4 @@
-"""Hypothesis tests over `numax.core.array.Tensor`: the three `t` tests,
+"""Hypothesis tests over `numax.core.tensor.Tensor`: the three `t` tests,
 `chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, each returning
 SciPy's statistic and p-value.
 
@@ -38,7 +38,7 @@ from std.math import exp as _exp, sqrt as _sqrt
 from layout.tile_layout import TensorLayout
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import Static, Tensor
+from ..core.tensor import Static, Tensor
 from ..core.plain import Plain
 from .distributions import chi2, f, norm, t
 

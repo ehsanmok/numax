@@ -1,4 +1,4 @@
-"""Constrained linear least squares over `numax.core.array.Tensor`: `nnls`
+"""Constrained linear least squares over `numax.core.tensor.Tensor`: `nnls`
 and `lsq_linear`. `scipy.optimize.nnls`, `scipy.optimize.lsq_linear`.
 
 **This module is tier 2.** Both are one box-constrained quadratic program
@@ -37,7 +37,7 @@ from std.math import sqrt as _sqrt
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import _canonical, Static, transpose
+from ..core.tensor import _canonical, Static, transpose
 from ..linalg.blas import matmul, matvec
 
 from .common import _as_tensor

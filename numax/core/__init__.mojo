@@ -15,7 +15,7 @@ from numax.core.functional import map, reduce, reduce_axis   # the engine
 | `functional` | `map`/`reduce`/`reduce_axis`/`reduce_rows`/`broadcast_op_rows` -- one `gpu: Bool` parameter picks CPU or GPU, comptime and runtime shapes under one name, plus `map_strided`/`reduce_strided` for a transposed or sliced view and `map_blocks` for one whole small problem per lane |
 | `rowwise` | `reduce_all`/`argmax_all`/`argmin_all` over a whole tensor and `sum_axis`/`prod_axis`/`max_axis`/`min_axis` along one -- reductions delegated to MAX's `algorithm.rowwise` scaffolder and `reduce_op` monoids, one body for both targets, threaded on CPU and tiered on GPU. The monoid is a `StaticString` parameter dispatched by `comptime if`; `tensor`'s `reduce`/`reduce_axis` remain for a fold outside MAX's monoid set |
 | `tensorlike` | `TensorLike`, the bound every routine below takes its tensors through, with `Tensor` (owned) and `TensorView` (a borrowed `TileTensor` plus its device) as the conformers; `dim[T, i]` and `is_row_major[T]` for signatures |
-| `array` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
+| `tensor` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators over any `TensorLike`, the elementwise math surface, comparisons returning `Static[DType.bool]`, and sort/search/mask |
 | `_drive` | Private: the one launch policy behind `ops`, `elementwise` and `logic` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements |
 | `constants` | `pi` and `e` at any conformer |
@@ -35,7 +35,7 @@ reduction is a monoid MAX already ships rather than a body numax supplies.
 `sorting` is still host-side.
 """
 
-from .array import (
+from .tensor import (
     Dynamic,
     Static,
     Tensor,

@@ -18,7 +18,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Static, Tensor
+from numax.core.tensor import Static, Tensor
 from numax.core.constants import e, e_at, pi, pi_at
 from numax.core.logic import all, any
 from numax.core.ops import invert

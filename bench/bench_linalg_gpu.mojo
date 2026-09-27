@@ -53,7 +53,7 @@ part of CI, which has no GPU runners. Run with `pixi run bench-linalg-gpu`.
 from max.gpu.host import DeviceContext
 from std.benchmark import keep, run
 
-from numax.core.array import Static, transpose
+from numax.core.tensor import Static, transpose
 from numax.linalg import (
     asum,
     axpy,

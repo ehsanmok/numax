@@ -1,4 +1,4 @@
-"""Filtering over `numax.core.array.Tensor`: `lfilter`, `lfilter_zi`,
+"""Filtering over `numax.core.tensor.Tensor`: `lfilter`, `lfilter_zi`,
 `filtfilt`, `sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample`
 and the `firwin` design, with `scipy.signal`'s signatures and semantics.
 
@@ -16,7 +16,7 @@ Host-side is not the same as off-tensor, and the difference is most of
 what these three cost. The recurrence reads and writes through
 `buffer.map_to_host()` -- the accessor `Tensor.to_host` and
 `Tensor.copy_from_host` use internally, and the only one correct on both a
-CPU and a GPU context (`numax/core/array.mojo`'s docstring says why a raw
+CPU and a GPU context (`numax/core/tensor.mojo`'s docstring says why a raw
 `unsafe_ptr()` is not). Reaching for it directly is legitimate *inside*
 numax and nowhere else; what it buys is that no signal is ever copied into
 a `List` on the way in or out. Coefficients and delay state are the only
@@ -60,7 +60,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import _canonical, Static, arange, zeros
+from ..core.tensor import _canonical, Static, arange, zeros
 from ..core.ops import subtract
 from ..fft.fft import Spectrum, fft, ifft
 from ..linalg.blas import dot
@@ -270,7 +270,7 @@ def lfilter[
     **Host-side**, for the reason the module docstring gives: a recurrence
     is sequential. It is host-side without being *off*-tensor, though --
     the pass reads `x` and writes the result through the mapping
-    `numax.core.array`'s own `to_host`/`copy_from_host` use, so nothing is
+    `numax.core.tensor`'s own `to_host`/`copy_from_host` use, so nothing is
     copied into a `List` on the way in or out. Arithmetic is at `A.dtype`,
     which is also where SciPy computes it.
     `numax.signal.array.lfilter` is the tier-1 form that runs per SIMD lane

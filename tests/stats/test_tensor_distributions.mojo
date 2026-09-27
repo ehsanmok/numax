@@ -13,7 +13,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Static, linspace, zeros
+from numax.core.tensor import Static, linspace, zeros
 from numax.core.ops import add
 from numax.stats import beta, binom, chi2, expon, f, gamma, norm, poisson, t
 

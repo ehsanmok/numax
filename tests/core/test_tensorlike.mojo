@@ -14,7 +14,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from layout import Coord, TileTensor
 
-from numax.core.array import (
+from numax.core.tensor import (
     Static,
     Tensor,
     arange,

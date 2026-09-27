@@ -61,7 +61,7 @@ from max.gpu.host import DeviceContext
 
 from .common import _mut_view, _mut_view_as
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 
 from .blas import _target
 
@@ -281,7 +281,7 @@ def hilbert[
 
     Takes `n` as a parameter and no matrix argument, so the `DeviceContext`
     is the last argument and optional, matching `eye` and the rest of
-    `numax.core.array`'s factories rather than the operations in this
+    `numax.core.tensor`'s factories rather than the operations in this
     module.
 
     There is no `invhilbert`. Its entries are large integers -- the

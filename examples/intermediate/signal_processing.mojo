@@ -35,7 +35,7 @@ from std.math import sin
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.signal import (
     butter,
     convolve,

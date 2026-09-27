@@ -1,4 +1,4 @@
-"""Correlation over `numax.core.array.Tensor`: `cov`, `corrcoef`,
+"""Correlation over `numax.core.tensor.Tensor`: `cov`, `corrcoef`,
 `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata` and
 `zscore`, with NumPy's and SciPy's conventions and SciPy's p-values.
 
@@ -82,7 +82,7 @@ from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import _canonical, Static, Tensor
+from ..core.tensor import _canonical, Static, Tensor
 from ..core._drive import (
     _check_device,
     _dense,

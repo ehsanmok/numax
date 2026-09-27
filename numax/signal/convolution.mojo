@@ -1,4 +1,4 @@
-"""Linear convolution and correlation over `numax.core.array.Tensor`:
+"""Linear convolution and correlation over `numax.core.tensor.Tensor`:
 `convolve`, `correlate` and `fftconvolve`, in NumPy's three modes.
 
 **This module is tier 2**, like the rest of `numax.signal` over `Tensor`:
@@ -56,7 +56,7 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 from ..fft.fft import Spectrum, _rfft, irfft, next_fast_len
 
 comptime full = 0

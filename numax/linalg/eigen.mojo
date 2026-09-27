@@ -45,7 +45,7 @@ from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Dynamic, Static, zeros, zeros_dyn
+from ..core.tensor import Dynamic, Static, zeros, zeros_dyn
 from .blas import _target, dot, inner, matmul, matvec
 from .common import _mut_view, _mut_view_as, _Dense, _device_identity
 from .panel import (

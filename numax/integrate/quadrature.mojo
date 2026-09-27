@@ -30,7 +30,7 @@ split `numax.stats` uses and is a follow-up rather than a decision.
 from layout.tile_layout import TensorLayout
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static, Tensor
+from ..core.tensor import Static, Tensor
 
 
 def _spacings[

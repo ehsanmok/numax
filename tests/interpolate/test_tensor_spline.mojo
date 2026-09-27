@@ -12,7 +12,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.interpolate import (
     Akima1DInterpolator,
     CubicHermiteSpline,

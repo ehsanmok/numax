@@ -25,7 +25,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.linalg import inf, neg_inf, norm, nrm2
 from numax.linalg.array import eigh, eigvalsh, matrix_rank, svd, svdvals
 

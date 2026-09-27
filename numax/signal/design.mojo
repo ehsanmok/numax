@@ -1,5 +1,5 @@
 """IIR filter design and frequency response over
-`numax.core.array.Tensor`: `butter`, `cheby1`, `cheby2`, `ellip`, the
+`numax.core.tensor.Tensor`: `butter`, `cheby1`, `cheby2`, `ellip`, the
 `iirfilter` front door they share, and `freqz`.
 
 **Tier 2.** A design is a few dozen complex numbers on the host --
@@ -73,7 +73,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 
 comptime _PI = 3.141592653589793
 comptime _LN10 = 2.302585092994046

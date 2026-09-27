@@ -92,7 +92,7 @@ from layout.tile_tensor import DefaultEngine
 from max.gpu.host import DeviceContext
 from std.utils import IndexList
 
-from .array import Static
+from .tensor import Static
 
 
 @always_inline

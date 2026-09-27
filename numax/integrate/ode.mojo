@@ -35,7 +35,7 @@ from max.gpu.host import DeviceContext
 from std.sys.info import simd_width_of
 
 from ..core.tensorlike import TensorLike, dim
-from ..core.array import Static, copy
+from ..core.tensor import Static, copy
 
 from .array.ode import (
     _A21,

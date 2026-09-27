@@ -32,7 +32,7 @@ Run: `pixi run example-spectral`
 from max.gpu.host import DeviceContext
 
 from numax import FloatLike
-from numax.core.array import Static, transpose
+from numax.core.tensor import Static, transpose
 from numax.linalg import (
     cond,
     eigh,

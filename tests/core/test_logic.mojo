@@ -23,7 +23,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Dynamic, Static, Tensor, zeros_dyn
+from numax.core.tensor import Dynamic, Static, Tensor, zeros_dyn
 from numax.core.logic import (
     all,
     allclose,

@@ -14,7 +14,7 @@ from max.gpu.host import DeviceContext
 
 from std.math import log10 as _log10, sqrt as _sqrt
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.signal import (
     butter,
     cheby1,

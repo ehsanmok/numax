@@ -38,7 +38,7 @@ from std.python import Python
 from max.gpu.host import DeviceContext
 
 from numax import Dual, Plain
-from numax.core.array import Tensor, to_array, to_tensor
+from numax.core.tensor import Tensor, to_array, to_tensor
 from numax.io import numpy  # numax's .npy reader; `np` below is NumPy itself
 from numax.linalg.array import cholesky, det
 

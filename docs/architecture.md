@@ -240,7 +240,7 @@ Modules that fill NumPy/SciPy-shaped gaps, each picked because MAX ships no
 usable equivalent. [`parity.md`](parity.md) has the disposition table and the
 survey of what MAX does ship.
 
-- **`numax.core.array`** — creation and manipulation over a `Tensor` that owns its
+- **`numax.core.tensor`** — creation and manipulation over a `Tensor` that owns its
   storage, because a bare `TileTensor` is a view and dangles once the function
   that built it returns. The storage is a MAX `DeviceBuffer`, so the
   `DeviceContext` decides host or device memory and `.tile()` yields the same

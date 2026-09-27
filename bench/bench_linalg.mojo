@@ -74,7 +74,7 @@ from max.gpu.host import DeviceContext
 from std.benchmark import keep, run
 from std.math import sqrt
 
-from numax.core.array import Static, transpose
+from numax.core.tensor import Static, transpose
 from numax.linalg import (
     asum,
     axpy,

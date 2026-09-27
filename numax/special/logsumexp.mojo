@@ -38,7 +38,7 @@ from max.gpu.host import DeviceContext
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 from ..core.numeric import FloatLike, max_of
 
 

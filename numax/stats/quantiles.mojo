@@ -1,4 +1,4 @@
-"""Order statistics over `numax.core.array.Tensor`: `quantile`,
+"""Order statistics over `numax.core.tensor.Tensor`: `quantile`,
 `percentile`, their NaN-ignoring forms, `nanmedian` and `iqr`, with every
 `method` NumPy names.
 
@@ -50,7 +50,7 @@ from std.utils.numerics import nan as _nan
 from layout.tile_layout import TensorLayout
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import Static, Tensor
+from ..core.tensor import Static, Tensor
 
 
 def _virtual_index(

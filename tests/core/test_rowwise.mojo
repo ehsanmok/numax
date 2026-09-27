@@ -16,7 +16,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from std.utils import IndexList
 
 from algorithm.rowwise_types import RowCoord
-from numax.core.array import Static, zeros, zeros_dyn
+from numax.core.tensor import Static, zeros, zeros_dyn
 from numax.core._drive import _flat
 from numax.core.rowwise import (
     argmax_all,

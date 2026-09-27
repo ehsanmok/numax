@@ -18,7 +18,7 @@ lets `numax` accept it.
 
 from layout import Coord
 
-from numax.core.array import Static, arange, reshape, zeros
+from numax.core.tensor import Static, arange, reshape, zeros
 from numax.core.elementwise import exp
 from numax.core.tensorlike import TensorLike, TensorView, dim
 from numax.linalg import cholesky, det, solve

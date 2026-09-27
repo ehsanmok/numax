@@ -24,7 +24,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax import Plain
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.linalg import det, lu_factor, slogdet
 from numax.linalg.array import slogdet as array_slogdet
 

@@ -25,7 +25,7 @@ A caller who wants the shape back in the type broadcasts explicitly with
 `broadcast_to` and stays on the first.
 
 Broadcasting here does not materialize either operand:
-`numax.core.array._stretch_strides` gives a stretched axis stride 0, so
+`numax.core.tensor._stretch_strides` gives a stretched axis stride 0, so
 the body reads the same element for every position along it. The rule
 itself is `broadcast_shapes`, written down once.
 
@@ -42,7 +42,7 @@ than implying.
 from layout.tile_layout import TensorLayout
 
 from .tensorlike import TensorLike, is_row_major
-from .array import Dynamic, Tensor
+from .tensor import Dynamic, Tensor
 from ._drive import (
     _BroadcastRank,
     binary,

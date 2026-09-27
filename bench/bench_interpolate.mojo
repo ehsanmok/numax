@@ -25,7 +25,7 @@ from max.gpu.host import DeviceContext
 from std.benchmark import keep, run
 from std.math import sin
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.interpolate import CubicSpline, interp
 
 comptime dtype = DType.float32

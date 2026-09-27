@@ -25,7 +25,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.linalg import expm, matmul
 from numax.linalg.array import expm as array_expm
 from numax.linalg.array import matmul as array_matmul

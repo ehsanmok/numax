@@ -11,7 +11,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.core.tensorlike import TensorView
 from numax.interpolate import (
     horner,

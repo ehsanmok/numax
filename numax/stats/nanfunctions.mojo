@@ -1,4 +1,4 @@
-"""NaN-ignoring reductions over `numax.core.array.Tensor`: `nansum`,
+"""NaN-ignoring reductions over `numax.core.tensor.Tensor`: `nansum`,
 `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax`, and the
 counts they rest on. `nanmedian` and `nanquantile` are in `quantiles.mojo`
 with the other order statistics.
@@ -32,7 +32,7 @@ from std.utils.numerics import inf as _inf
 from layout.tile_layout import TensorLayout
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.array import copy, Tensor, full_like
+from ..core.tensor import copy, Tensor, full_like
 from ..core.elementwise import sqrt as _sqrt
 from ..core.logic import isnan
 from ..core.ops import multiply, subtract

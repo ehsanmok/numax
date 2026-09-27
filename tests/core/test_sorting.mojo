@@ -15,7 +15,7 @@ from std.testing import (
 
 from max.gpu.host import DeviceContext
 
-from numax.core.array import Static, Tensor, asarray, diagflat, ravel, zeros
+from numax.core.tensor import Static, Tensor, asarray, diagflat, ravel, zeros
 from numax.core.logic import greater
 from numax.core.sorting import (
     all_nonzero,

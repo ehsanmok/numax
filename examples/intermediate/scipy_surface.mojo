@@ -47,7 +47,7 @@ from std.math import exp as exp_f64
 from max.gpu.host import DeviceContext
 
 from numax import FloatLike, Plain
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.linalg import (
     eigvalsh,
     expm,

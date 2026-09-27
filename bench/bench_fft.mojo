@@ -37,7 +37,7 @@ from max.gpu.host import DeviceContext
 from std.benchmark import keep, run
 from std.math import sin
 
-from numax.core.array import Static
+from numax.core.tensor import Static
 from numax.fft import fft, fft2, irfft, rfft
 from numax.fft.fft import _FUSED_STAGES, _log2_exact
 

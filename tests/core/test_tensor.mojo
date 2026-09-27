@@ -1,4 +1,4 @@
-"""Tests for `numax.core.array`'s NumPy-named creation/manipulation surface.
+"""Tests for `numax.core.tensor`'s NumPy-named creation/manipulation surface.
 
 Every creation routine is checked for shape (`num_elements`) and content;
 `*_like` is checked to match its source's dtype/shape; the manipulation
@@ -32,7 +32,7 @@ from numax.core.dtypes import (
     u32,
     u64,
 )
-from numax.core.array import (
+from numax.core.tensor import (
     to_array,
     Static,
     Tensor,

@@ -19,7 +19,7 @@ from std.math import cos, sqrt
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.core.array import Static, Tensor, linspace, meshgrid
+from numax.core.tensor import Static, Tensor, linspace, meshgrid
 from numax.core.functional import map
 
 comptime dtype = DType.float64

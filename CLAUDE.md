@@ -221,7 +221,7 @@ one signature.
 pointer, no GPU). There is deliberately **no second tensor type** — the
 comptime/runtime distinction lives in the layout, where MAX put it.
 
-`numax/core/array.mojo`'s `Tensor` owns a MAX `DeviceBuffer`, so the
+`numax/core/tensor.mojo`'s `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory (last argument, optional) decides host or
 device memory; `.tile()` yields the `TileTensor`. Bulk element access goes
 through `to_host`/`copy_from_host` — on CUDA `unsafe_ptr()` returns a device

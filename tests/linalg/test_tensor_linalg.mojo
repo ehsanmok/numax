@@ -12,9 +12,9 @@ from max.gpu.host import DeviceContext
 from std.testing import TestSuite, assert_almost_equal, assert_raises
 
 from numax import Plain
-from numax.core.array import Static, zeros_dyn
-from numax.core.array import zeros as array_zeros
-from numax.core.array import transpose, tril, triu
+from numax.core.tensor import Static, zeros_dyn
+from numax.core.tensor import zeros as array_zeros
+from numax.core.tensor import transpose, tril, triu
 from std.collections import Array
 
 from numax.linalg import (

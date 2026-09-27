@@ -26,7 +26,7 @@ from std.math import cos, exp, sin, sqrt
 from max.gpu.host import DeviceContext
 
 from numax import Dual, FloatLike, Plain
-from numax.core.array import Static, Tensor, linspace, meshgrid
+from numax.core.tensor import Static, Tensor, linspace, meshgrid
 from numax.core.ops import add, multiply
 from numax.stats import sum
 from numax.core.functional import map

@@ -1,4 +1,4 @@
-"""Cubic splines over `numax.core.array.Tensor`: `CubicHermiteSpline`,
+"""Cubic splines over `numax.core.tensor.Tensor`: `CubicHermiteSpline`,
 `CubicSpline` with SciPy's boundary conditions, `PchipInterpolator` and
 `Akima1DInterpolator`, on knots that need not be uniform.
 
@@ -60,7 +60,7 @@ from max.gpu.host import DeviceContext
 from std.utils.numerics import nan as _nan
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.array import Static
+from ..core.tensor import Static
 from ..linalg.banded import solve_banded
 from .interp import _interval
 

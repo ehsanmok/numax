@@ -14,7 +14,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 from std.collections import Array
 
-from numax.core.array import Static, copy, zeros
+from numax.core.tensor import Static, copy, zeros
 from numax.core.complex import Complex
 from numax.core.plain import Plain
 from numax.fft import (

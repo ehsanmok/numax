@@ -1,4 +1,4 @@
-"""Unconstrained minimization over `numax.core.array.Tensor`.
+"""Unconstrained minimization over `numax.core.tensor.Tensor`.
 
 **This module is tier 2.** It iterates to a tolerance and its driver loop
 runs on the host, so nothing here is launchable inside a kernel body.
@@ -82,7 +82,7 @@ stays in `numax.optimize.array`. General constraints are out of scope.
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, dim
-from ..core.array import Static, eye
+from ..core.tensor import Static, eye
 from ..core.ops import add, multiply
 from ..linalg.blas import matvec, outer
 
