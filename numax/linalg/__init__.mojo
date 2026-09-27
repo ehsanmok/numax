@@ -88,7 +88,7 @@ tiering.
 `gpu` is a compile-time parameter rather than a look at `ctx.api()`
 because MAX's `target` is a `StaticString`: deciding it at run time would
 compile the GPU kernels into every CPU-only build. `map` and `reduce` in
-`numax.core.tensor` take the same parameter for the same reason. These
+`numax.core.functional` take the same parameter for the same reason. These
 overloads also take their operands mutably even though they only read them
 -- `tile()` hands back a `TileTensor` that can write, and a mutable view
 cannot be built from an immutable binding.

@@ -10,7 +10,7 @@ MAX's `nn.softmax` and numax computes nothing itself. On GPU that entry
 point is out of reach at the pinned toolchain -- the overload that takes a
 `target` also takes its input as a compile-time closure parameter whose
 origins cannot be inferred from outside MAX's own module -- so the same
-four-step recipe is hand-launched below from `numax.core.tensor`'s
+four-step recipe is hand-launched below from `numax.core.functional`'s
 `reduce_rows` and `broadcast_op_rows` with `gpu=True`, one kernel launch per
 step. The last check compares the two, which is what says the hand-launched
 version is the same softmax rather than merely a plausible one.
@@ -20,7 +20,7 @@ from max.gpu.host import DeviceContext
 from std.math import exp
 
 from numax import Plain, Static, softmax
-from numax.core.tensor import (
+from numax.core.functional import (
     add_combine,
     broadcast_op_rows,
     max_combine,
@@ -82,7 +82,7 @@ def main() raises:
     check_rows_sum_to_one("CPU  softmax:", ys.to_host())
     print("CPU  row 1 (large-value row), last column:", ys[1, cols - 1])
 
-    # --- GPU, hand-launched from `numax.core.tensor`'s primitives ---
+    # --- GPU, hand-launched from `numax.core.functional`'s primitives ---
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 

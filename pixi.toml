@@ -147,8 +147,8 @@ test-dual = "mojo -I . tests/core/test_dual.mojo"
 test-format = "mojo -I . tests/core/test_format.mojo"
 test-compensated = "mojo -I . tests/core/test_compensated.mojo"
 test-special = "mojo -I . tests/special/test_special.mojo"
-test-tensor = "mojo -I . tests/core/test_tensor.mojo"
-test-tensor-reduce = "mojo -I . tests/core/test_tensor_reduce.mojo"
+test-functional = "mojo -I . tests/core/test_functional.mojo"
+test-functional-reduce = "mojo -I . tests/core/test_functional_reduce.mojo"
 test-activations = "mojo -I . tests/special/test_activations.mojo"
 test-erf = "mojo -I . tests/special/test_erf.mojo"
 test-gamma = "mojo -I . tests/special/test_gamma.mojo"
@@ -248,8 +248,8 @@ tests-per-file = { depends-on = [
     "test-format",
     "test-compensated",
     "test-special",
-    "test-tensor",
-    "test-tensor-reduce",
+    "test-functional",
+    "test-functional-reduce",
     "test-rowwise",
     "test-map-blocks",
     "test-activations",

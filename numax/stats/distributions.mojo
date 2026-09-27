@@ -36,7 +36,7 @@ needs the extent in the type, and this route does not use it. A `gpu` that
 disagrees with where the tensor's memory lives falls back to a host walk
 and says so on `stderr`. Both forms are one definition: the `Tensor`
 overload *is* the `FloatLike` one, evaluated per lane.
-`numax.core.tensor.map`'s scalar-parameter overloads remain the route for a
+`numax.core.functional.map`'s scalar-parameter overloads remain the route for a
 caller launching the raw kernel by hand.
 
 `gamma` and `beta` are the *distributions*; `numax.special.gamma` and

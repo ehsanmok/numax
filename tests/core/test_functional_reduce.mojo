@@ -1,4 +1,4 @@
-"""Tests for `numax.core.tensor.reduce`/`reduce_rows`/`broadcast_op_rows` (CPU).
+"""Tests for `numax.core.functional.reduce`/`reduce_rows`/`broadcast_op_rows` (CPU).
 
 GPU coverage for `reduce_block_gpu` and for `reduce_rows`/`broadcast_op_rows`
 with `gpu=True` lives in `examples/softmax.mojo`, which exercises them end to
@@ -9,7 +9,7 @@ from layout import Coord, TileTensor
 from layout.tile_layout import row_major
 from std.testing import TestSuite, assert_almost_equal
 
-from numax.core.tensor import (
+from numax.core.functional import (
     add_combine,
     broadcast_op_axis,
     broadcast_op_rows,

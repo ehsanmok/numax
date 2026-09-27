@@ -1,4 +1,4 @@
-"""Tests for `numax.core.tensor.map`, driving `FloatLike` kernels over `TileTensor`.
+"""Tests for `numax.core.functional.map`, driving `FloatLike` kernels over `TileTensor`.
 
 These mirror `test_special.mojo`'s value/derivative checks, but through the
 `TileTensor` walk `examples/gaussian.mojo` and `examples/gaussian_gpu.mojo`
@@ -14,7 +14,7 @@ from std.sys.info import simd_width_of
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Compensated, Dual, Plain, gaussian
-from numax.core.tensor import (
+from numax.core.functional import (
     add_combine,
     add_step,
     map,

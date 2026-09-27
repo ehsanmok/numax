@@ -63,7 +63,7 @@ from numax.core.array import Static
 from numax.core.elementwise import exp
 from numax.core.logic import greater
 from numax.core.ops import add, multiply
-from numax.core.tensor import map, map_threaded
+from numax.core.functional import map, map_threaded
 from numax.stats import sum as tensor_sum
 
 comptime dtype = DType.float32

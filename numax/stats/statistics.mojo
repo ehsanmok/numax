@@ -1,4 +1,4 @@
-"""NumPy-named statistics, composed from `numax.core.tensor` and `FloatLike`.
+"""NumPy-named statistics, composed from `numax.core.functional` and `FloatLike`.
 
 **Tier 2 in shape, both targets in fact, for the reductions.** `mean`,
 `variance` and `stddev` fold through MAX's `Welford` monoid over its
@@ -22,7 +22,7 @@ What stays on a host copy, and says so in its own docstring: `median`,
 `mode`, `cumsum` and `cumprod` (a whole slice at once, or a running scan,
 rather than a monoid fold), the axis-wise `argmax`/`argmin` (which route to
 `nn.argmaxmin`, MAX's only axis-taking entry point), and everything composed
-out of those. `numax.core.tensor`'s `reduce` and `reduce_axis` remain the
+out of those. `numax.core.functional`'s `reduce` and `reduce_axis` remain the
 primitives for a fold outside MAX's monoid set.
 
 `docs/parity.md` picks statistics as a genuine `numax` gap with a
@@ -50,7 +50,7 @@ two different questions:
   `variance`, `stddev`, `variance_axis`, `median`, `mode`, `argmax`,
   `argmin`, `cumprod`): "what NumPy-shaped
   statistic can I compute over a buffer of raw `dtype` values". These
-  compose from MAX's reductions and `numax.core.tensor.reduce` the same way
+  compose from MAX's reductions and `numax.core.functional.reduce` the same way
   `numax.core.array`'s creation
   routines compose from `TileTensor` -- a thin, `Plain`-only layer, axis 2
   only. `median` selects with `std.builtin.sort.partition` and `mode` sorts
@@ -92,7 +92,7 @@ The axis is a compile-time parameter because the result's *rank* depends on it
 extents are not: the result comes back run-time-shaped, since they are read
 from the input rather than named.
 
-`numax.core.tensor.reduce_axis` is the same fold one layer down, over a
+`numax.core.functional.reduce_axis` is the same fold one layer down, over a
 `TileTensor` a caller allocated the output for, with an arbitrary `combine`
 instead of one of MAX's monoids. `sum`, `prod`, `min` and `max` no longer
 go through it: they call `numax.core.rowwise`'s `sum_axis`/`prod_axis`/
@@ -481,7 +481,7 @@ def sum[
     `xs`. The sum is reassociated -- MAX folds SIMD tiles and joins
     partials -- so it differs in the last bits from the strict
     left-to-right host loop this replaced, and from
-    `numax.core.tensor.reduce[add_combine]`.
+    `numax.core.functional.reduce[add_combine]`.
     """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):

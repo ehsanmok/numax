@@ -31,7 +31,7 @@ reference.
 `0 * (-infinity)` indeterminate form at exactly `m1 = 0`, since `E`'s log
 coefficient `Q(m1)` has no constant term (`Q(m1) = b1*m1 + ...`, `Q(0) =
 0`) while `ln(m1) -> -infinity` there. Both get the same fix: `m1` is
-floored at a small epsilon (branchless, via `numax.core.tensor.max_op`,
+floored at a small epsilon (branchless, via `numax.core.functional.max_op`,
 the exact selection `numax.core.numeric.max_of` is, same as
 `numax.special.bessel`'s domain clamps) before it's handed to `ln` -- for `K`, this caps the singularity at
 a large-but-finite value rather than reaching a true `+infinity`; for `E`,

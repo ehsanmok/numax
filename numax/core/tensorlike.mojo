@@ -33,7 +33,7 @@ the compiler says so at parse time), which is also how MAX writes its own
 whose origin is the borrow of `self`: bind the tensor `mut` and the tile is
 writable, bind it immutably and the tile is read-only, and either way the
 tile keeps `self` alive. MAX's implicit origin cast then turns that tile into
-the `MutAnyOrigin` spelling `numax.core.tensor` and every MAX kernel take,
+the `MutAnyOrigin` spelling `numax.core.functional` and every MAX kernel take,
 at the call site and with parameter inference intact. `context()` names the
 device the storage lives on, so a kernel can allocate its result beside its
 input without being told twice.
@@ -99,7 +99,7 @@ trait TensorLike:
         """A `TileTensor` over the storage, with the mutability of this
         borrow of `self` and its lifetime.
 
-        The type `numax.core.tensor`'s walks and every MAX kernel accept,
+        The type `numax.core.functional`'s walks and every MAX kernel accept,
         once MAX's implicit origin cast has erased the origin at the call
         site. A view outliving the borrow is a compile error rather than a
         dangling pointer.
@@ -195,7 +195,7 @@ comptime is_row_major[T: TensorLike] = TileTensor[
 The `where` clause every routine that flattens its argument must carry: a
 `TensorView` over `a.tile().tile[2, 2](0, 0)` of a 4x4 has stride 4 on its first
 axis, and a walk that treats it as eight contiguous elements reads the
-wrong ones. `numax.core.tensor`'s walks already require this; the trait
+wrong ones. `numax.core.functional`'s walks already require this; the trait
 makes it one spelling for the public tier too. For a run-time layout the
 check is on the stride *types*, which every layout `numax` builds
 satisfies, and the flattening helpers verify the values at run time.

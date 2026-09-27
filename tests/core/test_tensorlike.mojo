@@ -27,7 +27,7 @@ from numax.core.elementwise import exp
 from numax.core.logic import greater
 from numax.core.ops import add, multiply
 from numax.core.sorting import extract, sort
-from numax.core.tensor import add_combine, map, reduce
+from numax.core.functional import add_combine, map, reduce
 from numax.core.tensorlike import TensorLike, TensorView, dim, is_row_major
 
 comptime f64 = DType.float64

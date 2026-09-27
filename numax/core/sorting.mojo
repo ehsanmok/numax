@@ -50,7 +50,7 @@ depend on the values at all.
 Every function numax *writes* here treats its input as flat row-major,
 matching `numpy.sort(a, axis=None)` rather than the default `axis=-1`.
 Axis-wise sorting would need the same `outer`/`length`/`inner` decomposition
-`numax.core.tensor.reduce_axis` uses; it is a straightforward extension and is
+`numax.core.functional.reduce_axis` uses; it is a straightforward extension and is
 not written yet, so the flat behavior is stated rather than implied.
 
 `top_k` is the exception, and deliberately: `nn.top_k` takes an axis, so its
@@ -718,7 +718,7 @@ def select[
     `numpy.where(cond, x, y)`.
 
     Named `select` because `where` is a Mojo keyword -- it introduces the
-    constraint clauses this library uses throughout (`numax.core.tensor`'s
+    constraint clauses this library uses throughout (`numax.core.functional`'s
     `all_dims_known` checks, `numax.core.array.reshape`'s element-count check).
     Not merely a style collision: `mojo format` cannot parse `where` as an
     identifier at all. The third such rename in the parity surface, after

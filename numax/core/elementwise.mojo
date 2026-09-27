@@ -7,7 +7,7 @@
 `gpu: Bool` parameter names: `max.algorithm.elementwise` on the device, the
 same threaded walk on a large host tensor, a serial SIMD loop on a small
 one. The mathematics is tier 1 -- fixed work per element, no branching --
-and `numax.core.tensor.map`/`map_to` remain the primitives a caller holding
+and `numax.core.functional.map`/`map_to` remain the primitives a caller holding
 a concrete shape and a hot loop can reach for directly.
 
 `gpu: Bool = False` is the last compile-time parameter of every routine, so

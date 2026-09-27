@@ -7,7 +7,7 @@ ways:
 
 - **CPU**: `numax.stats.uniform` draws the initial conditions directly
   into a `Tensor`, reproducibly under a fixed `seed`, then
-  `numax.integrate.array.rk4` integrates every trajectory via `numax.core.tensor.map` at
+  `numax.integrate.array.rk4` integrates every trajectory via `numax.core.functional.map` at
   native SIMD width -- no different from `ode.mojo`'s own CPU path once the
   initial conditions exist.
 - **GPU**: the same call with `gpu=True` and a device context,
@@ -30,7 +30,7 @@ from numax import Plain, Static
 from numax.core.numeric import FloatLike
 from numax.integrate.array import rk4
 from numax.stats import Generator, uniform
-from numax.core.tensor import map
+from numax.core.functional import map
 
 comptime dtype = DType.float32
 comptime n = 4096

@@ -23,7 +23,7 @@ for the elementwise family (`map`), `combine` for the folding family
 `kernel`/`wrap`/`unwrap` trio an earlier version of this module used.
 Composing a `FloatLike` kernel with the raw `SIMD` in/out conversion is now
 the caller's job, in one small function, the same way `gaussian_step` below
-does it; `numax.core.tensor` itself only ever sees raw `SIMD`.
+does it; `numax.core.functional` itself only ever sees raw `SIMD`.
 
 **`map`, `reduce_rows`, and `broadcast_op_rows` run on either CPU or GPU,
 picked with a `gpu: Bool` compile-time parameter, same function either way.**
@@ -616,7 +616,7 @@ def map_blocks[
     targets, rather than paying a strided gather per block per launch.
 
     Raw `SIMD` in and out, the same contract `map`'s `step` has:
-    `numax.core.tensor` never sees a `FloatLike` type, and composing the
+    `numax.core.functional` never sees a `FloatLike` type, and composing the
     conformer with the block is the caller's job in one small function.
     `map_blocks` at `k_in = k_out = 1` is exactly `map`'s contract, so a
     genuinely elementwise kernel stays on `map` -- `quantum_well.mojo`'s

@@ -131,11 +131,11 @@ data but make no launchability promise to a `FloatLike` caller; they do
 run on either processor, through MAX's `rowwise` and `elementwise`), the
 array manipulations and file I/O -- plus
 `numax.optimize.optimize` and `numax.integrate.integrate`, which converge
-to a tolerance. `numax.core.tensor` is the boundary itself and declares per
+to a tolerance. `numax.core.functional` is the boundary itself and declares per
 function: there, a compile-time shape carries the guarantee and takes
 `gpu=True` while a run-time one cannot, since a shape the compiler cannot
 see cannot become an `enqueue_function` signature. **That limit is
-`numax.core.tensor`'s, not the library's.** The NumPy-named surface
+`numax.core.functional`'s, not the library's.** The NumPy-named surface
 launches through `max.algorithm.elementwise` instead, which computes its
 grid from a run-time `Coord`, so a `Dynamic` reaches the device there --
 the routed-surface section below has the policy.
@@ -185,16 +185,16 @@ function); the benefit is that **every kernel here is launchable inside
 a GPU thread unmodified**. Adaptive-tolerance variants are deliberately
 out of scope, not missing.
 
-## The `numax.core.tensor` layer
+## The `numax.core.functional` layer
 
-[`numax/core/tensor.mojo`](../numax/core/tensor.mojo) drives a `FloatLike` kernel
+[`numax/core/functional.mojo`](../numax/core/functional.mojo) drives a `FloatLike` kernel
 across MAX's `TileTensor` -- the same tensor type used for both CPU- and
 GPU-resident data -- instead of a hand-rolled pointer loop. CPU or GPU
 is picked with one `gpu: Bool` compile-time parameter rather than two
 differently-named functions.
 
 ```mojo
-from numax.core.tensor import map
+from numax.core.functional import map
 
 def gaussian_step[w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return gaussian(Plain[dtype, w](x)).v
@@ -324,7 +324,7 @@ survey of what MAX does ship.
 
 ## Static and runtime shapes
 
-`numax.core.tensor`'s walks originally required `all_dims_known`, because they
+`numax.core.functional`'s walks originally required `all_dims_known`, because they
 flatten with `TileTensor.coalesce()` and `coalesce()` is itself constrained
 to statically-shaped storage. That is what `enqueue_function` needs: a
 kernel reaching it must have its entire type resolved before the launch,

@@ -35,7 +35,7 @@ eigensolve, per thread.
   `Dual` for the sensitivity to the initial condition.
 - [`examples/advanced/batched_solve.mojo`](../examples/advanced/batched_solve.mojo):
   4096 SPD 4x4 systems, one Cholesky factorization and solve per lane
-  through `numax.core.tensor.map_blocks`, and `dx/dA00` for every one of
+  through `numax.core.functional.map_blocks`, and `dx/dA00` for every one of
   them from the same factorization at `Dual`. `map` hands a lane one
   scalar; `map_blocks` hands it a whole problem.
 - [`examples/advanced/gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo):

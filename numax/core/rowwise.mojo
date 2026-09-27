@@ -9,7 +9,7 @@ MAX's top-level `algorithm` root is a reduction library: `reduce_op` supplies
 the monoids (`ReduceSum`, `ReduceMax`, `ReduceMin`, `ReduceProduct`,
 `MinMax`, `ArgMax`, `ArgMin`, `Welford`, `OnlineLogSumExp`) and `rowwise`
 supplies the scaffolder that drives one across an axis. The scaffolder's
-contract is precisely the problem `numax.core.tensor` solves by hand with its
+contract is precisely the problem `numax.core.functional` solves by hand with its
 `gpu: Bool` parameter, solved upstream: the body never branches on `target`,
 because `rowwise.reduce`/`pjoin`/`once`/`simd` comptime-dispatch on
 `params.target`, so GPU primitives never appear in CPU codegen and vice
@@ -32,7 +32,7 @@ so every dispatch here is a `comptime if` chain whose `else` is
 `comptime assert False` -- an unknown monoid is a compile-time error, not a
 quietly chosen default.
 
-**How this relates to `numax.core.tensor.reduce_axis`.** That one takes an
+**How this relates to `numax.core.functional.reduce_axis`.** That one takes an
 arbitrary `combine` function and folds scalar, left to right. This one takes
 one of MAX's monoids. Both ship, because they answer different questions:
 
@@ -59,7 +59,7 @@ arbitrary layout, requires every extent at compile time, and these accept a
 runtime-shaped destination -- `numax.stats` reduces into a `Dynamic` tensor
 whose extents are read from the input rather than named, and a predicate over
 a layout built at run time has nothing to prove itself against.
-`numax.core.tensor`'s runtime `map` overload flattens the same way for the
+`numax.core.functional`'s runtime `map` overload flattens the same way for the
 same reason. Pass a row-major destination; a strided one is filled densely.
 
 A monoid reduction is reassociated by construction -- MAX folds SIMD tiles
@@ -179,7 +179,7 @@ def reduce_all[
 
     `"sum"` and `"prod"` are reassociated -- MAX folds SIMD tiles and joins
     partials across threads or lanes -- so they will differ in the last bits
-    from a strict left-to-right loop such as `numax.core.tensor.reduce`.
+    from a strict left-to-right loop such as `numax.core.functional.reduce`.
     `"max"` and `"min"` are exact in any order and agree bit for bit.
 
     `dtype` and `Contribute` are inferred from the arguments, so a call
@@ -504,7 +504,7 @@ def sum_axis[
 ):
     """Sum `xs` along `axis` into `dst`, on either target.
 
-    `numpy.sum(a, axis=k)`, and `numax.core.tensor.reduce_axis` with
+    `numpy.sum(a, axis=k)`, and `numax.core.functional.reduce_axis` with
     `add_combine` -- but through MAX's `ReduceSum` monoid and `rowwise`
     scaffolder rather than a scalar loop, so it is threaded on CPU and
     tiered on GPU. `ctx` is required when `target="gpu"` and unused
@@ -738,7 +738,7 @@ def _collapsed[
 
     `rowwise.emit` hands out the full-rank coordinate with the reduced axis
     pinned to `0`; `dst` holds only the surviving axes. This is the same
-    `o * inner + i` position `numax.core.tensor.reduce_axis` writes, which
+    `o * inner + i` position `numax.core.functional.reduce_axis` writes, which
     is what lets the two be checked against each other.
     """
     var flat = 0

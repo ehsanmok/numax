@@ -26,7 +26,7 @@ from std.math import exp as exp_f64
 
 from numax import Dual, FloatLike, Plain, Static
 from numax.integrate.array import rk4
-from numax.core.tensor import map
+from numax.core.functional import map
 
 comptime dtype = DType.float32
 comptime n = 1024

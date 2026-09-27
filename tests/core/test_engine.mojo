@@ -22,7 +22,7 @@ from std.testing import (
     assert_true,
 )
 
-from numax.core.tensor import (
+from numax.core.functional import (
     add_combine,
     broadcast_op_axis,
     map,

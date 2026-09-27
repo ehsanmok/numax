@@ -11,7 +11,7 @@ plain `float32` SIMD, the value plus its derivative (`Dual`), and the value
 carried to roughly double precision (`Compensated`).
 
 The 4096 points live in a `Tensor`, which owns its storage. The walk is
-`numax.core.tensor.map`, and what it takes is `.tile()`: the `TileTensor`
+`numax.core.functional.map`, and what it takes is `.tile()`: the `TileTensor`
 MAX kernels speak, here driven at the CPU's native SIMD width with a scalar
 tail for whatever doesn't divide evenly. `examples/gaussian_gpu.mojo` hands
 the same view to the same `map` on a GPU.
@@ -21,7 +21,7 @@ from std.math import exp
 from std.sys.info import simd_width_of
 
 from numax import Compensated, Dual, Plain, gaussian, zeros
-from numax.core.tensor import map
+from numax.core.functional import map
 
 comptime dtype = DType.float32
 comptime n = 4096

@@ -709,6 +709,93 @@ from test_format import (
 from test_format import (
     test_a_conformer_prints_the_same_value_its_field_holds as test_format__test_a_conformer_prints_the_same_value_its_field_holds,
 )
+from test_functional import (
+    test_map_at_native_width_matches_direct_call as test_functional__test_map_at_native_width_matches_direct_call,
+)
+from test_functional import (
+    test_map_with_remainder_covers_tail_loop as test_functional__test_map_with_remainder_covers_tail_loop,
+)
+from test_functional import (
+    test_map_dual_derivative_matches_closed_form as test_functional__test_map_dual_derivative_matches_closed_form,
+)
+from test_functional import (
+    test_map_walks_a_multidimensional_tensor_via_coalesce as test_functional__test_map_walks_a_multidimensional_tensor_via_coalesce,
+)
+from test_functional import (
+    test_map_compensated_beats_plain_for_small_x as test_functional__test_map_compensated_beats_plain_for_small_x,
+)
+from test_functional import (
+    test_binary_map_adds_two_tensors as test_functional__test_binary_map_adds_two_tensors,
+)
+from test_functional import (
+    test_binary_map_multiplies_with_a_remainder as test_functional__test_binary_map_multiplies_with_a_remainder,
+)
+from test_functional import (
+    test_binary_map_runs_a_floatlike_kernel_over_both_inputs as test_functional__test_binary_map_runs_a_floatlike_kernel_over_both_inputs,
+)
+from test_functional import (
+    test_binary_map_coalesces_a_multidimensional_tensor as test_functional__test_binary_map_coalesces_a_multidimensional_tensor,
+)
+from test_functional import (
+    test_map_threaded_matches_the_serial_walk as test_functional__test_map_threaded_matches_the_serial_walk,
+)
+from test_functional import (
+    test_map_threaded_coalesces_a_rank_three_tensor as test_functional__test_map_threaded_coalesces_a_rank_three_tensor,
+)
+from test_functional import (
+    test_dynamic_map_agrees_with_the_static_map as test_functional__test_dynamic_map_agrees_with_the_static_map,
+)
+from test_functional import (
+    test_dynamic_map_handles_a_width_that_does_not_divide_n as test_functional__test_dynamic_map_handles_a_width_that_does_not_divide_n,
+)
+from test_functional import (
+    test_dynamic_binary_map_agrees_with_the_static_one as test_functional__test_dynamic_binary_map_agrees_with_the_static_one,
+)
+from test_functional import (
+    test_dynamic_reduce_agrees_with_the_static_reduce as test_functional__test_dynamic_reduce_agrees_with_the_static_reduce,
+)
+from test_functional import (
+    test_dynamic_map_writes_through_to_the_underlying_storage as test_functional__test_dynamic_map_writes_through_to_the_underlying_storage,
+)
+from test_functional import (
+    test_map_carries_one_runtime_scalar_into_the_kernel as test_functional__test_map_carries_one_runtime_scalar_into_the_kernel,
+)
+from test_functional import (
+    test_map_carries_two_runtime_scalars_with_a_remainder as test_functional__test_map_carries_two_runtime_scalars_with_a_remainder,
+)
+from test_functional import (
+    test_map_with_scalars_coalesces_a_multidimensional_tensor as test_functional__test_map_with_scalars_coalesces_a_multidimensional_tensor,
+)
+from test_functional_reduce import (
+    test_reduce_sums_a_1d_tensor as test_functional_reduce__test_reduce_sums_a_1d_tensor,
+)
+from test_functional_reduce import (
+    test_reduce_finds_the_max_of_a_1d_tensor as test_functional_reduce__test_reduce_finds_the_max_of_a_1d_tensor,
+)
+from test_functional_reduce import (
+    test_reduce_sums_a_multidimensional_tensor_via_coalesce as test_functional_reduce__test_reduce_sums_a_multidimensional_tensor_via_coalesce,
+)
+from test_functional_reduce import (
+    test_reduce_rows_finds_each_row_max as test_functional_reduce__test_reduce_rows_finds_each_row_max,
+)
+from test_functional_reduce import (
+    test_broadcast_op_rows_subtracts_row_max as test_functional_reduce__test_broadcast_op_rows_subtracts_row_max,
+)
+from test_functional_reduce import (
+    test_broadcast_op_rows_divides_by_row_sum as test_functional_reduce__test_broadcast_op_rows_divides_by_row_sum,
+)
+from test_functional_reduce import (
+    test_reduce_axis_folds_each_axis_of_a_rank_three_tensor as test_functional_reduce__test_reduce_axis_folds_each_axis_of_a_rank_three_tensor,
+)
+from test_functional_reduce import (
+    test_reduce_axis_reproduces_reduce_rows as test_functional_reduce__test_reduce_axis_reproduces_reduce_rows,
+)
+from test_functional_reduce import (
+    test_broadcast_op_axis_inverts_reduce_axis as test_functional_reduce__test_broadcast_op_axis_inverts_reduce_axis,
+)
+from test_functional_reduce import (
+    test_broadcast_op_axis_reproduces_broadcast_op_rows as test_functional_reduce__test_broadcast_op_axis_reproduces_broadcast_op_rows,
+)
 from test_gradient import (
     test_one_has_zero_gradient as test_gradient__test_one_has_zero_gradient,
 )
@@ -1271,93 +1358,6 @@ from test_sqrt import (
 from test_sqrt import (
     test_beats_the_exp_ln_workaround as test_sqrt__test_beats_the_exp_ln_workaround,
 )
-from test_tensor import (
-    test_map_at_native_width_matches_direct_call as test_tensor__test_map_at_native_width_matches_direct_call,
-)
-from test_tensor import (
-    test_map_with_remainder_covers_tail_loop as test_tensor__test_map_with_remainder_covers_tail_loop,
-)
-from test_tensor import (
-    test_map_dual_derivative_matches_closed_form as test_tensor__test_map_dual_derivative_matches_closed_form,
-)
-from test_tensor import (
-    test_map_walks_a_multidimensional_tensor_via_coalesce as test_tensor__test_map_walks_a_multidimensional_tensor_via_coalesce,
-)
-from test_tensor import (
-    test_map_compensated_beats_plain_for_small_x as test_tensor__test_map_compensated_beats_plain_for_small_x,
-)
-from test_tensor import (
-    test_binary_map_adds_two_tensors as test_tensor__test_binary_map_adds_two_tensors,
-)
-from test_tensor import (
-    test_binary_map_multiplies_with_a_remainder as test_tensor__test_binary_map_multiplies_with_a_remainder,
-)
-from test_tensor import (
-    test_binary_map_runs_a_floatlike_kernel_over_both_inputs as test_tensor__test_binary_map_runs_a_floatlike_kernel_over_both_inputs,
-)
-from test_tensor import (
-    test_binary_map_coalesces_a_multidimensional_tensor as test_tensor__test_binary_map_coalesces_a_multidimensional_tensor,
-)
-from test_tensor import (
-    test_map_threaded_matches_the_serial_walk as test_tensor__test_map_threaded_matches_the_serial_walk,
-)
-from test_tensor import (
-    test_map_threaded_coalesces_a_rank_three_tensor as test_tensor__test_map_threaded_coalesces_a_rank_three_tensor,
-)
-from test_tensor import (
-    test_dynamic_map_agrees_with_the_static_map as test_tensor__test_dynamic_map_agrees_with_the_static_map,
-)
-from test_tensor import (
-    test_dynamic_map_handles_a_width_that_does_not_divide_n as test_tensor__test_dynamic_map_handles_a_width_that_does_not_divide_n,
-)
-from test_tensor import (
-    test_dynamic_binary_map_agrees_with_the_static_one as test_tensor__test_dynamic_binary_map_agrees_with_the_static_one,
-)
-from test_tensor import (
-    test_dynamic_reduce_agrees_with_the_static_reduce as test_tensor__test_dynamic_reduce_agrees_with_the_static_reduce,
-)
-from test_tensor import (
-    test_dynamic_map_writes_through_to_the_underlying_storage as test_tensor__test_dynamic_map_writes_through_to_the_underlying_storage,
-)
-from test_tensor import (
-    test_map_carries_one_runtime_scalar_into_the_kernel as test_tensor__test_map_carries_one_runtime_scalar_into_the_kernel,
-)
-from test_tensor import (
-    test_map_carries_two_runtime_scalars_with_a_remainder as test_tensor__test_map_carries_two_runtime_scalars_with_a_remainder,
-)
-from test_tensor import (
-    test_map_with_scalars_coalesces_a_multidimensional_tensor as test_tensor__test_map_with_scalars_coalesces_a_multidimensional_tensor,
-)
-from test_tensor_reduce import (
-    test_reduce_sums_a_1d_tensor as test_tensor_reduce__test_reduce_sums_a_1d_tensor,
-)
-from test_tensor_reduce import (
-    test_reduce_finds_the_max_of_a_1d_tensor as test_tensor_reduce__test_reduce_finds_the_max_of_a_1d_tensor,
-)
-from test_tensor_reduce import (
-    test_reduce_sums_a_multidimensional_tensor_via_coalesce as test_tensor_reduce__test_reduce_sums_a_multidimensional_tensor_via_coalesce,
-)
-from test_tensor_reduce import (
-    test_reduce_rows_finds_each_row_max as test_tensor_reduce__test_reduce_rows_finds_each_row_max,
-)
-from test_tensor_reduce import (
-    test_broadcast_op_rows_subtracts_row_max as test_tensor_reduce__test_broadcast_op_rows_subtracts_row_max,
-)
-from test_tensor_reduce import (
-    test_broadcast_op_rows_divides_by_row_sum as test_tensor_reduce__test_broadcast_op_rows_divides_by_row_sum,
-)
-from test_tensor_reduce import (
-    test_reduce_axis_folds_each_axis_of_a_rank_three_tensor as test_tensor_reduce__test_reduce_axis_folds_each_axis_of_a_rank_three_tensor,
-)
-from test_tensor_reduce import (
-    test_reduce_axis_reproduces_reduce_rows as test_tensor_reduce__test_reduce_axis_reproduces_reduce_rows,
-)
-from test_tensor_reduce import (
-    test_broadcast_op_axis_inverts_reduce_axis as test_tensor_reduce__test_broadcast_op_axis_inverts_reduce_axis,
-)
-from test_tensor_reduce import (
-    test_broadcast_op_axis_reproduces_broadcast_op_rows as test_tensor_reduce__test_broadcast_op_axis_reproduces_broadcast_op_rows,
-)
 from test_tensorlike import (
     test_tensor_and_view_conform_and_agree as test_tensorlike__test_tensor_and_view_conform_and_agree,
 )
@@ -1768,6 +1768,75 @@ def main() raises:
     suite.test[
         test_format__test_a_conformer_prints_the_same_value_its_field_holds
     ]()
+    # tests/core/test_functional.mojo
+    suite.test[test_functional__test_map_at_native_width_matches_direct_call]()
+    suite.test[test_functional__test_map_with_remainder_covers_tail_loop]()
+    suite.test[test_functional__test_map_dual_derivative_matches_closed_form]()
+    suite.test[
+        test_functional__test_map_walks_a_multidimensional_tensor_via_coalesce
+    ]()
+    suite.test[test_functional__test_map_compensated_beats_plain_for_small_x]()
+    suite.test[test_functional__test_binary_map_adds_two_tensors]()
+    suite.test[test_functional__test_binary_map_multiplies_with_a_remainder]()
+    suite.test[
+        test_functional__test_binary_map_runs_a_floatlike_kernel_over_both_inputs
+    ]()
+    suite.test[
+        test_functional__test_binary_map_coalesces_a_multidimensional_tensor
+    ]()
+    suite.test[test_functional__test_map_threaded_matches_the_serial_walk]()
+    suite.test[
+        test_functional__test_map_threaded_coalesces_a_rank_three_tensor
+    ]()
+    suite.test[test_functional__test_dynamic_map_agrees_with_the_static_map]()
+    suite.test[
+        test_functional__test_dynamic_map_handles_a_width_that_does_not_divide_n
+    ]()
+    suite.test[
+        test_functional__test_dynamic_binary_map_agrees_with_the_static_one
+    ]()
+    suite.test[
+        test_functional__test_dynamic_reduce_agrees_with_the_static_reduce
+    ]()
+    suite.test[
+        test_functional__test_dynamic_map_writes_through_to_the_underlying_storage
+    ]()
+    suite.test[
+        test_functional__test_map_carries_one_runtime_scalar_into_the_kernel
+    ]()
+    suite.test[
+        test_functional__test_map_carries_two_runtime_scalars_with_a_remainder
+    ]()
+    suite.test[
+        test_functional__test_map_with_scalars_coalesces_a_multidimensional_tensor
+    ]()
+    # tests/core/test_functional_reduce.mojo
+    suite.test[test_functional_reduce__test_reduce_sums_a_1d_tensor]()
+    suite.test[
+        test_functional_reduce__test_reduce_finds_the_max_of_a_1d_tensor
+    ]()
+    suite.test[
+        test_functional_reduce__test_reduce_sums_a_multidimensional_tensor_via_coalesce
+    ]()
+    suite.test[test_functional_reduce__test_reduce_rows_finds_each_row_max]()
+    suite.test[
+        test_functional_reduce__test_broadcast_op_rows_subtracts_row_max
+    ]()
+    suite.test[
+        test_functional_reduce__test_broadcast_op_rows_divides_by_row_sum
+    ]()
+    suite.test[
+        test_functional_reduce__test_reduce_axis_folds_each_axis_of_a_rank_three_tensor
+    ]()
+    suite.test[
+        test_functional_reduce__test_reduce_axis_reproduces_reduce_rows
+    ]()
+    suite.test[
+        test_functional_reduce__test_broadcast_op_axis_inverts_reduce_axis
+    ]()
+    suite.test[
+        test_functional_reduce__test_broadcast_op_axis_reproduces_broadcast_op_rows
+    ]()
     # tests/core/test_gradient.mojo
     suite.test[test_gradient__test_one_has_zero_gradient]()
     suite.test[test_gradient__test_variable_is_one_hot]()
@@ -2080,61 +2149,6 @@ def main() raises:
     suite.test[test_sqrt__test_complex_squares_back]()
     suite.test[test_sqrt__test_complex_of_a_positive_real_is_real]()
     suite.test[test_sqrt__test_beats_the_exp_ln_workaround]()
-    # tests/core/test_tensor.mojo
-    suite.test[test_tensor__test_map_at_native_width_matches_direct_call]()
-    suite.test[test_tensor__test_map_with_remainder_covers_tail_loop]()
-    suite.test[test_tensor__test_map_dual_derivative_matches_closed_form]()
-    suite.test[
-        test_tensor__test_map_walks_a_multidimensional_tensor_via_coalesce
-    ]()
-    suite.test[test_tensor__test_map_compensated_beats_plain_for_small_x]()
-    suite.test[test_tensor__test_binary_map_adds_two_tensors]()
-    suite.test[test_tensor__test_binary_map_multiplies_with_a_remainder]()
-    suite.test[
-        test_tensor__test_binary_map_runs_a_floatlike_kernel_over_both_inputs
-    ]()
-    suite.test[
-        test_tensor__test_binary_map_coalesces_a_multidimensional_tensor
-    ]()
-    suite.test[test_tensor__test_map_threaded_matches_the_serial_walk]()
-    suite.test[test_tensor__test_map_threaded_coalesces_a_rank_three_tensor]()
-    suite.test[test_tensor__test_dynamic_map_agrees_with_the_static_map]()
-    suite.test[
-        test_tensor__test_dynamic_map_handles_a_width_that_does_not_divide_n
-    ]()
-    suite.test[
-        test_tensor__test_dynamic_binary_map_agrees_with_the_static_one
-    ]()
-    suite.test[test_tensor__test_dynamic_reduce_agrees_with_the_static_reduce]()
-    suite.test[
-        test_tensor__test_dynamic_map_writes_through_to_the_underlying_storage
-    ]()
-    suite.test[
-        test_tensor__test_map_carries_one_runtime_scalar_into_the_kernel
-    ]()
-    suite.test[
-        test_tensor__test_map_carries_two_runtime_scalars_with_a_remainder
-    ]()
-    suite.test[
-        test_tensor__test_map_with_scalars_coalesces_a_multidimensional_tensor
-    ]()
-    # tests/core/test_tensor_reduce.mojo
-    suite.test[test_tensor_reduce__test_reduce_sums_a_1d_tensor]()
-    suite.test[test_tensor_reduce__test_reduce_finds_the_max_of_a_1d_tensor]()
-    suite.test[
-        test_tensor_reduce__test_reduce_sums_a_multidimensional_tensor_via_coalesce
-    ]()
-    suite.test[test_tensor_reduce__test_reduce_rows_finds_each_row_max]()
-    suite.test[test_tensor_reduce__test_broadcast_op_rows_subtracts_row_max]()
-    suite.test[test_tensor_reduce__test_broadcast_op_rows_divides_by_row_sum]()
-    suite.test[
-        test_tensor_reduce__test_reduce_axis_folds_each_axis_of_a_rank_three_tensor
-    ]()
-    suite.test[test_tensor_reduce__test_reduce_axis_reproduces_reduce_rows]()
-    suite.test[test_tensor_reduce__test_broadcast_op_axis_inverts_reduce_axis]()
-    suite.test[
-        test_tensor_reduce__test_broadcast_op_axis_reproduces_broadcast_op_rows
-    ]()
     # tests/core/test_tensorlike.mojo
     suite.test[test_tensorlike__test_tensor_and_view_conform_and_agree]()
     suite.test[test_tensorlike__test_view_over_a_block_writes_into_the_parent]()

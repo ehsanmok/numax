@@ -6,7 +6,7 @@
 routine here runs through `numax.core._drive`, which launches one capturing
 body on the target its `gpu: Bool` parameter names: `max.algorithm.elementwise`
 on the device, the same threaded walk on a large host tensor, a serial SIMD
-loop on a small one. `numax.core.tensor.map` with `add_step`/`mul_step` is
+loop on a small one. `numax.core.functional.map` with `add_step`/`mul_step` is
 the tier-1 form, generic over every `FloatLike` conformer.
 
 `gpu: Bool = False` is the last compile-time parameter of every routine, so

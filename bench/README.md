@@ -447,8 +447,8 @@ chained ones.
 ## Threading: `map` vs `map_threaded`
 
 `pixi run bench-elementwise`, same machine and same `gaussian` kernel.
-`numax.core.tensor.map` walks the tensor on one thread at native SIMD width;
-`numax.core.tensor.map_threaded` hands the same `step` to
+`numax.core.functional.map` walks the tensor on one thread at native SIMD width;
+`numax.core.functional.map_threaded` hands the same `step` to
 `max.algorithm.elementwise[target="cpu"]`, which vectorizes *and*
 distributes across cores. Millions of elements/sec, higher is better.
 

@@ -840,7 +840,7 @@ def test_tensor_nrm2_and_asum_agree_with_the_array_versions() raises:
 
 def test_tensor_axpy_agrees_with_the_array_axpy() raises:
     """`alpha` is a run-time scalar riding `elementwise`'s capture list,
-    which is the thing `numax.core.tensor.map` cannot express -- so this
+    which is the thing `numax.core.functional.map` cannot express -- so this
     also pins that the fused form got the right `alpha`."""
     comptime n = 32
     var ctx = _cpu()

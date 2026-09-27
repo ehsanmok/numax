@@ -10,7 +10,7 @@ their own, so none of them need any changes to be used inside a kernel body:
 exactly the same code imported from `numax.special`, `numax.core.plain`,
 `numax.core.dual`, and `numax.core.compensated` as the CPU example uses.
 
-The walk itself is `numax.core.tensor.map[gpu=True]`, launched once per element
+The walk itself is `numax.core.functional.map[gpu=True]`, launched once per element
 via `DeviceContext.enqueue_function` -- one GPU thread per element, since
 GPU parallelism comes from thread count rather than per-thread SIMD
 registers (unlike the CPU example's `map[gpu=False]`, which vectorizes
@@ -18,7 +18,7 @@ within a thread). Same function, same `step` shape ("`wrap` -> kernel ->
 `unwrap`" composed inline) as the CPU example, over a `Tensor` built on the
 GPU context instead of the CPU one -- picked with one `gpu: Bool`
 compile-time parameter rather than a separate name (see
-`numax/core/tensor.mojo`'s module docstring for why `step` has to stay `thin` on
+`numax/core/functional.mojo`'s module docstring for why `step` has to stay `thin` on
 both paths for that to work through `enqueue_function`).
 
 `Compensated.exp()` used to be excluded here because its Taylor-series
@@ -32,7 +32,7 @@ else.
 
 The last section reruns the plain pass over a rank-3 tensor (same
 `n` elements, reshaped) to check that `map[gpu=True]`'s internal
-`.coalesce()` (see `numax/core/tensor.mojo`) produces the same result on the
+`.coalesce()` (see `numax/core/functional.mojo`) produces the same result on the
 device as it does on the rank-1 layout above -- no manual flattening
 needed at either the CPU or GPU call site.
 """
@@ -41,7 +41,7 @@ from max.gpu.host import DeviceContext
 from std.math import exp
 
 from numax import Compensated, Dual, Plain, Static, gaussian
-from numax.core.tensor import map
+from numax.core.functional import map
 
 comptime dtype = DType.float32
 comptime n = 4096

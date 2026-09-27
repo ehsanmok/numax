@@ -35,7 +35,7 @@ engine at `batch = 1`; `fft2` is the engine along the rows and then, through
 a zero-copy `TileTensor.transpose()` of the same buffer, along the columns,
 so the row-column decomposition costs no transpose pass and no second set
 of kernels. The rank-2 view is built over the tensor's own pointer with a
-`row_major[rows, cols]()` layout -- the construction `numax.core.tensor`'s
+`row_major[rows, cols]()` layout -- the construction `numax.core.functional`'s
 runtime `map` uses to flatten, run the other way -- so no `Tensor` is ever
 reshaped or copied to get there.
 
@@ -225,7 +225,7 @@ def _as_matrix[
 
     The tensor's elements are contiguous and row-major, so a rank-2 layout
     over the same pointer addresses the same memory in the same order --
-    the construction the runtime `map` in `numax.core.tensor` uses to
+    the construction the runtime `map` in `numax.core.functional` uses to
     flatten, run the other way. `rows * cols` must equal `t`'s element
     count; every caller here passes `t`'s own shape or `(1, n)`.
 

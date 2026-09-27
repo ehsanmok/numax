@@ -25,7 +25,7 @@ their own buffer pointers, and hands one capturing body to `_launch`.
   run-time-shaped `Dynamic` launches exactly as a `Static` does; that is
   why there is one signature per driver and no static/runtime doubling.
 - `gpu=False` below `_THREADED_FROM` elements is a serial SIMD loop. Thread
-  dispatch loses on small inputs (`numax/core/tensor.mojo` measures the
+  dispatch loses on small inputs (`numax/core/functional.mojo` measures the
   crossover near a quarter of a million elements), and the NumPy-named
   surface is mostly called on small tensors.
 - `gpu=False` at or above it is `elementwise[target="cpu"]`, which is
@@ -76,7 +76,7 @@ comptime _THREADED_FROM = 1 << 16
 `elementwise[target="cpu"]`.
 
 Provisional: thread dispatch is measured to lose below roughly a quarter of
-a million elements in `numax/core/tensor.mojo`, and this is the conservative
+a million elements in `numax/core/functional.mojo`, and this is the conservative
 power of two below that. Retuned against `bench/bench_core_surface.mojo`.
 """
 
@@ -90,7 +90,7 @@ def _target[gpu: Bool]() -> StaticString:
 @always_inline
 def _width[dtype: DType, gpu: Bool]() -> Int:
     """Native SIMD width on the host, one element per thread on the device
-    -- the same choice `numax.core.tensor.map` documents measuring."""
+    -- the same choice `numax.core.functional.map` documents measuring."""
     comptime if gpu:
         return 1
     else:

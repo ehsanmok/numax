@@ -3,7 +3,7 @@
 **This module is tier 2.** Every manipulation here walks a host copy of the
 elements, and several of them raise on a shape the compiler cannot check.
 The tensor itself is tier-agnostic -- it is storage -- but these functions
-are host-side. `numax.core.tensor` holds the GPU-launchable walks.
+are host-side. `numax.core.functional` holds the GPU-launchable walks.
 
 `docs/parity.md` picks array creation/manipulation as a genuine
 `numax` gap: MAX's `layout` package ships `TileTensor` itself (slicing,
@@ -26,7 +26,7 @@ is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
 changes between the two, and `.tile()` hands back the same
 `TileTensor[dtype, LayoutType, origin_of(self)]` either way -- a tile that
 borrows the tensor at the mutability of the binding, which MAX's implicit
-origin cast turns into the `MutAnyOrigin` spelling `numax.core.tensor.map`/
+origin cast turns into the `MutAnyOrigin` spelling `numax.core.functional.map`/
 `reduce` and every MAX kernel take, on both paths (`map[gpu=False]` walks the
 host view, `map[gpu=True]` launches on the device view through
 `enqueue_function`). `Tensor` is also `DevicePassable`, with that erased
@@ -69,11 +69,11 @@ wrap it and there is deliberately no `__getitem__`/`__setitem__` on `Tensor`
 to be reached for by accident.
 
 **Comptime shape only.** `row_major[*dims: Int]()` (compile-time variadic)
-is what satisfies `numax.core.tensor`'s `where all_dims_known and is_row_major`
+is what satisfies `numax.core.functional`'s `where all_dims_known and is_row_major`
 clause; the runtime-shape sibling `row_major(Coord)` produces
 `all_dims_known=False` and fails that same clause. So every function here
-takes a compile-time `*dims: Int` shape, matching `numax.core.tensor`'s existing
-contract exactly. Dynamic-shape creation is out of scope; `numax.core.tensor`'s
+takes a compile-time `*dims: Int` shape, matching `numax.core.functional`'s existing
+contract exactly. Dynamic-shape creation is out of scope; `numax.core.functional`'s
 runtime-shape overloads take a `TileTensor` the caller has laid out.
 
 **Two parameter shapes, and why.** The fixed-arity factories put the count
@@ -105,7 +105,7 @@ four below are written against this module's own `Tensor` instead.
 Their outputs are consumable, which they were not while every shape here
 was compile-time: `nn.reshape` returns a `TileTensor` whose extents are
 run-time values and whose strides are not the row-major pattern a static
-walk requires, and `numax.core.tensor.map_strided` walks exactly that (see
+walk requires, and `numax.core.functional.map_strided` walks exactly that (see
 `tests/core/test_bridge.mojo`). `numax.stats.argmax`/`argmin` already route
 into `nn.argmaxmin`.
 
@@ -484,7 +484,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ) -> TileTensor[Self.dtype, Self.LayoutType, origin_of(self)]:
         """A `TileTensor` view over this tensor's storage, borrowing `self`.
 
-        The type every `numax.core.tensor` entry point and every MAX kernel
+        The type every `numax.core.functional` entry point and every MAX kernel
         takes, on CPU and GPU alike. The tile's origin is this borrow of
         `self`: on a `var` or `mut` binding it is writable, on an immutable
         one it is read-only, and either way it cannot outlive `self`. Where
@@ -517,7 +517,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ]
     """What a GPU kernel receives when a `Tensor` is passed to
     `enqueue_function`: the same tile `tile()` yields, origin erased, which
-    is the type `numax.core.tensor`'s kernels declare."""
+    is the type `numax.core.functional`'s kernels declare."""
 
     def _to_device_type(
         self, mut encoder: Some[DeviceTypeEncoder], target: MutOpaquePointer[_]
@@ -1668,7 +1668,7 @@ def slice[
 
     This copies into compact storage rather than returning a view. A view
     is expressible -- `TileTensor.slice` produces one, and
-    `numax.core.tensor.map_strided` walks it -- but it would borrow from a
+    `numax.core.functional.map_strided` walks it -- but it would borrow from a
     tensor this module does not own, and every other result here is owned.
     Reach for the view directly when the copy is the expensive part.
 
@@ -1868,7 +1868,7 @@ def broadcast_to[
 
     This materializes rather than returning a stride-0 view: MAX has no
     `broadcast_to`, and a view would borrow from a tensor this module does
-    not own, the same reason `slice` copies. `numax.core.tensor`'s
+    not own, the same reason `slice` copies. `numax.core.functional`'s
     `broadcast_op_axis` is the route that avoids the copy where the
     broadcast only exists to be consumed by an elementwise op.
     """

@@ -45,7 +45,7 @@ from max.gpu.host import DeviceContext
 
 from numax import Plain, exp, gaussian, greater
 from numax.core.array import Static, Tensor, linspace, zeros
-from numax.core.tensor import map
+from numax.core.functional import map
 from numax.stats import norm
 from numax.stats import sum as tensor_sum
 

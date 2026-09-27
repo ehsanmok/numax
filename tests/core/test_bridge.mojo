@@ -37,7 +37,7 @@ from numax.core.array import (
     zeros_dyn,
 )
 from numax.linalg.array import cholesky, det
-from numax.core.tensor import map_strided
+from numax.core.functional import map_strided
 from numax.linalg.array import matmul as numax_matmul
 
 comptime dtype = DType.float64

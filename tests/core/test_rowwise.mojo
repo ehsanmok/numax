@@ -1,4 +1,4 @@
-"""`numax.core.rowwise` against `numax.core.tensor`'s `reduce`/`reduce_axis`.
+"""`numax.core.rowwise` against `numax.core.functional`'s `reduce`/`reduce_axis`.
 
 The claim these assert is agreement: the MAX-delegated reduction and the
 hand-written `combine` fold compute the same thing over the same tensor, at
@@ -27,7 +27,7 @@ from numax.core.rowwise import (
     reduce_all,
     sum_axis,
 )
-from numax.core.tensor import reduce, reduce_axis
+from numax.core.functional import reduce, reduce_axis
 
 comptime dtype = DType.float64
 
@@ -172,7 +172,7 @@ def test_sum_axis_folds_a_rank_1_tensor_to_one_value() raises:
 
 
 def test_reduce_all_matches_reduce_for_every_monoid() raises:
-    """Each of the four monoids against `numax.core.tensor.reduce`.
+    """Each of the four monoids against `numax.core.functional.reduce`.
 
     `reduce` folds strictly left to right with an explicit `combine`; these
     fold through MAX's monoid. Sum and product get a tolerance because the

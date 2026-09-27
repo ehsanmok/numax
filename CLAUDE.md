@@ -152,7 +152,7 @@ it lives on, and a public routine takes either through the trait bound
 flattening walk with `is_row_major[T]`). A bare `TileTensor` appears at the
 interop boundary (`.tile()`, which borrows at the mutability of the binding
 and erases to `MutAnyOrigin` through MAX's implicit cast), inside `TensorView`, and
-in the kernel-author primitives of `numax/core/tensor.mojo`, never as the
+in the kernel-author primitives of `numax/core/functional.mojo`, never as the
 thing a user of `numax.linalg` passes. `Tensor` is also `DevicePassable`, so
 `enqueue_function` takes the tensor and the kernel receives its view.
 
@@ -204,7 +204,7 @@ scope, not missing. Every approximation documents its error bound, checked by
 
 ### Tensor layer
 
-`numax/core/tensor.mojo` drives a kernel across MAX's `TileTensor` — the same
+`numax/core/functional.mojo` drives a kernel across MAX's `TileTensor` — the same
 type for CPU- and GPU-resident data — with one `gpu: Bool` compile-time
 parameter rather than two functions. Primitives: `map` (unary/binary),
 `reduce`, `reduce_block_gpu`, `reduce_rows`, `broadcast_op_rows`,

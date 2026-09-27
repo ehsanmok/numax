@@ -19,7 +19,7 @@ def gaussian[T: FloatLike](x: T) -> T:
 ```
 
 Run across an n-element `TileTensor` of `float32` via
-`numax.core.tensor.map[step=gaussian_step]`. It moves 8 bytes per element
+`numax.core.functional.map[step=gaussian_step]`. It moves 8 bytes per element
 (float32 read + float32 write) however it's written, so on a 150 GB/s
 machine it's capped at ~18,750 M elem/s. **Most of the surface below is
 competing for that bandwidth, not for arithmetic.** That's measured,
@@ -1039,7 +1039,7 @@ treat it as "a few microseconds" rather than as a measurement.
 
 **Where threading starts to pay, and why `_THREADED_FROM` did not move.**
 The last table in the harness runs one `exp` body through
-`numax.core.tensor.map` (a serial SIMD walk) and `map_threaded` (the same
+`numax.core.functional.map` (a serial SIMD walk) and `map_threaded` (the same
 walk through `elementwise[target="cpu"]`) over two buffers the caller
 already owns, so neither row pays for an allocation and both are
 reproducible to 1%:
@@ -1190,7 +1190,7 @@ reason.
 ## Bench tasks
 
 ```bash
-pixi run bench          # CPU: numax.core.tensor.map vs. a hand-rolled raw-SIMD loop
+pixi run bench          # CPU: numax.core.functional.map vs. a hand-rolled raw-SIMD loop
 pixi run bench-gpu     # CPU vs. GPU (map[gpu=True]) across a size sweep
 pixi run bench-roofline # GPU: how much memory bandwidth map[gpu=True] reaches
 pixi run bench-elementwise # CPU: serial vs. threaded at six sizes

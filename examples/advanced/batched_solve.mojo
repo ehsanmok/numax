@@ -6,7 +6,7 @@ express: `solve` over a 4x4 is a handful of flops against a launch and two
 allocations, so doing it 4096 times means 4096 launches. `numax.linalg.array`
 already has the answer for one problem -- a register-resident,
 `FloatLike`-generic `cholesky` that fits inside a GPU thread -- and
-`numax.core.tensor.map_blocks` is what hands it a whole batch: `step`
+`numax.core.functional.map_blocks` is what hands it a whole batch: `step`
 receives one lane's entire problem and returns its entire answer, so the
 factorization runs *inside* the lane and the batch is one launch.
 
@@ -47,7 +47,7 @@ anywhere).
 
 from max.gpu.host import DeviceContext
 
-from numax.core.tensor import map_blocks
+from numax.core.functional import map_blocks
 from numax.linalg.array import cholesky, cholesky_solve
 from numax.prelude import *
 

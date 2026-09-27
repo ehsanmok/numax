@@ -13,7 +13,7 @@ is what lets the same function answer four different questions here:
   perturbation theory written anywhere, checked against the analytic `1/2`;
 - inside `numax.optimize.newton`, which frequency puts the ground state at a
   target energy, using a derivative the caller never supplied;
-- inside `numax.core.tensor.map`, a sweep over `w`, on the GPU with the whole
+- inside `numax.core.functional.map`, a sweep over `w`, on the GPU with the whole
   eigensolve running inside a single thread, and on the CPU across SIMD
   lanes. Both come out bit-identical.
 
@@ -48,7 +48,7 @@ one `dtype` so the bit-for-bit comparison is between equals.
 from max.gpu.host import DeviceContext
 
 from numax.core.numeric import min_of
-from numax.core.tensor import map
+from numax.core.functional import map
 from numax.linalg.array import eigh
 from numax.optimize.array import newton
 from numax.prelude import *

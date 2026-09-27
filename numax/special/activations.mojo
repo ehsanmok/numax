@@ -120,7 +120,7 @@ def softmax[
     `ReduceMax` and `ReduceSum` monoids and a fused normalizing write, and
     re-implementing it here would be the defect the MAX-first gate exists to
     catch -- as it was: this used to be four passes built from
-    `numax.core.tensor.reduce_rows` and `broadcast_op_rows`, with three
+    `numax.core.functional.reduce_rows` and `broadcast_op_rows`, with three
     caller-provided scratch buffers, none of which are needed now.
 
     Tier 2, and host-only, which at `max ==26.6` is numax's choice rather
@@ -134,7 +134,7 @@ def softmax[
     `DeviceContext` away, and is not wired up here only because this
     function has no `gpu` parameter to switch on.
     `examples/intermediate/softmax.mojo` hand-launches the device path from
-    `numax.core.tensor`'s primitives and checks the two against each other.
+    `numax.core.functional`'s primitives and checks the two against each other.
     """
 
     @always_inline

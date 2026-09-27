@@ -1,4 +1,4 @@
-"""`numax.core.tensor.map_blocks`: one small problem per lane.
+"""`numax.core.functional.map_blocks`: one small problem per lane.
 
 The claim under test is that a lane receives its *whole* problem and
 nothing else: the `k_in` values at one batch index, in row order, and that
@@ -24,7 +24,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from numax.core.array import Static
 from numax.core.dual import Dual
 from numax.core.plain import Plain
-from numax.core.tensor import map_blocks
+from numax.core.functional import map_blocks
 from numax.linalg.array import solve
 
 comptime dtype = DType.float64

@@ -189,7 +189,7 @@ def axpy[
 
     One fused `max.algorithm.elementwise` pass: `alpha` rides the body's
     capture list, so no scaled copy of `x` is materialized. That is the
-    reason this cannot be `numax.core.tensor.map` -- `map`'s `step` is a
+    reason this cannot be `numax.core.functional.map` -- `map`'s `step` is a
     non-capturing compile-time function, which a run-time scalar cannot
     reach.
 

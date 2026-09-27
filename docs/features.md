@@ -106,7 +106,7 @@ siblings rather than replacements.
 
 ## `numax.core` — the tensor engine
 
-[`numax/core/tensor.mojo`](../numax/core/tensor.mojo) drives a `FloatLike`
+[`numax/core/functional.mojo`](../numax/core/functional.mojo) drives a `FloatLike`
 kernel over a MAX `TileTensor`, CPU or GPU, chosen by one `gpu: Bool`
 parameter. Shapes may be comptime or runtime: `map`/`reduce` have two
 overloads under one name, picked by `where` clauses that are exact negations.
@@ -119,13 +119,13 @@ on the device. There is no second owning tensor type — both are `TileTensor`.
 | Surface | Where |
 |---|---|
 | `map[step, width, gpu]` — walk one tensor into another at native SIMD width; `gpu=True` is the same source launched per element | [`gaussian.mojo`](../examples/basic/gaussian.mojo), [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo) |
-| `map_to`, `zip_to` — write into a caller-supplied output, and elementwise combine of two inputs | [`test_tensor.mojo`](../tests/core/test_tensor.mojo) |
+| `map_to`, `zip_to` — write into a caller-supplied output, and elementwise combine of two inputs | [`test_functional.mojo`](../tests/core/test_functional.mojo) |
 | `map_threaded` — the same `step` spread across cores via `max.algorithm.elementwise` | [`bench_elementwise.mojo`](../bench/bench_elementwise.mojo) |
 | `map_blocks[k_in, k_out, batch, step, gpu]` — one *small problem* per lane rather than one scalar: `step` takes a lane's whole block as an `Array` of raw `SIMD` and returns its whole answer, so an `Array`-tier factorization runs inside the thread. Structure-of-arrays `(k, batch)`; an AoS caller `transpose`s once | [`batched_solve.mojo`](../examples/advanced/batched_solve.mojo), [`test_map_blocks.mojo`](../tests/core/test_map_blocks.mojo) |
-| `reduce[combine]`, `reduce_block_gpu` — whole-tensor folds, host and device | [`test_tensor_reduce.mojo`](../tests/core/test_tensor_reduce.mojo) |
+| `reduce[combine]`, `reduce_block_gpu` — whole-tensor folds, host and device | [`test_functional_reduce.mojo`](../tests/core/test_functional_reduce.mojo) |
 | `reduce_rows`, `reduce_axis` — per-row and per-axis folds | [`softmax.mojo`](../examples/intermediate/softmax.mojo) |
 | `broadcast_op_rows`, `broadcast_op_axis` — broadcast a folded result back along an axis | [`softmax.mojo`](../examples/intermediate/softmax.mojo) |
-| `add_op`, `max_op`, `add_combine`, `max_combine`, `add_step`, `mul_step` — the ready-made steps and combiners | [`core/tensor.mojo`](../numax/core/tensor.mojo) |
+| `add_op`, `max_op`, `add_combine`, `max_combine`, `add_step`, `mul_step` — the ready-made steps and combiners | [`core/functional.mojo`](../numax/core/functional.mojo) |
 | `reduce_all[monoid]`, `argmax_all`, `argmin_all`, `sum_axis`, `prod_axis`, `max_axis`, `min_axis` — the same folds through MAX's `reduce_op` monoids over its `rowwise` scaffolder, threaded on CPU and tiered on GPU from one body; `tensor`'s `reduce`/`reduce_axis` remain for a `combine` outside the monoid set | [`core/rowwise.mojo`](../numax/core/rowwise.mojo), [`test_rowwise.mojo`](../tests/core/test_rowwise.mojo) |
 | Composition: two `step`s fused into one closes both passes into a single walk — worth 1.99x on the GPU at every size | [`bench_fusion.mojo`](../bench/bench_fusion.mojo) |
 
@@ -600,7 +600,7 @@ row-major tensor, but the surface above it is not uniformly rank-generic yet:
 - `numax.stats`'s `sum`, `prod`, `min`, `max`, `mean`, `median`, `mode`,
   `argmin`, `argmax`, `cumsum` and `cumprod` each take an `axis=` through a
   second overload of its own name (`sum(a)` folds everything,
-  `sum[axis=k](a)` folds one axis), and `numax.core.tensor.reduce_axis`
+  `sum[axis=k](a)` folds one axis), and `numax.core.functional.reduce_axis`
   folds an arbitrary `combine` the same way.
 - `numax.core.sorting` flattens, except `take`/`take_along_axis`, which
   gather along an axis at any rank, and `searchsorted`, which takes a whole
