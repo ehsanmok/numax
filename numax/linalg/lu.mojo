@@ -134,8 +134,8 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         """
         var out = Static[Self.dtype, Self.n, Self.n](self.factored.context())
         pack_block[target=_target[Self.gpu]()](
-            self.factored.view(),
-            out.view(),
+            self.factored.tile(),
+            out.tile(),
             0,
             0,
             Self.n,
@@ -184,9 +184,9 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         can pick without the prover having to refute the sibling overload."""
         var ctx = self.factored.context()
         var x = Static[Self.dtype, Self.n](ctx)
-        var fv = self.factored.view()
-        var xv = x.view()
-        var pv = self.pivots.view()
+        var fv = self.factored.tile()
+        var xv = x.tile()
+        var pv = self.pivots.tile()
 
         pack_vector[target=_target[Self.gpu]()](
             _mut_view_as[Self.dtype](b), xv, 0, Self.n, ctx
@@ -265,10 +265,10 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         comptime rhs = dim[T, 1]
         var ctx = self.factored.context()
         var x = Static[Self.dtype, Self.n, rhs](ctx)
-        var fv = self.factored.view()
-        var pv = self.pivots.view()
+        var fv = self.factored.tile()
+        var pv = self.pivots.tile()
         var xd: _Dense[Self.dtype] = TileTensor(
-            x.view().ptr_at_offset(Coord(0, 0)),
+            x.tile().ptr_at_offset(Coord(0, 0)),
             row_major(Coord(Self.n, rhs)),
         )
 
@@ -299,8 +299,8 @@ struct TensorLU[dtype: DType, n: Int, gpu: Bool = False](
         """
         var ctx = self.factored.context()
         var diagonal = Static[Self.dtype, Self.n](ctx)
-        var fv = self.factored.view()
-        var dv = diagonal.view()
+        var fv = self.factored.tile()
+        var dv = diagonal.tile()
 
         @always_inline
         def gather[w: Int, alignment: Int = 1](coord: Coord) {var fv, var dv}:
@@ -485,12 +485,12 @@ def lu_factor[
     var right_operand = zeros_dyn[T.dtype, 2](block, n, ctx=ctx)
     var scratch = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
 
-    var wv = work.view()
-    var pv = pivots.view()
-    var iv = info.view()
-    var lv = left_operand.view()
-    var rv = right_operand.view()
-    var sv = scratch.view()
+    var wv = work.tile()
+    var pv = pivots.tile()
+    var iv = info.tile()
+    var lv = left_operand.tile()
+    var rv = right_operand.tile()
+    var sv = scratch.tile()
 
     pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
@@ -568,7 +568,7 @@ def lu_factor[
 
     ctx.synchronize()
 
-    # `view()` erases the origin, so none of these is kept alive by its
+    # `tile()` erases the origin, so none of these is kept alive by its
     # view and destruction is ASAP. See `numax.linalg.qr`.
     _ = info^
     _ = left_operand^

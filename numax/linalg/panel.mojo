@@ -119,8 +119,8 @@ comptime _View[dtype: DType, Lay: TensorLayout] = TileTensor[
 
 Origin-erased because a blocked factorization reads and writes one matrix
 through several names at once, and Mojo's exclusivity checker rejects two
-live views of one buffer. `numax.core.array`'s `Tensor.view()` already
-returns this type, so a caller passes `a.view()` and nothing else.
+live views of one buffer. `numax.core.array`'s `Tensor.tile()` already
+returns this type, so a caller passes `a.tile()` and nothing else.
 """
 
 

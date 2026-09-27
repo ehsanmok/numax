@@ -179,10 +179,10 @@ def cholesky[
     # be the product's full size, since `matmul` writes `c` regardless.
     var scratch = zeros_dyn[T.dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
 
-    var wv = work.view()
-    var iv = info.view()
-    var ov = operand.view()
-    var sv = scratch.view()
+    var wv = work.tile()
+    var iv = info.tile()
+    var ov = operand.tile()
+    var sv = scratch.tile()
 
     pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
@@ -315,7 +315,7 @@ def cholesky[
 
     ctx.synchronize()
 
-    # `view()` erases the origin, so neither scratch tensor is kept alive
+    # `tile()` erases the origin, so neither scratch tensor is kept alive
     # by its view and destruction is ASAP. See `numax.linalg.qr`.
     _ = operand^
     _ = scratch^

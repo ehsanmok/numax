@@ -236,12 +236,12 @@ def _trig[
     # `u[j] = w[j] * x[source[j]]`, or zero where `source[j] < 0`.
     var u_re = Static[dtype, m]._uninitialized(ctx)
     var u_im = Static[dtype, m]._uninitialized(ctx)
-    var xs = x.view()
-    var ix = index.view()
-    var wre = weight_re.view()
-    var wim = weight_im.view()
-    var ure = u_re.view()
-    var uim = u_im.view()
+    var xs = x.tile()
+    var ix = index.tile()
+    var wre = weight_re.tile()
+    var wim = weight_im.tile()
+    var ure = u_re.tile()
+    var uim = u_im.tile()
 
     @always_inline
     def gather[
@@ -273,11 +273,11 @@ def _trig[
 
     # `y[k] = Re(p[k] * U[k + offset])`.
     var out = Static[dtype, n]._uninitialized(ctx)
-    var bre = big_re.view()
-    var bim = big_im.view()
-    var pre = post_re.view()
-    var pim = post_im.view()
-    var ys = out.view()
+    var bre = big_re.tile()
+    var bim = big_im.tile()
+    var pre = post_re.tile()
+    var pim = post_im.tile()
+    var ys = out.tile()
 
     @always_inline
     def project[

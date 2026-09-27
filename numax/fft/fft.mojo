@@ -229,10 +229,10 @@ def _as_matrix[
     flatten, run the other way. `rows * cols` must equal `t`'s element
     count; every caller here passes `t`'s own shape or `(1, n)`.
 
-    Valid only while `t` is alive, like `view()`; the origin is erased.
+    Valid only while `t` is alive, like `tile()`; the origin is erased.
     """
     var v: _Lanes[T.dtype, type_of(row_major[rows, cols]())] = TileTensor(
-        t.view().ptr.unsafe_mut_cast[True]().unsafe_origin_cast[MutAnyOrigin](),
+        t.tile().ptr.unsafe_mut_cast[True]().unsafe_origin_cast[MutAnyOrigin](),
         row_major[rows, cols](),
     )
     return v
@@ -300,8 +300,8 @@ def _radix2[
     var sim = src_im
     var dre = dst_re
     var dim = dst_im
-    var fwr = wr_all.view()
-    var fwi = wi_all.view()
+    var fwr = wr_all.tile()
+    var fwi = wi_all.tile()
 
     @always_inline
     def fused_block[
@@ -373,8 +373,8 @@ def _radix2[
         comptime scale_here = inverse and tail == 0 and p == pairs - 1
         var qre = dst_re
         var qim = dst_im
-        var qwr = wr_all.view()
-        var qwi = wi_all.view()
+        var qwr = wr_all.tile()
+        var qwi = wi_all.tile()
 
         @always_inline
         def radix4[
@@ -466,8 +466,8 @@ def _radix2[
         comptime stride = n // span
         var bre = dst_re
         var bim = dst_im
-        var twr = wr_all.view()
-        var twi = wi_all.view()
+        var twr = wr_all.tile()
+        var twi = wi_all.tile()
 
         @always_inline
         def butterfly[
@@ -511,7 +511,7 @@ def _radix2[
 
     ctx.synchronize()
 
-    # `view()` erases the origin, so the twiddle tables are not kept alive
+    # `tile()` erases the origin, so the twiddle tables are not kept alive
     # by the views the launches read through.
     _ = wr_all^
     _ = wi_all^
@@ -594,10 +594,10 @@ def _bluestein[
     var a_im = Static[dtype, batch, m]._uninitialized(ctx)
     var sre = src_re
     var sim = src_im
-    var are = a_re.view()
-    var aim = a_im.view()
-    var cre = chirp_re.view()
-    var cim = chirp_im.view()
+    var are = a_re.tile()
+    var aim = a_im.tile()
+    var cre = chirp_re.tile()
+    var cim = chirp_im.tile()
 
     @always_inline
     def spread[
@@ -632,10 +632,10 @@ def _bluestein[
         _as_matrix[rows=batch, cols=m](big_im),
         ctx,
     )
-    var bre = big_re.view()
-    var bim = big_im.view()
-    var hre = big_h_re.view()
-    var him = big_h_im.view()
+    var bre = big_re.tile()
+    var bim = big_im.tile()
+    var hre = big_h_re.tile()
+    var him = big_h_im.tile()
 
     @always_inline
     def multiply[
@@ -848,10 +848,10 @@ def _rfft[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var fre = full[0].view().as_unsafe_any_origin()
-    var fim = full[1].view().as_unsafe_any_origin()
-    var hre = re.view()
-    var him = im.view()
+    var fre = full[0].tile().as_unsafe_any_origin()
+    var fim = full[1].tile().as_unsafe_any_origin()
+    var hre = re.tile()
+    var him = im.tile()
 
     @always_inline
     def truncate[
@@ -866,7 +866,7 @@ def _rfft[
     )
     ctx.synchronize()
 
-    # `view()` erases the origin, so `full` is not kept alive by `fre`/`fim`
+    # `tile()` erases the origin, so `full` is not kept alive by `fre`/`fim`
     # and its buffers would be freed while `truncate` still reads them.
     _ = full^
 
@@ -911,10 +911,10 @@ def irfft[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var hre = x[0].view().as_unsafe_any_origin()
-    var him = x[1].view().as_unsafe_any_origin()
-    var fre = full_re.view()
-    var fim = full_im.view()
+    var hre = x[0].tile().as_unsafe_any_origin()
+    var him = x[1].tile().as_unsafe_any_origin()
+    var fre = full_re.tile()
+    var fim = full_im.tile()
 
     @always_inline
     def mirror[
@@ -1015,10 +1015,10 @@ def rfft2[
 
     var half_re = Static[dtype, rows, keep]._uninitialized(ctx)
     var half_im = Static[dtype, rows, keep]._uninitialized(ctx)
-    var fre = full_re.view()
-    var fim = full_im.view()
-    var hre = half_re.view()
-    var him = half_im.view()
+    var fre = full_re.tile()
+    var fim = full_im.tile()
+    var hre = half_re.tile()
+    var him = half_im.tile()
 
     @always_inline
     def truncate[
@@ -1059,8 +1059,8 @@ def _rolled[
     are, one gather launch."""
     var ctx = x.context()
     var out = Static[dtype, n]._uninitialized(ctx)
-    var src = x.view()
-    var dst = out.view()
+    var src = x.tile()
+    var dst = out.tile()
     var shift = offset
 
     @always_inline
@@ -1086,8 +1086,8 @@ def _rolled2[
     """The rank-2 `_rolled`: both axes shifted cyclically in one gather."""
     var ctx = x.context()
     var out = Static[dtype, rows, cols]._uninitialized(ctx)
-    var src = x.view()
-    var dst = out.view()
+    var src = x.tile()
+    var dst = out.tile()
     var di = row_offset
     var dj = col_offset
 

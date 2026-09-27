@@ -1,5 +1,5 @@
 """Tests for the seams out of `Tensor`: `to_array`/`to_tensor` between
-numax's two arrays, `view`/`from_view` between owned storage and a borrowed
+numax's two arrays, `view`/`from_tile` between owned storage and a borrowed
 one, and `dynamic`/`static_view` between a shape the compiler can see and
 one it cannot.
 
@@ -186,17 +186,17 @@ def test_lifted_values_match_the_source_elements() raises:
         assert_almost_equal(lifted[i].v, a[i])
 
 
-def test_from_view_round_trips_the_elements() raises:
+def test_from_tile_round_trips_the_elements() raises:
     var a = _matrix()
-    var back = Static[dtype, 2, 2].from_view(a.view(), a.context())
+    var back = Static[dtype, 2, 2].from_tile(a.tile(), a.context())
     for i in range(4):
         assert_almost_equal(back[i], a[i])
 
 
-def test_from_view_copies_rather_than_aliases() raises:
+def test_from_tile_copies_rather_than_aliases() raises:
     var a = _matrix()
-    var back = Static[dtype, 2, 2].from_view(a.view(), a.context())
-    var v = a.view()
+    var back = Static[dtype, 2, 2].from_tile(a.tile(), a.context())
+    var v = a.tile()
     v[0, 0] = 99.0
     assert_almost_equal(a[0], Scalar[dtype](99.0))
     assert_almost_equal(back[0], Scalar[dtype](4.0))
@@ -236,8 +236,8 @@ def test_a_named_run_time_shape_matches_the_static_tensor_element_for_element() 
         built_static[i] = Scalar[dtype](i) * 0.5
 
     var named = built_dynamic^.static_view[2, 3]()
-    var from_named = named.view()
-    var from_static = built_static.view()
+    var from_named = named.tile()
+    var from_static = built_static.tile()
     for r in range(2):
         for c in range(3):
             assert_equal(from_named[r, c], from_static[r, c])
@@ -264,7 +264,7 @@ def test_one_matrix_multiplied_through_both_layers_agrees() raises:
     var a = _matrix()
     var b = _matrix()
     var through_max = zeros[dtype, 2, 2](ctx)
-    max_matmul[target="cpu"](through_max.view(), a.view(), b.view())
+    max_matmul[target="cpu"](through_max.tile(), a.tile(), b.tile())
     ctx.synchronize()
 
     var through_numax = to_tensor[dtype, 2, 2](
@@ -288,11 +288,11 @@ def test_a_max_kernels_output_view_feeds_a_numax_walk() raises:
     for i in range(6):
         a[i] = Scalar[dtype](i)
 
-    var reshaped = nn_reshape[output_rank=2](a.view(), IndexList[2](3, 2))
+    var reshaped = nn_reshape[output_rank=2](a.tile(), IndexList[2](3, 2))
     assert_equal(type_of(reshaped).all_dims_known, False)
 
     var out = zeros_dyn[dtype, 2](3, 2, ctx=ctx)
-    map_strided[step=_double](reshaped, out.view())
+    map_strided[step=_double](reshaped, out.tile())
     for i in range(6):
         assert_almost_equal(out[i], Scalar[dtype](2 * i))
 

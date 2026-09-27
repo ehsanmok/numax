@@ -105,7 +105,7 @@ def dot[
         return tile * rhs.load[w](idx.coord)
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        _mut_view(a), out.view(), times, n, Optional(ctx)
+        _mut_view(a), out.tile(), times, n, Optional(ctx)
     )
     return out.to_host()[0]
 
@@ -138,7 +138,7 @@ def nrm2[
         return tile * tile
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        _mut_view(a), out.view(), square, n, Optional(ctx)
+        _mut_view(a), out.tile(), square, n, Optional(ctx)
     )
     return _sqrt(out.to_host()[0])
 
@@ -167,7 +167,7 @@ def asum[
         return abs(tile)
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        _mut_view(a), out.view(), magnitude, n, Optional(ctx)
+        _mut_view(a), out.tile(), magnitude, n, Optional(ctx)
     )
     return out.to_host()[0]
 
@@ -207,7 +207,7 @@ def axpy[
     var out = Static[A.dtype, n]._uninitialized(ctx)
     var xv = _mut_view(x)
     var yv = _mut_view_as[A.dtype](y)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[
@@ -254,7 +254,7 @@ def outer[
     var out = Static[A.dtype, m, n]._uninitialized(ctx)
     var av = _mut_view(a)
     var bv = _mut_view_as[A.dtype](b)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
@@ -341,7 +341,7 @@ def matvec[
 
     comptime if m % lanes == 0 and k % lanes == 0:
         var result = Static[A.dtype, m](ctx)
-        var yv = result.view()
+        var yv = result.tile()
         var y_col = TileTensor(
             yv.ptr_at_offset(Coord(0)), row_major(Coord(m, 1))
         )
@@ -357,7 +357,7 @@ def matvec[
         # Not zeroed: `grow` writes every element, phantom entries included.
         var padded = Static[A.dtype, m_pad, k_pad]._uninitialized(ctx)
         var av = _mut_view(a)
-        var pv = padded.view()
+        var pv = padded.tile()
 
         # Width 1: this reads its input at an index derived from the
         # *output* coordinate, and a wider tile is not guaranteed to stay
@@ -376,7 +376,7 @@ def matvec[
 
         # `x` grows with it, so the phantom columns pair `0` against `0`.
         var x_wide = Static[A.dtype, k_pad]._uninitialized(ctx)
-        var xw = x_wide.view()
+        var xw = x_wide.tile()
 
         @always_inline
         def grow_x[w: Int, alignment: Int = 1](coord: Coord) {var xv, var xw}:
@@ -394,19 +394,19 @@ def matvec[
         )
 
         var wide = Static[A.dtype, m_pad]._uninitialized(ctx)
-        var wv = wide.view()
+        var wv = wide.tile()
         var y_col = TileTensor(
             wv.ptr_at_offset(Coord(0)), row_major(Coord(m_pad, 1))
         )
         _max_matmul[target="gpu" if gpu else "cpu"](
-            y_col, padded.view(), x_pad_col, ctx
+            y_col, padded.tile(), x_pad_col, ctx
         )
         ctx.synchronize()
 
         # Not zeroed: `trim` writes every element of `result`.
         var result = Static[A.dtype, m]._uninitialized(ctx)
-        var rv = result.view()
-        var read = wide.view()
+        var rv = result.tile()
+        var read = wide.tile()
 
         # Width 1 for the same reason: the source is longer than the
         # destination, so a tile sized to `m` is not a tile of `wide`.
@@ -415,7 +415,7 @@ def matvec[
             rv.store[1](coord, read[coord])
 
         elementwise[simd_width=1, target=_target[gpu]()](trim, Coord(m), ctx)
-        # `wide`'s last *use* above is `.view()`, and the view is
+        # `wide`'s last *use* above is `.tile()`, and the view is
         # origin-erased, so without this Mojo destroys `wide` before `trim`
         # reads through `read`: the queued free ran at the next
         # `synchronize` and `trim` copied a heap pointer into `result[0]`.
@@ -453,7 +453,7 @@ def matmul[
     comptime n = dim[B, 1]
     var ctx = a.context()
     var result = Static[A.dtype, m, n](ctx)
-    var c = result.view()
+    var c = result.tile()
     _max_matmul[target="gpu" if gpu else "cpu"](
         c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
     )
@@ -498,7 +498,7 @@ def inner[
     comptime n = dim[B, 0]
     var ctx = a.context()
     var result = Static[A.dtype, m, n](ctx)
-    var c = result.view()
+    var c = result.tile()
     _max_matmul[transpose_b=True, target=_target[gpu]()](
         c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
     )
@@ -549,7 +549,7 @@ def kron[
     var out = Static[A.dtype, m * p, n * q]._uninitialized(ctx)
     var av = _mut_view(a)
     var bv = _mut_view_as[A.dtype](b)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
@@ -675,7 +675,7 @@ def matmul[
         )
     var ctx = a.context()
     var result = zeros_dyn[A.dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
-    var c = result.view()
+    var c = result.tile()
     _max_matmul[target="gpu" if gpu else "cpu"](
         c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
     )
@@ -709,7 +709,7 @@ def batched_matmul[
     comptime n = dim[B, 2]
     var ctx = a.context()
     var result = Static[A.dtype, batch, m, n](ctx)
-    var c = result.view()
+    var c = result.tile()
     _max_batched_matmul[target="gpu" if gpu else "cpu"](
         c, _mut_view(a), _mut_view_as[A.dtype](b), context=ctx
     )
@@ -744,7 +744,7 @@ def cross[
     var out = Static[A.dtype, 3]._uninitialized(ctx)
     var av = _mut_view(a)
     var bv = _mut_view_as[A.dtype](b)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
@@ -780,7 +780,7 @@ def cross[
     var out = Static[A.dtype, n, 3]._uninitialized(ctx)
     var av = _mut_view(a)
     var bv = _mut_view_as[A.dtype](b)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
@@ -869,15 +869,15 @@ def tensordot[
     if n == 1:
         var ctx = a.context()
         var out = zeros_dyn[A.dtype, 1](m, ctx=ctx)
-        var av = a2.view()
-        var bv = b2.view()
+        var av = a2.tile()
+        var bv = b2.tile()
         var flat_a = TileTensor(
             av.ptr_at_offset(Coord(0, 0)), row_major(Coord(m * k))
         )
         var flat_b = TileTensor(
             bv.ptr_at_offset(Coord(0, 0)), row_major(Coord(k))
         )
-        var flat_out = out.view()
+        var flat_out = out.tile()
 
         @always_inline
         def contract[

@@ -202,7 +202,7 @@ def _stack_rows[
     comptime n = dim[A, 0]
     var ctx = x.context()
     var out = Static[dtype, 2, n]._uninitialized(ctx)
-    var ov = out.view()
+    var ov = out.tile()
     var xs = _flat(x)
     var ys = _flat(y)
     var top: _Row[dtype] = TileTensor(
@@ -250,7 +250,7 @@ def _centered[
     var out = Static[dtype, rows, n]._uninitialized(ctx)
     var src = _dense(m)
     var avg = _flat_unchecked(means)
-    var dst = out.view()
+    var dst = out.tile()
 
     @always_inline
     def center[
@@ -289,8 +289,8 @@ def _gram[
     comptime n = dim[T, 1]
     var ctx = centered.context()
     var out = Static[dtype, rows, rows]._uninitialized(ctx)
-    var cv = centered.view()
-    var ov = out.view()
+    var cv = centered.tile()
+    var ov = out.tile()
     # `cv.ptr` rather than `ptr_at_offset(Coord(0, 0))`: the offset is zero,
     # and `ptr_at_offset`'s rank clause is not provable for a generic `T`.
     var left: _BlockIn[dtype] = TileTensor(cv.ptr, row_major(Coord(rows, n)))
@@ -330,7 +330,7 @@ def _cov_device[
     var ctx = m.context()
     var centered = _centered[gpu=gpu](m)
     var gram = _gram[gpu=gpu](centered)
-    var gv = gram.view()
+    var gv = gram.tile()
     var scale = Scalar[dtype](1) / Scalar[dtype](n - dof)
 
     @always_inline
@@ -494,7 +494,7 @@ def corrcoef[
     var gram = _gram[gpu=gpu](centered)
     var out = Static[dtype, rows, rows]._uninitialized(ctx)
     var gv = _dense(gram)
-    var dst = out.view()
+    var dst = out.tile()
 
     @always_inline
     def normalize[w: Int, alignment: Int = 1](coord: Coord) {var gv, var dst}:
@@ -648,7 +648,7 @@ def rankdata[
     var values = List[Scalar[dtype]](capacity=len(ranks))
     for i in range(len(ranks)):
         values.append(Scalar[dtype](ranks[i]))
-    return Tensor[dtype, LayoutType](xs.context(), xs.view().layout, values^)
+    return Tensor[dtype, LayoutType](xs.context(), xs.tile().layout, values^)
 
 
 def spearmanr[
@@ -844,4 +844,4 @@ def zscore[
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype]((values[i] - centre) / scale))
-    return Tensor[dtype, LayoutType](xs.context(), xs.view().layout, out^)
+    return Tensor[dtype, LayoutType](xs.context(), xs.tile().layout, out^)

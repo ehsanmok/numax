@@ -99,9 +99,9 @@ def _framed[
     comptime n = dim[A, 0]
     comptime nperseg = dim[B, 0]
     var ctx = x.context()
-    var xs = x.view()
+    var xs = x.tile()
     var means = Static[A.dtype, frames]._uninitialized(ctx)
-    var ms = means.view()
+    var ms = means.tile()
     var shift = offset
 
     @always_inline
@@ -123,9 +123,9 @@ def _framed[
 
     var re = Static[A.dtype, frames, nperseg]._uninitialized(ctx)
     var im = Static[A.dtype, frames, nperseg]._uninitialized(ctx)
-    var rs = re.view()
-    var ims = im.view()
-    var ws = window.view_as[A.dtype]()
+    var rs = re.tile()
+    var ims = im.tile()
+    var ws = window.tile_as[A.dtype]()
     var remove_mean = detrend
 
     @always_inline
@@ -290,9 +290,9 @@ def _averaged_power[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var re = spectra[0].view().as_unsafe_any_origin()
-    var im = spectra[1].view().as_unsafe_any_origin()
-    var ys = out.view()
+    var re = spectra[0].tile().as_unsafe_any_origin()
+    var im = spectra[1].tile().as_unsafe_any_origin()
+    var ys = out.tile()
     var factor = Scalar[dtype](scale / Float64(frames))
 
     @always_inline
@@ -477,9 +477,9 @@ def spectrogram[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var re = spectra[0].view().as_unsafe_any_origin()
-    var im = spectra[1].view().as_unsafe_any_origin()
-    var ps = power.view()
+    var re = spectra[0].tile().as_unsafe_any_origin()
+    var im = spectra[1].tile().as_unsafe_any_origin()
+    var ps = power.tile()
     var factor = Scalar[T.dtype](scale)
 
     @always_inline
@@ -565,10 +565,10 @@ def stft[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var re = spectra[0].view().as_unsafe_any_origin()
-    var im = spectra[1].view().as_unsafe_any_origin()
-    var rs = real.view()
-    var ims = imag.view()
+    var re = spectra[0].tile().as_unsafe_any_origin()
+    var im = spectra[1].tile().as_unsafe_any_origin()
+    var rs = real.tile()
+    var ims = imag.tile()
     var factor = Scalar[T.dtype](1.0 / sums[0])
 
     @always_inline
@@ -693,12 +693,12 @@ def csd[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var xr = xf[0].view().as_unsafe_any_origin()
-    var xi = xf[1].view().as_unsafe_any_origin()
-    var yr = yf[0].view().as_unsafe_any_origin()
-    var yi = yf[1].view().as_unsafe_any_origin()
-    var rs = out_re.view()
-    var ims = out_im.view()
+    var xr = xf[0].tile().as_unsafe_any_origin()
+    var xi = xf[1].tile().as_unsafe_any_origin()
+    var yr = yf[0].tile().as_unsafe_any_origin()
+    var yi = yf[1].tile().as_unsafe_any_origin()
+    var rs = out_re.tile()
+    var ims = out_im.tile()
     var factor = Scalar[A.dtype](scale / Float64(frames))
 
     @always_inline
@@ -802,11 +802,11 @@ def coherence[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var xr = xf[0].view().as_unsafe_any_origin()
-    var xi = xf[1].view().as_unsafe_any_origin()
-    var yr = yf[0].view().as_unsafe_any_origin()
-    var yi = yf[1].view().as_unsafe_any_origin()
-    var cs = out.view()
+    var xr = xf[0].tile().as_unsafe_any_origin()
+    var xi = xf[1].tile().as_unsafe_any_origin()
+    var yr = yf[0].tile().as_unsafe_any_origin()
+    var yi = yf[1].tile().as_unsafe_any_origin()
+    var cs = out.tile()
 
     @always_inline
     def lane[
@@ -988,8 +988,8 @@ def hilbert[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var re = spectrum[0].view().as_unsafe_any_origin()
-    var im = spectrum[1].view().as_unsafe_any_origin()
+    var re = spectrum[0].tile().as_unsafe_any_origin()
+    var im = spectrum[1].tile().as_unsafe_any_origin()
 
     @always_inline
     def weight[w: Int, alignment: Int = 1](coord: Coord) {var re, var im}:

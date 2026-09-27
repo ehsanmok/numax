@@ -150,11 +150,11 @@ def argsort[T: TensorLike](a: T) raises -> List[Int]:
     var ctx = a.context()
     var flat = asarray(a.to_host(), ctx)
     var indices = Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](n)))
-    var flat_view = flat.view()
-    var indices_view = indices.view()
+    var flat_view = flat.tile()
+    var indices_view = indices.tile()
     _nn_argsort(indices_view, flat_view)
 
-    # `view()` erases the origin, so `flat` is not kept alive by
+    # `tile()` erases the origin, so `flat` is not kept alive by
     # `flat_view` and destruction is ASAP. See `numax.linalg.qr`.
     _ = flat^
 
@@ -747,7 +747,7 @@ def select[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = x_values[i] if mask[i] else y_values[i]
-    return Tensor[dtype, LayoutType](x.context(), x.view().layout, out^)
+    return Tensor[dtype, LayoutType](x.context(), x.tile().layout, out^)
 
 
 def select[
@@ -845,9 +845,9 @@ def _top_k_into[
     host fallback, so `gpu=True` keeps the data where it already is.
     """
     var ctx = a.context()
-    var source = a.view()
-    var out_vals = values.view()
-    var out_idxs = indices.view()
+    var source = a.tile()
+    var out_vals = values.tile()
+    var out_idxs = indices.tile()
     _max_top_k[largest=largest, target="gpu" if gpu else "cpu"](
         source, k, axis, out_vals, out_idxs, sorted, ctx
     )

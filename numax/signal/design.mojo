@@ -1043,11 +1043,11 @@ def freqz[
     var grid = Static[A.dtype, worN](ctx, w^)
     var real = Static[A.dtype, worN]._uninitialized(ctx)
     var imag = Static[A.dtype, worN]._uninitialized(ctx)
-    var ws = grid.view()
-    var bs = b.view()
-    var az = a.view_as[A.dtype]()
-    var rs = real.view()
-    var ims = imag.view()
+    var ws = grid.tile()
+    var bs = b.tile()
+    var az = a.tile_as[A.dtype]()
+    var rs = real.tile()
+    var ims = imag.tile()
 
     @always_inline
     def lane[

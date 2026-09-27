@@ -78,7 +78,7 @@ def main() raises:
 
     var ys = Rows(cpu)
 
-    softmax(xs.view(), ys.view())
+    softmax(xs.tile(), ys.tile())
     check_rows_sum_to_one("CPU  softmax:", ys.to_host())
     print("CPU  row 1 (large-value row), last column:", ys[1, cols - 1])
 
@@ -105,8 +105,8 @@ def main() raises:
             gpu=True,
         ]
     ](
-        xs_gpu.view(),
-        row_max_gpu.view(),
+        xs_gpu.tile(),
+        row_max_gpu.tile(),
         SIMD[dtype, 1](-1e30),
         grid_dim=row_blocks,
         block_dim=row_block,
@@ -120,9 +120,9 @@ def main() raises:
             gpu=True,
         ]
     ](
-        xs_gpu.view(),
-        row_max_gpu.view(),
-        tmp_gpu.view(),
+        xs_gpu.tile(),
+        row_max_gpu.tile(),
+        tmp_gpu.tile(),
         grid_dim=elem_blocks,
         block_dim=elem_block,
     )
@@ -135,8 +135,8 @@ def main() raises:
             gpu=True,
         ]
     ](
-        tmp_gpu.view(),
-        row_sum_gpu.view(),
+        tmp_gpu.tile(),
+        row_sum_gpu.tile(),
         SIMD[dtype, 1](0),
         grid_dim=row_blocks,
         block_dim=row_block,
@@ -150,9 +150,9 @@ def main() raises:
             gpu=True,
         ]
     ](
-        tmp_gpu.view(),
-        row_sum_gpu.view(),
-        ys_gpu.view(),
+        tmp_gpu.tile(),
+        row_sum_gpu.tile(),
+        ys_gpu.tile(),
         grid_dim=elem_blocks,
         block_dim=elem_block,
     )

@@ -151,8 +151,8 @@ def _trsm[
     # `b` as it lands. Both allocated once for the whole solve.
     var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
     var scratch = zeros_dyn[dtype, 2](n, rhs, ctx=ctx)
-    var ov = operand.view()
-    var sv = scratch.view()
+    var ov = operand.tile()
+    var sv = scratch.tile()
 
     var steps = (n + block - 1) // block
     for step in range(steps):
@@ -210,7 +210,7 @@ def _trsm[
 
     ctx.synchronize()
 
-    # `view()` erases the origin, so neither scratch tensor is kept alive
+    # `tile()` erases the origin, so neither scratch tensor is kept alive
     # by its view and destruction is ASAP. See `numax.linalg.qr`.
     _ = operand^
     _ = scratch^
@@ -251,7 +251,7 @@ def solve_triangular[
     `numax.linalg.panel` kernel per diagonal block and one `gemv_sub`
     between them, nothing crossing to the host.
 
-    `a` is taken mutably because `view()` hands back a writable
+    `a` is taken mutably because `tile()` hands back a writable
     `TileTensor`; neither operand is modified. `b` is copied, so the
     caller's vector survives.
     """
@@ -283,7 +283,7 @@ def _solve_triangular_vector[
     comptime n = dim[A, 0]
     var ctx = a.context()
     var x = Static[A.dtype, n](ctx)
-    var xv = x.view()
+    var xv = x.tile()
     pack_vector[target=_target[gpu]()](_mut_view_as[A.dtype](b), xv, 0, n, ctx)
     _trsv[upper=upper, unit=unit, trans=trans, gpu=gpu](
         _mut_view(a), xv, n, block, ctx
@@ -351,7 +351,7 @@ def _solve_triangular_matrix[
     var ctx = a.context()
     var x = Static[A.dtype, n, rhs](ctx)
     var xd: _Dense[A.dtype] = TileTensor(
-        x.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, rhs))
+        x.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, rhs))
     )
     pack_block[target=_target[gpu]()](
         _mut_view_as[A.dtype](b), xd, 0, 0, n, rhs, ctx

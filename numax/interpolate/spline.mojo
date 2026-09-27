@@ -175,10 +175,10 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         comptime m = dim[T, 0]
         var ctx = points.context()
         var out = Static[Self.dtype, m]._uninitialized(ctx)
-        var knots = self.x.view()
-        var coef = self.c.view()
-        var ps = points.view_as[Self.dtype]()
-        var ys = out.view()
+        var knots = self.x.tile()
+        var coef = self.c.tile()
+        var ps = points.tile_as[Self.dtype]()
+        var ys = out.tile()
         var extrapolate = self.extrapolate
 
         @always_inline

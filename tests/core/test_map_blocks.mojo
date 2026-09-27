@@ -145,7 +145,7 @@ def test_an_identity_step_round_trips_every_block() raises:
     var xs = Static[dtype, 3, batch](ctx, values.copy())
     var ys = Static[dtype, 3, batch]._uninitialized(ctx)
 
-    map_blocks[step=_identity_step](xs.view(), ys.view(), ctx)
+    map_blocks[step=_identity_step](xs.tile(), ys.tile(), ctx)
 
     var out = ys.to_host()
     for i in range(3 * batch):
@@ -162,7 +162,7 @@ def test_a_block_sum_equals_a_host_loop() raises:
     var xs = Static[dtype, 5, batch](ctx, values.copy())
     var ys = Static[dtype, 1, batch]._uninitialized(ctx)
 
-    map_blocks[step=_sum_step](xs.view(), ys.view(), ctx)
+    map_blocks[step=_sum_step](xs.tile(), ys.tile(), ctx)
 
     var out = ys.to_host()
     for p in range(batch):
@@ -183,7 +183,7 @@ def test_one_array_tier_solve_per_lane_matches_the_host_solve() raises:
     var xs = Static[dtype, k_in, batch](ctx, values.copy())
     var ys = Static[dtype, n, batch]._uninitialized(ctx)
 
-    map_blocks[step=_solve_step](xs.view(), ys.view(), ctx)
+    map_blocks[step=_solve_step](xs.tile(), ys.tile(), ctx)
 
     var out = ys.to_host()
     for p in range(0, batch, 37):
@@ -211,7 +211,7 @@ def test_a_dual_step_differentiates_the_solve_it_runs() raises:
     var xs = Static[dtype, k_in, batch](ctx, values.copy())
     var ys = Static[dtype, n, batch]._uninitialized(ctx)
 
-    map_blocks[step=_sensitivity_step](xs.view(), ys.view(), ctx)
+    map_blocks[step=_sensitivity_step](xs.tile(), ys.tile(), ctx)
 
     var out = ys.to_host()
     comptime step = 1.0e-5

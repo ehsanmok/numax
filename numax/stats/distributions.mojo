@@ -207,10 +207,10 @@ def _over1[
         var walked = List[Scalar[dtype]](length=len(values), fill=0)
         for i in range(len(values)):
             walked[i] = step[1](values[i], p0)[0]
-        return Tensor[dtype, LayoutType](x.context(), x.view().layout, walked^)
+        return Tensor[dtype, LayoutType](x.context(), x.tile().layout, walked^)
 
     var ctx = x.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.view().layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.tile().layout)
     var xs = _flat(x)
     var ys = _flat_out(out)
 
@@ -243,10 +243,10 @@ def _over2[
         var walked = List[Scalar[dtype]](length=len(values), fill=0)
         for i in range(len(values)):
             walked[i] = step[1](values[i], p0, p1)[0]
-        return Tensor[dtype, LayoutType](x.context(), x.view().layout, walked^)
+        return Tensor[dtype, LayoutType](x.context(), x.tile().layout, walked^)
 
     var ctx = x.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.view().layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.tile().layout)
     var xs = _flat(x)
     var ys = _flat_out(out)
 

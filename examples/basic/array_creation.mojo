@@ -47,7 +47,7 @@ def main() raises:
     print("full[3](7, ctx=ctx):", f[0], f[1], f[2])
 
     var identity = eye[3, dtype](ctx)
-    var iv = identity.view()
+    var iv = identity.tile()
     print(
         "eye[3]: [",
         iv[0, 0],
@@ -69,7 +69,7 @@ def main() raises:
 
     print("--- manipulation ---")
     var m = full[dtype, 2, 3](0, ctx=ctx)
-    var mv = m.view()
+    var mv = m.tile()
     var counter: Scalar[dtype] = 0
     for r in range(2):
         for c in range(3):
@@ -88,7 +88,7 @@ def main() raises:
     )
 
     var mt = transpose(m)
-    var mtv = mt.view()
+    var mtv = mt.tile()
     print(
         "transpose(m) (3x2): [",
         mtv[0, 0],
@@ -103,7 +103,7 @@ def main() raises:
     )
 
     var row = full[dtype, 1, 4](0, ctx=ctx)
-    var rv = row.view()
+    var rv = row.tile()
     for i in range(4):
         rv[0, i] = Scalar[dtype](i)
     var sq = squeeze(row)
@@ -112,7 +112,7 @@ def main() raises:
     var a = linspace[3, dtype](0, 2, ctx=ctx)
     var b = linspace[3, dtype](10, 12, ctx=ctx)
     var st = stack(a, b)
-    var sv = st.view()
+    var sv = st.tile()
     print("stack(a, b) row 0:", sv[0, 0], sv[0, 1], sv[0, 2])
     print("stack(a, b) row 1:", sv[1, 0], sv[1, 1], sv[1, 2])
 
@@ -122,7 +122,7 @@ def main() raises:
     print("arange(6):", r[0], r[1], r[2], r[3], r[4], r[5])
 
     var grid = reshape[rows=2, cols=3](r)
-    var gv = grid.view()
+    var gv = grid.tile()
     print(
         "reshape(6 -> 2x3): [",
         gv[0, 0],

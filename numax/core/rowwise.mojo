@@ -280,7 +280,7 @@ def _argn_all[
     var n = Int(xs.dim[0]())
     var src = xs
     var winner = Static[DType.int64, 1](ctx)
-    var out = winner.view()
+    var out = winner.tile()
 
     @always_inline
     def body[

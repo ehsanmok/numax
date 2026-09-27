@@ -532,7 +532,7 @@ The practical guidance, now in `numax/linalg/blas.mojo`'s docstring as well:
 if your entries are plain `dtype` and your matrix is bigger than about 8x8,
 cross to the `Tensor` tier. `to_tensor`, then the same `matmul` name, which
 resolves to the overload that *is* MAX's `linalg.matmul` — numax allocates
-the destination, takes `.view()`s and calls the kernel, so the dispatch
+the destination, takes `.tile()`s and calls the kernel, so the dispatch
 across Apple, NVIDIA and AMD is MAX's and the table above is the number you
 get.
 

@@ -860,10 +860,10 @@ def clip[
         var walked = List[Scalar[dtype]](length=n, fill=0)
         for i in range(n):
             walked[i] = min(max(values[i], lo), hi)
-        return Tensor[dtype, LayoutType](a.context(), a.view().layout, walked^)
+        return Tensor[dtype, LayoutType](a.context(), a.tile().layout, walked^)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 

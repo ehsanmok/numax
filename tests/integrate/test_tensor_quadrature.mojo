@@ -119,7 +119,7 @@ def test_a_mismatched_x_raises() raises:
 def test_trapezoid_accepts_a_view() raises:
     var y = _t[5]([1.0, 4.0, 9.0, 16.0, 25.0])
     assert_almost_equal(
-        trapezoid(TensorView(y.view()), Scalar[dtype](1.0)), Scalar[dtype](42.0)
+        trapezoid(TensorView(y.tile()), Scalar[dtype](1.0)), Scalar[dtype](42.0)
     )
 
 

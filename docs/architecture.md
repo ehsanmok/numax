@@ -243,20 +243,20 @@ survey of what MAX does ship.
 - **`numax.core.array`** — creation and manipulation over a `Tensor` that owns its
   storage, because a bare `TileTensor` is a view and dangles once the function
   that built it returns. The storage is a MAX `DeviceBuffer`, so the
-  `DeviceContext` decides host or device memory and `.view()` yields the same
+  `DeviceContext` decides host or device memory and `.tile()` yields the same
   `TileTensor` either way; the context is the last argument of every factory
   and optional, so a host-only program never names one. Element access is
   `a[i]` flat or `a[r, c]` on a rank-2 tensor, and in bulk goes through
   `to_host`/`copy_from_host`: on CUDA `unsafe_ptr()` returns a device pointer
   and a host read segfaults. `Tensor` is `Writable`, so `print(a)` works.
-  The view seam is cheap downward and a copy upward: `.view()` hands out a
-  pointer plus a layout, `Tensor.from_view` copies, and no constructor takes
+  The view seam is cheap downward and a copy upward: `.tile()` hands out a
+  pointer plus a layout, `Tensor.from_tile` copies, and no constructor takes
   a `TileTensor` at all, because a view owns nothing to adopt.
   `Tensor` conforms to `TensorLike` (`numax/core/tensorlike.mojo`), the
   bound every `Tensor`-tier routine takes its tensors through, and so does
   `TensorView`, a borrowed `TileTensor` plus its device: one generic routine,
   `def f[T: TensorLike](a: T)`, runs on a whole tensor or on
-  `TensorView(a.view().tile[4, 4](0, 0), a.context())` without a copy. `view()`
+  `TensorView(a.tile().tile[4, 4](0, 0), a.context())` without a copy. `tile()`
   borrows `self` at the mutability of the binding (`ref self`, origin
   tracked), so a read-only routine can take a `Tensor` by borrow and still
   view it; MAX's implicit origin cast erases to the `MutAnyOrigin` the

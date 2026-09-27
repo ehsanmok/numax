@@ -223,7 +223,7 @@ def test_matvec_odd_rows_and_odd_columns_every_element() raises:
     `m` odd -- against odd `k`, checking element 0 in particular.
 
     This is the shape that returned a heap pointer in `y[0]`: the padded
-    output buffer's last use was `.view()`, so Mojo destroyed it before the
+    output buffer's last use was `.tile()`, so Mojo destroyed it before the
     trimming pass read through the origin-erased view, and the queued free
     ran at the next `synchronize`. The `m = 6` tests above are lane-aligned
     on a 2-lane machine and never reached this path there.

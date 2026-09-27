@@ -98,7 +98,7 @@ def main() raises:
 
     # 1. Plain SIMD -- unchanged from the CPU example. The tensors are the
     # launch arguments: `Tensor` is `DevicePassable`, and what the kernel
-    # receives is each one's `MutAnyOrigin` view, exactly `.view()`'s type.
+    # receives is each one's `MutAnyOrigin` view, exactly `.tile()`'s type.
     ctx.enqueue_function[
         map[LayoutType=Flat.LayoutType, step=gaussian_step, gpu=True]
     ](xs, ys, grid_dim=num_blocks, block_dim=block_size)

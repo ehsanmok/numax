@@ -98,10 +98,10 @@ def main() raises:
     # --- the wavefunction, as two real fields ---
     var re = Static[dtype, n, n](ctx)
     var im = Static[dtype, n, n](ctx)
-    var xs = grid[0].view()
-    var ys = grid[1].view()
-    var re_view = re.view()
-    var im_view = im.view()
+    var xs = grid[0].tile()
+    var ys = grid[1].tile()
+    var re_view = re.tile()
+    var im_view = im.tile()
     map[step=packet_re[dtype, _], width=4](xs, ys, re_view)
     map[step=packet_im[dtype, _], width=4](xs, ys, im_view)
 

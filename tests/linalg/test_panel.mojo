@@ -78,7 +78,7 @@ def test_potrf_diag_factors_the_whole_block() raises:
     var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
-    potrf_diag(a.view(), info.view(), 0, n)
+    potrf_diag(a.tile(), info.tile(), 0, n)
 
     assert_equal(Int(info.to_host()[0]), 0)
     var l = a.to_host()
@@ -99,7 +99,7 @@ def test_potrf_diag_leaves_the_upper_triangle_alone() raises:
     var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
-    potrf_diag(a.view(), info.view(), 0, n)
+    potrf_diag(a.tile(), info.tile(), 0, n)
 
     var got = a.to_host()
     for i in range(n):
@@ -120,7 +120,7 @@ def test_potrf_diag_factors_an_offset_block() raises:
     var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
-    potrf_diag(a.view(), info.view(), k, nb)
+    potrf_diag(a.tile(), info.tile(), k, nb)
 
     var got = a.to_host()
     for i in range(n):
@@ -154,7 +154,7 @@ def test_potrf_diag_flags_a_matrix_that_is_not_positive_definite() raises:
     )
     var info = zeros[DType.int32, 1](ctx)
 
-    potrf_diag(a.view(), info.view(), 0, n)
+    potrf_diag(a.tile(), info.tile(), 0, n)
 
     # Column 0 factors to 2; the update leaves column 1's pivot at exactly
     # 1 - 1 == 0, so the first failure is column 1, reported 1-based.
@@ -170,8 +170,8 @@ def test_trsm_right_lower_t_solves_against_the_diagonal_block() raises:
     var a = Static[dtype, n, n](ctx, original.copy())
     var info = zeros[DType.int32, 1](ctx)
 
-    potrf_diag(a.view(), info.view(), 0, nb)
-    trsm_right_lower_t(a.view(), 0, nb, n, ctx)
+    potrf_diag(a.tile(), info.tile(), 0, nb)
+    trsm_right_lower_t(a.tile(), 0, nb, n, ctx)
     ctx.synchronize()
 
     var got = a.to_host()
@@ -196,7 +196,7 @@ def test_trsm_left_lower_unit_solves_the_block_row() raises:
             )
     var a = Static[dtype, n, n](ctx, original.copy())
 
-    trsm_left_lower_unit(a.view(), 0, nb, n, ctx)
+    trsm_left_lower_unit(a.tile(), 0, nb, n, ctx)
     ctx.synchronize()
 
     var got = a.to_host()
@@ -229,7 +229,7 @@ def test_getrf_panel_gives_lu_of_the_columns_it_factored() raises:
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
 
-    getrf_panel(a.view(), pivots.view(), info.view(), 0, nb, n)
+    getrf_panel(a.tile(), pivots.tile(), info.tile(), 0, nb, n)
 
     assert_equal(Int(info.to_host()[0]), 0)
 
@@ -267,7 +267,7 @@ def test_getrf_panel_picks_the_largest_pivot() raises:
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
 
-    getrf_panel(a.view(), pivots.view(), info.view(), 0, 1, n)
+    getrf_panel(a.tile(), pivots.tile(), info.tile(), 0, 1, n)
 
     # Column 0 is (0, 4, 7): the largest magnitude is row 2.
     assert_equal(Int(pivots.to_host()[0]), 2)
@@ -286,7 +286,7 @@ def test_pack_block_copies_a_strided_block_densely() raises:
     var a = Static[dtype, n, n](ctx, values.copy())
     var dst = zeros[dtype, rows, cols](ctx)
 
-    pack_block(a.view(), dst.view(), 2, 3, rows, cols, ctx)
+    pack_block(a.tile(), dst.tile(), 2, 3, rows, cols, ctx)
     ctx.synchronize()
 
     var got = dst.to_host()
@@ -318,7 +318,7 @@ def test_pack_block_copies_a_width_the_simd_lanes_do_not_divide() raises:
     var a = Static[dtype, n, n](ctx, values.copy())
     var dst = zeros[dtype, rows, cols](ctx)
 
-    pack_block(a.view(), dst.view(), 3, 2, rows, cols, ctx)
+    pack_block(a.tile(), dst.tile(), 3, 2, rows, cols, ctx)
     ctx.synchronize()
 
     var got = dst.to_host()
@@ -350,7 +350,7 @@ def test_pack_block_transposed_copies_a_ragged_width() raises:
     var a = Static[dtype, n, n](ctx, values.copy())
     var dst = zeros[dtype, rows, cols](ctx)
 
-    pack_block[trans=True](a.view(), dst.view(), 3, 2, rows, cols, ctx)
+    pack_block[trans=True](a.tile(), dst.tile(), 3, 2, rows, cols, ctx)
     ctx.synchronize()
 
     var got = dst.to_host()
@@ -389,18 +389,18 @@ def test_getrf2_agrees_with_the_single_block_panel_at_every_base() raises:
     var right0 = zeros_dyn[dtype, 2](nb, n, ctx=ctx)
     var prod0 = zeros_dyn[dtype, 2](n, n, ctx=ctx)
     var wl0: _Dense[dtype] = TileTensor(
-        left0.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, nb))
+        left0.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, nb))
     )
     var wr0: _Dense[dtype] = TileTensor(
-        right0.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, n))
+        right0.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, n))
     )
     var wp0: _Dense[dtype] = TileTensor(
-        prod0.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+        prod0.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
     )
     getrf2(
-        want_a.view(),
-        want_p.view(),
-        want_i.view(),
+        want_a.tile(),
+        want_p.tile(),
+        want_i.tile(),
         wl0,
         wr0,
         wp0,
@@ -425,18 +425,18 @@ def test_getrf2_agrees_with_the_single_block_panel_at_every_base() raises:
         var right = zeros_dyn[dtype, 2](nb, n, ctx=ctx)
         var prod = zeros_dyn[dtype, 2](n, n, ctx=ctx)
         var wl: _Dense[dtype] = TileTensor(
-            left.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, nb))
+            left.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, nb))
         )
         var wr: _Dense[dtype] = TileTensor(
-            right.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, n))
+            right.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, n))
         )
         var wp: _Dense[dtype] = TileTensor(
-            prod.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+            prod.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
         )
         getrf2(
-            got_a.view(),
-            got_p.view(),
-            got_i.view(),
+            got_a.tile(),
+            got_p.tile(),
+            got_i.tile(),
             wl,
             wr,
             wp,

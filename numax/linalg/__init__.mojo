@@ -90,7 +90,7 @@ because MAX's `target` is a `StaticString`: deciding it at run time would
 compile the GPU kernels into every CPU-only build. `map` and `reduce` in
 `numax.core.tensor` take the same parameter for the same reason. These
 overloads also take their operands mutably even though they only read them
--- `view()` hands back a `TileTensor` that can write, and a mutable view
+-- `tile()` hands back a `TileTensor` that can write, and a mutable view
 cannot be built from an immutable binding.
 
 ## Not here yet

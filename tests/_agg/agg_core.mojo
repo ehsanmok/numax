@@ -235,10 +235,10 @@ from test_bridge import (
     test_lifted_values_match_the_source_elements as test_bridge__test_lifted_values_match_the_source_elements,
 )
 from test_bridge import (
-    test_from_view_round_trips_the_elements as test_bridge__test_from_view_round_trips_the_elements,
+    test_from_tile_round_trips_the_elements as test_bridge__test_from_tile_round_trips_the_elements,
 )
 from test_bridge import (
-    test_from_view_copies_rather_than_aliases as test_bridge__test_from_view_copies_rather_than_aliases,
+    test_from_tile_copies_rather_than_aliases as test_bridge__test_from_tile_copies_rather_than_aliases,
 )
 from test_bridge import (
     test_widening_a_shape_and_naming_it_again_is_the_identity as test_bridge__test_widening_a_shape_and_naming_it_again_is_the_identity,
@@ -1494,8 +1494,8 @@ def main() raises:
         test_bridge__test_lowering_a_gradient_det_carries_both_cofactors
     ]()
     suite.test[test_bridge__test_lifted_values_match_the_source_elements]()
-    suite.test[test_bridge__test_from_view_round_trips_the_elements]()
-    suite.test[test_bridge__test_from_view_copies_rather_than_aliases]()
+    suite.test[test_bridge__test_from_tile_round_trips_the_elements]()
+    suite.test[test_bridge__test_from_tile_copies_rather_than_aliases]()
     suite.test[
         test_bridge__test_widening_a_shape_and_naming_it_again_is_the_identity
     ]()

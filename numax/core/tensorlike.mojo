@@ -9,7 +9,7 @@ runs on a whole tensor or on a sub-block of one without a copy:
 ```mojo
 var a = zeros[DType.float64, 8, 8]()
 var l = cholesky(a)                                   # owned
-var block = TensorView(a.view().tile[4, 4](0, 0), a.context())
+var block = TensorView(a.tile().tile[4, 4](0, 0), a.context())
 var lb = cholesky(block)                              # borrowed, no copy
 ```
 
@@ -29,7 +29,7 @@ the compiler says so at parse time), which is also how MAX writes its own
 `DenseTensor`. So this trait's member names match that one: `dtype`,
 `LayoutType`, `Engine`.
 
-**What the trait promises.** `view(ref self)` hands back a `TileTensor`
+**What the trait promises.** `tile(ref self)` hands back a `TileTensor`
 whose origin is the borrow of `self`: bind the tensor `mut` and the tile is
 writable, bind it immutably and the tile is read-only, and either way the
 tile keeps `self` alive. MAX's implicit origin cast then turns that tile into
@@ -46,7 +46,7 @@ owner's last mention passed). Immutable, so two `TensorView`s over one tensor, o
 the same one passed twice to `add`, are immutable aliases the exclusivity
 checker accepts, where a tracked mutable origin made `add(v, v)` an error a
 `Tensor` never raises. Mutability then comes from how the `TensorView` itself is
-bound: `view(ref self)` on a `var` or `mut` `TensorView` re-adds it, on an
+bound: `tile(ref self)` on a `var` or `mut` `TensorView` re-adds it, on an
 immutable binding it does not, the same rule `Tensor` follows. Wrapping an
 immutable tile is refused at compile time rather than quietly producing a
 writable view over read-only storage.
@@ -82,7 +82,7 @@ trait TensorLike:
     comptime Engine = DefaultEngine[element_width=1]
     """The `TileTensor` storage engine the view is built on: one constant
     for every conformer rather than an associated member each may choose,
-    so `view()`'s element width is `1` in a generic body instead of the
+    so `tile()`'s element width is `1` in a generic body instead of the
     symbolic `T.Engine.element_size` a body could not store through. MAX's
     `DenseTensor` leaves it open; nothing in numax needs that yet."""
 
@@ -93,7 +93,7 @@ trait TensorLike:
     """The compile-time element count; meaningful only where
     `LayoutType.all_dims_known`. `size()` is the run-time count."""
 
-    def view(
+    def tile(
         ref self,
     ) -> TileTensor[Self.dtype, Self.LayoutType, origin_of(self)]:
         """A `TileTensor` over the storage, with the mutability of this
@@ -134,29 +134,29 @@ trait TensorLike:
         logical shape. The bulk write path on either device."""
         ...
 
-    def view_as[
+    def tile_as[
         dtype: DType
     ](ref self) -> TileTensor[dtype, Self.LayoutType, origin_of(self)]:
-        """`view()` with its lanes typed `dtype`, a same-width bitcast.
+        """`tile()` with its lanes typed `dtype`, a same-width bitcast.
 
         For a routine over two conformers `A` and `B` under `where A.dtype
-        == B.dtype`: the checker types `b.view()`'s lanes `Scalar[B.dtype]`
+        == B.dtype`: the checker types `b.tile()`'s lanes `Scalar[B.dtype]`
         and will not rewrite that into `Scalar[A.dtype]` from the clause,
-        so the body reads `b.view_as[A.dtype]()` instead. The bitcast is the
+        so the body reads `b.tile_as[A.dtype]()` instead. The bitcast is the
         identity at equal dtypes, which the clause guarantees.
         """
-        var v = self.view()
+        var v = self.tile()
         return TileTensor[dtype, Self.LayoutType, origin_of(self)](
             ptr=v.ptr.unsafe_bitcast[Scalar[dtype]](), layout=v.layout
         )
 
     def size(self) -> Int:
         """The run-time element count, read from the layout."""
-        return self.view().layout.size()
+        return self.tile().layout.size()
 
     def dim[i: Int](self) -> Int:
         """The extent of axis `i`."""
-        return Int(self.view().layout.shape[i]().value())
+        return Int(self.tile().layout.shape[i]().value())
 
     def dim_at(self, axis: Int) -> Int:
         """The extent of `axis`, chosen at run time; `0` outside the rank."""
@@ -172,7 +172,7 @@ trait TensorLike:
         var stride = 0
         comptime for i in range(Self.rank):
             if i == axis:
-                stride = Int(self.view().layout.stride[i]().value())
+                stride = Int(self.tile().layout.stride[i]().value())
         return stride
 
 
@@ -193,7 +193,7 @@ comptime is_row_major[T: TensorLike] = TileTensor[
 """Whether `T`'s strides are the contiguous row-major ones, at compile time.
 
 The `where` clause every routine that flattens its argument must carry: a
-`TensorView` over `a.view().tile[2, 2](0, 0)` of a 4x4 has stride 4 on its first
+`TensorView` over `a.tile().tile[2, 2](0, 0)` of a 4x4 has stride 4 on its first
 axis, and a walk that treats it as eight contiguous elements reads the
 wrong ones. `numax.core.tensor`'s walks already require this; the trait
 makes it one spelling for the public tier too. For a run-time layout the
@@ -218,7 +218,7 @@ struct TensorView[
 
     The `TensorLike` conformer for storage `numax` does not own -- a
     sub-block of a `Tensor`, a `List`'s span, a tile another library handed
-    over. It is what lets `cholesky(TensorView(a.view().tile[4, 4](0, 0),
+    over. It is what lets `cholesky(TensorView(a.tile().tile[4, 4](0, 0),
     a.context()))` factor one quadrant of `a` in place, with no copy and no
     second `cholesky`.
 
@@ -237,10 +237,10 @@ struct TensorView[
     ]
     """The `TensorView` type built over a mutable tile at origin `src`."""
 
-    var tile: Self.TileType
+    var _tile: Self.TileType
     """The borrowed storage."""
     var ctx: DeviceContext
-    """The device `tile` lives on."""
+    """The device the tile lives on."""
     var host_addressable: Bool
     """`ctx.api() == "cpu"`, recorded once, as `Tensor` records it."""
 
@@ -253,17 +253,17 @@ struct TensorView[
     ) raises:
         """Borrow `tile`, on `ctx` or the host when none is given.
 
-        The tile must be mutable: `a.view()` on a `mut`-bound or `var`
-        tensor is one, `a.view().tile[...](...)` is one, a tile over an
+        The tile must be mutable: `a.tile()` on a `mut`-bound or `var`
+        tensor is one, `a.tile().tile[...](...)` is one, a tile over an
         immutable borrow is not and is refused where it is written. The
         `TensorView` records the immutable form of its origin; the module
         docstring says why.
         """
-        self.tile = tile.as_immut()
+        self._tile = tile.as_immut()
         self.ctx = ctx.value() if ctx else DeviceContext(api="cpu")
         self.host_addressable = self.ctx.api() == "cpu"
 
-    def view(
+    def tile(
         ref self,
     ) -> TileTensor[Self.dtype, Self.LayoutType, origin_of(self)]:
         """The wrapped tile, at the mutability of this borrow of `self`.
@@ -274,10 +274,10 @@ struct TensorView[
         tracked `origin` keeps inside the owner's.
         """
         return TileTensor[Self.dtype, Self.LayoutType, origin_of(self)](
-            ptr=self.tile.ptr.unsafe_mut_cast[
+            ptr=self._tile.ptr.unsafe_mut_cast[
                 origin_of(self).mut
             ]().unsafe_origin_cast[origin_of(self)](),
-            layout=self.tile.layout,
+            layout=self._tile.layout,
         )
 
     def context(self) raises -> DeviceContext:
@@ -303,7 +303,7 @@ struct TensorView[
         if self.host_addressable:
             for i in range(n):
                 out.append(
-                    self.tile.ptr[unsafe_offset=self._offset(i)].cast[dtype]()
+                    self._tile.ptr[unsafe_offset=self._offset(i)].cast[dtype]()
                 )
             return out^
         if not is_row_major[Self]:
@@ -312,7 +312,7 @@ struct TensorView[
                 " be copied as one block"
             )
         var host = self.ctx.enqueue_create_host_buffer[Self.dtype](n)
-        self.ctx.enqueue_copy(host, self.tile.ptr.as_imm())
+        self.ctx.enqueue_copy(host, self._tile.ptr.as_imm())
         self.ctx.synchronize()
         for i in range(n):
             out.append(host[i].cast[dtype]())
@@ -323,7 +323,7 @@ struct TensorView[
         shape; the write counterpart of `to_host`, with the same contiguity
         rule over device memory."""
         var n = self.size()
-        var ptr = self.tile.ptr.unsafe_mut_cast[True]()
+        var ptr = self._tile.ptr.unsafe_mut_cast[True]()
         if self.host_addressable:
             for i in range(n):
                 ptr[unsafe_offset=self._offset(i)] = values[i]
@@ -349,10 +349,10 @@ struct TensorView[
         comptime for k in range(Self.rank):
             comptime d = Self.rank - 1 - k
             var extent = self.dim[d]()
-            off += (rem % extent) * Int(self.tile.layout.stride[d]().value())
+            off += (rem % extent) * Int(self._tile.layout.stride[d]().value())
             rem //= extent
         return off
 
     def write_to(self, mut writer: Some[Writer]):
         """`print(v)`: the tile's own printer."""
-        writer.write(self.tile)
+        writer.write(self._tile)

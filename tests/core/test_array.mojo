@@ -112,7 +112,7 @@ def test_empty_is_zero_initialized_for_memory_safety() raises:
 def test_eye_is_the_identity_matrix() raises:
     var ctx = DeviceContext(api="cpu")
     var m = eye[3, dtype](ctx)
-    var v = m.view()
+    var v = m.tile()
     for r in range(3):
         for c in range(3):
             var expected = Scalar[dtype](1) if r == c else Scalar[dtype](0)
@@ -176,7 +176,7 @@ def test_empty_like_matches_source_shape() raises:
 def test_transpose_swaps_rows_and_columns() raises:
     var ctx = DeviceContext(api="cpu")
     var m = full[dtype, 2, 3](0, ctx=ctx)
-    var v = m.view()
+    var v = m.tile()
     v[0, 0] = 1
     v[0, 1] = 2
     v[0, 2] = 3
@@ -185,7 +185,7 @@ def test_transpose_swaps_rows_and_columns() raises:
     v[1, 2] = 6
 
     var t = transpose(m)
-    var tv = t.view()
+    var tv = t.tile()
     for r in range(2):
         for c in range(3):
             assert_equal(tv[c, r], v[r, c])
@@ -194,7 +194,7 @@ def test_transpose_swaps_rows_and_columns() raises:
 def test_transpose_is_its_own_inverse() raises:
     var ctx = DeviceContext(api="cpu")
     var m = full[dtype, 3, 2](0, ctx=ctx)
-    var v = m.view()
+    var v = m.tile()
     var counter = 0
     for r in range(3):
         for c in range(2):
@@ -203,7 +203,7 @@ def test_transpose_is_its_own_inverse() raises:
 
     var t = transpose(m)
     var tt = transpose(t)
-    var v2 = tt.view()
+    var v2 = tt.tile()
     for r in range(3):
         for c in range(2):
             assert_equal(v2[r, c], v[r, c])
@@ -221,7 +221,7 @@ def test_transpose_default_is_the_host_path() raises:
     """
     var ctx = DeviceContext(api="cpu")
     var m = full[dtype, 2, 3](0, ctx=ctx)
-    var v = m.view()
+    var v = m.tile()
     var counter = 0
     for r in range(2):
         for c in range(3):
@@ -230,8 +230,8 @@ def test_transpose_default_is_the_host_path() raises:
 
     var implicit = transpose(m)
     var explicit = transpose[gpu=False](m)
-    var iv = implicit.view()
-    var ev = explicit.view()
+    var iv = implicit.tile()
+    var ev = explicit.tile()
     for r in range(3):
         for c in range(2):
             assert_equal(iv[r, c], ev[r, c])
@@ -240,7 +240,7 @@ def test_transpose_default_is_the_host_path() raises:
 def test_squeeze_drops_a_leading_size_one_axis() raises:
     var ctx = DeviceContext(api="cpu")
     var row = full[dtype, 1, 4](0, ctx=ctx)
-    var rv = row.view()
+    var rv = row.tile()
     for i in range(4):
         rv[0, i] = Scalar[dtype](i)
 
@@ -253,7 +253,7 @@ def test_squeeze_drops_a_leading_size_one_axis() raises:
 def test_squeeze_drops_a_trailing_size_one_axis() raises:
     var ctx = DeviceContext(api="cpu")
     var col = full[dtype, 4, 1](0, ctx=ctx)
-    var cv = col.view()
+    var cv = col.tile()
     for i in range(4):
         cv[i, 0] = Scalar[dtype](i * 2)
 
@@ -268,7 +268,7 @@ def test_stack_along_axis_zero() raises:
     var a = linspace[3, dtype](0, 2, ctx=ctx)
     var b = linspace[3, dtype](10, 12, ctx=ctx)
     var st = stack(a, b)
-    var sv = st.view()
+    var sv = st.tile()
     for i in range(3):
         assert_equal(sv[0, i], a[i])
         assert_equal(sv[1, i], b[i])
@@ -328,7 +328,7 @@ def test_ravel_inverts_reshape() raises:
 def test_ravel_flattens_a_2d_tensor_row_by_row() raises:
     var ctx = DeviceContext(api="cpu")
     var m = zeros[dtype, 2, 2](ctx)
-    var v = m.view()
+    var v = m.tile()
     v[0, 0] = 1
     v[0, 1] = 2
     v[1, 0] = 3
@@ -391,7 +391,7 @@ def test_rank_2_indexing_agrees_with_the_view() raises:
         for c in range(2):
             m[r, c] = Scalar[dtype](counter)
             counter += 1
-    var v = m.view()
+    var v = m.tile()
     for r in range(3):
         for c in range(2):
             assert_almost_equal(m[r, c], v[r, c])
@@ -490,7 +490,7 @@ def test_transpose_at_rank_two_still_keeps_its_extents_in_the_type() raises:
     var m = full[dtype, 2, 3](0, ctx=ctx)
     m[1] = 7
     var t: Static[dtype, 3, 2] = transpose(m)
-    assert_equal(t.view()[1, 0], 7)
+    assert_equal(t.tile()[1, 0], 7)
 
 
 def test_transpose_rejects_a_bad_permutation() raises:

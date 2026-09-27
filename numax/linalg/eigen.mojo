@@ -242,14 +242,14 @@ def sytrd[
     var red = zeros[T.dtype, 2 * width + 2](ctx)
     var product = zeros[T.dtype, n, n](ctx)
 
-    var wv = work.view()
-    var tv = taus.view()
-    var vv = vpad.view()
-    var sv = scratch.view()
-    var lv = left.view()
-    var rv = right.view()
-    var redv = red.view()
-    var pv = product.view()
+    var wv = work.tile()
+    var tv = taus.tile()
+    var vv = vpad.tile()
+    var sv = scratch.tile()
+    var lv = left.tile()
+    var rv = right.tile()
+    var redv = red.tile()
+    var pv = product.tile()
 
     pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
@@ -310,9 +310,9 @@ def sytrd[
             var p = matvec[gpu=gpu](work, vpad)
 
             latrd_w[target=_target[gpu]()](
-                vv, p.view(), lv, rv, redv, tv, k0, j, width, n, ctx
+                vv, p.tile(), lv, rv, redv, tv, k0, j, width, n, ctx
             )
-            # `p`'s last mention is `.view()`, and a view erases the
+            # `p`'s last mention is `.tile()`, and a view erases the
             # origin; see `findings.mdc` on the queued free.
             _ = p^
 
@@ -332,7 +332,7 @@ def sytrd[
 
     # `sv`, `lv`, `rv`, `redv` and `pv` are read by the launches above and
     # their owners are named nowhere else, so without these Mojo would
-    # destroy them after `.view()`; see `findings.mdc` on the origin-erased
+    # destroy them after `.tile()`; see `findings.mdc` on the origin-erased
     # view and the queued free.
     _ = scratch^
     _ = left^
@@ -342,8 +342,8 @@ def sytrd[
 
     var d = zeros[T.dtype, n](ctx)
     var e = zeros[T.dtype, n](ctx)
-    var dv = d.view()
-    var ev = e.view()
+    var dv = d.tile()
+    var ev = e.tile()
 
     # The band, on the device: `work`'s diagonal and first subdiagonal.
     # `e[n-1]` is the documented unused entry and is written zero.
@@ -630,7 +630,7 @@ struct _RotationBatch[
         self.rot_r = List[Scalar[Self.dtype]]()
         comptime if Self.vectors:
             var seed: _Dense[Self.dtype] = TileTensor(
-                self.zt.view().ptr_at_offset(Coord(0, 0)),
+                self.zt.tile().ptr_at_offset(Coord(0, 0)),
                 row_major(Coord(side, side)),
             )
             _device_identity[Self.dtype, Self.gpu](seed, side, side, ctx)
@@ -745,7 +745,7 @@ struct _RotationBatch[
             ordered[cursor[g]] = k
             cursor[g] += 1
 
-        var zv = self.zt.view()
+        var zv = self.zt.tile()
         for step in range(groups):
             var g = step if Self.ascending else groups - 1 - step
             var first = start[g]
@@ -776,14 +776,14 @@ struct _RotationBatch[
             self.u_dev.copy_from_host(self.ut_host)
 
             var staged: _Dense[Self.dtype] = TileTensor(
-                self.staged.view().ptr_at_offset(Coord(0, 0)),
+                self.staged.tile().ptr_at_offset(Coord(0, 0)),
                 row_major(Coord(w, cols)),
             )
             pack_block[target=_target[Self.gpu]()](
                 zv, staged, c_lo, 0, w, cols, ctx
             )
             var ut: _Dense[Self.dtype] = TileTensor(
-                self.u_dev.view().ptr_at_offset(Coord(0, 0)),
+                self.u_dev.tile().ptr_at_offset(Coord(0, 0)),
                 row_major(Coord(w, w)),
             )
             var out: _Dense[Self.dtype] = TileTensor(
@@ -1162,9 +1162,9 @@ def eigh[
     # source and destination are the same shape, which is what keeps a
     # cross-shape `elementwise` read out of it.
     var zt_sorted = Static[T.dtype, n, n]._uninitialized(ctx)
-    var src = acc.zt.view()
-    var dst = zt_sorted.view()
-    var pv = perm.view()
+    var src = acc.zt.tile()
+    var dst = zt_sorted.tile()
+    var pv = perm.tile()
 
     @always_inline
     def gather[
@@ -1175,7 +1175,7 @@ def eigh[
 
     elementwise[simd_width=1, target=_target[gpu]()](gather, Coord(n, n), ctx)
     ctx.synchronize()
-    # Both owners' last mention is `.view()` above, and a view erases the
+    # Both owners' last mention is `.tile()` above, and a view erases the
     # origin, so without these Mojo frees them while `gather` still reads
     # through `src` and `pv`.
     _ = acc^
@@ -1232,7 +1232,7 @@ def _accumulate_reflectors[
     var ctx = reflectors.context()
     var result = Static[A.dtype, n, n]._uninitialized(ctx)
     var out: _Dense[A.dtype] = TileTensor(
-        result.view().ptr, row_major(Coord(n, n))
+        result.tile().ptr, row_major(Coord(n, n))
     )
     _device_identity[gpu=gpu](out, n, n, ctx)
     if count <= 0:
@@ -1471,16 +1471,16 @@ def hessenberg[
     var red = zeros[T.dtype, 2 * width + 2](ctx)
     var product = zeros[T.dtype, n, n](ctx)
 
-    var wv = work.view()
-    var rfv = reflectors.view()
-    var tv = taus.view()
-    var vv = vpad.view()
-    var sv = scratch.view()
-    var yv = yy.view()
-    var vpv = vp.view()
-    var ttv = tt.view()
-    var redv = red.view()
-    var pv = product.view()
+    var wv = work.tile()
+    var rfv = reflectors.tile()
+    var tv = taus.tile()
+    var vv = vpad.tile()
+    var sv = scratch.tile()
+    var yv = yy.tile()
+    var vpv = vp.tile()
+    var ttv = tt.tile()
+    var redv = red.tile()
+    var pv = product.tile()
 
     pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
 
@@ -1545,9 +1545,9 @@ def hessenberg[
             # them. The deferred update reaches `Y` inside `lahr2_y`.
             var p = matvec[gpu=gpu](work, vpad)
             lahr2_y[target=_target[gpu]()](
-                p.view(), rfv, yv, ttv, redv, tv, k0, j, n, ctx
+                p.tile(), rfv, yv, ttv, redv, tv, k0, j, n, ctx
             )
-            # `p`'s last mention is `.view()`, and a view erases the
+            # `p`'s last mention is `.tile()`, and a view erases the
             # origin; see `findings.mdc` on the queued free.
             _ = p^
 
@@ -2043,7 +2043,7 @@ def _q_times_zt[
     var ctx = q.context()
     var result = Static[A.dtype, n, n](ctx)
     var out: _Dense[A.dtype] = TileTensor(
-        result.view().ptr, row_major(Coord(n, n))
+        result.tile().ptr, row_major(Coord(n, n))
     )
     var left: _Dense[A.dtype] = TileTensor(
         _mut_view(q).ptr, row_major(Coord(n, n))
@@ -2165,7 +2165,7 @@ def _left_products[
         _mut_view_as[A.dtype](v).ptr_at_offset(Coord(0)), row_major(Coord(1, m))
     )
     var out: _Dense[A.dtype] = TileTensor(
-        result.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
+        result.tile().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
     )
     _max_matmul[target=_target[gpu]()](out, row, _mut_view(a), ctx)
     ctx.synchronize()
@@ -2185,7 +2185,7 @@ def _column_of[
     var ctx = dense.context()
     var out = zeros[T.dtype, m](ctx)
     var src = _mut_view(dense)
-    var dst = out.view()
+    var dst = out.tile()
 
     @always_inline
     def gather[
@@ -2211,7 +2211,7 @@ def _row_of[
     var ctx = dense.context()
     var out = zeros[T.dtype, n](ctx)
     var dst: _Dense[T.dtype] = TileTensor(
-        out.view().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
+        out.tile().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
     )
     pack_block[target=_target[gpu]()](_mut_view(dense), dst, k, 0, 1, n, ctx)
     ctx.synchronize()
@@ -2293,19 +2293,19 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         var ctx = self.left.context()
         var result = Static[Self.dtype, Self.m, Self.n]._uninitialized(ctx)
         var out: _Dense[Self.dtype] = TileTensor(
-            result.view().ptr_at_offset(Coord(0, 0)),
+            result.tile().ptr_at_offset(Coord(0, 0)),
             row_major(Coord(Self.m, Self.n)),
         )
         _device_identity[Self.dtype, Self.gpu](out, Self.m, Self.n, ctx)
 
-        var tv = self.taus_left.view()
+        var tv = self.taus_left.tile()
         var work = _ReflectorWork[Self.dtype](Self.m, Self.n, self.block, ctx)
         var steps = (Self.n + self.block - 1) // self.block
         for step in range(steps):
             var k = (steps - 1 - step) * self.block
             var nb = min(self.block, Self.n - k)
             _apply_block_reflector[transposed=False, gpu=Self.gpu](
-                self.left.view(),
+                self.left.tile(),
                 tv,
                 out,
                 k,
@@ -2344,9 +2344,9 @@ struct TensorBidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         """
         var ctx = self.right.context()
         var packed = Static[Self.dtype, Self.n, Self.n]._uninitialized(ctx)
-        var pv = packed.view()
+        var pv = packed.tile()
         pack_block[trans=True, target=_target[Self.gpu]()](
-            self.right.view(), pv, 0, 0, Self.n, Self.n, ctx
+            self.right.tile(), pv, 0, 0, Self.n, Self.n, ctx
         )
         return _accumulate_reflectors[gpu=Self.gpu](
             packed, self.taus_right, Self.n - 2, self.block
@@ -2440,18 +2440,18 @@ def gebrd[
     var red = zeros[T.dtype, 2 * width + 2](ctx)
     var product = zeros[T.dtype, m, n](ctx)
 
-    var wv = work.view()
-    var lv = left.view()
-    var rv = right.view()
-    var tlv = taus_left.view()
-    var trv = taus_right.view()
-    var sv = scratch.view()
-    var yv = yy.view()
-    var xv = xx.view()
-    var vpv = vp.view()
-    var utv = ut.view()
-    var redv = red.view()
-    var pv = product.view()
+    var wv = work.tile()
+    var lv = left.tile()
+    var rv = right.tile()
+    var tlv = taus_left.tile()
+    var trv = taus_right.tile()
+    var sv = scratch.tile()
+    var yv = yy.tile()
+    var xv = xx.tile()
+    var vpv = vp.tile()
+    var utv = ut.tile()
+    var redv = red.tile()
+    var pv = product.tile()
 
     pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, m, n, ctx)
 
@@ -2519,7 +2519,7 @@ def gebrd[
             var v = _column_of[gpu=gpu](left, i)
             var t1 = _left_products[gpu=gpu](work, v)
             labrd_y[target=_target[gpu]()](
-                t1.view(), lv, xv, yv, rv, redv, tlv, k0, j, m, n, ctx
+                t1.tile(), lv, xv, yv, rv, redv, tlv, k0, j, m, n, ctx
             )
             # `v` and `t1` are last mentioned through a view, and a view
             # erases the origin; see `findings.mdc` on the queued free.
@@ -2558,7 +2558,7 @@ def gebrd[
                 var u = _row_of[gpu=gpu](right, i)
                 var t2 = matvec[gpu=gpu](work, u)
                 labrd_x[target=_target[gpu]()](
-                    t2.view(), lv, xv, yv, rv, redv, trv, k0, j, m, n, ctx
+                    t2.tile(), lv, xv, yv, rv, redv, trv, k0, j, m, n, ctx
                 )
                 _ = u^
                 _ = t2^
@@ -2592,8 +2592,8 @@ def gebrd[
 
     var d = zeros[T.dtype, n](ctx)
     var e = zeros[T.dtype, n](ctx)
-    var dv = d.view()
-    var ev = e.view()
+    var dv = d.tile()
+    var ev = e.tile()
 
     # The band, on the device: `work`'s diagonal and first superdiagonal.
     # `e[n-1]` is the documented unused entry and is written zero.
@@ -2611,7 +2611,7 @@ def gebrd[
     # `work` is not returned, and after the panel loop it is read only
     # through `wv`, which erases the origin -- so without this Mojo frees
     # it before `band` runs and the band comes back as heap garbage. See
-    # `findings.mdc` on the `.view()` lifetime bug that `print` hides.
+    # `findings.mdc` on the `.tile()` lifetime bug that `print` hides.
     _ = work^
 
     return TensorBidiagonal[T.dtype, m, n, gpu](
@@ -3201,15 +3201,15 @@ def svd[
     var ub_t = Static[T.dtype, n, n]._uninitialized(ctx)
     var vb_t = Static[T.dtype, n, n]._uninitialized(ctx)
     var ut = TileTensor(
-        uacc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
+        uacc.zt.tile().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
     )
     var vt = TileTensor(
-        vacc.zt.view().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
+        vacc.zt.tile().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
     )
-    var ub = ub_t.view()
-    var vb = vb_t.view()
-    var rv = rows.view()
-    var sv = signs.view()
+    var ub = ub_t.tile()
+    var vb = vb_t.tile()
+    var rv = rows.tile()
+    var sv = signs.tile()
 
     @always_inline
     def gather[
@@ -3223,7 +3223,7 @@ def svd[
     elementwise[simd_width=1, target=_target[gpu]()](gather, Coord(n, n), ctx)
     ctx.synchronize()
     # The batches and the two index tensors are named nowhere past the
-    # `.view()` a view erases the origin of; see `findings.mdc` on the
+    # `.tile()` a view erases the origin of; see `findings.mdc` on the
     # queued free.
     _ = uacc^
     _ = vacc^

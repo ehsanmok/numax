@@ -82,8 +82,8 @@ def logsumexp[
     ]()
     var ctx = xs.context()
     var out = Static[T.dtype, 1](ctx)
-    var src = xs.view()
-    var dst = out.view()
+    var src = xs.tile()
+    var dst = out.tile()
 
     @always_inline
     def identity[

@@ -256,7 +256,7 @@ def sum[
         return _host_fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
     var out = _axis_dst[axis=axis](xs)
     sum_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
-        _dense(xs), out.view(), Optional(xs.context())
+        _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
 
@@ -286,7 +286,7 @@ def prod[
         return _host_fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
     var out = _axis_dst[axis=axis](xs)
     prod_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
-        _dense(xs), out.view(), Optional(xs.context())
+        _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
 
@@ -319,7 +319,7 @@ def min[
         )
     var out = _axis_dst[axis=axis](xs)
     min_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
-        _dense(xs), out.view(), Optional(xs.context())
+        _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
 
@@ -348,7 +348,7 @@ def max[
         )
     var out = _axis_dst[axis=axis](xs)
     max_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
-        _dense(xs), out.view(), Optional(xs.context())
+        _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
 
@@ -439,7 +439,7 @@ def _welford_axis[
     """
     comptime dtype = T.dtype
     mean_variance_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
-        xs.view(), means.view(), variances.view(), ddof, Optional(xs.context())
+        xs.tile(), means.tile(), variances.tile(), ddof, Optional(xs.context())
     )
 
 
@@ -464,7 +464,7 @@ def _reduce_whole[
         return tile
 
     reduce_all[monoid=monoid, target=_target[gpu]()](
-        _flat(xs), out.view(), identity, xs.size(), Optional(ctx)
+        _flat(xs), out.tile(), identity, xs.size(), Optional(ctx)
     )
     return out.to_host()[0]
 
@@ -568,12 +568,12 @@ def _welford[
     var ctx = xs.context()
     var n = xs.size()
     var flat = TileTensor(
-        xs.view().ptr.unsafe_origin_cast[ImmutAnyOrigin](), row_major(Coord(n))
+        xs.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin](), row_major(Coord(n))
     )
     var mean_out = Static[dtype, 1](ctx)
     var var_out = Static[dtype, 1](ctx)
     mean_variance_axis[dtype, _, _, axis=0, target=_target[gpu]()](
-        flat, mean_out.view(), var_out.view(), ddof, Optional(ctx)
+        flat, mean_out.tile(), var_out.tile(), ddof, Optional(ctx)
     )
     return (mean_out.to_host()[0], var_out.to_host()[0])
 
@@ -1009,7 +1009,7 @@ def cumprod[
     comptime LayoutType = T.LayoutType
     return Tensor[dtype, LayoutType](
         xs.context(),
-        xs.view().layout,
+        xs.tile().layout,
         _scan_axis[axis=axis, multiply=True](xs)^,
     )
 
@@ -1166,7 +1166,7 @@ def cumsum[
     comptime LayoutType = T.LayoutType
     return Tensor[dtype, LayoutType](
         xs.context(),
-        xs.view().layout,
+        xs.tile().layout,
         _scan_axis[axis=axis, multiply=False](xs)^,
     )
 

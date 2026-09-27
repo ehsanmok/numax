@@ -219,7 +219,7 @@ def test_minimize_starts_from_a_view() raises:
     owned `Static`, and the answer is the one the tensor start gives."""
     var start = Static[dtype, 2](DeviceContext(api="cpu"), [-1.2, 1.0])
     var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac](
-        TensorView(start.view())
+        TensorView(start.tile())
     )
     var x = result.x.to_host()
     assert_almost_equal(Float64(x[0]), 1.0, atol=1e-5)

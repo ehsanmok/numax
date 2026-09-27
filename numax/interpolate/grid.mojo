@@ -152,11 +152,11 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
                     )
 
         var out = Static[Self.dtype, m]._uninitialized(ctx)
-        var xg = self.x.view()
-        var yg = self.y.view()
-        var vals = self.values.view()
-        var ps = points.view_as[Self.dtype]()
-        var os = out.view()
+        var xg = self.x.tile()
+        var yg = self.y.tile()
+        var vals = self.values.tile()
+        var ps = points.tile_as[Self.dtype]()
+        var os = out.tile()
         var nearest = self.nearest
         var extrapolate = self.extrapolate
         var fill = self.fill_value

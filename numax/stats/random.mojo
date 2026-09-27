@@ -178,7 +178,7 @@ def _fill[
     # about to be written, and at `DType.bool` the zero fill is the
     # compiler crash `findings.mdc` records.
     var flat = Static[dtype, n]._uninitialized(device)
-    var ys = flat.view()
+    var ys = flat.tile()
 
     @always_inline
     def body[

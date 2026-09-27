@@ -191,9 +191,9 @@ def _clenshaw[
     comptime m = dim[B, 0]
     var ctx = x.context()
     var out = Static[A.dtype, m]._uninitialized(ctx)
-    var cs = c.view()
-    var xs = x.view_as[A.dtype]()
-    var ys = out.view()
+    var cs = c.tile()
+    var xs = x.tile_as[A.dtype]()
+    var ys = out.tile()
     var lo = a
     var hi = b
 

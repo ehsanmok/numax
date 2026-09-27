@@ -41,7 +41,7 @@ delegate to.
 
 Unlike the transforms in `numax.fft`, these take their tensors `mut` and
 leave them alone: a grid is queried many times, and consuming it on the
-first call would make the second one a copy. `mut` because `view()` needs
+first call would make the second one a copy. `mut` because `tile()` needs
 it, so a caller holds the tensors in `var` bindings -- which is how a grid
 that is reused is held anyway.
 """
@@ -126,10 +126,10 @@ def interp[
     comptime n = dim[B, 0]
     var ctx = x.context()
     var out = Static[A.dtype, m]._uninitialized(ctx)
-    var xs = x.view()
-    var knots = xp.view_as[A.dtype]()
-    var values = fp.view_as[A.dtype]()
-    var ys = out.view()
+    var xs = x.tile()
+    var knots = xp.tile_as[A.dtype]()
+    var values = fp.tile_as[A.dtype]()
+    var ys = out.tile()
     var has_left = Bool(left)
     var left_value = left.value() if left else Scalar[A.dtype](0)
     var has_right = Bool(right)
@@ -202,9 +202,9 @@ def horner[
     comptime m = dim[B, 0]
     var ctx = x.context()
     var out = Static[A.dtype, m]._uninitialized(ctx)
-    var cs = coefficients.view()
-    var xs = x.view_as[A.dtype]()
-    var ys = out.view()
+    var cs = coefficients.tile()
+    var xs = x.tile_as[A.dtype]()
+    var ys = out.tile()
 
     @always_inline
     def evaluate[
@@ -252,9 +252,9 @@ def polyval[
     comptime m = dim[B, 0]
     var ctx = x.context()
     var out = Static[A.dtype, m]._uninitialized(ctx)
-    var cs = p.view()
-    var xs = x.view_as[A.dtype]()
-    var ys = out.view()
+    var cs = p.tile()
+    var xs = x.tile_as[A.dtype]()
+    var ys = out.tile()
 
     @always_inline
     def evaluate[

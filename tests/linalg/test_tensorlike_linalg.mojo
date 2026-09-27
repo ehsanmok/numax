@@ -33,12 +33,12 @@ def _big() raises -> Static[f64, 4, 4]:
 
 def test_cholesky_of_a_view_block_matches_the_owned_block() raises:
     var big = _big()
-    var block = TensorView(big.view().tile[2, 2](0, 0), big.context())
+    var block = TensorView(big.tile().tile[2, 2](0, 0), big.context())
     var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
-    var from_view = cholesky(block).to_host()
+    var from_tile = cholesky(block).to_host()
     var from_owned = cholesky(owned).to_host()
     for i in range(4):
-        assert_almost_equal(from_view[i], from_owned[i])
+        assert_almost_equal(from_tile[i], from_owned[i])
     # The parent is untouched: cholesky allocates its result.
     assert_equal(big[0, 1], 2.0)
     assert_equal(big[2, 3], 23.0)
@@ -46,7 +46,7 @@ def test_cholesky_of_a_view_block_matches_the_owned_block() raises:
 
 def test_solve_and_det_accept_a_view() raises:
     var big = _big()
-    var block = TensorView(big.view().tile[2, 2](0, 0), big.context())
+    var block = TensorView(big.tile().tile[2, 2](0, 0), big.context())
     var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
     var rhs = Static[f64, 2](big.context(), [1.0, 2.0])
     var x_view = solve(block, rhs).to_host()
@@ -59,11 +59,11 @@ def test_solve_and_det_accept_a_view() raises:
 
 def test_matmul_and_transpose_accept_views() raises:
     var m = reshape[rows=2, cols=3](arange[6, f64]())
-    var vm = TensorView(m.view())
+    var vm = TensorView(m.tile())
     var t_owned = transpose(m)
     var t_view = transpose(vm)
     var p_owned = matmul(m, t_owned).to_host()
-    var p_view = matmul(vm, TensorView(t_view.view())).to_host()
+    var p_view = matmul(vm, TensorView(t_view.tile())).to_host()
     for i in range(4):
         assert_almost_equal(p_owned[i], p_view[i])
     assert_almost_equal(p_view[0], 5.0)

@@ -23,7 +23,7 @@ tensor in `numax`, and it works on either kind of device because its storage
 is a MAX `DeviceBuffer` obtained from a `DeviceContext`: pass
 `DeviceContext(api="cpu")` and the buffer is host memory, pass
 `DeviceContext()` and it is device memory. Nothing else about the type
-changes between the two, and `.view()` hands back the same
+changes between the two, and `.tile()` hands back the same
 `TileTensor[dtype, LayoutType, origin_of(self)]` either way -- a tile that
 borrows the tensor at the mutability of the binding, which MAX's implicit
 origin cast turns into the `MutAnyOrigin` spelling `numax.core.tensor.map`/
@@ -36,7 +36,7 @@ view as its device type, so the tensor itself can be the argument to
 **Owned or borrowed, one bound.** `Tensor` conforms to `TensorLike`
 (`numax.core.tensorlike`), as does `TensorView`, which wraps a `TileTensor` someone
 else owns. Every public routine in the `Tensor` tier takes its tensors
-through that trait, so `cholesky(a)` and `cholesky(TensorView(a.view().tile[4,
+through that trait, so `cholesky(a)` and `cholesky(TensorView(a.tile().tile[4,
 4](0, 0), a.context()))` are one `cholesky`: the second factors a quadrant
 in place, no copy, no second kernel.
 
@@ -53,8 +53,8 @@ the `DeviceBuffer` alongside a compile-time row-major layout, so the value
 The view is valid only as long as the owning `Tensor` is.
 
 The seam runs one way cheaply and the other way at a cost, and that
-asymmetry is inherent rather than an omission: `view()` hands out a pointer
-and a layout for free, while `from_view` has to *copy*, because a
+asymmetry is inherent rather than an omission: `tile()` hands out a pointer
+and a layout for free, while `from_tile` has to *copy*, because a
 `TileTensor` owns nothing that could be adopted. There is deliberately no
 constructor taking a `TileTensor`, `DeviceBuffer` or raw pointer.
 
@@ -253,7 +253,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     use, `Tensor[dtype, LayoutType]`, is unaffected.
 
     Conforms to `TensorLike`, so every `Tensor`-tier routine takes one, and
-    `view()` hands out a `TileTensor` that borrows `self` at the mutability
+    `tile()` hands out a `TileTensor` that borrows `self` at the mutability
     of the binding. Conforms to `DevicePassable` with the `MutAnyOrigin`
     view as its device type, so a tensor can be passed straight to
     `DeviceContext.enqueue_function` and the kernel receives the tile.
@@ -479,7 +479,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
                 stride = Int(self.layout.stride[i]().value())
         return stride
 
-    def view(
+    def tile(
         ref self,
     ) -> TileTensor[Self.dtype, Self.LayoutType, origin_of(self)]:
         """A `TileTensor` view over this tensor's storage, borrowing `self`.
@@ -490,7 +490,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         one it is read-only, and either way it cannot outlive `self`. Where
         a kernel spells `MutAnyOrigin`, MAX's implicit origin cast erases the
         origin at the call site with parameter inference intact, so
-        `map(a.view(), b.view())` reads as it always did. `store` on a
+        `map(a.tile(), b.tile())` reads as it always did. `store` on a
         read-only tile, or handing one to a `MutAnyOrigin` parameter, is a
         compile error rather than a write through a borrow.
 
@@ -516,7 +516,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         Self.dtype, Self.LayoutType, MutAnyOrigin
     ]
     """What a GPU kernel receives when a `Tensor` is passed to
-    `enqueue_function`: the same tile `view()` yields, origin erased, which
+    `enqueue_function`: the same tile `tile()` yields, origin erased, which
     is the type `numax.core.tensor`'s kernels declare."""
 
     def _to_device_type(
@@ -535,7 +535,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         return String(t"Tensor[{Self.dtype}, rank={Self.rank}]")
 
     @staticmethod
-    def from_view(
+    def from_tile(
         v: TileTensor[Self.dtype, Self.LayoutType, _],
         ctx: Optional[DeviceContext] = None,
     ) raises -> Self:
@@ -544,7 +544,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         The way back up from the view layer, and the name says copy because
         that is the only thing it can be: a `TileTensor` is a pointer plus a
         layout in every storage policy MAX ships, so there is no buffer to
-        adopt and no way to take ownership of one. `view()` down is free;
+        adopt and no way to take ownership of one. `tile()` down is free;
         this direction costs an allocation and an element walk.
 
         Reach for it when a kernel wrote into a view over borrowed storage
@@ -556,7 +556,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         over device memory would segfault it on CUDA, exactly as this
         module's docstring describes for `unsafe_ptr()`. When the source is
         already an owning device-resident `Tensor`, `to_host()` plus a
-        factory is the route; `from_view` is for the borrowed-storage case,
+        factory is the route; `from_tile` is for the borrowed-storage case,
         which is a host case by construction.
         """
         var device = _context(ctx)
@@ -663,7 +663,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         The same read as the flat `a[r * cols + c]`, spelled the way the
         shape is. Rank-2 only -- axis `1` is a compile-time error on
         a rank-1 tensor, so a wrong-rank call fails where it is written.
-        `.view()[i, j, k]` is the general form, and the same per-access
+        `.tile()[i, j, k]` is the general form, and the same per-access
         mapping cost applies on a GPU.
         """
         return self[r * self.dim[1]() + c]
@@ -853,7 +853,7 @@ def _canonical[
         ], "_canonical: a strided view cannot be re-viewed row-major"
     else:
         _require_contiguous(a)
-    var v = a.view()
+    var v = a.tile()
     return TensorView(
         TileTensor[dtype, _LayoutOf[*dims], MutUntrackedOrigin](
             ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
@@ -885,7 +885,7 @@ def _canonical_dyn[
         count *= extents[d]
     if count != a.size():
         raise Error("_canonical_dyn: ", count, " elements asked of ", a.size())
-    var v = a.view()
+    var v = a.tile()
     return TensorView(
         TileTensor[dtype, _DynLayoutOf[rank], MutUntrackedOrigin](
             ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
@@ -1172,7 +1172,7 @@ def zeros_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new zero-filled tensor with `a`'s dtype, shape and device."""
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
-    return Tensor[dtype, LayoutType](a.context(), a.view().layout)
+    return Tensor[dtype, LayoutType](a.context(), a.tile().layout)
 
 
 def ones_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
@@ -1226,7 +1226,7 @@ def transpose[
     shared-memory tiled one, and is what should be replaced by MAX's
     kernel once that kernel runs on a device.
 
-    Takes `a` by borrow: `view()` follows the binding's mutability, so a
+    Takes `a` by borrow: `tile()` follows the binding's mutability, so a
     read-only routine reads through a read-only tile and a temporary is a
     fine argument.
 
@@ -1240,8 +1240,8 @@ def transpose[
     comptime cols = dim[T, 1]
     var ctx = a.context()
     var result = Static[T.dtype, cols, rows](ctx)
-    var src = a.view()
-    var dst = result.view()
+    var src = a.tile()
+    var dst = result.tile()
 
     comptime if gpu:
 
@@ -1372,7 +1372,7 @@ def _transpose_by[
     var result = Dynamic[dtype, rank](
         ctx, row_major(_dyn_shape_from[rank](out_extents))
     )
-    _max_transpose(result.view(), a.view(), order.unsafe_ptr(), ctx)
+    _max_transpose(result.tile(), a.tile(), order.unsafe_ptr(), ctx)
     ctx.synchronize()
     return result^
 
@@ -2277,8 +2277,8 @@ def _band_part[
     var num_lower = Static[DType.int64, 1](counts, [Scalar[DType.int64](lower)])
     var num_upper = Static[DType.int64, 1](counts, [Scalar[DType.int64](upper)])
     var exclude = Static[DType.int64, 1](counts)
-    var src = a.view()
-    var dst = result.view()
+    var src = a.tile()
+    var dst = result.tile()
 
     def read[
         width: Int, rank: Int
@@ -2288,9 +2288,9 @@ def _band_part[
     _max_band_part[simd_width=1, target="gpu" if gpu else "cpu"](
         read,
         IndexList[2](rows, cols),
-        num_lower.view(),
-        num_upper.view(),
-        exclude.view(),
+        num_lower.tile(),
+        num_upper.tile(),
+        exclude.tile(),
         dst,
         ctx,
     )
@@ -2382,7 +2382,7 @@ def _pad_into[
         _max_pad_constant_gpu(
             dst.buffer.unsafe_ptr(),
             dst_shape,
-            src.view().ptr.unsafe_origin_cast[MutAnyOrigin](),
+            src.tile().ptr.unsafe_origin_cast[MutAnyOrigin](),
             src_shape,
             pads._storage,
             constant,
@@ -2390,8 +2390,8 @@ def _pad_into[
         )
         ctx.synchronize()
     else:
-        var source = src.view()
-        var target = dst.view()
+        var source = src.tile()
+        var target = dst.tile()
         comptime if mode == pad_constant:
             _max_pad_constant(target, source, pads._storage, constant)
         elif mode == pad_reflect:
@@ -2762,7 +2762,7 @@ def roll[
                 out[(o * length + to) * inner + i] = values[
                     (o * length + k) * inner + i
                 ]
-    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
 def tile[
@@ -2946,7 +2946,7 @@ def copy[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
-    return Tensor[dtype, LayoutType](a.context(), a.view().layout, a.to_host())
+    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, a.to_host())
 
 
 def vstack[

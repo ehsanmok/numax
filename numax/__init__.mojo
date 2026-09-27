@@ -32,7 +32,7 @@ lane load is consecutive (`examples/advanced/batched_solve.mojo`, 4096 SPD
 **One tensor, every device.** `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory decides host or device memory: the
 same kernel, any accelerator, unmodified. Nothing else changes, and
-`.view()` yields the `TileTensor` every MAX kernel takes, borrowing the
+`.tile()` yields the `TileTensor` every MAX kernel takes, borrowing the
 tensor at the mutability of the binding. `Tensor` and the borrowed `TensorView`
 both conform to `TensorLike`, so a routine written once against that bound
 runs on a whole tensor or on a sub-block of one without a copy, and a

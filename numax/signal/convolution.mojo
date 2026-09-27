@@ -115,9 +115,9 @@ def _direct[
     comptime offset = _offset(m, k, mode)
     var ctx = a.context()
     var out = Static[A.dtype, out_n]._uninitialized(ctx)
-    var xs = a.view()
-    var taps = b.view_as[A.dtype]()
-    var ys = out.view()
+    var xs = a.tile()
+    var taps = b.tile_as[A.dtype]()
+    var ys = out.tile()
 
     @always_inline
     def lane[
@@ -254,14 +254,14 @@ def fftconvolve[
 
     var padded_a = Static[A.dtype, n]._uninitialized(ctx)
     var padded_b = Static[A.dtype, n]._uninitialized(ctx)
-    var xs = a.view()
-    var taps = b.view_as[A.dtype]()
+    var xs = a.tile()
+    var taps = b.tile_as[A.dtype]()
     # `pad` captures views of the two padded buffers, and the buffers are
     # consumed by `_rfft` right after the launch; a tracked origin would
     # hold them past that point, so erase it. The launch has completed by
     # the time they are consumed.
-    var pa = padded_a.view().as_unsafe_any_origin()
-    var pb = padded_b.view().as_unsafe_any_origin()
+    var pa = padded_a.tile().as_unsafe_any_origin()
+    var pb = padded_b.tile().as_unsafe_any_origin()
 
     @always_inline
     def pad[
@@ -283,12 +283,12 @@ def fftconvolve[
     # tracked views read as aliasing when a body captures both; erase to
     # `MutAnyOrigin`, which is the type the kernels take anyway. The owner
     # outlives every launch below.
-    var ar = spectrum_a[0].view().as_unsafe_any_origin()
-    var ai = spectrum_a[1].view().as_unsafe_any_origin()
-    var br = spectrum_b[0].view().as_unsafe_any_origin()
-    var bi = spectrum_b[1].view().as_unsafe_any_origin()
-    var pr = product_re.view()
-    var pi = product_im.view()
+    var ar = spectrum_a[0].tile().as_unsafe_any_origin()
+    var ai = spectrum_a[1].tile().as_unsafe_any_origin()
+    var br = spectrum_b[0].tile().as_unsafe_any_origin()
+    var bi = spectrum_b[1].tile().as_unsafe_any_origin()
+    var pr = product_re.tile()
+    var pi = product_im.tile()
 
     @always_inline
     def multiply[
@@ -309,8 +309,8 @@ def fftconvolve[
     var circular = irfft[gpu=gpu, n=n](product^)
 
     var out = Static[A.dtype, out_n]._uninitialized(ctx)
-    var src = circular.view()
-    var dst = out.view()
+    var src = circular.tile()
+    var dst = out.tile()
 
     @always_inline
     def slice[w: Int, alignment: Int = 1](coord: Coord) {var src, var dst}:

@@ -186,7 +186,7 @@ def _apply_block_reflector[
     # read disagree about where row `i` starts -- silent, and wrong only on
     # the ragged last panel.
     var t_block: _Dense[dtype] = TileTensor(
-        work.t_block.view().ptr_at_offset(Coord(0, 0)),
+        work.t_block.tile().ptr_at_offset(Coord(0, 0)),
         row_major(Coord(nb, nb)),
     )
     comptime if gpu:
@@ -215,15 +215,15 @@ def _apply_block_reflector[
         )
 
     var v: _Dense[dtype] = TileTensor(
-        work.v.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, nb))
+        work.v.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(rows, nb))
     )
     var v_t: _Dense[dtype] = TileTensor(
-        work.v_t.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, rows))
+        work.v_t.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, rows))
     )
     pack_reflectors[target=_target[gpu]()](a, v, v_t, k, nb, rows, ctx)
 
     var staged: _Dense[dtype] = TileTensor(
-        work.staged.view().ptr_at_offset(Coord(0, 0)),
+        work.staged.tile().ptr_at_offset(Coord(0, 0)),
         row_major(Coord(rows, padded)),
     )
 
@@ -255,19 +255,19 @@ def _apply_block_reflector[
 
     # `W = V^T C`.
     var w: _Dense[dtype] = TileTensor(
-        work.w.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, padded))
+        work.w.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, padded))
     )
     _max_matmul[target=_target[gpu]()](w, v_t, staged, ctx)
 
     # `Y = T W`, or `T^T W`: `larft_panel` built whichever was asked for,
     # since `matmul` transposes `b` and never `a`.
     var y: _Dense[dtype] = TileTensor(
-        work.y.view().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, padded))
+        work.y.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, padded))
     )
     _max_matmul[target=_target[gpu]()](y, t_block, w, ctx)
 
     var product: _Dense[dtype] = TileTensor(
-        work.product.view().ptr_at_offset(Coord(0, 0)),
+        work.product.tile().ptr_at_offset(Coord(0, 0)),
         row_major(Coord(rows, padded)),
     )
 
@@ -359,8 +359,8 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         """
         var ctx = self.factored.context()
         var out = zeros[Self.dtype, Self.n, Self.n](ctx)
-        var fv = self.factored.view()
-        var ov = out.view()
+        var fv = self.factored.tile()
+        var ov = out.tile()
 
         @always_inline
         def upper[w: Int, alignment: Int = 1](coord: Coord) {var fv, var ov}:
@@ -397,7 +397,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         """
         var ctx = self.factored.context()
         var out = zeros[Self.dtype, Self.m, Self.n](ctx)
-        var ov = out.view()
+        var ov = out.tile()
 
         @always_inline
         def identity[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
@@ -415,8 +415,8 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
             var k = (steps - 1 - step) * self.block
             var nb = min(self.block, Self.n - k)
             _apply_block_reflector[transposed=False, gpu=Self.gpu](
-                self.factored.view(),
-                self.taus.view(),
+                self.factored.tile(),
+                self.taus.tile(),
                 ov,
                 k,
                 nb,
@@ -455,7 +455,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         comptime rhs = dim[T, 1]
         var ctx = self.factored.context()
         var out = Static[Self.dtype, Self.m, rhs](ctx)
-        var ov = out.view()
+        var ov = out.tile()
         pack_block[target=_target[Self.gpu]()](
             _mut_view_as[Self.dtype](b), ov, 0, 0, Self.m, rhs, ctx
         )
@@ -466,8 +466,8 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
             var k = step * self.block
             var nb = min(self.block, Self.n - k)
             _apply_block_reflector[transposed=True, gpu=Self.gpu](
-                self.factored.view(),
-                self.taus.view(),
+                self.factored.tile(),
+                self.taus.tile(),
                 ov,
                 k,
                 nb,
@@ -508,7 +508,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         """
         var ctx = self.factored.context()
         var wide = zeros[Self.dtype, Self.m, 1](ctx)
-        var wv = wide.view()
+        var wv = wide.tile()
         var bv = _mut_view_as[Self.dtype](b)
 
         @always_inline
@@ -522,8 +522,8 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
 
         var projected = self.apply_q_transpose(wide)
         var head = zeros[Self.dtype, Self.n](ctx)
-        var hv = head.view()
-        var pv = projected.view()
+        var hv = head.tile()
+        var pv = projected.tile()
 
         @always_inline
         def narrow[w: Int, alignment: Int = 1](coord: Coord) {var hv, var pv}:
@@ -535,7 +535,7 @@ struct TensorQR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         )
         ctx.synchronize()
 
-        # `view()` erases the origin, so `projected` is not kept alive by
+        # `tile()` erases the origin, so `projected` is not kept alive by
         # `pv` and destruction is ASAP: without this, its buffer is freed
         # while `narrow` still reads through `pv`, and the allocator's
         # free-list pointer lands in element zero.
@@ -601,9 +601,9 @@ def qr_factor[
     var taus = zeros[T.dtype, n](ctx)
     var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
 
-    var fv = factored.view()
-    var tv = taus.view()
-    var sv = scratch.view()
+    var fv = factored.tile()
+    var tv = taus.tile()
+    var sv = scratch.tile()
 
     pack_block[target=_target[gpu]()](_mut_view(a), fv, 0, 0, m, n, ctx)
 
@@ -653,7 +653,7 @@ def qr_factor[
 
     ctx.synchronize()
 
-    # `view()` erases the origin, so `scratch` is not kept alive by `sv`
+    # `tile()` erases the origin, so `scratch` is not kept alive by `sv`
     # and destruction is ASAP, the same hazard `TensorQR.solve` names.
     _ = scratch^
 

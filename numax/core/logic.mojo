@@ -440,12 +440,12 @@ def isclose[
             var diff = abs(a_values[i] - b_values[i])
             walked[i] = diff <= atol + rtol * abs(b_values[i])
         return Tensor[DType.bool, LayoutType](
-            a.context(), a.view().layout, walked^
+            a.context(), a.tile().layout, walked^
         )
 
     var ctx = a.context()
     var out = Tensor[DType.bool, LayoutType]._uninitialized(
-        ctx, a.view().layout
+        ctx, a.tile().layout
     )
     var xs = _flat(a)
     var zs = _flat(b)

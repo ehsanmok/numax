@@ -150,7 +150,7 @@ types are `Tensor` and `TensorView`, both `TensorLike`** (`numax/core/tensorlike
 it lives on, and a public routine takes either through the trait bound
 (`def f[T: TensorLike](a: T)`, spelling extents as `dim[T, i]` and guarding a
 flattening walk with `is_row_major[T]`). A bare `TileTensor` appears at the
-interop boundary (`.view()`, which borrows at the mutability of the binding
+interop boundary (`.tile()`, which borrows at the mutability of the binding
 and erases to `MutAnyOrigin` through MAX's implicit cast), inside `TensorView`, and
 in the kernel-author primitives of `numax/core/tensor.mojo`, never as the
 thing a user of `numax.linalg` passes. `Tensor` is also `DevicePassable`, so
@@ -223,7 +223,7 @@ comptime/runtime distinction lives in the layout, where MAX put it.
 
 `numax/core/array.mojo`'s `Tensor` owns a MAX `DeviceBuffer`, so the
 `DeviceContext` passed to a factory (last argument, optional) decides host or
-device memory; `.view()` yields the `TileTensor`. Bulk element access goes
+device memory; `.tile()` yields the `TileTensor`. Bulk element access goes
 through `to_host`/`copy_from_host` — on CUDA `unsafe_ptr()` returns a device
 pointer and a host read segfaults. `to_array`/`to_tensor` is the seam to the
 `Array[T, n]` half of the library.

@@ -94,8 +94,8 @@ def _axpy_into[
 ) raises where dtype.is_floating_point():
     """`out += a * x`, in place, on `out`'s device -- the one primitive
     every Runge-Kutta stage argument and combination is built from."""
-    var o = out.view().coalesce()
-    var xs = x.view().coalesce()
+    var o = out.tile().coalesce()
+    var xs = x.tile().coalesce()
 
     @always_inline
     def body[w: Int, alignment: Int = 1](coord: Coord) {var o, var xs, var a}:

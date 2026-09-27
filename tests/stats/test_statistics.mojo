@@ -130,7 +130,7 @@ def test_median_of_an_even_count_averages_the_two_middle_values() raises:
 def test_median_of_an_odd_count_returns_the_middle_value() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, 5](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     var vals = [5.0, 1.0, 3.0, 2.0, 4.0]
     for i in range(5):
         v[i] = Scalar[dtype](vals[i])
@@ -147,7 +147,7 @@ def test_mode_returns_the_most_frequent_value() raises:
 def test_mode_returns_the_smallest_among_tied_values() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, 4](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     var vals = [5.0, 5.0, 1.0, 1.0]
     for i in range(4):
         v[i] = Scalar[dtype](vals[i])
@@ -277,7 +277,7 @@ def test_tensor_variance_recovers_a_small_spread_under_a_large_mean() raises:
     comptime n = 8
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, n](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     for i in range(n):
         v[i] = Scalar[dtype](1e4) + Scalar[dtype](i % 2)
 
@@ -305,7 +305,7 @@ def test_variance_axis_agrees_with_the_separate_entry_points() raises:
     comptime cols = 4
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, rows, cols](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     for r in range(rows):
         for c in range(cols):
             v[r, c] = Scalar[dtype]((r * cols + c) % 5)
@@ -337,7 +337,7 @@ def test_mean_reduces_the_first_axis() raises:
     comptime cols = 3
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, rows, cols](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     for r in range(rows):
         for c in range(cols):
             v[r, c] = Scalar[dtype](r + 2 * c)
@@ -354,7 +354,7 @@ def test_reductions_accept_a_view_and_agree_with_the_tensor() raises:
     """One `sum`, one `mean`, one `variance`: the owned tensor and a `TensorView`
     over it are the same argument to the `TensorLike` bound."""
     var xs = reshape[rows=3, cols=4](arange[12, dtype]())
-    var v = TensorView(xs.view())
+    var v = TensorView(xs.tile())
     assert_almost_equal(sum(v), sum(xs))
     assert_almost_equal(mean(v), mean(xs))
     assert_almost_equal(variance(v), variance(xs))

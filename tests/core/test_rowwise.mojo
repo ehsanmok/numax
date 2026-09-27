@@ -74,10 +74,10 @@ def test_sum_axis_matches_reduce_axis_along_rows() raises:
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=1](
-        a.view(), want.view(), 0
+        a.tile(), want.tile(), 0
     )
     var got = zeros[dtype, rows](ctx)
-    sum_axis[dtype, _, _, axis=1](a.view(), got.view())
+    sum_axis[dtype, _, _, axis=1](a.tile(), got.tile())
 
     var wh = want.to_host()
     var gh = got.to_host()
@@ -98,10 +98,10 @@ def test_sum_axis_matches_reduce_axis_down_columns() raises:
 
     var want = zeros[dtype, cols](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=0](
-        a.view(), want.view(), 0
+        a.tile(), want.tile(), 0
     )
     var got = zeros[dtype, cols](ctx)
-    sum_axis[dtype, _, _, axis=0](a.view(), got.view())
+    sum_axis[dtype, _, _, axis=0](a.tile(), got.tile())
 
     var wh = want.to_host()
     var gh = got.to_host()
@@ -118,10 +118,10 @@ def test_max_axis_agrees_exactly() raises:
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_larger[dtype], axis=1](
-        a.view(), want.view(), -1e30
+        a.tile(), want.tile(), -1e30
     )
     var got = zeros[dtype, rows](ctx)
-    max_axis[dtype, _, _, axis=1](a.view(), got.view())
+    max_axis[dtype, _, _, axis=1](a.tile(), got.tile())
 
     var wh = want.to_host()
     var gh = got.to_host()
@@ -144,10 +144,10 @@ def test_sum_axis_reduces_the_middle_axis_of_a_rank_3_tensor() raises:
 
     var want = zeros[dtype, d0 * d2](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=1](
-        a.view(), want.view(), 0
+        a.tile(), want.tile(), 0
     )
     var got = zeros[dtype, d0 * d2](ctx)
-    sum_axis[dtype, _, _, axis=1](a.view(), got.view())
+    sum_axis[dtype, _, _, axis=1](a.tile(), got.tile())
 
     var wh = want.to_host()
     var gh = got.to_host()
@@ -162,7 +162,7 @@ def test_sum_axis_folds_a_rank_1_tensor_to_one_value() raises:
     var a = Static[dtype, n](ctx, _ramp(n))
 
     var got = zeros[dtype, 1](ctx)
-    sum_axis[dtype, _, _, axis=0](a.view(), got.view())
+    sum_axis[dtype, _, _, axis=0](a.tile(), got.tile())
 
     var want = Float64(0)
     var values = _ramp(n)
@@ -190,28 +190,28 @@ def test_reduce_all_matches_reduce_for_every_monoid() raises:
     ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
-    reduce_all[monoid="sum"](_flat(a), out.view(), _identity, n, Optional(ctx))
+    reduce_all[monoid="sum"](_flat(a), out.tile(), _identity, n, Optional(ctx))
     assert_almost_equal(
         Float64(out.to_host()[0]),
-        Float64(reduce[dtype, _, _, combine=_add[dtype]](a.view(), 0)),
+        Float64(reduce[dtype, _, _, combine=_add[dtype]](a.tile(), 0)),
     )
 
-    reduce_all[monoid="prod"](_flat(a), out.view(), _identity, n, Optional(ctx))
+    reduce_all[monoid="prod"](_flat(a), out.tile(), _identity, n, Optional(ctx))
     assert_almost_equal(
         Float64(out.to_host()[0]),
-        Float64(reduce[dtype, _, _, combine=_mul[dtype]](a.view(), 1)),
+        Float64(reduce[dtype, _, _, combine=_mul[dtype]](a.tile(), 1)),
     )
 
-    reduce_all[monoid="max"](_flat(a), out.view(), _identity, n, Optional(ctx))
+    reduce_all[monoid="max"](_flat(a), out.tile(), _identity, n, Optional(ctx))
     assert_equal(
         Float64(out.to_host()[0]),
-        Float64(reduce[dtype, _, _, combine=_larger[dtype]](a.view(), -1e30)),
+        Float64(reduce[dtype, _, _, combine=_larger[dtype]](a.tile(), -1e30)),
     )
 
-    reduce_all[monoid="min"](_flat(a), out.view(), _identity, n, Optional(ctx))
+    reduce_all[monoid="min"](_flat(a), out.tile(), _identity, n, Optional(ctx))
     assert_equal(
         Float64(out.to_host()[0]),
-        Float64(reduce[dtype, _, _, combine=_smaller[dtype]](a.view(), 1e30)),
+        Float64(reduce[dtype, _, _, combine=_smaller[dtype]](a.tile(), 1e30)),
     )
 
 
@@ -229,7 +229,7 @@ def test_reduce_all_applies_the_per_tile_transform() raises:
     ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile * tile
 
-    reduce_all[monoid="sum"](_flat(a), out.view(), square, n, Optional(ctx))
+    reduce_all[monoid="sum"](_flat(a), out.tile(), square, n, Optional(ctx))
 
     var values = _ramp(n)
     var want = Float64(0)
@@ -261,10 +261,10 @@ def test_reduce_all_agrees_between_a_static_and_a_dynamic_input() raises:
         return tile
 
     reduce_all[monoid="sum"](
-        _flat(stat), from_static.view(), _identity, rows * cols, Optional(ctx)
+        _flat(stat), from_static.tile(), _identity, rows * cols, Optional(ctx)
     )
     reduce_all[monoid="sum"](
-        _flat(dyn), from_dynamic.view(), _identity, rows * cols, Optional(ctx)
+        _flat(dyn), from_dynamic.tile(), _identity, rows * cols, Optional(ctx)
     )
     assert_equal(
         Float64(from_static.to_host()[0]), Float64(from_dynamic.to_host()[0])
@@ -279,10 +279,10 @@ def test_prod_axis_matches_reduce_axis() raises:
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_mul[dtype], axis=1](
-        a.view(), want.view(), 1
+        a.tile(), want.tile(), 1
     )
     var got = zeros[dtype, rows](ctx)
-    prod_axis[dtype, _, _, axis=1](a.view(), got.view())
+    prod_axis[dtype, _, _, axis=1](a.tile(), got.tile())
 
     var wh = want.to_host()
     var gh = got.to_host()
@@ -300,10 +300,10 @@ def test_min_axis_agrees_exactly() raises:
 
     var want = zeros[dtype, cols](ctx)
     reduce_axis[dtype, _, _, combine=_smaller[dtype], axis=0](
-        a.view(), want.view(), 1e30
+        a.tile(), want.tile(), 1e30
     )
     var got = zeros[dtype, cols](ctx)
-    min_axis[dtype, _, _, axis=0](a.view(), got.view())
+    min_axis[dtype, _, _, axis=0](a.tile(), got.tile())
 
     var wh = want.to_host()
     var gh = got.to_host()

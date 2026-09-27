@@ -158,7 +158,7 @@ def _flat[
     view is built at `A.dtype` through a same-width pointer bitcast.
     """
     _require_contiguous(a)
-    var v = a.view()
+    var v = a.tile()
     return _FlatIn[dtype](
         ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]().unsafe_origin_cast[
             ImmutAnyOrigin
@@ -174,7 +174,7 @@ def _flat_unchecked[T: TensorLike](a: T) raises -> _FlatIn[T.dtype]:
     still refuses a strided view; what is lost is only the compile-time
     refusal."""
     _require_contiguous(a)
-    var v = a.view()
+    var v = a.tile()
     return _FlatIn[T.dtype](
         ptr=v.ptr.unsafe_origin_cast[ImmutAnyOrigin](),
         layout=row_major(Coord(a.size())),
@@ -190,7 +190,7 @@ def _flat_out[T: TensorLike](mut a: T) raises -> _FlatOut[T.dtype]:
     the guarantee.
     """
     _require_contiguous(a)
-    var v = a.view()
+    var v = a.tile()
     return _FlatOut[T.dtype](
         ptr=v.ptr.unsafe_origin_cast[MutAnyOrigin](),
         layout=row_major(Coord(a.size())),
@@ -206,13 +206,13 @@ comptime _DenseIn[dtype: DType, LayoutType: TensorLayout] = TileTensor[
 def _dense[T: TensorLike](a: T) raises -> _DenseIn[T.dtype, T.LayoutType]:
     """`a`'s own layout as a read-only, origin-erased view.
 
-    The tracked `view()` already lets a borrowed argument be viewed; this
+    The tracked `tile()` already lets a borrowed argument be viewed; this
     is the spelling for a kernel whose parameter is fixed at
     `ImmutAnyOrigin`, at the tensor's rank rather than `_flat`'s rank 1 --
     what the axis reductions want, since they need the extents. Strides
     are kept, so a strided `TensorView` reads correctly here.
     """
-    var v = a.view()
+    var v = a.tile()
     return _DenseIn[T.dtype, T.LayoutType](
         ptr=v.ptr.unsafe_origin_cast[ImmutAnyOrigin](), layout=v.layout
     )
@@ -307,7 +307,7 @@ def _host_walk_unary[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i])
-    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
 def _host_walk_unary_to[
@@ -321,7 +321,7 @@ def _host_walk_unary_to[
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i])
-    return Tensor[out_dtype, LayoutType](a.context(), a.view().layout, out^)
+    return Tensor[out_dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
 def _host_walk_binary[
@@ -338,7 +338,7 @@ def _host_walk_binary[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](a_values[i], b_values[i])
-    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
 def _host_walk_binary_to[
@@ -355,7 +355,7 @@ def _host_walk_binary_to[
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](a_values[i], b_values[i])
-    return Tensor[out_dtype, LayoutType](a.context(), a.view().layout, out^)
+    return Tensor[out_dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
 def _host_walk_binary_scalar[
@@ -371,7 +371,7 @@ def _host_walk_binary_scalar[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i], s)
-    return Tensor[dtype, LayoutType](a.context(), a.view().layout, out^)
+    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
 comptime _BroadcastRank[
@@ -538,7 +538,7 @@ def unary[
         return _host_walk_unary[T, op](a)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
@@ -566,7 +566,7 @@ def unary_to[
         return _host_walk_unary_to[T, out_dtype, op](a)
 
     var ctx = a.context()
-    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.view().layout)
+    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
@@ -594,7 +594,7 @@ def binary[
         return _host_walk_binary[T, op](a, b)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var zs = _flat(b)
     var ys = _flat_out(out)
@@ -629,7 +629,7 @@ def binary_to[
         return _host_walk_binary_to[T, out_dtype, op](a, b)
 
     var ctx = a.context()
-    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.view().layout)
+    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var zs = _flat(b)
     var ys = _flat_out(out)
@@ -664,7 +664,7 @@ def binary_scalar[
         return _host_walk_binary_scalar[T, op](a, s)
 
     var ctx = a.context()
-    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.view().layout)
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 

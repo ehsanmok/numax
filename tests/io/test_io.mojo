@@ -49,7 +49,7 @@ def test_save_load_round_trips_a_rank_1_tensor() raises:
 def test_save_load_round_trips_a_rank_2_tensor() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, 2, 3](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     var k = 0
     for r in range(2):
         for c in range(3):
@@ -65,7 +65,7 @@ def test_save_load_round_trips_a_rank_2_tensor() raises:
 def test_save_load_round_trips_a_rank_3_tensor() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, 2, 2, 2](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     var k = 0
     for a in range(2):
         for b in range(2):
@@ -145,7 +145,7 @@ def test_format_matches_a_frozen_small_array_string() raises:
 def test_format_truncates_arrays_over_threshold() raises:
     var ctx = DeviceContext(api="cpu")
     var xs = full[dtype, 20](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     for i in range(20):
         v[i] = Scalar[dtype](i)
     assert_equal(

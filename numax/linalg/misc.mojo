@@ -91,7 +91,7 @@ def trace[
     var ctx = a.context()
     var diagonal = Static[T.dtype, n](ctx)
     var av = _mut_view(a)
-    var dv = diagonal.view()
+    var dv = diagonal.tile()
 
     @always_inline
     def gather[w: Int, alignment: Int = 1](coord: Coord) {var av, var dv}:
@@ -109,10 +109,10 @@ def trace[
         return tile
 
     reduce_all[monoid="sum", target=_target[gpu]()](
-        dv, out.view(), identity, n, Optional(ctx)
+        dv, out.tile(), identity, n, Optional(ctx)
     )
 
-    # `view()` erases the origin, so `diagonal` is not kept alive by `dv`
+    # `tile()` erases the origin, so `diagonal` is not kept alive by `dv`
     # and destruction is ASAP. See `numax.linalg.qr`.
     _ = diagonal^
 
@@ -190,12 +190,12 @@ def _matrix_norm[
             return tile * tile
 
         reduce_all[monoid="sum", target=_target[gpu]()](
-            flat, out.view(), square, n * n, Optional(ctx)
+            flat, out.tile(), square, n * n, Optional(ctx)
         )
         return _sqrt(out.to_host()[0])
 
     var magnitudes = Static[T.dtype, n, n](ctx)
-    var mv = magnitudes.view()
+    var mv = magnitudes.tile()
 
     @always_inline
     def magnitude[w: Int, alignment: Int = 1](coord: Coord) {var av, var mv}:
@@ -212,16 +212,16 @@ def _matrix_norm[
     # bound against.
     var sums = Static[T.dtype, n](ctx)
     comptime if ord == 1:
-        sum_axis[axis=0, target=_target[gpu]()](mv, sums.view(), ctx)
+        sum_axis[axis=0, target=_target[gpu]()](mv, sums.tile(), ctx)
     else:
-        sum_axis[axis=1, target=_target[gpu]()](mv, sums.view(), ctx)
+        sum_axis[axis=1, target=_target[gpu]()](mv, sums.tile(), ctx)
 
-    # `view()` erases the origin, so `magnitudes` is not kept alive by
+    # `tile()` erases the origin, so `magnitudes` is not kept alive by
     # `mv` and destruction is ASAP. See `numax.linalg.qr`.
     _ = magnitudes^
 
     var out = Static[T.dtype, 1](ctx)
-    max_axis[axis=0, target=_target[gpu]()](sums.view(), out.view(), ctx)
+    max_axis[axis=0, target=_target[gpu]()](sums.tile(), out.tile(), ctx)
     return out.to_host()[0]
 
 
@@ -297,7 +297,7 @@ def _vector_norm[
         # folds what it is given -- so the magnitudes are materialized once
         # and reduced, which is two launches rather than one.
         var magnitudes = Static[T.dtype, n]._uninitialized(ctx)
-        var mv = magnitudes.view()
+        var mv = magnitudes.tile()
 
         @always_inline
         def take_abs[w: Int, alignment: Int = 1](coord: Coord) {var av, var mv}:

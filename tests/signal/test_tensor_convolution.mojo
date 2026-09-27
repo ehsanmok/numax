@@ -306,7 +306,7 @@ def test_convolve_accepts_views_of_both_operands() raises:
     var a = _from[7](_a())
     var b = _from[3](_b())
     var want = convolve(a, b).to_host()
-    var got = convolve(TensorView(a.view()), TensorView(b.view())).to_host()
+    var got = convolve(TensorView(a.tile()), TensorView(b.tile())).to_host()
     for i in range(9):
         assert_almost_equal(Float64(got[i]), Float64(want[i]))
 

@@ -148,7 +148,7 @@ def _read_ptr[
     """
     if x.on_host():
         return (
-            x.view_as[dtype]()
+            x.tile_as[dtype]()
             .ptr.unsafe_mut_cast[True]()
             .unsafe_origin_cast[MutAnyOrigin]()
         )
@@ -501,8 +501,8 @@ def medfilt[
     comptime half = kernel_size // 2
     var ctx = x.context()
     var out = Static[T.dtype, n]._uninitialized(ctx)
-    var xs = x.view()
-    var ys = out.view()
+    var xs = x.tile()
+    var ys = out.tile()
 
     @always_inline
     def lane[w: Int, alignment: Int = 1](coord: Coord) {var xs, var ys}:
@@ -569,8 +569,8 @@ def detrend[
     var intercept = mean_y - slope * mean_i
 
     var out = Static[T.dtype, n]._uninitialized(ctx)
-    var xs = x.view()
-    var ys = out.view()
+    var xs = x.tile()
+    var ys = out.tile()
     var m = Scalar[T.dtype](slope)
     var c = Scalar[T.dtype](intercept)
 
@@ -794,10 +794,10 @@ def savgol_filter[
     )
 
     var out = Static[T.dtype, n]._uninitialized(ctx)
-    var xs_view = x.view()
-    var cs = taps.view()
-    var es = edges.view()
-    var ys = out.view()
+    var xs_view = x.tile()
+    var cs = taps.tile()
+    var es = edges.tile()
+    var ys = out.tile()
     var mode_code = 0 if mode == "interp" else (
         1 if mode
         == "nearest" else (

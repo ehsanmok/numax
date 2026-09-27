@@ -42,7 +42,7 @@ def main() raises:
     var ctx = DeviceContext(api="cpu")
     print("--- Plain-only, over Tensor ---")
     var xs = full[dtype, 6](0, ctx=ctx)
-    var v = xs.view()
+    var v = xs.tile()
     var vals = [3.0, 1.0, 9.0, 2.0, 7.0, 2.0]
     for i in range(6):
         v[i] = Scalar[dtype](vals[i])

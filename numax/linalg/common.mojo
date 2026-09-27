@@ -36,13 +36,13 @@ def _mut_view[
     """`a`'s erased, writable view from a borrow: what the panel kernels'
     `_View` parameters are spelled as, for an operand they only read.
 
-    The old `Tensor.view()` handed this out unconditionally; the tracked
+    The old `Tensor.tile()` handed this out unconditionally; the tracked
     one follows the binding, and a `TensorLike` argument this tier takes by
     borrow yields a read-only tile. The kernels here copy their inputs into
     scratch or read them under `matmul`, so the mutability added back is
     never exercised. Do not use it for a destination.
     """
-    var v = a.view()
+    var v = a.tile()
     return TileTensor[T.dtype, T.LayoutType, MutAnyOrigin](
         ptr=v.ptr.unsafe_mut_cast[True]().unsafe_origin_cast[MutAnyOrigin](),
         layout=v.layout,
@@ -53,8 +53,8 @@ def _mut_view_as[
     dtype: DType, T: TensorLike
 ](a: T) -> TileTensor[dtype, T.LayoutType, MutAnyOrigin]:
     """`_mut_view` with the lanes typed `dtype`, for a second operand under
-    `where B.dtype == A.dtype`; see `TensorLike.view_as`."""
-    var v = a.view()
+    `where B.dtype == A.dtype`; see `TensorLike.tile_as`."""
+    var v = a.tile()
     return TileTensor[dtype, T.LayoutType, MutAnyOrigin](
         ptr=v.ptr.unsafe_bitcast[Scalar[dtype]]()
         .unsafe_mut_cast[True]()

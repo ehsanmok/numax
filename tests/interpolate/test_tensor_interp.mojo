@@ -247,7 +247,7 @@ def test_interp_accepts_views() raises:
     var fp = _from[5](_samples())
     var want = interp(x, xp, fp).to_host()
     var got = interp(
-        TensorView(x.view()), TensorView(xp.view()), TensorView(fp.view())
+        TensorView(x.tile()), TensorView(xp.tile()), TensorView(fp.tile())
     ).to_host()
     for i in range(10):
         assert_almost_equal(Float64(got[i]), Float64(want[i]))

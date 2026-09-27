@@ -131,15 +131,15 @@ on the device. There is no second owning tensor type — both are `TileTensor`.
 
 `Tensor` ([`core/array.mojo`](../numax/core/array.mojo)) adds ownership only:
 it owns a MAX `DeviceBuffer`, so the `DeviceContext` passed to a factory
-decides host or device memory, and `.view()` yields the same `TileTensor`
+decides host or device memory, and `.tile()` yields the same `TileTensor`
 either way, borrowing the tensor at the mutability of the binding. Reads go
 through `to_host()`/`copy_from_host()`, never `DeviceBuffer.unsafe_ptr()`,
 which on CUDA returns a *device* pointer that segfaults a host read.
 
 | Surface | Where |
 |---|---|
-| `TensorLike` — the bound over owned and borrowed: associated `dtype`, `LayoutType`, `Engine`, `rank`, plus `view(ref self)` and `context()`. `Tensor` and `TensorView` conform; a routine `def f[T: TensorLike](a: T)` takes either | [`core/tensorlike.mojo`](../numax/core/tensorlike.mojo), [`test_tensorlike.mojo`](../tests/core/test_tensorlike.mojo) |
-| `TensorView` — a `TileTensor` plus the device it lives on; `TensorView(a.view().tile[2, 2](0, 0), a.context())` is a quadrant of `a` a routine can write into, no copy. Host when the context is omitted, like every factory | same |
+| `TensorLike` — the bound over owned and borrowed: associated `dtype`, `LayoutType`, `Engine`, `rank`, plus `tile(ref self)` and `context()`. `Tensor` and `TensorView` conform; a routine `def f[T: TensorLike](a: T)` takes either | [`core/tensorlike.mojo`](../numax/core/tensorlike.mojo), [`test_tensorlike.mojo`](../tests/core/test_tensorlike.mojo) |
+| `TensorView` — a `TileTensor` plus the device it lives on; `TensorView(a.tile().tile[2, 2](0, 0), a.context())` is a quadrant of `a` a routine can write into, no copy. Host when the context is omitted, like every factory | same |
 | `dim[T, i]`, `is_row_major[T]` — a compile-time extent for a signature, and the `where` clause a flattening walk carries so a strided block is refused where it is written | same |
 | `Tensor` is `DevicePassable` with its `MutAnyOrigin` view as `device_type`: `ctx.enqueue_function[map[...]](xs, ys, ...)` takes the tensors and the kernel receives the tiles | [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo), [`unified_tensor_gpu.mojo`](../examples/advanced/unified_tensor_gpu.mojo) |
 
@@ -162,7 +162,7 @@ compile time.
 | Creation at a computed shape | `zeros_dyn`, `ones_dyn`, `full_dyn`, `empty_dyn` — rank in the type, extents as arguments (`zeros_dyn[f32, 2](r, c)`) — and `asarray`, which takes a `List` and is as long as the list is | [`core/array.mojo`](../numax/core/array.mojo) |
 | Manipulation | `reshape`, `ravel`, `transpose`, `squeeze`, `flip`, `stack`, `vstack`, `hstack`, `concatenate`, `split` | [`core/array.mojo`](../numax/core/array.mojo) |
 | Manipulation at a computed shape | `reshape_dyn`, `slice` (basic slicing at any rank), `broadcast_to` (NumPy's rules, right-aligned), `concatenate_dyn`, `split_dyn`, `stack_dyn` — all copy into compact storage rather than returning a view, since MAX has no stride-0 broadcast view and a view would borrow from a tensor these do not own | [`core/array.mojo`](../numax/core/array.mojo) |
-| Indexing | `a[i]` flat on any rank, `a[r, c]` on a rank-2 tensor; `.view()[i, j, k]` is the general form. On a GPU each access stages its own host mapping — take one `to_host()` and index that instead | [`core/array.mojo`](../numax/core/array.mojo) |
+| Indexing | `a[i]` flat on any rank, `a[r, c]` on a rank-2 tensor; `.tile()[i, j, k]` is the general form. On a GPU each access stages its own host mapping — take one `to_host()` and index that instead | [`core/array.mojo`](../numax/core/array.mojo) |
 | Printing | `print(a)` — `Tensor` conforms to `Writable`; `a.format(precision=8, threshold=..., edge_items=...)` is the same output with the defaults overridden | [`core/array.mojo`](../numax/core/array.mojo) |
 | Conversion | `to_array`, `to_tensor` — the seam between `Tensor` (shape and device) and `Array[T, n]` (the `FloatLike` conformer layer `numax.linalg.array`, `numax.signal` and `numax.interpolate.array` take). Lifting works at any conformer; lowering is written per conformer, since `FloatLike` can build a value from a `Float64` but not read one back — `Plain` lowers to one tensor, `Dual` to a `(value, derivative)` pair, and `Gradient[.., n_vars]` to a value plus its partials flat in `(variable, element)` order. Every other conformer lowers by taking the component the caller means at `Plain` first | [`core/array.mojo`](../numax/core/array.mojo), [`npy_to_cholesky.mojo`](../examples/intermediate/npy_to_cholesky.mojo) |
 | Matrix builders | `diag`, `diagflat`, `diagonal`, `tri`, `tril`, `triu`, `vander`, `pad` | [`core/array.mojo`](../numax/core/array.mojo) |
@@ -234,7 +234,7 @@ borrow, and reads their extents from the layout: `cholesky(a)` is the whole
 spelling, `cholesky[gpu=True, block=32](a)` the tuned one, and
 `cholesky[dtype, n](a)` is no longer a spelling. Every factorization and
 solve accepts a `TensorView` of a sub-block in place of a tensor -- the panel
-kernels read through the layout, so `cholesky(TensorView(a.view().tile[4, 4](0,
+kernels read through the layout, so `cholesky(TensorView(a.tile().tile[4, 4](0,
 0), a.context()))` factors a quadrant with no copy
 (`tests/linalg/test_tensorlike_linalg.mojo`, [`borrowed_views.mojo`](../examples/intermediate/borrowed_views.mojo)). The two routines that flatten
 an argument by pointer, `matvec`'s vector and the matrix `norm`, carry

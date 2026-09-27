@@ -94,7 +94,7 @@ def toeplitz[
     var out = Static[A.dtype, m, n]._uninitialized(ctx)
     var cv = _mut_view(c)
     var rv = _mut_view_as[A.dtype](r)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var cv, var rv, var ov}:
@@ -128,7 +128,7 @@ def toeplitz[
     var ctx = c.context()
     var out = Static[T.dtype, n, n]._uninitialized(ctx)
     var cv = _mut_view(c)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var cv, var ov}:
@@ -169,7 +169,7 @@ def hankel[
     var out = Static[A.dtype, m, n]._uninitialized(ctx)
     var cv = _mut_view(c)
     var rv = _mut_view_as[A.dtype](r)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var cv, var rv, var ov}:
@@ -205,7 +205,7 @@ def circulant[
     var ctx = c.context()
     var out = Static[T.dtype, n, n]._uninitialized(ctx)
     var cv = _mut_view(c)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var cv, var ov}:
@@ -246,7 +246,7 @@ def companion[
     var ctx = a.context()
     var out = Static[T.dtype, n - 1, n - 1]._uninitialized(ctx)
     var av = _mut_view(a)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var ov}:
@@ -292,7 +292,7 @@ def hilbert[
     """
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var out = Static[dtype, n, n]._uninitialized(device)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
@@ -335,7 +335,7 @@ def block_diag[
     )
     var av = _mut_view(a)
     var bv = _mut_view_as[A.dtype](b)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
@@ -385,7 +385,7 @@ def khatri_rao[
     var out = Static[A.dtype, m * p, k]._uninitialized(ctx)
     var av = _mut_view(a)
     var bv = _mut_view_as[A.dtype](b)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var bv, var ov}:
@@ -426,7 +426,7 @@ def convolution_matrix[
     var ctx = a.context()
     var out = Static[T.dtype, m + n - 1, n]._uninitialized(ctx)
     var av = _mut_view(a)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var ov}:
@@ -481,7 +481,7 @@ def pascal[
     """
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var out = Static[dtype, n, n]._uninitialized(device)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
@@ -523,7 +523,7 @@ def invpascal[
     """
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var out = Static[dtype, n, n]._uninitialized(device)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
@@ -572,7 +572,7 @@ def hadamard[
     comptime assert (n & (n - 1)) == 0, "hadamard: n must be a power of two"
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var out = Static[dtype, n, n]._uninitialized(device)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
@@ -607,7 +607,7 @@ def helmert[
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     comptime rows = n - 1 + (1 if full else 0)
     var out = Static[dtype, rows, n]._uninitialized(device)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var ov}:
@@ -650,7 +650,7 @@ def fiedler[
     var ctx = a.context()
     var out = Static[T.dtype, n, n]._uninitialized(ctx)
     var av = _mut_view(a)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var ov}:
@@ -685,7 +685,7 @@ def fiedler_companion[
     var ctx = a.context()
     var out = Static[T.dtype, n - 1, n - 1]._uninitialized(ctx)
     var av = _mut_view(a)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var av, var ov}:
@@ -737,7 +737,7 @@ def leslie[
     var out = Static[A.dtype, n, n]._uninitialized(ctx)
     var fv = _mut_view(f)
     var sv = _mut_view_as[A.dtype](s)
-    var ov = out.view()
+    var ov = out.tile()
 
     @always_inline
     def step[w: Int, alignment: Int = 1](coord: Coord) {var fv, var sv, var ov}:

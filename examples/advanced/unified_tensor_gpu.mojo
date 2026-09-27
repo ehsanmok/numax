@@ -4,7 +4,7 @@
 lives on is decided by the `DeviceContext` handed to the factory function
 and by nothing else. `DeviceContext(api="cpu")` puts it in host memory,
 `DeviceContext()` puts it on the accelerator; the type, the shape
-parameters, the factory names, and `.view()`'s `TileTensor` type are
+parameters, the factory names, and `.tile()`'s `TileTensor` type are
 identical either way.
 
 It then runs three of the NumPy-named routines on the same device tensor:
@@ -70,8 +70,8 @@ def main() raises:
 
     var cpu_xs = linspace[n, dtype](-2.0, 2.0, ctx=cpu)
     var cpu_ys = TensorType(cpu)
-    var cpu_xs_view = cpu_xs.view()
-    var cpu_ys_view = cpu_ys.view()
+    var cpu_xs_view = cpu_xs.tile()
+    var cpu_ys_view = cpu_ys.tile()
     map[step=gaussian_step, width=8](cpu_xs_view, cpu_ys_view)
 
     # ---- GPU: device context, device launch, same tensor type ----
