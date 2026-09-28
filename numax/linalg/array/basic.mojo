@@ -61,8 +61,8 @@ def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
 
 
 def pinv[
-    T: FloatLike, n: Int, sweeps: Int = 12
-](a: Array[T, n * n], rcond: Float64 = 1e-12) -> Array[T, n * n]:
+    T: FloatLike, n: Int, sweeps: Int = 12, rcond: Float64 = 1e-12
+](a: Array[T, n * n]) -> Array[T, n * n]:
     """The Moore-Penrose pseudoinverse, `V @ diag(1/s) @ U.T`, with small
     singular values truncated.
 
@@ -73,7 +73,9 @@ def pinv[
     nothing rather than dominating.
 
     `rcond` is relative to the largest singular value, matching
-    `numpy.linalg.pinv`. The truncation is arithmetic, not a branch: each
+    `numpy.linalg.pinv`, and is a compile-time parameter as `eigvals`'s
+    `tol` is: a run-time `Float64` argument would put a `double` into
+    every kernel body that calls this, which Metal cannot compile. The truncation is arithmetic, not a branch: each
     reciprocal is multiplied by a `0`/`1` indicator built from
     `ge_indicator`, so no lane decides anything for another lane.
     """

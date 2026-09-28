@@ -235,13 +235,15 @@ def lfilter[
     return out^
 
 
-def firwin[T: FloatLike, n: Int](cutoff: Float64) -> Array[T, n]:
+def firwin[T: FloatLike, n: Int](cutoff: T) -> Array[T, n]:
     """A lowpass FIR filter of `n` taps by the window method.
     `scipy.signal.firwin`, with the default Hamming window.
 
     `cutoff` is in the same units SciPy uses: a fraction of the Nyquist
-    frequency, so `0.25` passes the lower quarter of the representable
-    band. The taps are a sinc -- the ideal brick wall's impulse response --
+    frequency, so `T.constant(0.25)` passes the lower quarter of the
+    representable band. It is a `T` like every other number at this tier,
+    so the taps differentiate with respect to it at `Dual`, and no
+    `double` reaches a kernel body. The taps are a sinc -- the ideal brick wall's impulse response --
     truncated to `n` points and tapered by a Hamming window, then scaled
     for unit gain at DC so a constant input passes through unchanged.
 
@@ -258,15 +260,19 @@ def firwin[T: FloatLike, n: Int](cutoff: Float64) -> Array[T, n]:
     lowpass designs), which is a continuation rather than a redesign.
     """
     var window = hamming[T, n]()
-    var center = Float64(n - 1) / 2.0
+    comptime center = Float64(n - 1) / 2.0
+    var scaled = T.constant(_PI) * cutoff
 
     var taps = Array[T, n](fill=T.constant(0.0))
     var total = T.constant(0.0)
-    for i in range(n):
-        var offset = cutoff * (Float64(i) - center)
+    # Unrolled, so each tap's offset from the center is a compile-time
+    # constant and no `double` survives into a kernel body.
+    comptime for i in range(n):
         # sinc(0) is 1, and the floored denominator delivers exactly that:
         # `sin(eps)/eps` rounds to 1 rather than dividing by zero.
-        var angle = guard_nonzero(T.constant(_PI * offset), T.constant(1e-30))
+        var angle = guard_nonzero(
+            scaled * T.constant(Float64(i) - center), T.constant(1e-30)
+        )
         taps[i] = angle.sin() / angle * window[i]
         total = total + taps[i]
 

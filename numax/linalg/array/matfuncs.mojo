@@ -46,12 +46,15 @@ comptime _B13 = 1.0
 `numax.linalg.matfuncs` carries the full note."""
 
 
+@always_inline
 def _combine[
     T: FloatLike, n: Int
 ](a: Array[T, n * n], scale: Float64, b: Array[T, n * n]) -> Array[T, n * n]:
     """`scale * a + b`, entrywise. The one operation the Pade evaluation
     below does over and over, and there is no tensor arithmetic at this
-    tier to reach for."""
+    tier to reach for. Always inlined, so the `Float64` coefficients it is
+    handed fold to `dtype` constants and no `double` reaches a kernel
+    body -- which Metal cannot compile."""
     var out = _zeros[T, n * n]()
     var factor = T.constant(scale)
     for i in range(n * n):
@@ -153,6 +156,7 @@ def expm[
     return result^
 
 
+@always_inline
 def _scaled_copy[
     T: FloatLike, n: Int
 ](a: Array[T, n * n], scale: Float64) -> Array[T, n * n]:

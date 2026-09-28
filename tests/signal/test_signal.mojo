@@ -395,7 +395,7 @@ def test_lfilter_divides_by_the_leading_coefficient() raises:
 def test_firwin_passes_a_constant_unchanged() raises:
     # Unit DC gain is what the normalization is for: the taps sum to one,
     # so a constant signal comes through at its own level.
-    var taps = firwin[P, 21](0.25)
+    var taps = firwin[P, 21](P.constant(0.25))
     var total = 0.0
     for i in range(21):
         total += s(taps[i])
@@ -403,7 +403,7 @@ def test_firwin_passes_a_constant_unchanged() raises:
 
 
 def test_firwin_is_symmetric_so_the_phase_is_linear() raises:
-    var taps = firwin[P, 21](0.3)
+    var taps = firwin[P, 21](P.constant(0.3))
     for i in range(21):
         assert_almost_equal(s(taps[i]), s(taps[20 - i]), atol=1e-12)
 
@@ -412,7 +412,7 @@ def test_firwin_attenuates_above_its_cutoff() raises:
     # Run a slow and a fast sinusoid through the filter and compare what
     # survives. The cutoff is a quarter of Nyquist, so the second is well
     # inside the stopband.
-    var taps = firwin[P, 31](0.25)
+    var taps = firwin[P, 31](P.constant(0.25))
 
     var slow = Array[P, 64](fill=pv(0.0))
     var fast = Array[P, 64](fill=pv(0.0))

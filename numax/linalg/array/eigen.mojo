@@ -495,8 +495,8 @@ def svdvals[
 
 
 def matrix_rank[
-    T: FloatLike, n: Int, sweeps: Int = 12
-](a: Array[T, n * n], rcond: Float64 = 1e-12) -> T:
+    T: FloatLike, n: Int, sweeps: Int = 12, rcond: Float64 = 1e-12
+](a: Array[T, n * n]) -> T:
     """How many singular values exceed `rcond` times the largest, as a
     count. `numpy.linalg.matrix_rank`.
 
@@ -518,7 +518,9 @@ def matrix_rank[
 
     `rcond` is relative to the largest singular value, matching
     `numpy.linalg.matrix_rank` and `pinv`, which applies the identical
-    threshold to build a pseudoinverse instead of counting.
+    threshold to build a pseudoinverse instead of counting. A compile-time
+    parameter, for `pinv`'s reason: a run-time `Float64` would not compile
+    in a Metal kernel body.
 
     The derivative is zero almost everywhere, as it must be for a
     step-shaped quantity: this differentiates in the sense of compiling and
