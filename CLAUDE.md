@@ -244,7 +244,8 @@ Subpackages mirror NumPy/SciPy names: `core`, `linalg`, `optimize`,
 `integrate`, `interpolate`, `special`, `stats`, `fft`, `signal`, `io`.
 `core` depends on nothing else in numax; every other subpackage depends on
 `core`. The few cross-subpackage edges are deliberate: `stats` → `special`
-(incomplete gamma/beta), `integrate` → `special` (Legendre roots) and
+(incomplete gamma/beta), `stats` → `linalg` (Cholesky and `matmul`, for
+`Generator.multivariate_normal`), `integrate` → `special` (Legendre roots) and
 `optimize` (Newton), `interpolate` → `linalg` (tridiagonal solve),
 `optimize` → `linalg` (Cholesky, for the least-squares normal equations),
 `linalg` → `fft` (`solve_circulant`, which is three transforms and a

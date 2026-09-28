@@ -35,6 +35,13 @@ and a rejection sampler gets a fixed number of attempts inside it
 rejection for the counts, inversion below their splits), so they fill on
 the device like the rest.
 
+`permutation`, `shuffle` and `choice` are compositions over those fills:
+`argsort` of uniform keys, `randint` indices, or inversion through the
+running sum of the weights and `searchsorted`, then a gather, each on
+the tensor's device. `multivariate_normal` is `z L^T + mean` through
+`numax.linalg`'s Cholesky and `matmul`. `spawn` seeds children from the
+parent's stream at a distant offset.
+
 Because the value at every position is a pure function of `(seed, i)`,
 the fill is the same body on both sides of the launch boundary, driven by
 `max.algorithm.elementwise` the way the distributions' `Tensor` overloads
@@ -81,8 +88,23 @@ from layout.tile_layout import row_major
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
-from ..core.tensor import Static, _LayoutOf, _context, _product
-from .statistics import _target
+from ..core.tensor import (
+    Dynamic,
+    Static,
+    _LayoutOf,
+    arange_n,
+    _context,
+    _dyn_shape,
+    _product,
+    _same_order,
+    transpose,
+)
+from ..core.tensorlike import TensorLike, dim
+from ..core.sorting import argsort, searchsorted, take
+from ..core.elementwise import clip
+from ..linalg.blas import matmul
+from ..linalg.cholesky import cholesky
+from .statistics import _target, cumsum
 
 comptime _TWO_PI = 6.283185307179586
 
@@ -687,6 +709,12 @@ def seed(value: Int):
     _std_seed(value)
 
 
+def _as_vector[T: TensorLike](x: T) raises -> Dynamic[T.dtype, 1]:
+    """`x`'s elements as a rank-1 run-time-shaped tensor on its device, the
+    shape `take` can prove its axis against from inside a generic method."""
+    return _same_order(x, row_major(_dyn_shape[1](x.size())))
+
+
 struct Generator(Copyable):
     """A named, reproducible source of draws. `numpy.random.Generator`.
 
@@ -1078,3 +1106,263 @@ struct Generator(Copyable):
             return _fill[dtype, W, _binomial_step[dtype, W], gpu, *dims](
                 self._advance(), Scalar[W](n), Scalar[W](p), ctx
             )
+
+    def spawn(mut self, count: Int) -> List[Generator]:
+        """`count` independent child generators.
+        `numpy.random.Generator.spawn`.
+
+        Each child's seed is two fresh words of this generator's Philox
+        stream at a distant offset, so children do not overlap each other
+        or the parent's draws; the parent's seed then advances by one.
+
+        Args:
+            count: How many children.
+
+        Returns:
+            The children, each its own reproducible stream.
+        """
+        var base = self._advance()
+        var children = List[Generator](capacity=count)
+        for k in range(count):
+            var r = Random(seed=base, offset=UInt64(1) << 40 | UInt64(k))
+            var words = r.step()
+            var child_seed = (UInt64(words[0]) << 32) | UInt64(words[1])
+            children.append(Generator(seed=Int(child_seed)))
+        return children^
+
+    def permutation[
+        n: Int, gpu: Bool = False
+    ](mut self, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
+        DType.int64, 1
+    ]:
+        """A random permutation of `0 .. n-1`.
+        `numpy.random.Generator.permutation(n)`.
+
+        `argsort` of `n` uniform keys, on the device at `gpu=True`. Keys that
+        tie keep their index order, a bias far below any sample size that
+        could detect it (`2^-24` per pair at `float32`, `2^-53` at
+        `float64`).
+
+        Parameters:
+            n: The length of the permutation.
+            gpu: Whether to draw and sort on `ctx`'s device.
+
+        Args:
+            ctx: The device to allocate on; `None` means the host.
+
+        Returns:
+            A `Dynamic` rank-1 `int64` tensor holding each index once.
+
+        Raises:
+            When allocation, the fill or the sort fails.
+        """
+        comptime key_dtype = DType.float32 if gpu else DType.float64
+        var keys = self.uniform[key_dtype, n, gpu=gpu](ctx=ctx)
+        return argsort[gpu=gpu](keys)
+
+    def permutation[
+        T: TensorLike, gpu: Bool = False
+    ](mut self, x: T) raises -> Dynamic[T.dtype, 1] where (
+        T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
+    ):
+        """`x` in a random order, a copy. `numpy.random.Generator.permutation(x)`
+        for a vector.
+
+        Parameters:
+            T: The tensor type of `x`, rank 1, static length.
+            gpu: Whether to draw, sort and gather on `x`'s device.
+
+        Args:
+            x: The values to permute.
+
+        Returns:
+            A new `Dynamic` tensor with `x`'s elements in a random order.
+
+        Raises:
+            When allocation, the fill, the sort or the gather fails.
+        """
+        comptime n = dim[T, 0]
+        var order = self.permutation[n, gpu=gpu](x.context())
+        return take[axis=0, gpu=gpu](_as_vector(x), order)
+
+    def shuffle[
+        dtype: DType, n: Int, gpu: Bool = False
+    ](mut self, mut x: Static[dtype, n]) raises:
+        """Shuffle `x` in place. `numpy.random.Generator.shuffle` for a
+        vector: `permutation(x)` copied back into `x`'s own buffer, on its
+        device.
+
+        Parameters:
+            dtype: The element type of `x`.
+            n: The length of `x`.
+            gpu: Whether to draw, sort and gather on `x`'s device.
+
+        Args:
+            x: The vector to shuffle.
+
+        Raises:
+            When allocation, the fill, the sort, the gather or the copy fails.
+        """
+        var shuffled = self.permutation[gpu=gpu](x)
+        x.context().enqueue_copy(x._buffer, shuffled._buffer)
+        x.context().synchronize()
+
+    def choice[
+        T: TensorLike, size: Int, replace: Bool = True, gpu: Bool = False
+    ](mut self, a: T) raises -> Dynamic[T.dtype, 1] where (
+        T.LayoutType.rank == 1 and T.LayoutType.all_dims_known and size >= 0
+    ):
+        """`size` elements of `a` drawn uniformly, with or without
+        replacement. `numpy.random.Generator.choice(a, size, replace)`.
+
+        With replacement it is `size` uniform integers gathered from `a`;
+        without, the first `size` of a random permutation, which needs
+        `size <= len(a)`.
+
+        Parameters:
+            T: The tensor type of `a`, rank 1, static length.
+            size: How many to draw.
+            replace: Whether an element may be drawn more than once.
+            gpu: Whether to draw and gather on `a`'s device.
+
+        Args:
+            a: The population.
+
+        Returns:
+            A new `Dynamic` tensor of the draws.
+
+        Raises:
+            When `replace` is `False` and `size > len(a)`, or a device
+            operation fails.
+        """
+        comptime n = dim[T, 0]
+        var ctx = a.context()
+        comptime if replace:
+            var idx = self.randint[DType.int64, size, gpu=gpu](0, n, ctx=ctx)
+            return take[axis=0, gpu=gpu](_as_vector(a), idx)
+        else:
+            if size > n:
+                raise Error(
+                    "choice: cannot take ",
+                    size,
+                    " of ",
+                    n,
+                    " without replacement",
+                )
+            var order = self.permutation[n, gpu=gpu](ctx)
+            var first = arange_n[size, DType.int64](ctx=ctx)
+            var head = take[axis=0, gpu=gpu](order, first)
+            return take[axis=0, gpu=gpu](_as_vector(a), head)
+
+    def choice[
+        T: TensorLike, P: TensorLike, size: Int, gpu: Bool = False
+    ](mut self, a: T, p: P) raises -> Dynamic[T.dtype, 1] where (
+        T.LayoutType.rank == 1
+        and T.LayoutType.all_dims_known
+        and P.LayoutType.rank == 1
+        and P.LayoutType.all_dims_known
+        and P.dtype.is_floating_point()
+        and size >= 0
+    ):
+        """`size` elements of `a` drawn with replacement at the weights `p`.
+        `numpy.random.Generator.choice(a, size, p=p)`.
+
+        Inversion: the running sum of `p`, one uniform per draw scaled by the
+        total, and `searchsorted` into the sum -- all on `a`'s device at
+        `gpu=True`. `p` need not sum to exactly 1; it is normalized by its
+        total, where NumPy raises unless it sums to 1.
+
+        Parameters:
+            T: The tensor type of `a`, rank 1, static length.
+            P: The tensor type of `p`, rank 1, floating-point, as long as `a`.
+            size: How many to draw.
+            gpu: Whether to draw and gather on `a`'s device.
+
+        Args:
+            a: The population.
+            p: The nonnegative weights, one per element of `a`.
+
+        Returns:
+            A new `Dynamic` tensor of the draws.
+
+        Raises:
+            When `p` is not as long as `a`, or a device operation fails.
+        """
+        comptime n = dim[T, 0]
+        comptime pd = P.dtype
+        if p.size() != n:
+            raise Error(
+                "choice: p has ", p.size(), " weights for ", n, " elements"
+            )
+        var ctx = a.context()
+        var cdf = cumsum[gpu=gpu](p)
+        var total = cdf[n - 1]
+        var u = self.uniform[pd, size, gpu=gpu](
+            Scalar[pd](0), Scalar[pd](total), ctx=ctx
+        )
+        var idx = searchsorted[right=True, gpu=gpu](cdf, u)
+        var clipped = clip[gpu=gpu](idx, Int64(0), Int64(n - 1))
+        return take[axis=0, gpu=gpu](_as_vector(a), clipped)
+
+    def multivariate_normal[
+        M: TensorLike, C: TensorLike, count: Int, gpu: Bool = False
+    ](mut self, mean: M, cov: C) raises -> Static[
+        M.dtype, count, dim[M, 0]
+    ] where (
+        M.dtype.is_floating_point()
+        and C.dtype.is_floating_point()
+        and C.dtype == M.dtype
+        and M.LayoutType.rank == 1
+        and M.LayoutType.all_dims_known
+        and C.LayoutType.rank == 2
+        and C.LayoutType.all_dims_known
+        and dim[C, 0] == dim[M, 0]
+        and dim[C, 1] == dim[C, 0]
+    ):
+        """`count` draws from the multivariate normal with the given `mean`
+        and covariance `cov`, one per row.
+        `numpy.random.Generator.multivariate_normal(mean, cov, count,
+        method="cholesky")`.
+
+        `z L^T + mean` with `z` standard normal and `L` the Cholesky factor
+        of `cov`, which must be positive definite: the draws, the
+        factorization and the product all on `mean`'s device at `gpu=True`.
+
+        Parameters:
+            M: The tensor type of `mean`, rank 1, static length `d`.
+            C: The tensor type of `cov`, `d x d`, same dtype.
+            count: How many draws.
+            gpu: Whether to draw and compute on `mean`'s device.
+
+        Args:
+            mean: The mean vector.
+            cov: The covariance matrix, symmetric positive definite.
+
+        Returns:
+            A `count x d` tensor, one draw per row.
+
+        Raises:
+            When `cov` is not positive definite, or a device operation fails.
+        """
+        comptime dtype = M.dtype
+        comptime d = dim[M, 0]
+        var ctx = mean.context()
+        var z = self.normal[dtype, count, d, gpu=gpu](ctx=ctx)
+        var lower = cholesky[gpu=gpu](cov)
+        var upper = transpose[gpu=gpu](lower)
+        var out = rebind_var[Static[dtype, count, d]](matmul[gpu=gpu](z, upper))
+        var mp = mean.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var op = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+        @always_inline
+        def shift[w: Int, alignment: Int = 1](coord: Coord) {var mp, var op}:
+            var f = coord_to_index_list(coord)[0]
+            op[unsafe_offset=f] = op[unsafe_offset=f] + rebind[Scalar[dtype]](
+                mp[unsafe_offset=f % d]
+            )
+
+        elementwise[simd_width=1, target=_target[gpu]()](
+            shift, Coord(count * d), ctx
+        )
+        ctx.synchronize()
+        return out^
