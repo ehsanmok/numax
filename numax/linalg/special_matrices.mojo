@@ -87,6 +87,23 @@ def toeplitz[
     both the first row and the first column, and `c[0]` is the one that
     wins. Passing an `r` whose first entry disagrees with `c[0]` is not an
     error and not a silent average -- it is `c[0]`.
+
+    Parameters:
+        A: The `TensorLike` type of `c`, a rank-1 vector of length `m`.
+        B: The `TensorLike` type of `r`, a rank-1 vector of length `n` with
+            `c`'s dtype.
+        gpu: Whether the fill runs as an `elementwise` kernel on `c`'s
+            accelerator rather than on the host.
+
+    Args:
+        c: The first column, length `m`.
+        r: The first row, length `n`; `r[0]` is ignored.
+
+    Returns:
+        The `m x n` Toeplitz matrix, on `c`'s device.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[B, 0]
@@ -123,6 +140,21 @@ def toeplitz[
     which is the common case -- an autocorrelation matrix is exactly this
     shape -- and is what `numax.linalg.banded.solve_toeplitz` expects when
     it is handed a single vector.
+
+    Parameters:
+        T: The `TensorLike` type of `c`, a rank-1 vector of length `n`.
+        gpu: Whether the fill runs as an `elementwise` kernel on `c`'s
+            accelerator rather than on the host.
+
+    Args:
+        c: The first column and first row, length `n`.
+
+    Returns:
+        The `n x n` symmetric Toeplitz matrix `out[i, j] = c[abs(i - j)]`, on
+        `c`'s device.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     comptime n = dim[T, 0]
     var ctx = c.context()
@@ -162,6 +194,23 @@ def hankel[
     `r[0]` is ignored for the same reason `toeplitz` ignores it -- the
     bottom-left corner belongs to both `c`'s end and `r`'s start, and `c`
     wins.
+
+    Parameters:
+        A: The `TensorLike` type of `c`, a rank-1 vector of length `m`.
+        B: The `TensorLike` type of `r`, a rank-1 vector of length `n` with
+            `c`'s dtype.
+        gpu: Whether the fill runs as an `elementwise` kernel on `c`'s
+            accelerator rather than on the host.
+
+    Args:
+        c: The first column, length `m`.
+        r: The last row, length `n`; `r[0]` is ignored.
+
+    Returns:
+        The `m x n` Hankel matrix, on `c`'s device.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[B, 0]
@@ -200,6 +249,21 @@ def circulant[
 
     The index is written `(i - j + n) % n` rather than `(i - j) % n` so the
     negative case does not depend on how Mojo rounds a modulus.
+
+    Parameters:
+        T: The `TensorLike` type of `c`, a rank-1 vector of length `n`.
+        gpu: Whether the fill runs as an `elementwise` kernel on `c`'s
+            accelerator rather than on the host.
+
+    Args:
+        c: The first column, length `n`.
+
+    Returns:
+        The `n x n` circulant matrix `out[i, j] = c[(i - j) mod n]`, on `c`'s
+        device.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     comptime n = dim[T, 0]
     var ctx = c.context()
@@ -241,6 +305,23 @@ def companion[
     claims, and trimming it is the caller's decision to make rather than
     something to do silently: the two readings give different-sized
     matrices.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-1 floating-point vector of
+            length `n >= 2`.
+        gpu: Whether the fill runs as an `elementwise` kernel on `a`'s
+            accelerator rather than on the host.
+
+    Args:
+        a: The `n` polynomial coefficients, highest degree first; `a[0]` must
+            be nonzero.
+
+    Returns:
+        The `(n-1) x (n-1)` companion matrix, on `a`'s device; not finite when
+        `a[0]` is zero.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -289,6 +370,21 @@ def hilbert[
     `float64` and calling the result an inverse would be a claim numax
     cannot back; an exact one needs integer arithmetic this tier does not
     have.
+
+    Parameters:
+        n: The matrix order.
+        dtype: The floating-point element type.
+        gpu: Whether the fill runs as an `elementwise` kernel on `ctx`'s
+            accelerator rather than on the host.
+
+    Args:
+        ctx: The device to allocate on; the host when omitted.
+
+    Returns:
+        The `n x n` Hilbert matrix, on `ctx`'s device.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var out = Static[dtype, n, n]._uninitialized(device)
@@ -324,6 +420,23 @@ def block_diag[
     spelling here. Three blocks is `block_diag(block_diag(a, b), c)`, which
     costs one extra pass over the first result and is the composition SciPy
     is doing internally anyway.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a rank-2 `p x q` matrix.
+        B: The `TensorLike` type of `b`, a rank-2 `r x s` matrix with `a`'s
+            dtype.
+        gpu: Whether the fill runs as an `elementwise` kernel on `a`'s
+            accelerator rather than on the host.
+
+    Args:
+        a: The upper-left block, `p x q`.
+        b: The lower-right block, `r x s`.
+
+    Returns:
+        The `(p + r) x (q + s)` block-diagonal matrix, on `a`'s device.
+
+    Raises:
+        If the output allocation or the `elementwise` launch fails.
     """
     comptime rows_a = dim[A, 0]
     comptime cols_a = dim[A, 1]

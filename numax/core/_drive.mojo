@@ -287,6 +287,14 @@ def set_fallback(policy: StaticString) raises:
     The policy is process-wide and lives in the `NUMAX_FALLBACK`
     environment variable, so it can also be set before the program starts.
     Any other value raises here.
+
+    Args:
+        policy: One of `"warn"`, `"raise"` or `"silent"`, written to
+            `NUMAX_FALLBACK` for the rest of the process.
+
+    Raises:
+        Raises if `policy` is not one of the three names, or if the environment
+        variable cannot be set.
     """
     if not (policy == "warn" or policy == "raise" or policy == "silent"):
         raise Error(
@@ -301,7 +309,12 @@ def set_fallback(policy: StaticString) raises:
 def fallback_policy() -> String:
     """The residency-mismatch policy in force: `"warn"`, `"raise"` or
     `"silent"`. `"warn"` when `NUMAX_FALLBACK` is unset or holds anything
-    else, so a typo in the environment degrades to the safe default."""
+    else, so a typo in the environment degrades to the safe default.
+
+    Returns:
+        `"warn"`, `"raise"` or `"silent"`, read from `NUMAX_FALLBACK` with
+        `"warn"` as the fallback.
+    """
     var policy = getenv(_FALLBACK_VARIABLE, "warn")
     if policy == "raise" or policy == "silent":
         return policy

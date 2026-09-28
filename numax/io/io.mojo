@@ -73,6 +73,16 @@ struct nmx:
 
         See this module's own docstring for the format and for why this isn't
         NumPy's `.npy`.
+
+        Parameters:
+            T: The tensor type, a `Tensor` or `TensorView` of any rank.
+
+        Args:
+            a: The tensor to write; it is copied to the host first.
+            path: The file to create or overwrite.
+
+        Raises:
+            If the file cannot be opened or written.
         """
         comptime LayoutType = T.LayoutType
         comptime rank = LayoutType.rank
@@ -111,6 +121,22 @@ struct nmx:
         the `dtype`/`dims` requested here. The `DeviceContext` is what every
         `numax.core.tensor` root factory takes, for the same reason: the bytes have
         to land on a device, and the file does not name one.
+
+        Parameters:
+            dtype: The element type the file must have been saved with.
+            dims: The exact shape the file must carry, one extent per axis.
+
+        Args:
+            path: The `NMX1` file to read.
+            ctx: The device to allocate the result on; `None` means the host.
+
+        Returns:
+            A `Static[dtype, *dims]` tensor holding the file's payload.
+
+        Raises:
+            If the file cannot be read, its magic bytes are wrong, or its
+            dtype name, rank, shape, or payload size disagrees with the
+            request.
         """
         var f = open(path, "r")
         var data = f.read_bytes()

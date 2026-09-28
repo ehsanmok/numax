@@ -130,6 +130,25 @@ def rk4_system[
 
     `t1 < t0` integrates backwards; the step is `(t1 - t0) / num_steps` and
     nothing here assumes its sign.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y0`.
+        f: The right-hand side `f(t, y, ctx)`, returning `dy/dt` as a
+            `Static` tensor of `y`'s length; it runs wherever it launches.
+        num_steps: The number of equal steps from `t0` to `t1`.
+        gpu: Whether the stage combinations launch as GPU kernels on the
+            state's device context rather than on the CPU.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`, of length `dim[T, 0]`.
+        t1: The final time; `t1 < t0` integrates backward.
+
+    Returns:
+        The state at `t1`, as a `Static` tensor on `y0`'s device.
+
+    Raises:
+        If `f` raises, or if a tensor copy or kernel launch fails.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -280,7 +299,28 @@ def dopri5[
 ):
     """Integrate the system with fixed-step Dormand-Prince 5(4). The
     `Tensor` form of `numax.integrate.dopri5`: fifth order for seven
-    stages per step, against `rk4_system`'s fourth for four."""
+    stages per step, against `rk4_system`'s fourth for four.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y0`.
+        f: The right-hand side `f(t, y, ctx)`, returning `dy/dt` as a
+            `Static` tensor of `y`'s length; it runs wherever it launches.
+        num_steps: The number of equal steps from `t0` to `t1`.
+        gpu: Whether the stage combinations launch as GPU kernels on the
+            state's device context rather than on the CPU.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`, of length `dim[T, 0]`.
+        t1: The final time; `t1 < t0` integrates backward.
+
+    Returns:
+        The fifth-order state at `t1`, as a `Static` tensor on `y0`'s
+        device.
+
+    Raises:
+        If `f` raises, or if a tensor copy or kernel launch fails.
+    """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     var h = (t1 - t0) / Float64(num_steps)
@@ -300,7 +340,21 @@ def dopri5[
 ](t0: T, y0: T, t1: T) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.integrate._array.ode.dopri5`."""
+    at `numax.integrate._array.ode.dopri5`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the time and the scalar state.
+        f: The right-hand side `f(t, y)`, a `FloatLike`-generic kernel.
+        num_steps: The number of equal steps from `t0` to `t1`.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`.
+        t1: The final time; `t1 < t0` integrates backward.
+
+    Returns:
+        The fifth-order state at `t1`.
+    """
     return _array_dopri5[T=T, f=f, num_steps=num_steps](t0, y0, t1)
 
 
@@ -322,5 +376,21 @@ def rk4_system[
 ](t0: T, y0: Array[T, n], t1: T) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.integrate._array.ode.rk4_system`."""
+    at `numax.integrate._array.ode.rk4_system`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the time and each state component.
+        n: The number of state components.
+        f: The right-hand side `f(t, y)`, returning `dy/dt` as an
+            `Array[U, n]`.
+        num_steps: The number of equal steps from `t0` to `t1`.
+
+    Args:
+        t0: The initial time.
+        y0: The `n`-component state at `t0`.
+        t1: The final time; `t1 < t0` integrates backward.
+
+    Returns:
+        The `n`-component state at `t1`.
+    """
     return _array_rk4_system[T=T, n=n, f=f, num_steps=num_steps](t0, y0, t1)

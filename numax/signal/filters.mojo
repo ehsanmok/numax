@@ -498,6 +498,26 @@ def lfilter[
     which is also where SciPy computes it.
     `numax.signal.lfilter` is the tier-1 form that runs per SIMD lane
     inside a kernel.
+
+    Parameters:
+        A: Rank-1 static-length floating-point tensor type of `b`.
+        B: Rank-1 static-length tensor type of `a`, same dtype.
+        C: Rank-1 static-length tensor type of `x`, same dtype.
+        gpu: Run the block-parallel device recurrence when `True` and `x`
+            is on a device; a residency mismatch falls back to the host
+            with a notice.
+
+    Args:
+        b: Numerator (feed-forward) coefficients.
+        a: Denominator (feedback) coefficients; `a[0]` must be nonzero.
+        x: Signal to filter.
+
+    Returns:
+        The filtered signal, the same length as `x`, on `x`'s device.
+
+    Raises:
+        If `a[0]` is zero, the fallback policy is `"raise"` on a residency
+        mismatch, or a device operation fails.
     """
     comptime na = dim[B, 0]
     comptime n = dim[C, 0]
@@ -672,6 +692,29 @@ def filtfilt[
     so no reversed copy is ever built. The extension is the only allocation,
     and its length is a run-time `n + 2 padlen`, which is why it is a
     `List[Scalar[A.dtype]]` rather than a `Static`.
+
+    Parameters:
+        A: Rank-1 static-length floating-point tensor type of `b`.
+        B: Rank-1 static-length tensor type of `a`, same dtype.
+        C: Rank-1 static-length tensor type of `x`, same dtype.
+        gpu: Run the block-parallel device recurrence when `True` and `x`
+            is on a device; a residency mismatch falls back to the host
+            with a notice.
+
+    Args:
+        b: Numerator (feed-forward) coefficients.
+        a: Denominator (feedback) coefficients; `a[0]` must be nonzero.
+        x: Signal to filter, longer than `padlen`.
+        padlen: Odd-extension length at each end; `None` means
+            `3 * max(len(a), len(b))`.
+
+    Returns:
+        The zero-phase filtered signal, the same length as `x`.
+
+    Raises:
+        If `x` is not longer than `padlen`, `a[0]` is zero, the fallback
+        policy is `"raise"` on a residency mismatch, or a device operation
+        fails.
     """
     comptime nb = dim[A, 0]
     comptime na = dim[B, 0]
@@ -753,6 +796,26 @@ def sosfilt[
     The cascade runs in **one** buffer: `x` is copied into the result once
     and each section filters that buffer in place, so `sections` passes
     cost one allocation rather than `sections` intermediate signals.
+
+    Parameters:
+        A: Rank-2 `(sections, 6)` static floating-point tensor type of
+            `sos`.
+        B: Rank-1 static-length tensor type of `x`, same dtype.
+        gpu: Run each section's block-parallel device recurrence when
+            `True` and `x` is on a device; a residency mismatch falls back
+            to the host with a notice.
+
+    Args:
+        sos: Second-order sections, one `[b0, b1, b2, a0, a1, a2]` row
+            each, applied top to bottom.
+        x: Signal to filter.
+
+    Returns:
+        The filtered signal, the same length as `x`.
+
+    Raises:
+        If a section's `a0` is zero, the fallback policy is `"raise"` on a
+        residency mismatch, or a device operation fails.
     """
     comptime sections = dim[A, 0]
     comptime n = dim[B, 0]
@@ -827,6 +890,21 @@ def medfilt[
     which for the window sizes a median filter uses is faster than anything
     cleverer. `kernel_size` is a compile-time parameter because the
     register array's length is; SciPy requires it odd and so does this.
+
+    Parameters:
+        T: Rank-1 static-length floating-point tensor type.
+        kernel_size: Odd window length, 3 by default.
+        gpu: Launch on the device holding `x` when `True`, on the host
+            when `False`.
+
+    Args:
+        x: Signal to filter.
+
+    Returns:
+        The running median, the same length as `x`, on `x`'s device.
+
+    Raises:
+        If the launch or allocation on `x`'s device fails.
     """
     comptime n = dim[T, 0]
     comptime assert kernel_size % 2 == 1, "medfilt: kernel_size must be odd"
@@ -880,6 +958,23 @@ def detrend[
     The line comes from the closed-form normal equations over the sample
     index: two reductions (`mean`, and `dot` against the index) and one
     launch to subtract, all device-resident. An unknown `type` raises.
+
+    Parameters:
+        T: Rank-1, row-major, static-length floating-point tensor type.
+        gpu: Run the reductions and the subtraction on the device holding
+            `x` when `True`, on the host when `False`.
+
+    Args:
+        x: Signal to detrend.
+        type: `"linear"` to remove the least-squares line, `"constant"` to
+            remove the mean.
+
+    Returns:
+        `x` minus its trend, the same length, on `x`'s device.
+
+    Raises:
+        If `type` is not `"linear"` or `"constant"`, or a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     if not (type == "linear" or type == "constant"):
@@ -1029,6 +1124,28 @@ def savgol_filter[
     coefficient array's is; `window_length` must be odd (a `comptime
     assert`, since the `where` prover cannot evaluate `%`), `polyorder`
     less than it, and for `"interp"` no longer than the signal.
+
+    Parameters:
+        T: Rank-1 static-length floating-point tensor type.
+        window_length: Odd number of samples in each fit.
+        polyorder: Degree of the fitted polynomial, below `window_length`.
+        deriv: Order of the derivative to return; `0` smooths.
+        gpu: Launch the correlation on the device holding `x` when `True`,
+            on the host when `False`.
+
+    Args:
+        x: Signal to filter.
+        delta: Sample spacing the derivative is taken against.
+        mode: Edge handling: `"interp"`, `"nearest"`, `"mirror"`, `"wrap"`
+            or `"constant"`.
+        cval: Fill value past the ends for `mode="constant"`.
+
+    Returns:
+        The filtered signal (or its derivative), the same length as `x`.
+
+    Raises:
+        If `mode` is unknown, `window_length` exceeds the signal under
+        `"interp"`, a fit is singular, or a device operation fails.
     """
     comptime n = dim[T, 0]
     if not (
@@ -1287,6 +1404,21 @@ def resample[
     Two transforms around a reshuffle of the spectrum, `O(n)` against their
     `O(n log n)`. At `gpu=True` the reshuffle is one device launch too, so
     nothing crosses to the host; on the host it is a loop.
+
+    Parameters:
+        T: Rank-1 static-length floating-point tensor type.
+        num: Number of output samples.
+        gpu: Run both transforms, and the spectrum reshuffle when `x` is
+            on a device, on the device when `True`.
+
+    Args:
+        x: Signal to resample, treated as periodic.
+
+    Returns:
+        The length-`num` resampled signal on `x`'s device.
+
+    Raises:
+        If a transform or device operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = x.context()
@@ -1375,6 +1507,25 @@ def firwin[
 
     Host arithmetic, uploaded once; a design is a table, not a kernel. The
     `Array` tier's `firwin` is the lowpass case of this.
+
+    Parameters:
+        dtype: Floating-point element type of the taps.
+        numtaps: Filter length; odd when the response passes Nyquist.
+
+    Args:
+        cutoff: Ascending band edges as fractions of Nyquist, each strictly
+            inside `(0, 1)`.
+        pass_zero: Whether the band starting at zero frequency passes.
+        window: `get_window` name of the symmetric taper.
+        scale: Normalize to unit gain at the center of the first pass band.
+        ctx: Device to upload the taps to; `None` uses the host.
+
+    Returns:
+        The length-`numtaps` FIR coefficients on `ctx`.
+
+    Raises:
+        If a cutoff lies outside `(0, 1)`, an even `numtaps` must pass
+        Nyquist, `window` is unknown, or allocation fails.
     """
     var edges = len(cutoff)
     var pass_nyquist = ((edges % 2) == 1) != pass_zero
@@ -1490,7 +1641,18 @@ def decimate[
 def firwin[T: FloatLike, n: Int](cutoff: T) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.firwin`."""
+    at `numax.signal._array.signal.firwin`.
+
+    Parameters:
+        T: `FloatLike` conformer of the cutoff and taps.
+        n: Number of taps.
+
+    Args:
+        cutoff: Lowpass cutoff as a fraction of Nyquist.
+
+    Returns:
+        The `n` Hamming-windowed lowpass taps, scaled to unit gain at DC.
+    """
     return _array_firwin[T=T, n=n](cutoff)
 
 
@@ -1499,5 +1661,20 @@ def lfilter[
 ](b: Array[T, nb], a: Array[T, na], x: Array[T, n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.lfilter`."""
+    at `numax.signal._array.signal.lfilter`.
+
+    Parameters:
+        T: `FloatLike` conformer of every element.
+        n: Signal length.
+        nb: Number of numerator coefficients.
+        na: Number of denominator coefficients.
+
+    Args:
+        b: Numerator (feed-forward) coefficients.
+        a: Denominator (feedback) coefficients; `a[0]` is divided out.
+        x: Signal to filter, from a zero initial state.
+
+    Returns:
+        The length-`n` filtered signal.
+    """
     return _array_lfilter[T=T, n=n, nb=nb, na=na](b, a, x)

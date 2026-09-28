@@ -393,6 +393,21 @@ def mean[
     MAX's `Welford` monoid, as the whole-tensor `mean` above. The variance
     the monoid also produces is discarded here; `variance_axis` returns
     both from the one traversal for a caller that wants them together.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        gpu: Whether to fold on `xs`'s device; the Welford reduction
+            runs wherever `xs` lives, so `gpu=True` needs a device `xs`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        A run-time-shaped tensor of rank `rank - 1` holding each slice's mean.
+
+    Raises:
+        If a device allocation, launch or copy fails.
     """
     var means = _axis_dst[axis=axis](xs)
     var variances = _axis_dst[axis=axis](xs)
@@ -612,6 +627,20 @@ def mean[
     `Plain`-only: a mean is a single scalar with no derivative to
     propagate through the division by a plain `Int` count, so there is no
     axis-1 win here the way there is for `variance`/`stddev`/`cumsum`.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        gpu: Whether to fold on `xs`'s device; the Welford reduction
+            runs wherever `xs` lives, so `gpu=True` needs a device `xs`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        The mean of every element of `xs`.
+
+    Raises:
+        If a device allocation, launch or copy fails.
     """
     var pair = _welford[gpu=gpu](xs, 0)
     return pair[0]
@@ -706,6 +735,21 @@ def median[
     two-element gather, so only the middle pair comes back. There a NaN
     anywhere makes the median NaN, as NumPy has it; the host selection
     does not look for one.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        The median of every element of `xs`; NaN when `xs` is empty.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -872,6 +916,23 @@ def median[
     is `_median_of`'s, the same one the whole-tensor overload uses. More
     than `2^24` slices, or empty ones, take the host path; so does a
     residency mismatch, with the `_drive` notice.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor; it must be row-major.
+
+    Returns:
+        A run-time-shaped tensor of rank `rank - 1` holding each slice's median,
+        resident where `xs` is.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -945,6 +1006,22 @@ def mode[
     `gpu=True`, with `xs` on a device, both run there (a device sort, then
     `_slice_modes_device` over one slice) and one scalar comes back. A
     residency mismatch takes the host path with the `_drive` notice.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor; it must have at least one element.
+
+    Returns:
+        The most frequent element of `xs`, the smallest among ties.
+
+    Raises:
+        If `xs` is a non-contiguous device view, if a device allocation,
+        launch or copy fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
     """
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -972,7 +1049,26 @@ def mode[
     once and `_slice_modes_device` finds each slice's longest run; the
     result stays on the device. More than `2^24` slices, or empty ones,
     take the host path; so does a residency mismatch, with the `_drive`
-    notice."""
+    notice.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor; every slice along `axis` must be non-empty.
+
+    Returns:
+        A run-time-shaped tensor of rank `rank - 1` holding each slice's mode,
+        the smallest among ties, resident where `xs` is.
+
+    Raises:
+        If `xs` is a non-contiguous device view, if a device allocation,
+        launch or copy fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     var split = _axis_split[axis=axis](xs)
@@ -1024,6 +1120,21 @@ def argmax[
     the comparison already does and `xs` is never downloaded. The first
     index wins a tie, NumPy's rule. The axis-wise form below stays on
     `nn.argmaxmin`, which is the only MAX entry point that takes an axis.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor; it must be row-major and non-empty.
+
+    Returns:
+        The flat row-major index of the first largest element.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
@@ -1042,7 +1153,23 @@ def argmin[
     T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Int where is_row_major[T] and T.dtype.is_floating_point():
     """The flat index of the smallest element of `xs`. `numpy.argmin(a)`,
-    `argmax`'s mirror through MAX's `ArgMin` monoid."""
+    `argmax`'s mirror through MAX's `ArgMin` monoid.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor; it must be row-major and non-empty.
+
+    Returns:
+        The flat row-major index of the first smallest element.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("argmin")
@@ -1182,6 +1309,23 @@ def argmax[
     Indices are positions *along `axis`*, not flat ones -- which is why
     this returns a tensor where the whole-tensor overload returns a single
     flat `Int`.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        An `int64` tensor of rank `rank - 1` holding, for each slice, the
+        position along `axis` of its first largest element.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     return _argn_axis[axis=axis, largest=True, gpu=gpu](xs)
 
@@ -1195,6 +1339,23 @@ def argmin[
     and T.LayoutType.rank > 1
 ):
     """Indices of the smallest element along `axis`. `numpy.argmin(a, axis=k)`.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        An `int64` tensor of rank `rank - 1` holding, for each slice, the
+        position along `axis` of its first smallest element.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     return _argn_axis[axis=axis, largest=False, gpu=gpu](xs)
 
@@ -1211,11 +1372,10 @@ def _scan_axis[
     accurate than the obvious loop. There is no `nn.cumprod`, so the
     product half is numax's own walk over `_axis_split`'s decomposition.
 
-    `ponytail:` both halves are host-side. `nn.cumsum` has no `target` and
-    no `DeviceContext` -- the graph operator takes a context and drops it,
-    so `mo.cumsum` has no GPU kernel either -- and a device scan is a
-    blocked Blelloch pass rather than a flag on this one, so it is a
-    separate commit rather than a parameter here.
+    This is the host half. `nn.cumsum` has no `target` and no
+    `DeviceContext` -- the graph operator takes a context and drops it, so
+    `mo.cumsum` has no GPU kernel either -- so the device half is numax's
+    own `_scan_device`, which `cumsum`/`cumprod` select under `gpu=True`.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -1260,8 +1420,23 @@ def cumprod[
     it always was; at higher rank it flattens, which is what
     `numpy.cumprod` with no `axis` does.
 
-    **Host-side**: a scan carries every prefix forward, so it is not one of
-    MAX's monoids and takes no `gpu` parameter, unlike `prod`.
+    A scan carries every prefix forward, so it is not one of MAX's monoids;
+    `gpu=True` runs numax's own device scan over `xs` where it lives.
+
+    Parameters:
+        T: The tensor type of `xs`; its layout must be fully static.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        A rank-1 static tensor of `xs.size()` running products, row-major.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -1290,7 +1465,23 @@ def cumprod[
     """The running product along `axis`. `numpy.cumprod(a, axis=k)`.
 
     Keeps `xs`'s shape rather than dropping the axis -- a scan is not a
-    reduction, and so runs **host-side** with no `gpu` parameter.
+    reduction. `gpu=True` runs one device scan per line along `axis`.
+
+    Parameters:
+        T: The tensor type of `xs`.
+        axis: The axis to scan along, in `[0, rank)`; the shape is kept.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        A tensor of `xs`'s layout holding the running products along `axis`.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -1326,6 +1517,21 @@ def variance[
 
     The `List[T]` form below is the `FloatLike`-generic one -- call that at
     `Compensated` when the summation length is what threatens the result.
+
+    Parameters:
+        T: The tensor type of `xs`; its `dtype` must be floating point.
+        gpu: Whether to fold on `xs`'s device; the Welford reduction
+            runs wherever `xs` lives, so `gpu=True` needs a device `xs`.
+
+    Args:
+        xs: The input tensor.
+        ddof: Delta degrees of freedom; the divisor is `xs.size() - ddof`.
+
+    Returns:
+        The variance of every element of `xs`.
+
+    Raises:
+        If a device allocation, launch or copy fails.
     """
     var pair = _welford[gpu=gpu](xs, ddof)
     return pair[1]
@@ -1341,6 +1547,22 @@ def stddev[
     Named `stddev`, not NumPy's `std`, for the reason the `List[T]` form
     below documents: `std` is Mojo's standard library package and cannot be
     defined as a function name at all.
+
+    Parameters:
+        T: The row-major tensor type of `xs`; its `dtype` must be floating
+            point.
+        gpu: Whether to fold on `xs`'s device; the Welford reduction
+            runs wherever `xs` lives, so `gpu=True` needs a device `xs`.
+
+    Args:
+        xs: The input tensor.
+        ddof: Delta degrees of freedom; the divisor is `xs.size() - ddof`.
+
+    Returns:
+        The square root of `variance(xs, ddof)`.
+
+    Raises:
+        If a device allocation, launch or copy fails.
     """
     return _sqrt(variance[gpu=gpu](xs, ddof))
 
@@ -1351,7 +1573,24 @@ def ptp[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The range of `xs`, `max - min` -- "peak to peak". `numpy.ptp`. The
-    two whole-tensor reductions, so host-side as they are."""
+    two whole-tensor reductions, so host-side as they are.
+
+    Parameters:
+        T: The row-major tensor type of `xs`; its `dtype` must be floating
+            point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor; it must have at least one element.
+
+    Returns:
+        The largest element of `xs` minus the smallest.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
+    """
     return max[gpu=gpu](xs) - min[gpu=gpu](xs)
 
 
@@ -1362,7 +1601,23 @@ def average[
 ):
     """The plain mean: `numpy.average(a)` without weights is `numpy.mean`.
     Here so that the weighted overload below has its unweighted twin under
-    the same name."""
+    the same name.
+
+    Parameters:
+        T: The row-major tensor type of `xs`; its `dtype` must be floating
+            point.
+        gpu: Whether to fold on `xs`'s device; the Welford reduction
+            runs wherever `xs` lives, so `gpu=True` needs a device `xs`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        The unweighted mean of every element of `xs`.
+
+    Raises:
+        If a device allocation, launch or copy fails.
+    """
     return mean[gpu=gpu](xs)
 
 
@@ -1379,6 +1634,23 @@ def average[
     axis form this does not have. A second overload rather than an
     `Optional[Tensor]`, since a `Tensor` is not implicitly copyable into
     one.
+
+    Parameters:
+        T: The row-major tensor type of `xs` and `weights`; its `dtype` must
+            be floating point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+        weights: The per-element weights, the same shape as `xs`.
+
+    Returns:
+        `sum(weights * xs) / sum(weights)`.
+
+    Raises:
+        If the weights sum to zero, if a device allocation, launch or copy
+        fails, or on a residency mismatch under the `"raise"` fallback policy.
     """
     var total = sum[gpu=gpu](weights)
     if total == 0:
@@ -1402,6 +1674,25 @@ def moment[
     zero rather than as the rounding noise the subtraction would leave,
     which is SciPy's short-circuit too. One elementwise pass and one
     reduction, host-side as those are.
+
+    Parameters:
+        T: The row-major tensor type of `xs`; its `dtype` must be floating
+            point.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+        order: The moment's order, non-negative; `0` returns `1`.
+        center: The point the moment is taken about; `None` means the mean
+            of `xs`.
+
+    Returns:
+        The mean of `(xs - center) ** order`.
+
+    Raises:
+        If `order` is negative, if a device allocation, launch or copy fails,
+        or on a residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     if order < 0:
@@ -1431,8 +1722,24 @@ def cumsum[
     The counterpart of `cumprod`; the `List[T]` form below is the
     `FloatLike`-generic one. Rank-1 in gives rank-1 out at the same length,
     and at higher rank it flattens, which is what `numpy.cumsum` with no
-    `axis` does. **Host-side**: `nn.cumsum` is called over a host copy, and
-    there is no `gpu` parameter the way `sum` has one.
+    `axis` does. The host path calls `nn.cumsum` over a host copy;
+    `gpu=True` runs numax's device scan, since `nn.cumsum` has no device
+    path.
+
+    Parameters:
+        T: The tensor type of `xs`; its layout must be fully static.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        A rank-1 static tensor of `xs.size()` running sums, row-major.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -1461,8 +1768,24 @@ def cumsum[
     """The running sum along `axis`. `numpy.cumsum(a, axis=k)`.
 
     Keeps `xs`'s shape rather than dropping the axis -- a scan is not a
-    reduction. Routed to `nn.cumsum` over a host copy, **host-side** with no
-    `gpu` parameter.
+    reduction. The host path routes to `nn.cumsum` over a host copy;
+    `gpu=True` runs one device scan per line along `axis`.
+
+    Parameters:
+        T: The tensor type of `xs`.
+        axis: The axis to scan along, in `[0, rank)`; the shape is kept.
+        gpu: Whether to run on `xs`'s device; a residency mismatch falls
+            back to the host walk with a notice on `stderr`.
+
+    Args:
+        xs: The input tensor.
+
+    Returns:
+        A tensor of `xs`'s layout holding the running sums along `axis`.
+
+    Raises:
+        If a device allocation, launch or copy fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -1485,6 +1808,15 @@ def mean[T: FloatLike](xs: List[T]) -> T:
     Also the helper `variance` composes with below -- calling this at
     `Compensated` keeps the running sum in extra precision before the
     final division, the same axis-1 win `variance`/`std`/`cumsum` document.
+
+    Parameters:
+        T: The `FloatLike` conformer the values and the sum are held in.
+
+    Args:
+        xs: The values to average; an empty list divides by zero.
+
+    Returns:
+        The sum of `xs` divided by `len(xs)`.
     """
     var acc = T.constant(0.0)
     for x in xs:
@@ -1508,6 +1840,16 @@ def variance[T: FloatLike](xs: List[T], ddof: Int = 0) -> T:
     already measure this for a single running sum), and `Compensated`
     recovers it here for free -- this kernel was written once, against
     `FloatLike`, with no `Compensated`-specific code path.
+
+    Parameters:
+        T: The `FloatLike` conformer the values and the sums are held in.
+
+    Args:
+        xs: The values whose variance is taken.
+        ddof: Delta degrees of freedom; the divisor is `len(xs) - ddof`.
+
+    Returns:
+        The sum of squared deviations from the mean over `len(xs) - ddof`.
     """
     var m = mean(xs)
     var acc = T.constant(0.0)
@@ -1525,6 +1867,16 @@ def stddev[T: FloatLike](xs: List[T], ddof: Int = 0) -> T:
     scope, and a top-level `def std(...)` collides with it outright
     ("invalid redefinition of 'std'"), the same class of keyword/name
     collision `variance` above was renamed to avoid.
+
+    Parameters:
+        T: The `FloatLike` conformer the values and the sums are held in.
+
+    Args:
+        xs: The values whose standard deviation is taken.
+        ddof: Delta degrees of freedom; the divisor is `len(xs) - ddof`.
+
+    Returns:
+        The square root of `variance(xs, ddof)`.
     """
     return variance(xs, ddof).sqrt()
 
@@ -1536,6 +1888,15 @@ def cumsum[T: FloatLike](xs: List[T]) -> List[T]:
     running sum is exactly where `Compensated`'s extra precision earns its
     keep over `Plain`, and this kernel gets that for free by being written
     against the trait rather than a concrete `dtype`.
+
+    Parameters:
+        T: The `FloatLike` conformer the values and the sums are held in.
+
+    Args:
+        xs: The values to accumulate.
+
+    Returns:
+        A list of `len(xs)` running sums, `xs[0] + ... + xs[i]` at `i`.
     """
     var result = List[T](capacity=len(xs))
     var acc = T.constant(0.0)

@@ -107,17 +107,31 @@ trait TensorLike:
         once MAX's implicit origin cast has erased the origin at the call
         site. A view outliving the borrow is a compile error rather than a
         dangling pointer.
+
+        Returns:
+            A `TileTensor` over the storage at `origin_of(self)`.
         """
         ...
 
     def context(self) raises -> DeviceContext:
-        """The device the storage lives on."""
+        """The device the storage lives on.
+
+        Returns:
+            The `DeviceContext` the storage was allocated on.
+
+        Raises:
+            Raises if the conformer cannot produce its context.
+        """
         ...
 
     def on_host(self) -> Bool:
         """Whether the storage can be read through a plain host pointer:
         true on a CPU context, false on a discrete GPU. What a `gpu`-targeted
-        launch checks its operands against."""
+        launch checks its operands against.
+
+        Returns:
+            `True` on a CPU context, `False` on a GPU one.
+        """
         ...
 
     def to_host[dtype: DType = Self.dtype](self) raises -> List[Scalar[dtype]]:
@@ -130,12 +144,30 @@ trait TensorLike:
         rewrite one into the other from the clause; `b.to_host[A.dtype]()`
         is how it reads them at the type the body computes in. The cast is
         the identity at equal dtypes.
+
+        Parameters:
+            dtype: The element type of the returned list; defaults to
+                `Self.dtype`, and other values cast each element.
+
+        Returns:
+            A `List` of `size()` elements, row-major over the logical shape.
+
+        Raises:
+            Raises if the device-to-host copy fails.
         """
         ...
 
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from a host list, row-major over the
-        logical shape. The bulk write path on either device."""
+        logical shape. The bulk write path on either device.
+
+        Args:
+            values: The new elements, row-major over the logical shape.
+
+        Raises:
+            Raises if the host-to-device copy fails or `values` has the wrong
+            length.
+        """
         ...
 
     def tile_as[
@@ -148,6 +180,13 @@ trait TensorLike:
         and will not rewrite that into `Scalar[A.dtype]` from the clause,
         so the body reads `b.tile_as[A.dtype]()` instead. The bitcast is the
         identity at equal dtypes, which the clause guarantees.
+
+        Parameters:
+            dtype: The lane type to reinterpret the storage as, which must have
+                the width of `Self.dtype`.
+
+        Returns:
+            `tile()` bitcast to `dtype` lanes, same layout and origin.
         """
         var v = self.tile()
         return TileTensor[dtype, Self.LayoutType, origin_of(self)](
@@ -155,15 +194,33 @@ trait TensorLike:
         )
 
     def size(self) -> Int:
-        """The run-time element count, read from the layout."""
+        """The run-time element count, read from the layout.
+
+        Returns:
+            The product of the run-time extents.
+        """
         return self.tile().layout.size()
 
     def dim[i: Int](self) -> Int:
-        """The extent of axis `i`."""
+        """The extent of axis `i`.
+
+        Parameters:
+            i: The axis, in `[0, rank)`.
+
+        Returns:
+            The run-time extent of axis `i`.
+        """
         return Int(self.tile().layout.shape[i]().value())
 
     def dim_at(self, axis: Int) -> Int:
-        """The extent of `axis`, chosen at run time; `0` outside the rank."""
+        """The extent of `axis`, chosen at run time; `0` outside the rank.
+
+        Args:
+            axis: The axis, read at run time.
+
+        Returns:
+            The extent of `axis`, or `0` when `axis` is outside `[0, rank)`.
+        """
         var extent = 0
         comptime for i in range(Self.rank):
             if i == axis:
@@ -172,7 +229,15 @@ trait TensorLike:
 
     def stride_at(self, axis: Int) -> Int:
         """The stride of `axis` in elements, chosen at run time; `0` outside
-        the rank."""
+        the rank.
+
+        Args:
+            axis: The axis, read at run time.
+
+        Returns:
+            The stride of `axis` in elements, or `0` when `axis` is outside `[0,
+            rank)`.
+        """
         var stride = 0
         comptime for i in range(Self.rank):
             if i == axis:
@@ -262,6 +327,18 @@ struct TensorView[
         immutable borrow is not and is refused where it is written. The
         `TensorView` records the immutable form of its origin; the module
         docstring says why.
+
+        Parameters:
+            src: The mutable origin of `tile`, inferred; the view records its
+                immutable form.
+
+        Args:
+            tile: The mutable `TileTensor` to borrow.
+            ctx: The device the tile lives on; `None` (the default) means a host
+                view on a fresh CPU context.
+
+        Raises:
+            Raises if building the default CPU `DeviceContext` fails.
         """
         self._tile = tile.as_immut()
         self._ctx = ctx.value() if ctx else DeviceContext(api="cpu")
@@ -276,6 +353,9 @@ struct TensorView[
         yields a writable tile over storage that was mutable when the
         `TensorView` was built. The lifetime it names is this borrow's, which the
         tracked `origin` keeps inside the owner's.
+
+        Returns:
+            The wrapped `TileTensor` at `origin_of(self)`.
         """
         return TileTensor[Self.dtype, Self.LayoutType, origin_of(self)](
             ptr=self._tile.ptr.unsafe_mut_cast[
@@ -285,11 +365,22 @@ struct TensorView[
         )
 
     def context(self) raises -> DeviceContext:
-        """The device the storage lives on."""
+        """The device the storage lives on.
+
+        Returns:
+            The `DeviceContext` the view was built with.
+
+        Raises:
+            Declared by `TensorLike`; this conformer never raises.
+        """
         return self._ctx
 
     def on_host(self) -> Bool:
-        """Whether the tile can be read through a plain host pointer."""
+        """Whether the tile can be read through a plain host pointer.
+
+        Returns:
+            `True` when the view's context is a CPU one.
+        """
         return self.host_addressable
 
     def to_host[dtype: DType = Self.dtype](self) raises -> List[Scalar[dtype]]:
@@ -301,6 +392,17 @@ struct TensorView[
         `enqueue_copy` of `size()` elements from its pointer, which is what
         a `DeviceBuffer` has and a bare tile does not; a strided device
         block raises rather than copying the wrong elements.
+
+        Parameters:
+            dtype: The element type of the returned list; defaults to
+                `Self.dtype`, and other values cast each element.
+
+        Returns:
+            A `List` of `size()` elements, row-major over the logical shape.
+
+        Raises:
+            Raises if the view is strided over device memory, or if the
+            device-to-host copy fails.
         """
         var n = self.size()
         var out = List[Scalar[dtype]](capacity=n)
@@ -325,7 +427,16 @@ struct TensorView[
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from `values`, row-major over the logical
         shape; the write counterpart of `to_host`, with the same contiguity
-        rule over device memory. A list of the wrong length raises."""
+        rule over device memory. A list of the wrong length raises.
+
+        Args:
+            values: The new elements, `size()` of them, row-major over the
+                logical shape.
+
+        Raises:
+            Raises if `len(values)` is not `size()`, if the view is strided over
+            device memory, or if the host-to-device copy fails.
+        """
         var n = self.size()
         if len(values) != n:
             raise Error(
@@ -378,7 +489,25 @@ struct TensorView[
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a + b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.add`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `Dynamic` tensor at the broadcast shape
+            holding the elementwise sum, on this view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .ops import add as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -393,7 +522,25 @@ struct TensorView[
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a - b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.subtract`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `Dynamic` tensor at the broadcast shape
+            holding the elementwise difference, on this view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .ops import subtract as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -408,7 +555,25 @@ struct TensorView[
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a * b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.multiply`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `Dynamic` tensor at the broadcast shape
+            holding the elementwise product, on this view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .ops import multiply as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -423,7 +588,25 @@ struct TensorView[
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a / b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.divide`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `Dynamic` tensor at the broadcast shape
+            holding the elementwise quotient, on this view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .ops import divide as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -437,7 +620,25 @@ struct TensorView[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a < b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `bool` tensor at the broadcast shape, on this
+            view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .logic import less as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -451,7 +652,25 @@ struct TensorView[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a <= b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `bool` tensor at the broadcast shape, on this
+            view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .logic import less_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -465,7 +684,25 @@ struct TensorView[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a > b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `bool` tensor at the broadcast shape, on this
+            view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .logic import greater as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -479,7 +716,25 @@ struct TensorView[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a >= b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `bool` tensor at the broadcast shape, on this
+            view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .logic import greater_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -493,7 +748,25 @@ struct TensorView[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a == b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `bool` tensor at the broadcast shape, on this
+            view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .logic import equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -507,7 +780,25 @@ struct TensorView[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a != b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of `other`, any `TensorLike` of the same dtype,
+                row-major.
+
+        Args:
+            other: The right operand, at a shape that broadcasts against this
+                view's.
+
+        Returns:
+            A new run-time-shaped `bool` tensor at the broadcast shape, on this
+            view's device.
+
+        Raises:
+            Raises if the shapes do not broadcast, if the device launch fails,
+            or under the `"raise"` fallback policy when the call falls back to
+            the host.
+        """
         from .logic import not_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -517,7 +808,11 @@ struct TensorView[
 
     def write_to(self, mut writer: Some[Writer]):
         """`print(v)`, in the same format as `print(a)` for a `Tensor`:
-        both go through `numax.core.tensor._format_tensor`."""
+        both go through `numax.core.tensor._format_tensor`.
+
+        Args:
+            writer: The destination the formatted tensor is written to.
+        """
         from .tensor import _format_tensor
 
         try:
@@ -535,7 +830,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a + b` against a view of the same type, into a new tensor. Forwards to
         `numax.core.ops.add` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise sum, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import add as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -548,7 +855,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a + b` against a scalar, into a new tensor. Forwards to
         `numax.core.ops.add` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise sum, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import add as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -561,7 +880,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a - b` against a view of the same type, into a new tensor. Forwards to
         `numax.core.ops.subtract` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise difference, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import subtract as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -574,7 +905,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a - b` against a scalar, into a new tensor. Forwards to
         `numax.core.ops.subtract` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise difference, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import subtract as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -587,7 +930,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a * b` against a view of the same type, into a new tensor. Forwards to
         `numax.core.ops.multiply` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise product, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import multiply as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -600,7 +955,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a * b` against a scalar, into a new tensor. Forwards to
         `numax.core.ops.multiply` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise product, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import multiply as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -613,7 +980,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a / b` against a view of the same type, into a new tensor. Forwards to
         `numax.core.ops.divide` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise quotient, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import divide as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -626,7 +1005,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
         """`a / b` against a scalar, into a new tensor. Forwards to
         `numax.core.ops.divide` and follows the view, as `Tensor.__add__`
-        describes."""
+        describes.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise quotient, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import divide as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -637,19 +1028,55 @@ struct TensorView[
     def __radd__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
-        """`b + a` with a scalar `b` on the left."""
+        """`b + a` with a scalar `b` on the left.
+
+        Args:
+            other: The scalar on the left of the operator.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise sum `other + a`, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         return self.__add__(other)
 
     def __rmul__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
-        """`b * a` with a scalar `b` on the left."""
+        """`b * a` with a scalar `b` on the left.
+
+        Args:
+            other: The scalar on the left of the operator.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise product `other * a`, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         return self.__mul__(other)
 
     def __rsub__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
-        """`b - a` with a scalar `b` on the left, one launch."""
+        """`b - a` with a scalar `b` on the left, one launch.
+
+        Args:
+            other: The scalar on the left of the operator.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise difference `other - a`, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import _reflected
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -660,7 +1087,19 @@ struct TensorView[
     def __rtruediv__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
-        """`b / a` with a scalar `b` on the left, one launch."""
+        """`b / a` with a scalar `b` on the left, one launch.
+
+        Args:
+            other: The scalar on the left of the operator.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise quotient `other / a`, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import _reflected
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -671,7 +1110,16 @@ struct TensorView[
     def __neg__(
         self,
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
-        """`-a`, into a new tensor."""
+        """`-a`, into a new tensor.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding `-a`, on this
+            view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import negative as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -684,7 +1132,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where (
         is_row_major[Self] and Self.dtype.is_floating_point()
     ):
-        """`a ** b`, into a new tensor."""
+        """`a ** b`, into a new tensor.
+
+        Args:
+            other: A view of the same type holding the exponents.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise power `a ** other`, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import power as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -697,7 +1157,19 @@ struct TensorView[
     ) raises -> Tensor[Self.dtype, Self.LayoutType] where (
         is_row_major[Self] and Self.dtype.is_floating_point()
     ):
-        """`a ** b`, into a new tensor."""
+        """`a ** b`, into a new tensor.
+
+        Args:
+            other: The exponent applied to every element.
+
+        Returns:
+            A new `Tensor` of this view's shape and dtype holding the
+            elementwise power `a ** other`, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .ops import power as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -708,7 +1180,18 @@ struct TensorView[
     def __lt__(
         self, other: Self
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a < b`, elementwise, as a new `bool` tensor."""
+        """`a < b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import less as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -719,7 +1202,18 @@ struct TensorView[
     def __lt__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a < b`, elementwise, as a new `bool` tensor."""
+        """`a < b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import less as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -730,7 +1224,18 @@ struct TensorView[
     def __le__(
         self, other: Self
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a <= b`, elementwise, as a new `bool` tensor."""
+        """`a <= b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import less_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -741,7 +1246,18 @@ struct TensorView[
     def __le__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a <= b`, elementwise, as a new `bool` tensor."""
+        """`a <= b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import less_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -752,7 +1268,18 @@ struct TensorView[
     def __gt__(
         self, other: Self
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a > b`, elementwise, as a new `bool` tensor."""
+        """`a > b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import greater as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -763,7 +1290,18 @@ struct TensorView[
     def __gt__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a > b`, elementwise, as a new `bool` tensor."""
+        """`a > b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import greater as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -774,7 +1312,18 @@ struct TensorView[
     def __ge__(
         self, other: Self
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a >= b`, elementwise, as a new `bool` tensor."""
+        """`a >= b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import greater_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -785,7 +1334,18 @@ struct TensorView[
     def __ge__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a >= b`, elementwise, as a new `bool` tensor."""
+        """`a >= b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import greater_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -796,7 +1356,18 @@ struct TensorView[
     def __eq__(
         self, other: Self
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a == b`, elementwise, as a new `bool` tensor."""
+        """`a == b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -807,7 +1378,18 @@ struct TensorView[
     def __eq__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a == b`, elementwise, as a new `bool` tensor."""
+        """`a == b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -818,7 +1400,18 @@ struct TensorView[
     def __ne__(
         self, other: Self
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a != b`, elementwise, as a new `bool` tensor."""
+        """`a != b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: A view of the same type, and so the same shape.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import not_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:
@@ -829,7 +1422,18 @@ struct TensorView[
     def __ne__(
         self, other: Scalar[Self.dtype]
     ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
-        """`a != b`, elementwise, as a new `bool` tensor."""
+        """`a != b`, elementwise, as a new `bool` tensor.
+
+        Args:
+            other: The scalar applied to every element.
+
+        Returns:
+            A new `bool` `Tensor` of this view's shape, on this view's device.
+
+        Raises:
+            Raises if the device launch fails, or under the `"raise"` fallback
+            policy when the call falls back to the host.
+        """
         from .logic import not_equal as _op
 
         comptime if has_accelerator() and Self.dtype != DType.float64:

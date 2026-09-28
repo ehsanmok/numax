@@ -346,6 +346,13 @@ struct QR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         var taus: Static[Self.dtype, Self.n],
         block: Int,
     ):
+        """Wraps a finished factorization; `qr_factor` is what builds one.
+
+        Args:
+            factored: `R` above the diagonal and the reflectors below it.
+            taus: The `n` reflector scales.
+            block: The panel width the factorization ran at.
+        """
         self.factored = factored^
         self.taus = taus^
         self.block = block
@@ -360,6 +367,12 @@ struct QR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         A copy rather than a view, because the storage it comes from also
         holds the reflectors and handing out a view would let a caller
         destroy them.
+
+        Returns:
+            The `n x n` upper-triangular `R`, on the factorization's device.
+
+        Raises:
+            If the allocation or the `elementwise` launch fails.
         """
         var ctx = self.factored.context()
         var out = zeros[Self.dtype, Self.n, Self.n](ctx)
@@ -398,6 +411,13 @@ struct QR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         Costs roughly what the factorization did. `apply_q_transpose` is
         the answer when `Q` is wanted only for its action, and `solve`
         never forms it at all.
+
+        Returns:
+            The thin `m x n` `Q` with orthonormal columns, on the
+            factorization's device.
+
+        Raises:
+            If an allocation or a kernel launch fails.
         """
         var ctx = self.factored.context()
         var out = zeros[Self.dtype, Self.m, Self.n](ctx)
@@ -455,6 +475,20 @@ struct QR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         The result is `m x rhs`, of which the leading `n` rows are what a
         thin `Q^T B` means; the rows below them are the part of `B` that
         the discarded columns of the full `Q` see.
+
+        Parameters:
+            T: The `TensorLike` type of `b`, an `m x k` matrix with the
+                factorization's dtype.
+
+        Args:
+            b: The `m x k` matrix to multiply, on the factorization's device.
+
+        Returns:
+            The `m x k` product `Q^T @ b` against the full `Q`, on the
+            factorization's device; its leading `n` rows are the thin product.
+
+        Raises:
+            If an allocation or a kernel launch fails.
         """
         comptime rhs = dim[T, 1]
         var ctx = self.factored.context()
@@ -509,6 +543,22 @@ struct QR[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         Rank deficiency is not detected, the same limit `lstsq` documents:
         a dependent column leaves a near-zero diagonal in `R`, and the
         substitution's floor keeps the answer finite rather than correct.
+
+        Parameters:
+            T: The `TensorLike` type of `b`, a length-`m` vector with the
+                factorization's dtype.
+            block: Width of the diagonal blocks the back substitution steps by.
+
+        Args:
+            b: The right-hand side, length `m`, on the factorization's device.
+
+        Returns:
+            The length-`n` `x` minimizing `||A x - b||`, on the factorization's
+            device.
+
+        Raises:
+            If an allocation or a kernel launch fails; rank deficiency is not
+            reported.
         """
         var ctx = self.factored.context()
         var wide = zeros[Self.dtype, Self.m, 1](ctx)
@@ -597,6 +647,24 @@ def qr_factor[
     Rank deficiency is not detected. A dependent column gives a zero
     reflector (`tau = 0`, correctly the identity) and a zero on `R`'s
     diagonal; `cond` on the original matrix is the check for it.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, an `m x n` floating-point matrix with
+            `m >= n`.
+        gpu: Whether the panels and the block-reflector updates run as
+            kernels on `a`'s accelerator; carried into the returned `QR`.
+        block: Width of each panel of reflectors.
+
+    Args:
+        a: The `m x n` matrix to factor.
+
+    Returns:
+        The `QR` holding `R`, the reflectors and their scales, on `a`'s
+        device.
+
+    Raises:
+        If an allocation or a kernel launch fails; rank deficiency is not
+        reported.
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -705,6 +773,28 @@ def lstsq[
     price of a singular value decomposition instead of a QR. An
     unrecognized `method` raises rather than failing to compile; see
     `numax.optimize.minimize` for why.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, an `m x n` floating-point matrix with
+            `m >= n >= 1`.
+        B: The `TensorLike` type of `b`, a length-`m` vector with `a`'s dtype.
+        gpu: Whether the factorization and solve run as kernels on `a`'s
+            accelerator rather than on the host.
+        block: Panel width of `qr_factor` and block width of the back
+            substitution; unused at `"svd"`.
+        method: The route, `"qr"` or `"svd"`.
+
+    Args:
+        a: The `m x n` design matrix.
+        b: The right-hand side, length `m`.
+
+    Returns:
+        The length-`n` `x` minimizing `||a x - b||`; at `"svd"`, the
+        minimum-norm one.
+
+    Raises:
+        If `method` is neither `"qr"` nor `"svd"`, if the SVD iteration does
+        not converge, or if a device operation fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[A, 1]
@@ -745,6 +835,12 @@ struct RQ[dtype: DType, n: Int](
         var r: Static[Self.dtype, Self.n, Self.n],
         var q: Static[Self.dtype, Self.n, Self.n],
     ):
+        """Holds the two factors; `rq` is what builds them.
+
+        Args:
+            r: The `n x n` upper-triangular factor.
+            q: The `n x n` orthogonal factor.
+        """
         self.r = r^
         self.q = q^
 
@@ -844,6 +940,22 @@ def rq[
     **Tier 2**, like `qr_factor`. The three permutations and the two
     transposes are `O(n^2)` on the host, against the factorization's
     `O(n^3)` on the device.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the QR, transposes and reversals run as kernels on `a`'s
+            accelerator rather than on the host.
+        block: Panel width of the underlying `qr_factor`.
+
+    Args:
+        a: The `n x n` matrix to factor.
+
+    Returns:
+        The `RQ` holding the `n x n` upper-triangular `r` and orthogonal `q`
+        with `a == r @ q`, on `a`'s device.
+
+    Raises:
+        If an allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     var reversed = _reverse_rows[gpu=gpu](a)
@@ -866,5 +978,18 @@ def lstsq[
 ](a: Array[T, m * n], b: Array[T, m]) -> Array[T, n] where m >= n:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.qr.lstsq`."""
+    at `numax.linalg._array.qr.lstsq`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        m: The number of rows, at least `n`.
+        n: The number of columns.
+
+    Args:
+        a: The `m x n` design matrix, row-major.
+        b: The right-hand side, length `m`.
+
+    Returns:
+        The length-`n` `x` minimizing `||a x - b||`.
+    """
     return _array_lstsq[T=T, m=m, n=n](a, b)

@@ -84,6 +84,23 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
 
         Copies rather than moves, so the caller's grid stays usable; the
         three tensors are read on every query and never written.
+
+        Args:
+            x: The ascending axis of length `rows`; its device is kept.
+            y: The ascending axis of length `cols`.
+            values: The `rows x cols` values, `values[i, j]` at
+                `(x[i], y[j])`.
+            method: `"linear"` for bilinear blending or `"nearest"` for the
+                nearest grid point.
+            bounds_error: Whether a query point outside the grid raises.
+            fill_value: The value returned outside the grid when
+                `bounds_error` is false; NaN when not given.
+            extrapolate: Whether to apply the boundary cell's rule past the
+                edge instead of returning `fill_value`.
+
+        Raises:
+            If `method` is neither `"linear"` nor `"nearest"`, or a copy of
+            the axes or values fails.
         """
         if not (method == "linear" or method == "nearest"):
             raise Error(
@@ -128,6 +145,21 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
         point outside the grid raises, as SciPy's does; the check is a
         pass over `points`, so a caller who knows the points are inside
         can pass `bounds_error=False` and skip it.
+
+        Parameters:
+            T: The tensor type of `points`, rank 2 of shape `m x 2`.
+            gpu: Whether the query launch targets the GPU on the device of
+                `points` rather than the host CPU.
+
+        Args:
+            points: The `m x 2` query points, one `(x, y)` pair per row.
+
+        Returns:
+            A length-`m` tensor of the interpolated values.
+
+        Raises:
+            If `bounds_error` is set and a point lies outside the grid, or
+            a copy or the launch fails.
         """
         comptime m = dim[T, 0]
         var ctx = points.context()

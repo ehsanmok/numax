@@ -21,10 +21,24 @@ comptime e: Float64 = 2.718281828459045
 
 
 def pi_at[T: FloatLike]() -> T:
-    """`pi` as a `T`, for use inside a `FloatLike` kernel."""
+    """`pi` as a `T`, for use inside a `FloatLike` kernel.
+
+    Parameters:
+        T: The `FloatLike` conformer to build the constant in.
+
+    Returns:
+        `T.constant(pi)`.
+    """
     return T.constant(pi)
 
 
 def e_at[T: FloatLike]() -> T:
-    """`e` as a `T`, for use inside a `FloatLike` kernel."""
+    """`e` as a `T`, for use inside a `FloatLike` kernel.
+
+    Parameters:
+        T: The `FloatLike` conformer to build the constant in.
+
+    Returns:
+        `T.constant(e)`.
+    """
     return T.constant(e)

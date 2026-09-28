@@ -447,6 +447,23 @@ def cov[
     The GEMM reassociates, so a `float32` result differs from the host
     loop's in the last bits, and `c[i, j]` and `c[j, i]` are computed
     independently rather than mirrored -- `numpy.cov` does the same.
+
+    Parameters:
+        T: The input tensor type, a rank-2 row-major floating-point tensor
+            with static extents `rows x n`.
+        gpu: Whether to compute on the tensor's device; a residency mismatch
+            falls back to the host loop with a notice on `stderr`.
+
+    Args:
+        m: The `rows x n` observations, one variable per row.
+        bias: Normalize by `n` rather than `n - 1` when `ddof` is not given.
+        ddof: The delta degrees of freedom, overriding `bias` when given.
+
+    Returns:
+        The `rows x rows` covariance matrix, on `m`'s device.
+
+    Raises:
+        If `n - ddof <= 0`, or if a device allocation or launch fails.
     """
     comptime rows = dim[T, 0]
     comptime n = dim[T, 1]
@@ -480,6 +497,26 @@ def cov[
 
     The two vectors are stacked into one `2 x n` matrix and handed to the
     matrix overload, so there is one covariance algorithm here, not two.
+
+    Parameters:
+        A: The type of `x`, a rank-1 row-major floating-point tensor with a
+            static length `n > 1`.
+        B: The type of `y`, a rank-1 row-major tensor of `A`'s dtype and
+            length.
+        gpu: Whether to compute on the tensors' device; a residency
+            mismatch falls back to the host loop with a notice on `stderr`.
+
+    Args:
+        x: The observations of the first variable.
+        y: The observations of the second variable.
+        bias: Normalize by `n` rather than `n - 1` when `ddof` is not given.
+        ddof: The delta degrees of freedom, overriding `bias` when given.
+
+    Returns:
+        The `2 x 2` covariance matrix of `x` and `y`, on `x`'s device.
+
+    Raises:
+        If `n - ddof <= 0`, or if a device allocation or launch fails.
     """
     comptime n = dim[A, 0]
     var stacked = _stack_rows[gpu=gpu](x, y)
@@ -503,6 +540,22 @@ def corrcoef[
     is what this reads and `corrcoef` takes no `ddof`. The diagonal is
     written as exactly `1` rather than computed, which is what the host
     walk did and what `numpy.corrcoef`'s clip amounts to.
+
+    Parameters:
+        T: The input tensor type, a rank-2 row-major floating-point tensor
+            with static extents `rows x n`.
+        gpu: Whether to compute on the tensor's device; a residency mismatch
+            falls back to the host loop with a notice on `stderr`.
+
+    Args:
+        m: The `rows x n` observations, one variable per row.
+
+    Returns:
+        The `rows x rows` correlation matrix with an exact unit diagonal, on
+        `m`'s device.
+
+    Raises:
+        If a device allocation, launch or host copy fails.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -556,7 +609,26 @@ def corrcoef[
 ):
     """The Pearson correlation matrix of two variables, ones on the
     diagonal. `numpy.corrcoef(x, y)`. The pair is stacked into a `2 x n`
-    and handed to the matrix overload."""
+    and handed to the matrix overload.
+
+    Parameters:
+        A: The type of `x`, a rank-1 row-major floating-point tensor with a
+            static length `n > 1`.
+        B: The type of `y`, a rank-1 row-major tensor of `A`'s dtype and
+            length.
+        gpu: Whether to compute on the tensors' device; a residency
+            mismatch falls back to the host loop with a notice on `stderr`.
+
+    Args:
+        x: The observations of the first variable.
+        y: The observations of the second variable.
+
+    Returns:
+        The `2 x 2` correlation matrix of `x` and `y`, on `x`'s device.
+
+    Raises:
+        If a device allocation, launch or host copy fails.
+    """
     comptime n = dim[A, 0]
     var stacked = _stack_rows[gpu=gpu](x, y)
     return corrcoef[gpu=gpu](stacked)
@@ -656,6 +728,24 @@ def pearsonr[
     and the `t` tail are host scalar work either way. The device sums are
     at the tensors' dtype and reassociated, so a `float32` `r` differs
     from the host's `Float64` one in the last digits.
+
+    Parameters:
+        A: The type of `x`, a rank-1 row-major floating-point tensor with a
+            static length `n > 2`.
+        B: The type of `y`, a rank-1 row-major tensor of `A`'s dtype and
+            length.
+        gpu: Whether to take the moments on the tensors' device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        x: The first sample.
+        y: The second sample, paired with `x` element by element.
+
+    Returns:
+        A `CorrelationResult` holding `r` and its two-sided p-value.
+
+    Raises:
+        If a device sum or the copy to the host fails.
     """
     comptime n = dim[A, 0]
     if _check_device[A, gpu](x) and _check_device[B, gpu](y):
@@ -835,6 +925,23 @@ def rankdata[
     computed there from a device sort (`_rank_device`) and never leave
     it. A residency mismatch takes the host path with the `_drive`
     notice. Neither path gives NaN a special rank.
+
+    Parameters:
+        T: The input tensor type, of a floating-point dtype and any shape.
+        gpu: Whether to rank on the tensor's device; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        xs: The values to rank, in flat order.
+        method: The tie rule: `"average"`, `"min"`, `"max"`, `"dense"` or
+            `"ordinal"`.
+
+    Returns:
+        The ranks at `xs`'s dtype, layout and device.
+
+    Raises:
+        If `method` is not one of the five names, if `gpu=True` and `xs` is
+        not contiguous, or if a device operation fails.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -871,6 +978,25 @@ def spearmanr[
     At `gpu=True`, with both vectors on a device and contiguous, both are
     ranked there (`rankdata[gpu=True]`) and correlated by `pearsonr`'s
     device moments; only five scalars come back.
+
+    Parameters:
+        A: The type of `x`, a rank-1 floating-point tensor with a static
+            length `n > 2`.
+        B: The type of `y`, a rank-1 tensor of `A`'s dtype and length.
+        gpu: Whether to rank and correlate on the tensors' device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        x: The first sample.
+        y: The second sample, paired with `x` element by element.
+
+    Returns:
+        A `CorrelationResult` holding Spearman's rho and its two-sided
+        p-value.
+
+    Raises:
+        If `gpu=True` and either vector is not contiguous, or if a device
+        operation or host copy fails.
     """
     comptime n = dim[A, 0]
     if _check_device[A, gpu](x) and _check_device[B, gpu](y):
@@ -1034,6 +1160,26 @@ def kendalltau[
     the others (`_kendall_counts_device`), so eleven integers come back
     and the answer is the host's exactly -- the counts are the same
     integers, and the finish is shared.
+
+    Parameters:
+        A: The type of `x`, a rank-1 row-major floating-point tensor with a
+            static length `n > 1`.
+        B: The type of `y`, a rank-1 row-major tensor of `A`'s dtype and
+            length.
+        gpu: Whether to count the pairs on the tensors' device; a residency
+            mismatch falls back to the host with a notice.
+
+    Args:
+        x: The first sample.
+        y: The second sample, paired with `x` element by element.
+
+    Returns:
+        A `CorrelationResult` holding tau-b and its two-sided asymptotic
+        p-value.
+
+    Raises:
+        If either variable is constant, or if a device operation or host
+        copy fails.
     """
     comptime n = dim[A, 0]
     if _check_device[A, gpu](x) and _check_device[B, gpu](y):
@@ -1143,6 +1289,25 @@ def linregress[
 
     At `gpu=True` with both vectors on a device, the moments are device
     sums as in `pearsonr`, and only five scalars come back.
+
+    Parameters:
+        A: The type of `x`, a rank-1 row-major floating-point tensor with a
+            static length `n > 2`.
+        B: The type of `y`, a rank-1 row-major tensor of `A`'s dtype and
+            length.
+        gpu: Whether to take the moments on the tensors' device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        x: The independent variable.
+        y: The dependent variable, paired with `x` element by element.
+
+    Returns:
+        A `LinregressResult` with the slope, intercept, `r`, the p-value of
+        a zero slope and both standard errors.
+
+    Raises:
+        If `x` is constant, or if a device operation or host copy fails.
     """
     comptime n = dim[A, 0]
     if _check_device[A, gpu](x) and _check_device[B, gpu](y):
@@ -1201,7 +1366,25 @@ def zscore[
     """Every element standardized by the tensor's mean and standard
     deviation, `(x - mean) / std` with `ddof` degrees of freedom in the
     standard deviation. `scipy.stats.zscore(a, ddof)`, the same shape
-    back. A constant tensor raises rather than dividing by zero."""
+    back. A constant tensor raises rather than dividing by zero.
+
+    Parameters:
+        T: The input tensor type, row-major and floating-point, of any
+            shape.
+        gpu: Whether to standardize on the tensor's device; a residency
+            mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The values to standardize, all elements pooled.
+        ddof: The delta degrees of freedom of the standard deviation.
+
+    Returns:
+        The z-scores at `xs`'s dtype, layout and device.
+
+    Raises:
+        If the element count is at most `ddof`, if the tensor is constant,
+        or if a device operation fails.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     if _check_device[T, gpu](xs):

@@ -196,7 +196,26 @@ def ttest_1samp[
     """The one-sample `t` test that the mean of `xs` is `popmean`.
     `scipy.stats.ttest_1samp(a, popmean, alternative)`: `t = (mean -
     popmean) / (std_1 / sqrt(n))` on `n - 1` degrees of freedom. Device
-    sums at `gpu=True`; see the module docstring."""
+    sums at `gpu=True`; see the module docstring.
+
+    Parameters:
+        T: The tensor type of the sample, row-major and floating-point.
+        gpu: Whether the sums run on the sample's device; a residency
+            mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The sample, read flat in any shape.
+        popmean: The hypothesized population mean.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, the tail
+            the p-value is taken on.
+
+    Returns:
+        A `TestResult` with the `t` statistic, its p-value and `df = n - 1`.
+
+    Raises:
+        If `alternative` is not one of the three names, if `xs` has fewer
+        than two elements, or on a fallback under the `"raise"` policy.
+    """
     _check_alternative("ttest_1samp", alternative)
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -239,7 +258,32 @@ def ttest_ind[
     `scipy.stats.ttest_ind(a, b, equal_var, alternative)`: Student's
     pooled-variance test by default, Welch's unequal-variance test with
     its Welch-Satterthwaite degrees of freedom when `equal_var=False`.
-    Device sums at `gpu=True`; see the module docstring."""
+    Device sums at `gpu=True`; see the module docstring.
+
+    Parameters:
+        A: The tensor type of the first sample, row-major and floating-point.
+        B: The tensor type of the second sample, at `A`'s dtype.
+        gpu: Whether the sums run on the samples' device; if either sample
+            is not where `gpu` expects, both fall back to the host with a
+            notice.
+
+    Args:
+        xs: The first sample, read flat in any shape.
+        ys: The second sample, read flat; its length may differ from `xs`.
+        equal_var: `True` for Student's pooled-variance test, `False` for
+            Welch's test.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, the tail
+            the p-value is taken on.
+
+    Returns:
+        A `TestResult` with the `t` statistic, its p-value and the degrees
+        of freedom (`n1 + n2 - 2`, or Welch-Satterthwaite's).
+
+    Raises:
+        If `alternative` is not one of the three names, if either sample has
+        fewer than two elements, or on a fallback under the `"raise"`
+        policy.
+    """
     _check_alternative("ttest_ind", alternative)
     var n1: Float64
     var n2: Float64
@@ -320,7 +364,27 @@ def ttest_rel[
     """The paired `t` test: `ttest_1samp` of the differences against zero.
     `scipy.stats.ttest_rel(a, b, alternative)`. At `gpu=True` the
     differences are one device `subtract` and their moments device
-    sums."""
+    sums.
+
+    Parameters:
+        T: The tensor type of both samples, row-major and floating-point.
+        gpu: Whether the differences and sums run on the samples' device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The first sample of each pair, read flat.
+        ys: The second sample of each pair, at the same length as `xs`.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, the tail
+            the p-value is taken on.
+
+    Returns:
+        A `TestResult` with the `t` statistic of `xs - ys`, its p-value and
+        `df = n - 1`.
+
+    Raises:
+        If `alternative` is not one of the three names, if there are fewer
+        than two pairs, or on a fallback under the `"raise"` policy.
+    """
     _check_alternative("ttest_rel", alternative)
     if _check_device[T, gpu](xs) and _check_device[T, gpu](ys):
         comptime if gpu:
@@ -356,7 +420,25 @@ def chisquare[
     `sum((o - e)^2 / e)` against `chi2` on `k - 1 - ddof` degrees of
     freedom, `e` the mean count. `scipy.stats.chisquare(f_obs, ddof)`.
     At `gpu=True` the statistic is the device sum of squared deviations
-    over the mean count."""
+    over the mean count.
+
+    Parameters:
+        T: The tensor type of the counts, row-major and floating-point.
+        gpu: Whether the sums run on the counts' device; a residency
+            mismatch falls back to the host with a notice.
+
+    Args:
+        observed: The `k` observed counts, read flat.
+        ddof: The adjustment subtracted from the `k - 1` degrees of freedom.
+
+    Returns:
+        A `TestResult` with the chi-squared statistic, its upper-tail
+        p-value and `df = k - 1 - ddof`.
+
+    Raises:
+        If the device reduction fails, or on a fallback under the `"raise"`
+        policy.
+    """
     if _check_device[T, gpu](observed):
         comptime if gpu:
             var m = _moments_device(observed)
@@ -394,7 +476,27 @@ def chisquare[
     At `gpu=True` both totals and the statistic are device sums at the
     samples' dtype, so the totals check allows the reassociated sum's own
     rounding, `n` units in the last place of that dtype, when that is
-    looser than `1e-8`."""
+    looser than `1e-8`.
+
+    Parameters:
+        T: The tensor type of both count tensors, row-major and
+            floating-point.
+        gpu: Whether the totals and statistic run on the counts' device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        observed: The `k` observed counts, read flat.
+        expected: The `k` expected counts, at the same length as `observed`.
+        ddof: The adjustment subtracted from the `k - 1` degrees of freedom.
+
+    Returns:
+        A `TestResult` with the chi-squared statistic, its upper-tail
+        p-value and `df = k - 1 - ddof`.
+
+    Raises:
+        If `observed` and `expected` do not sum to the same total within
+        the tolerance above, or on a fallback under the `"raise"` policy.
+    """
     if _check_device[T, gpu](observed) and _check_device[T, gpu](expected):
         comptime if gpu:
             var so = Float64(_tsum[gpu=True](observed))
@@ -503,6 +605,23 @@ def ks_1samp[
     why, and `docs/parity.md` the divergence. `cdf` is a compile-time
     function parameter, so a `numax.stats` distribution's `cdf` is passed
     through a one-line wrapper that fixes its parameters.
+
+    Parameters:
+        T: The tensor type of the sample, row-major and floating-point.
+        cdf: The hypothesized continuous CDF, evaluated at `Float64` on the
+            host.
+
+    Args:
+        xs: The sample, read flat and sorted on the host.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, selecting the
+            statistic `max(D+, D-)`, `D-` or `D+`.
+
+    Returns:
+        A `TestResult` with the KS statistic, its p-value and `df` set to the
+        sample size `n`.
+
+    Raises:
+        If `alternative` is not one of the three names, or if `xs` is empty.
     """
     _check_alternative("ks_1samp", alternative)
     var values = _values(xs)
@@ -535,7 +654,25 @@ def f_oneway[
     groups passed as separate arguments of one shape. `df` in the result
     is the numerator's; the denominator's is `N - k`. At `gpu=True`, with
     every group on a device, each group's size, mean and within sum of
-    squares are device sums (`_moments_device`)."""
+    squares are device sums (`_moments_device`).
+
+    Parameters:
+        T: The tensor type of every group, row-major and floating-point.
+        gpu: Whether the per-group sums run on the groups' device; if any
+            group is not on a device, all fall back to the host with a
+            notice.
+
+    Args:
+        groups: The `k` samples, all of tensor type `T`, each read flat.
+
+    Returns:
+        A `TestResult` with the `F` statistic, its upper-tail p-value and
+        the numerator degrees of freedom `k - 1`.
+
+    Raises:
+        If fewer than two groups are given, or on a fallback under the
+        `"raise"` policy.
+    """
     var k = len(groups)
     if k < 2:
         raise Error("f_oneway: at least two groups are needed")
@@ -771,6 +908,28 @@ def mannwhitneyu[
     At `gpu=True`, with both samples on a device, the pooled sample is
     ranked there (`_rank_sum_device`) and only the first sample's rank sum
     and the tie term come back.
+
+    Parameters:
+        A: The tensor type of the first sample, row-major and floating-point.
+        B: The tensor type of the second sample, at `A`'s dtype.
+        gpu: Whether the ranking runs on the samples' device; if either
+            sample is not where `gpu` expects, both fall back to the host
+            with a notice.
+
+    Args:
+        xs: The first sample, read flat.
+        ys: The second sample, read flat; its length may differ from `xs`.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, selecting
+            `max(U1, U2)`, `U2` or `U1` for the normal tail.
+        use_continuity: Whether to subtract SciPy's `0.5` continuity
+            correction before standardizing.
+
+    Returns:
+        A `TestResult` with `U1`, its asymptotic p-value and `df = 0`.
+
+    Raises:
+        If `alternative` is not one of the three names, or on a fallback
+        under the `"raise"` policy.
     """
     _check_alternative("mannwhitneyu", alternative)
     if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
@@ -964,6 +1123,27 @@ def ks_2samp[
     At `gpu=True`, with both samples on a device, both sort there and the
     gaps are exact integer numerators (`_ks_gaps_device`); two integers
     come back.
+
+    Parameters:
+        A: The tensor type of the first sample, row-major and floating-point.
+        B: The tensor type of the second sample, at `A`'s dtype.
+        gpu: Whether the sorts and gaps run on the samples' device; if
+            either sample is not where `gpu` expects, both fall back to the
+            host with a notice.
+
+    Args:
+        xs: The first sample, read flat.
+        ys: The second sample, read flat; its length may differ from `xs`.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, selecting
+            `max(D+, D-)`, `D-` or `D+`.
+
+    Returns:
+        A `TestResult` with the KS statistic, its asymptotic p-value and
+        `df` set to the effective sample size `n1 n2 / (n1 + n2)`.
+
+    Raises:
+        If `alternative` is not one of the three names, if either sample
+        is empty, or on a fallback under the `"raise"` policy.
     """
     _check_alternative("ks_2samp", alternative)
     if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
@@ -1157,6 +1337,30 @@ def wilcoxon[
     At `gpu=True`, with both samples on a device, the differences, the
     zero-dropping (a compaction) and the ranking all run there, and only
     the positive rank sum, the tie term and the count come back.
+
+    Parameters:
+        A: The tensor type of the first sample, row-major and floating-point.
+        B: The tensor type of the second sample, at `A`'s dtype.
+        gpu: Whether the differences and ranking run on the samples'
+            device; if either sample is not where `gpu` expects, both fall
+            back to the host with a notice.
+
+    Args:
+        xs: The first sample of each pair, read flat.
+        ys: The second sample of each pair, at the same length as `xs`.
+        alternative: `"two-sided"`, `"less"` or `"greater"`, the tail
+            the normal p-value is taken on.
+        use_continuity: Whether to apply SciPy's `0.5` continuity
+            correction to `W`.
+
+    Returns:
+        A `TestResult` with `W`, its asymptotic p-value and `df` set to the
+        number of nonzero differences.
+
+    Raises:
+        If `alternative` is not one of the three names, if the lengths
+        differ, if every difference is zero or every magnitude is tied, or
+        on a fallback under the `"raise"` policy.
     """
     _check_alternative("wilcoxon", alternative)
     if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):

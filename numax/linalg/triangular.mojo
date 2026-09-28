@@ -254,6 +254,29 @@ def solve_triangular[
     `a` is taken mutably because `tile()` hands back a writable
     `TileTensor`; neither operand is modified. `b` is copied, so the
     caller's vector survives.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a square `n x n` floating-point
+            matrix with static extents.
+        B: The `TensorLike` type of `b`, a length-`n` vector of `A.dtype`.
+        upper: Read the upper triangle of `a` rather than the lower one.
+        unit: Treat the diagonal of `a` as all ones without reading it.
+        trans: Solve against `a^T` instead of `a`, without transposing it.
+        gpu: Run the blocked substitution on the tensors' device rather
+            than the host.
+        block: The width of the diagonal blocks.
+
+    Args:
+        a: The `n x n` triangular coefficient matrix; the other triangle is
+            ignored.
+        b: The length-`n` right-hand side, copied and left unmodified.
+
+    Returns:
+        The length-`n` solution, on `a`'s device.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails; a zero on the
+        diagonal does not raise and yields non-finite entries instead.
     """
     return _solve_triangular_vector[
         upper=upper, unit=unit, trans=trans, gpu=gpu, block=block
@@ -320,6 +343,29 @@ def solve_triangular[
     to have both spellings, and it is what `inverse` is built on.
 
     Parameters are the vector overload's. Device-resident throughout.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a square `n x n` floating-point
+            matrix with static extents.
+        B: The `TensorLike` type of `b`, an `n x k` matrix of `A.dtype`.
+        upper: Read the upper triangle of `a` rather than the lower one.
+        unit: Treat the diagonal of `a` as all ones without reading it.
+        trans: Solve against `a^T` instead of `a`, without transposing it.
+        gpu: Run the blocked substitution on the tensors' device rather
+            than the host.
+        block: The width of the diagonal blocks.
+
+    Args:
+        a: The `n x n` triangular coefficient matrix; the other triangle is
+            ignored.
+        b: The `n x k` right-hand side, copied and left unmodified.
+
+    Returns:
+        The `n x k` solution, on `a`'s device.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails; a zero on the
+        diagonal does not raise and yields non-finite entries instead.
     """
     return _solve_triangular_matrix[
         upper=upper, unit=unit, trans=trans, gpu=gpu, block=block

@@ -66,15 +66,33 @@ struct Compensated[dtype: DType, width: Int](
     var error: SIMD[Self.dtype, Self.width]
 
     def write_to(self, mut writer: Some[Writer]):
+        """Write `value + error`, both components.
+
+        Args:
+            writer: The destination both components are written to.
+        """
         writer.write(self.value, " + ", self.error)
 
     @staticmethod
     def one() -> Self:
+        """The value `1`, with a zero error term.
+
+        Returns:
+            `(1, 0)` in every lane.
+        """
         return Self(
             SIMD[Self.dtype, Self.width](1), SIMD[Self.dtype, Self.width](0)
         )
 
     def __add__(self, rhs: Self) -> Self:
+        """Double-double addition: `two_sum`, both error terms, renormalized.
+
+        Args:
+            rhs: The addend.
+
+        Returns:
+            The renormalized `(value, error)` pair of `self + rhs`.
+        """
         # two_sum(self.value, rhs.value), then fold in both error terms and
         # renormalize with a second two_sum.
         var s = self.value + rhs.value
@@ -90,9 +108,22 @@ struct Compensated[dtype: DType, width: Int](
         return Self(s2, err2)
 
     def __neg__(self) -> Self:
+        """Negation of both components, exact.
+
+        Returns:
+            `(-value, -error)`.
+        """
         return Self(-self.value, -self.error)
 
     def __mul__(self, rhs: Self) -> Self:
+        """Double-double multiplication: an FMA `two_prod` plus the cross terms.
+
+        Args:
+            rhs: The multiplier.
+
+        Returns:
+            The renormalized `(value, error)` pair of `self * rhs`.
+        """
         # two_prod(self.value, rhs.value), using FMA for the exact remainder,
         # then fold in the cross terms and renormalize.
         var p = self.value * rhs.value
@@ -107,6 +138,14 @@ struct Compensated[dtype: DType, width: Int](
         return Self(p2, err2)
 
     def __truediv__(self, rhs: Self) -> Self:
+        """Double-double division: a float quotient corrected by its residual.
+
+        Args:
+            rhs: The divisor.
+
+        Returns:
+            The renormalized `(value, error)` pair of `self / rhs`.
+        """
         # Double-double division: a float estimate, a compensated
         # multiply-subtract for its residual, a second float division to
         # correct, then a `two_sum` back into one pair.
@@ -123,6 +162,12 @@ struct Compensated[dtype: DType, width: Int](
         return Self(s, err)
 
     def exp(self) -> Self where Self.dtype.is_floating_point():
+        """`e^self`: compensated reduction by `ln 2`, then a 14-term series.
+
+        Returns:
+            `e^self` to roughly twice `dtype`'s precision, scaled exactly by
+            `2^m`.
+        """
         comptime DT = Self.dtype
         comptime W = Self.width
 
@@ -179,6 +224,12 @@ struct Compensated[dtype: DType, width: Int](
         return Self(total.value * scale, total.error * scale)
 
     def ln(self) -> Self where Self.dtype.is_floating_point():
+        """`ln(self)`: three Newton steps on `exp(y) - self`, `dtype` seed.
+
+        Returns:
+            `ln(self)` to roughly twice `dtype`'s precision; only meaningful for
+            `self > 0`.
+        """
         # Newton on f(y) = exp(y) - self, seeded from a single-`dtype`
         # `log` and refined in the compensated `exp`/`+`/`*` above.
         comptime DT = Self.dtype
@@ -192,6 +243,12 @@ struct Compensated[dtype: DType, width: Int](
         return y
 
     def sqrt(self) -> Self where Self.dtype.is_floating_point():
+        """`sqrt(self)`: three Newton steps on `y^2 - self` from a `dtype` seed.
+
+        Returns:
+            `sqrt(self)` to roughly twice `dtype`'s precision, exactly `0` for
+            zero lanes.
+        """
         # Newton on f(y) = y^2 - self, seeded from a single-`dtype` sqrt
         # and refined three times in compensated arithmetic -- the shape
         # `ln` uses. `self == 0` would divide by zero in the refinement, so
@@ -216,6 +273,11 @@ struct Compensated[dtype: DType, width: Int](
         return Self(y.value * is_positive, y.error * is_positive)
 
     def erf(self) -> Self where Self.dtype.is_floating_point():
+        """`erf(self)`: `default_erf_approx` run in compensated arithmetic.
+
+        Returns:
+            `erf(self)`, limited by the approximation's `1.5e-7` absolute error.
+        """
         # No double-double `erf` to port, so this reuses the rational
         # approximation `Plain` used to, run through compensated
         # `+`/`*`/`exp` -- which recovers what the formula's cancellation
@@ -223,6 +285,11 @@ struct Compensated[dtype: DType, width: Int](
         return default_erf_approx(self)
 
     def erfc(self) -> Self where Self.dtype.is_floating_point():
+        """`erfc(self)` as `1 - erf(self)`.
+
+        Returns:
+            `1 - erf(self)`, which loses relative accuracy for large `self`.
+        """
         return Self.one() - self.erf()
 
     def _range_reduce_2pi(self) -> Self where Self.dtype.is_floating_point():
@@ -255,6 +322,12 @@ struct Compensated[dtype: DType, width: Int](
         return Self(s, (self.error - t_err) - m * two_pi_lo + s_err)
 
     def sin(self) -> Self where Self.dtype.is_floating_point():
+        """`sin(self)`: reduction by `2*pi`, then a 24-term Taylor series.
+
+        Returns:
+            `sin(self)` to roughly twice `dtype`'s precision on the reduced
+            argument.
+        """
         # sin(r) = r * sum_k (-1)^k r^(2k) / (2k+1)!, evaluated in `r^2`.
         # 24 terms, past double-double even at the reduction's `|r| = pi`
         # boundary: the k=21 term is already 4e-32.
@@ -301,6 +374,12 @@ struct Compensated[dtype: DType, width: Int](
         return total * r
 
     def cos(self) -> Self where Self.dtype.is_floating_point():
+        """`cos(self)`: reduction by `2*pi`, then a 24-term Taylor series.
+
+        Returns:
+            `cos(self)` to roughly twice `dtype`'s precision on the reduced
+            argument.
+        """
         # cos(r) = sum_k (-1)^k r^(2k) / (2k)!, evaluated in `r^2` -- same
         # reduction and convergence margin as `sin()` above.
         comptime DT = Self.dtype
@@ -347,6 +426,15 @@ struct Compensated[dtype: DType, width: Int](
 
     @staticmethod
     def constant(v: Float64) -> Self:
+        """A `Float64` literal split into a `dtype`-native hi/lo pair.
+
+        Args:
+            v: The literal value.
+
+        Returns:
+            `(hi, lo)` with `hi = dtype(v)` and `lo` the part of `v` rounding
+            dropped.
+        """
         # Split into a hi/lo pair at `dtype`'s precision rather than
         # rounding once and calling the residual zero.
         var v64 = SIMD[DType.float64, Self.width](v)
@@ -355,6 +443,11 @@ struct Compensated[dtype: DType, width: Int](
         return Self(hi, lo)
 
     def abs(self) -> Self where Self.dtype.is_floating_point():
+        """The absolute value, both components scaled by the same exact sign.
+
+        Returns:
+            `(|value|, error * sign(value))`.
+        """
         # Multiplying both fields by the same +-1 is exact, so this stays an
         # error-free transformation.
         var sign = copysign(SIMD[Self.dtype, Self.width](1), self.value)
@@ -363,12 +456,25 @@ struct Compensated[dtype: DType, width: Int](
     def copysign(
         self, sign_source: Self
     ) -> Self where Self.dtype.is_floating_point():
+        """The magnitude of `self` with the sign of `sign_source`.
+
+        Args:
+            sign_source: The value whose `value` component's sign is copied.
+
+        Returns:
+            `self` with both components flipped where the signs disagree.
+        """
         var flip = copysign(
             SIMD[Self.dtype, Self.width](1), self.value
         ) * copysign(SIMD[Self.dtype, Self.width](1), sign_source.value)
         return Self(self.value * flip, self.error * flip)
 
     def floor(self) -> Self where Self.dtype.is_floating_point():
+        """`floor` of the `value` component, with `error` zeroed.
+
+        Returns:
+            `(floor(value), 0)`; can be one off when `error` crosses an integer.
+        """
         # `ponytail:` floored from `value` alone with `error` zeroed, so a
         # `value` rounding just above an integer while `error` puts the
         # true sum just below it gives the wrong integer. Folding `error`
@@ -376,7 +482,17 @@ struct Compensated[dtype: DType, width: Int](
         return Self(floor(self.value), SIMD[Self.dtype, Self.width](0))
 
     def ceil(self) -> Self where Self.dtype.is_floating_point():
+        """`ceil` of the `value` component, with `error` zeroed.
+
+        Returns:
+            `(ceil(value), 0)`; can be one off when `error` crosses an integer.
+        """
         return Self(ceil(self.value), SIMD[Self.dtype, Self.width](0))
 
     def trunc(self) -> Self where Self.dtype.is_floating_point():
+        """`trunc` of the `value` component, with `error` zeroed.
+
+        Returns:
+            `(trunc(value), 0)`; can be one off when `error` crosses an integer.
+        """
         return Self(trunc(self.value), SIMD[Self.dtype, Self.width](0))

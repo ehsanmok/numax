@@ -61,7 +61,14 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
         a: Scalar[Self.dtype],
         b: Scalar[Self.dtype],
     ):
-        """A series from its coefficients and domain."""
+        """A series from its coefficients and domain.
+
+        Args:
+            coefficients: The `n` coefficients, `coefficients[k]` multiplying
+                `T_k`.
+            a: The lower end of the domain, mapped onto `-1`.
+            b: The upper end of the domain, mapped onto `1`.
+        """
         self.coefficients = coefficients^
         self.a = a
         self.b = b
@@ -90,6 +97,22 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
         `numax.linalg.lstsq`, so the conditioning is the QR's rather than
         the normal equations'. `m >= n` samples, as any least-squares fit
         needs; `m == n` interpolates.
+
+        Parameters:
+            A: The tensor type of `x`, rank 1 with `m >= n` elements.
+            B: The tensor type of `y`, rank 1 with the same length as `x`.
+            gpu: Whether the `lstsq` solve runs on the tensors' device; the
+                Vandermonde matrix is built on the host either way.
+
+        Args:
+            x: The `m` sample abscissae; their range sets the domain.
+            y: The `m` sample values at `x`.
+
+        Returns:
+            The fitted series of `n` terms on `[min(x), max(x)]`.
+
+        Raises:
+            If the `lstsq` solve or a host-device copy raises.
         """
         comptime m = dim[A, 0]
         var xs = x.to_host[Self.dtype]()
@@ -137,6 +160,21 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
         from the highest coefficient down, so no `T_k` is ever formed --
         the numerically stable way to evaluate this basis, and `O(n)` per
         point.
+
+        Parameters:
+            T: The tensor type of `points`, rank 1 with `m > 0` elements.
+            gpu: Whether the evaluation launch targets the GPU on the
+                device of `points` rather than the host CPU.
+
+        Args:
+            points: The `m` points to evaluate at, in the series' domain
+                coordinates.
+
+        Returns:
+            A length-`m` tensor of the series' values at `points`.
+
+        Raises:
+            If allocating the output or the launch fails.
         """
         comptime m = dim[T, 0]
         return _clenshaw[gpu=gpu](self.coefficients, points, self.a, self.b)
@@ -161,6 +199,22 @@ def chebval[
     The raw form: no domain mapping, so this is `Chebyshev.__call__` with
     `a = -1`, `b = 1`, and a point outside `[-1, 1]` evaluates the
     polynomial there rather than being rejected -- NumPy's behaviour too.
+
+    Parameters:
+        A: The tensor type of `x`, rank 1 with `m > 0` elements.
+        B: The tensor type of `c`, rank 1 with `n >= 1` elements.
+        gpu: Whether the evaluation launch targets the GPU on the device of
+            `x` rather than the host CPU.
+
+    Args:
+        x: The `m` points to evaluate at.
+        c: The `n` coefficients, `c[k]` multiplying `T_k`.
+
+    Returns:
+        A length-`m` tensor of the series' values at `x`.
+
+    Raises:
+        If copying `c`, allocating the output or the launch fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[B, 0]

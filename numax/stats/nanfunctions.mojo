@@ -67,7 +67,22 @@ def nansum[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The sum of the non-NaN elements; `0` if there are none.
-    `numpy.nansum`."""
+    `numpy.nansum`.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+
+    Returns:
+        The sum of the non-NaN elements, or `0` if every element is NaN.
+
+    Raises:
+        If a residency mismatch occurs under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     return _sum[gpu=gpu](_filled[gpu=gpu](xs, Scalar[dtype](0)))
 
@@ -78,7 +93,22 @@ def nanprod[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The product of the non-NaN elements; `1` if there are none.
-    `numpy.nanprod`."""
+    `numpy.nanprod`.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+
+    Returns:
+        The product of the non-NaN elements, or `1` if every element is NaN.
+
+    Raises:
+        If a residency mismatch occurs under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     from .statistics import prod as _prod
 
@@ -91,7 +121,22 @@ def nanmean[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The mean of the non-NaN elements. `numpy.nanmean`. Raises when every
-    element is NaN, where NumPy warns and returns NaN."""
+    element is NaN, where NumPy warns and returns NaN.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+
+    Returns:
+        The sum of the non-NaN elements divided by their count.
+
+    Raises:
+        If every element of `xs` is NaN.
+    """
     comptime dtype = T.dtype
     var kept = xs.size() - _nan_count[gpu=gpu](xs)
     if kept == 0:
@@ -112,6 +157,23 @@ def nanvar[
     `variance`'s single Welford fold, because the mask has to be applied to
     a deviation the fold never materializes. Raises when fewer than `ddof +
     1` elements are not NaN.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+        ddof: Degrees of freedom subtracted from the non-NaN count in the
+            divisor.
+
+    Returns:
+        The mean squared deviation of the non-NaN elements from their mean,
+        over `count - ddof`.
+
+    Raises:
+        If `ddof` or fewer elements of `xs` are not NaN.
     """
     comptime dtype = T.dtype
     var kept = xs.size() - _nan_count[gpu=gpu](xs)
@@ -130,7 +192,24 @@ def nanstd[
 ](xs: T, ddof: Int = 0) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
-    """The square root of `nanvar`. `numpy.nanstd`."""
+    """The square root of `nanvar`. `numpy.nanstd`.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+        ddof: Degrees of freedom subtracted from the non-NaN count in the
+            divisor.
+
+    Returns:
+        The square root of `nanvar(xs, ddof)`.
+
+    Raises:
+        If `ddof` or fewer elements of `xs` are not NaN.
+    """
     from std.math import sqrt
 
     return sqrt(nanvar[gpu=gpu](xs, ddof))
@@ -142,7 +221,22 @@ def nanmin[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The smallest non-NaN element. `numpy.nanmin`. Raises when every
-    element is NaN."""
+    element is NaN.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+
+    Returns:
+        The smallest non-NaN element of `xs`.
+
+    Raises:
+        If every element of `xs` is NaN.
+    """
     comptime dtype = T.dtype
     if _nan_count[gpu=gpu](xs) == xs.size():
         raise Error("nanmin: every element is NaN")
@@ -155,7 +249,22 @@ def nanmax[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The largest non-NaN element. `numpy.nanmax`. Raises when every
-    element is NaN."""
+    element is NaN.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to reduce, walked flat over all its elements.
+
+    Returns:
+        The largest non-NaN element of `xs`.
+
+    Raises:
+        If every element of `xs` is NaN.
+    """
     comptime dtype = T.dtype
     if _nan_count[gpu=gpu](xs) == xs.size():
         raise Error("nanmax: every element is NaN")

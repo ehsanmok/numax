@@ -94,6 +94,17 @@ def hyp1f1[T: FloatLike](a: T, b: T, x: T) -> T:
     The series at `|x|`, through Kummer's transformation on the negative
     side, blended by the sign of `x`; accurate to double precision for
     `|x| <= 100`, the module docstring has the reasoning.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        a: The numerator parameter.
+        b: The denominator parameter, not a non-positive integer.
+        x: The argument, accurate for `|x| <= 100`.
+
+    Returns:
+        `1F1(a; b; x)`.
     """
     var positive = ge_indicator(x, T.constant(0.0))
     var ax = x.abs()
@@ -157,6 +168,18 @@ def hyp2f1[T: FloatLike](a: T, b: T, c: T, x: T) -> T:
     than reaching `inf` and turning `0 * inf` into `NaN`, which means a
     caller who passes `x > 1` gets the value at `0.99`, not a diverging
     sum. Neither is an answer; nothing here checks the domain.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        a: The first numerator parameter.
+        b: The second numerator parameter.
+        c: The denominator parameter, not a non-positive integer.
+        x: The argument, `|x| < 1`.
+
+    Returns:
+        `2F1(a, b; c; x)`.
     """
     var positive = ge_indicator(x, T.constant(0.0))
     var forward = min_of(max_of(x, T.constant(0.0)), T.constant(_2F1_X_CAP))

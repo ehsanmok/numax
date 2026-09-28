@@ -170,6 +170,26 @@ def cholesky[
     in the loop. The sibling `cholesky` over `Array[T, n*n]` floors the
     diagonal too but has no way to report it, because a tier-1 kernel
     cannot branch on a value.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the diagonal blocks, panel solves and trailing GEMMs run
+            as kernels on `a`'s accelerator rather than on the host.
+        block: Width of each diagonal block; `n` gives the unblocked
+            algorithm.
+        tile: Side of the square tiles the symmetric trailing update is split
+            into, so only its lower block triangle is computed.
+
+    Args:
+        a: The `n x n` symmetric positive definite matrix.
+
+    Returns:
+        The `n x n` lower-triangular factor `L`, zeros above the diagonal, on
+        `a`'s device.
+
+    Raises:
+        If `a` is not positive definite (a non-positive pivot, whose index the
+        message names), or if a device operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -368,6 +388,25 @@ def cholesky_solve[
 
     MAX ships neither the factorization nor the solve, so both halves are
     numax's; the cubic work inside them is still MAX's `matmul`.
+
+    Parameters:
+        A: The `TensorLike` type of `lower`, a square floating-point matrix.
+        B: The `TensorLike` type of `b`, with `lower`'s dtype and `n` rows.
+        gpu: Whether both triangular solves run as kernels on `lower`'s
+            accelerator rather than on the host.
+        block: Width of the diagonal blocks the triangular solves step by.
+
+    Args:
+        lower: The `n x n` lower-triangular Cholesky factor `L` of `A`, as
+            `cholesky` returns it.
+        b: The right-hand side, length `n`.
+
+    Returns:
+        The solution `x` of `A @ x == b`, length `n`, on `lower`'s device.
+
+    Raises:
+        If a device operation fails; a zero on `L`'s diagonal is not detected
+        and gives a non-finite result.
     """
     comptime n = dim[A, 0]
     var y = _solve_triangular_vector[
@@ -401,6 +440,25 @@ def cholesky_solve[
     so the update between diagonal blocks is a GEMM. This is the spelling
     a Gaussian process wants when it has a batch of right-hand sides
     rather than one.
+
+    Parameters:
+        A: The `TensorLike` type of `lower`, a square floating-point matrix.
+        B: The `TensorLike` type of `b`, with `lower`'s dtype and `n` rows.
+        gpu: Whether both triangular solves run as kernels on `lower`'s
+            accelerator rather than on the host.
+        block: Width of the diagonal blocks the triangular solves step by.
+
+    Args:
+        lower: The `n x n` lower-triangular Cholesky factor `L` of `A`, as
+            `cholesky` returns it.
+        b: The `n x k` right-hand sides, one per column.
+
+    Returns:
+        The `n x k` solution `X` of `A @ X == B`, on `lower`'s device.
+
+    Raises:
+        If a device operation fails; a zero on `L`'s diagonal is not detected
+        and gives a non-finite result.
     """
     comptime n = dim[A, 0]
     comptime rhs = dim[B, 1]
@@ -415,7 +473,18 @@ def cholesky_solve[
 def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.cholesky.cholesky`."""
+    at `numax.linalg._array.cholesky.cholesky`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` symmetric positive definite matrix, row-major.
+
+    Returns:
+        The `n x n` lower-triangular factor `L`, row-major.
+    """
     return _array_cholesky[T=T, n=n](a)
 
 
@@ -424,5 +493,17 @@ def cholesky_solve[
 ](lower: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.cholesky.cholesky_solve`."""
+    at `numax.linalg._array.cholesky.cholesky_solve`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        lower: The `n x n` lower-triangular Cholesky factor `L`, row-major.
+        b: The right-hand side, length `n`.
+
+    Returns:
+        The solution `x` of `L @ L.T @ x == b`, length `n`.
+    """
     return _array_cholesky_solve[T=T, n=n](lower, b)

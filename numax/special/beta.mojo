@@ -52,6 +52,16 @@ def beta[T: FloatLike](a: T, b: T) -> T:
     arguments, so an `a < 0` extension would work the same way `gammainc`'s
     does -- via `_gamma_sign` -- but negative-parameter Beta has no
     standard use here to justify carrying it.)
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        a: The first shape argument, `a > 0`.
+        b: The second shape argument, `b > 0`.
+
+    Returns:
+        `B(a, b)`, computed as `exp` of a sum of `lgamma` terms.
     """
     return (lgamma(a) + lgamma(b) - lgamma(a + b)).exp()
 
@@ -70,6 +80,16 @@ def betaln[T: FloatLike](a: T, b: T) -> T:
     Same domain as `beta` -- `a > 0`, `b > 0` -- and **tier 1**: one
     subtraction over three `lgamma` calls, no branching, so it
     differentiates at `Dual` and runs in a kernel.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        a: The first shape argument, `a > 0`.
+        b: The second shape argument, `b > 0`.
+
+    Returns:
+        `ln B(a, b)`, finite where `beta` itself underflows.
     """
     return lgamma(a) + lgamma(b) - lgamma(a + b)
 

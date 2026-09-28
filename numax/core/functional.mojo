@@ -194,14 +194,36 @@ from .plain import Plain
 
 
 def add_op[T: FloatLike](a: T, b: T) -> T:
-    """Sum two `FloatLike` values -- the default `reduce`/`reduce_rows` op."""
+    """Sum two `FloatLike` values -- the default `reduce`/`reduce_rows` op.
+
+    Parameters:
+        T: The `FloatLike` conformer the two values share.
+
+    Args:
+        a: The left operand.
+        b: The right operand.
+
+    Returns:
+        `a + b`, in the conformer's own arithmetic.
+    """
     return a + b
 
 
 def max_op[T: FloatLike](a: T, b: T) -> T:
     """The larger of two `FloatLike` values, lane-wise -- `max_of` from
     `numax.core.numeric`, the exact selection, under the name the
-    reduction scaffolding pairs with `add_op`."""
+    reduction scaffolding pairs with `add_op`.
+
+    Parameters:
+        T: The `FloatLike` conformer the two values share.
+
+    Args:
+        a: The first operand.
+        b: The second operand.
+
+    Returns:
+        The lane-wise maximum of `a` and `b`, from `max_of`.
+    """
     return max_of(a, b)
 
 
@@ -211,7 +233,18 @@ def add_combine[
     dtype, 1
 ] where dtype.is_floating_point():
     """`add_op`, pre-composed for `Plain[dtype]` raw `SIMD` in and out --
-    the `combine` most `reduce`/`reduce_rows` callers want directly."""
+    the `combine` most `reduce`/`reduce_rows` callers want directly.
+
+    Parameters:
+        dtype: The floating-point element type.
+
+    Args:
+        a: The running accumulator.
+        b: The next element.
+
+    Returns:
+        `a + b` as one raw scalar lane.
+    """
     return add_op(Plain[dtype](a), Plain[dtype](b)).v
 
 
@@ -220,7 +253,18 @@ def max_combine[
 ](a: SIMD[dtype, 1], b: SIMD[dtype, 1]) -> SIMD[
     dtype, 1
 ] where dtype.is_floating_point():
-    """`max_op`, pre-composed for `Plain[dtype]` raw `SIMD` in and out."""
+    """`max_op`, pre-composed for `Plain[dtype]` raw `SIMD` in and out.
+
+    Parameters:
+        dtype: The floating-point element type.
+
+    Args:
+        a: The running accumulator.
+        b: The next element.
+
+    Returns:
+        The larger of `a` and `b` as one raw scalar lane.
+    """
     return max_op(Plain[dtype](a), Plain[dtype](b)).v
 
 
@@ -317,6 +361,23 @@ def map[
 
     map[width = simd_width_of[dtype](), step=gaussian_step](xs, ys)
     ```
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `xs` and `ys` share; it must be statically shaped
+            and row-major, as the `where` clause requires.
+        step: The elementwise kernel, generic over its SIMD width `w` and
+            non-capturing so it can be bound at compile time.
+        width: Elements per SIMD register on the CPU path, or consecutive
+            elements per thread at `gpu=True`; defaults to `1`.
+        gpu: `False` (the default) walks the tensor on the host; `True` makes
+            this the body of one GPU thread, to be launched with
+            `enqueue_function`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs`; every element is
+            overwritten.
     """
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
@@ -387,6 +448,24 @@ def map_to[
     because its `step` is `SIMD[dtype, w] -> SIMD[dtype, w]`.
 
     `numax.core.logic` and `numax.core.tensor.astype` are built on this.
+
+    Parameters:
+        in_dtype: The element type of `xs`.
+        out_dtype: The element type of `ys`, which `step` returns.
+        LayoutType: The layout `xs` and `ys` share; it must be statically shaped
+            and row-major.
+        step: The elementwise kernel from `in_dtype` lanes to `out_dtype` lanes,
+            generic over its SIMD width `w`.
+        width: Elements per SIMD register on the CPU path, or consecutive
+            elements per thread at `gpu=True`; defaults to `1`.
+        gpu: `False` (the default) walks the tensor on the host; `True` makes
+            this the body of one GPU thread, to be launched with
+            `enqueue_function`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs` at `out_dtype`; every
+            element is overwritten.
     """
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
@@ -461,6 +540,25 @@ def zip_to[
     What an elementwise comparison needs -- two `float32` inputs, one
     `bool` output. Same shape for all three, same reasoning as `map`'s own
     two-input overload for why there is no three-input form.
+
+    Parameters:
+        in_dtype: The element type of `lhs` and `rhs`.
+        out_dtype: The element type of `ys`, which `step` returns.
+        LayoutType: The layout all three tensors share; it must be statically
+            shaped and row-major.
+        step: The two-input kernel from `in_dtype` lanes to `out_dtype` lanes,
+            generic over its SIMD width `w`.
+        width: Elements per SIMD register on the CPU path, or consecutive
+            elements per thread at `gpu=True`; defaults to `1`.
+        gpu: `False` (the default) walks the tensor on the host; `True` makes
+            this the body of one GPU thread, to be launched with
+            `enqueue_function`.
+
+    Args:
+        lhs: The first input tensor.
+        rhs: The second input tensor, the same shape as `lhs`.
+        ys: The output tensor, the same shape as `lhs` at `out_dtype`; every
+            element is overwritten.
     """
     var lhs_flat = lhs.coalesce()
     var rhs_flat = rhs.coalesce()
@@ -558,6 +656,25 @@ def map_threaded[
     smallest normal value of `dtype` (about 1.2e-38 for `float32`) can come
     back as exactly `0` where the serial path returns the denormal.
     Everything at or above that threshold agrees bit for bit.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `xs` and `ys` share; it must be statically shaped
+            and row-major, as the `where` clause requires.
+        step: The elementwise kernel, generic over its SIMD width `w` and
+            non-capturing so it can be bound at compile time.
+        width: The SIMD width each threaded work item runs `step` at; defaults
+            to `1`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs`; every element is
+            overwritten.
+        ctx: A CPU context (`DeviceContext(api="cpu")`) for MAX's thread pool; a
+            GPU one aborts.
+
+    Raises:
+        Raises if `max.algorithm.elementwise` fails to dispatch on `ctx`.
     """
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
@@ -636,6 +753,26 @@ def map_blocks[
     is `max.algorithm.elementwise` over `Coord(batch)`, which handles a
     `batch` that is not a multiple of the lane count by running the tail at
     `w = 1` -- the same `step`, instantiated once more.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        k_in: The number of input values per problem, the rows of `xs`.
+        k_out: The number of output values per problem, the rows of `ys`.
+        batch: The number of independent problems, the columns of both tensors.
+        step: The per-lane solver from `k_in` raw `SIMD` values to `k_out`,
+            generic over its SIMD width `w`.
+        gpu: `False` (the default) runs on CPU lanes; `True` runs on the GPU,
+            with `ctx` a device context.
+
+    Args:
+        xs: The `(k_in, batch)` input, one problem per column.
+        ys: The `(k_out, batch)` output, one answer per column; every element is
+            overwritten.
+        ctx: The context the `elementwise` launch runs on, which must match
+            `gpu`.
+
+    Raises:
+        Raises if the `elementwise` launch on `ctx` fails.
     """
 
     @always_inline
@@ -668,7 +805,30 @@ def map_blocks[
     from `xs` rather than passed, and no `tile()` at the call site --
     `map_blocks[step=solve, gpu=True](problems, answers)`. The shapes are
     the tile overload's `(k_in, batch)` and `(k_out, batch)`, and `dtype`,
-    `k_in`, `k_out` and `batch` come from the tensors' types."""
+    `k_in`, `k_out` and `batch` come from the tensors' types.
+
+    Parameters:
+        dtype: The element type of every tensor involved. Inferred from the
+            tensors.
+        k_in: The number of input values per problem, the rows of `xs`. Inferred
+            from the tensors.
+        k_out: The number of output values per problem, the rows of `ys`.
+            Inferred from the tensors.
+        batch: The number of independent problems, the columns of both tensors.
+            Inferred from the tensors.
+        step: The per-lane solver from `k_in` raw `SIMD` values to `k_out`,
+            generic over its SIMD width `w`.
+        gpu: `False` (the default) runs on CPU lanes; `True` runs on the GPU,
+            which must be where `xs` lives.
+
+    Args:
+        xs: The `(k_in, batch)` input tensor; its context picks the device.
+        ys: The `(k_out, batch)` output tensor on the same device; every element
+            is overwritten.
+
+    Raises:
+        Raises if reading `xs`'s device context or the launch fails.
+    """
     map_blocks[dtype, k_in, k_out, batch, step, gpu](
         xs.tile(), ys.tile(), xs.context()
     )
@@ -732,6 +892,24 @@ def map[
         xs, ys, zs
     )
     ```
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `lhs`, `rhs` and `out_tensor` share; it must be
+            statically shaped and row-major.
+        step: The two-input elementwise kernel `out = step(lhs, rhs)`, generic
+            over its SIMD width `w` and non-capturing.
+        width: Elements per SIMD register on the CPU path, or consecutive
+            elements per thread at `gpu=True`; defaults to `1`.
+        gpu: `False` (the default) walks the tensor on the host; `True` makes
+            this the body of one GPU thread, to be launched with
+            `enqueue_function`.
+
+    Args:
+        lhs: The first input tensor.
+        rhs: The second input tensor, the same shape as `lhs`.
+        out_tensor: The output tensor, the same shape as `lhs`; every element is
+            overwritten.
     """
     var lhs_flat = lhs.coalesce()
     var rhs_flat = rhs.coalesce()
@@ -829,6 +1007,24 @@ def map[
 
     map[width = simd_width_of[dtype](), step=scale_step](xs, ys, 2.0)
     ```
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `xs` and `ys` share; it must be statically shaped
+            and row-major, as the `where` clause requires.
+        step: The kernel `step(x, p0)`, generic over the SIMD width `w` of `x`;
+            `p0` stays scalar.
+        width: Elements per SIMD register on the CPU path, or consecutive
+            elements per thread at `gpu=True`; defaults to `1`.
+        gpu: `False` (the default) walks the tensor on the host; `True` makes
+            this the body of one GPU thread, to be launched with
+            `enqueue_function`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs`; every element is
+            overwritten.
+        p0: The first run-time scalar, passed unchanged to every `step` call.
     """
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
@@ -895,6 +1091,25 @@ def map[
     two-parameter distribution takes -- `norm(mu, sigma)`, `gamma(shape,
     scale)`, `beta(a, b)`, `binom(n, p)`. See that overload for why the
     scalars are run-time arguments rather than compile-time parameters.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `xs` and `ys` share; it must be statically shaped
+            and row-major, as the `where` clause requires.
+        step: The kernel `step(x, p0, p1)`, generic over the SIMD width `w` of
+            `x`; `p0` and `p1` stay scalar.
+        width: Elements per SIMD register on the CPU path, or consecutive
+            elements per thread at `gpu=True`; defaults to `1`.
+        gpu: `False` (the default) walks the tensor on the host; `True` makes
+            this the body of one GPU thread, to be launched with
+            `enqueue_function`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs`; every element is
+            overwritten.
+        p0: The first run-time scalar, passed unchanged to every `step` call.
+        p1: The second run-time scalar, passed unchanged to every `step` call.
     """
     var xs_flat = xs.coalesce()
     var ys_flat = ys.coalesce()
@@ -941,6 +1156,17 @@ def add_step[
     instantiates `step` twice, at the vector width and again at `1` for the
     tail. The elementwise counterpart of what `add_combine` does for
     `reduce`.
+
+    Parameters:
+        dtype: The floating-point element type, bound first.
+        w: The SIMD width, left unbound (`_`) so `map` can pick it.
+
+    Args:
+        a: The left operand.
+        b: The right operand.
+
+    Returns:
+        `a + b`, lane by lane.
     """
     return add_op(Plain[dtype, w](a), Plain[dtype, w](b)).v
 
@@ -950,7 +1176,19 @@ def mul_step[
 ](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[
     dtype, w
 ] where dtype.is_floating_point():
-    """`a * b`, for the binary `map`, as `step=mul_step[dtype, _]`."""
+    """`a * b`, for the binary `map`, as `step=mul_step[dtype, _]`.
+
+    Parameters:
+        dtype: The floating-point element type, bound first.
+        w: The SIMD width, left unbound (`_`) so `map` can pick it.
+
+    Args:
+        a: The left operand.
+        b: The right operand.
+
+    Returns:
+        `a * b`, lane by lane.
+    """
     return (Plain[dtype, w](a) * Plain[dtype, w](b)).v
 
 
@@ -986,6 +1224,21 @@ def reduce[
     behind a flag would make the same name mean two different contracts
     depending on a parameter's value. Call `reduce_block_gpu`, then finish
     with a CPU-side call to `reduce` over its (small) `partials` output.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout of `xs`; it must be statically shaped and
+            row-major.
+        O: The origin of `xs`, mutable or not.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+
+    Args:
+        xs: The tensor to fold, of any rank.
+        init: The starting accumulator, normally `combine`'s identity.
+
+    Returns:
+        `init` folded with every element of `xs` in flat row-major order.
     """
     var xs_flat = xs.coalesce()
     var acc = init
@@ -1028,6 +1281,22 @@ def reduce_block_gpu[
     buffer once it's copied back to the host. A full single-pass reduction
     (a second, smaller kernel combining blocks, or a grid-wide atomic) is
     more machinery than a handful of blocks' worth of partials justifies.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout of `xs`.
+        PartialsLayout: The layout of `partials`.
+        block_size: Threads per block, which must equal the launch's `block_dim`
+            and should be a power of two for the halving tree.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+
+    Args:
+        xs: The device tensor to reduce, indexed by the global thread id.
+        partials: The output, with at least `grid_dim` elements; block `b`
+            writes element `b`.
+        identity: The value out-of-range threads contribute, `combine`'s
+            identity.
     """
     var shared = stack_allocation[
         block_size, Scalar[dtype], address_space=AddressSpace.SHARED
@@ -1090,6 +1359,20 @@ def reduce_rows[
     (many rows, each a modest width); a wide-row workload would want
     `reduce_block_gpu`'s approach per row instead, which 0.1.0 doesn't
     build.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        RowsLayout: The rank-2 layout of `xs`.
+        OutLayout: The layout of `dst`, indexed by row.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+        gpu: `False` (the default) is a host double loop; `True` makes this the
+            body of one GPU thread per row.
+
+    Args:
+        xs: The rank-2 `(rows, cols)` input.
+        dst: The output, one element per row of `xs`.
+        init: The starting accumulator for every row.
     """
     comptime if gpu:
         var r = global_idx.x
@@ -1170,6 +1453,23 @@ def reduce_axis[
     each walking the reduced axis serially -- the same trade `reduce_rows`
     makes, for the same reason. A long reduced axis would want
     `reduce_block_gpu`'s tree instead.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        XsLayout: The row-major layout of `xs`, statically shaped.
+        OutLayout: The layout of `dst`; it must be statically shaped and
+            row-major.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+        axis: The axis to fold or broadcast along, in `[0, rank)`.
+        gpu: `False` (the default) loops on the host; `True` makes this the body
+            of one GPU thread per surviving position.
+
+    Args:
+        xs: The input tensor, of any rank.
+        dst: The output, holding the surviving axes' element count in row-major
+            order.
+        init: The starting accumulator for every output element.
     """
     comptime rank = type_of(xs).rank
 
@@ -1271,6 +1571,23 @@ def broadcast_op_axis[
     axis normalization, centering). Full NumPy-style broadcasting between
     two arbitrary shapes -- size-1 dimensions stretched independently on
     either side -- is not implemented.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        XsLayout: The row-major layout of `xs`, statically shaped.
+        ValuesLayout: The layout of `values`; it must be statically shaped and
+            row-major.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+        axis: The axis to fold or broadcast along, in `[0, rank)`.
+        gpu: `False` (the default) loops on the host; `True` makes this the body
+            of one GPU thread per element of `xs`.
+
+    Args:
+        xs: The input tensor, of any rank.
+        values: The tensor missing `axis`, the surviving axes' element count in
+            row-major order.
+        ys: The output, the same shape as `xs`; every element is overwritten.
     """
     comptime rank = type_of(xs).rank
 
@@ -1345,6 +1662,20 @@ def broadcast_op_rows[
     ceildiv(xs.num_elements(), block_size)`, `block_dim = block_size` -- a
     flat 1D launch over every element, same as `map[gpu=True]`, with the
     row/column split recovered from the flat index.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        RowsLayout: The rank-2 layout `xs` and `ys` share.
+        ValuesLayout: The layout of `row_values`, indexed by row.
+        combine: The non-capturing binary op, called as `combine(element,
+            row_value)`.
+        gpu: `False` (the default) is a host double loop; `True` makes this the
+            body of one GPU thread per element.
+
+    Args:
+        xs: The rank-2 `(rows, cols)` input.
+        row_values: One value per row of `xs`.
+        ys: The output, the same shape as `xs`; every element is overwritten.
     """
     comptime if gpu:
         var idx = global_idx.x
@@ -1420,6 +1751,20 @@ def map[
     Same `width` meaning as the static CPU path (elements per SIMD
     register), same non-overlapping bulk-then-tail walk, so a `width` that
     does not divide `num_elements()` is handled rather than rounded away.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `xs` and `ys` share; row-major with at least one
+            run-time extent, as the `where` clause requires.
+        step: The elementwise kernel, generic over its SIMD width `w` and
+            non-capturing so it can be bound at compile time.
+        width: Elements per SIMD register; the tail that does not fill a
+            register runs at width `1`. Defaults to `1`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs`; every element is
+            overwritten.
     """
     var n = xs.num_elements()
     var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
@@ -1469,7 +1814,23 @@ def map[
 ):
     """The binary `map` for runtime-shaped tensors: `out[i] = step(lhs[i],
     rhs[i])`. Same reasoning as the unary runtime-shape overload above, and
-    the same deliberate absence of a three-input form as the static one."""
+    the same deliberate absence of a three-input form as the static one.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `lhs`, `rhs` and `out_tensor` share; row-major
+            with at least one run-time extent.
+        step: The two-input elementwise kernel `out = step(lhs, rhs)`, generic
+            over its SIMD width `w` and non-capturing.
+        width: Elements per SIMD register; the tail that does not fill a
+            register runs at width `1`. Defaults to `1`.
+
+    Args:
+        lhs: The first input tensor.
+        rhs: The second input tensor, the same shape as `lhs`.
+        out_tensor: The output tensor, the same shape as `lhs`; every element is
+            overwritten.
+    """
     var n = lhs.num_elements()
     var lhs_flat = TileTensor(lhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
     var rhs_flat = TileTensor(rhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
@@ -1512,7 +1873,23 @@ def reduce[
     """`reduce` for a runtime-shaped tensor. Scalar and left-to-right, like
     the static overload, so the two agree bit-for-bit on the same values --
     which is what makes the runtime-shape path testable against the static
-    one rather than only against itself."""
+    one rather than only against itself.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The row-major layout of `xs`, with at least one run-time
+            extent.
+        O: The origin of `xs`, mutable or not.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+
+    Args:
+        xs: The tensor to fold, of any rank.
+        init: The starting accumulator, normally `combine`'s identity.
+
+    Returns:
+        `init` folded with every element of `xs` in flat row-major order.
+    """
     var n = xs.num_elements()
     var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
     var total = init
@@ -1556,7 +1933,23 @@ def map_to[
 ):
     """`map_to` for a runtime-shaped tensor -- the dtype-changing walk a
     predicate needs, at a shape the compiler cannot see. No `gpu`
-    parameter, for the reason the runtime `map` gives."""
+    parameter, for the reason the runtime `map` gives.
+
+    Parameters:
+        in_dtype: The element type of `xs`.
+        out_dtype: The element type of `ys`, which `step` returns.
+        LayoutType: The layout `xs` and `ys` share; row-major with at least one
+            run-time extent.
+        step: The elementwise kernel from `in_dtype` lanes to `out_dtype` lanes,
+            generic over its SIMD width `w`.
+        width: Elements per SIMD register; the tail that does not fill a
+            register runs at width `1`. Defaults to `1`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs` at `out_dtype`; every
+            element is overwritten.
+    """
     var n = xs.num_elements()
     var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
     var ys_flat = TileTensor(ys.ptr_at_offset(Coord(0)), row_major(Coord(n)))
@@ -1613,7 +2006,24 @@ def zip_to[
     ].is_row_major
 ):
     """`zip_to` for runtime-shaped tensors: two inputs, one output, and a
-    `step` free to change dtype -- what an elementwise comparison needs."""
+    `step` free to change dtype -- what an elementwise comparison needs.
+
+    Parameters:
+        in_dtype: The element type of `lhs` and `rhs`.
+        out_dtype: The element type of `ys`, which `step` returns.
+        LayoutType: The layout all three tensors share; row-major with at least
+            one run-time extent.
+        step: The two-input kernel from `in_dtype` lanes to `out_dtype` lanes,
+            generic over its SIMD width `w`.
+        width: Elements per SIMD register; the tail that does not fill a
+            register runs at width `1`. Defaults to `1`.
+
+    Args:
+        lhs: The first input tensor.
+        rhs: The second input tensor, the same shape as `lhs`.
+        ys: The output tensor, the same shape as `lhs` at `out_dtype`; every
+            element is overwritten.
+    """
     var n = lhs.num_elements()
     var lhs_flat = TileTensor(lhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
     var rhs_flat = TileTensor(rhs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
@@ -1668,6 +2078,25 @@ def map_threaded[
     run-time value on both paths -- so unlike the GPU launch, threading has
     nothing to lose here. Same CPU-context requirement and same
     denormal-flushing caveat as the static overload.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        LayoutType: The layout `xs` and `ys` share; row-major with at least one
+            run-time extent, as the `where` clause requires.
+        step: The elementwise kernel, generic over its SIMD width `w` and
+            non-capturing so it can be bound at compile time.
+        width: The SIMD width each threaded work item runs `step` at; defaults
+            to `1`.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, the same shape as `xs`; every element is
+            overwritten.
+        ctx: A CPU context (`DeviceContext(api="cpu")`) for MAX's thread pool; a
+            GPU one aborts.
+
+    Raises:
+        Raises if `max.algorithm.elementwise` fails to dispatch on `ctx`.
     """
     var n = xs.num_elements()
     var xs_flat = TileTensor(xs.ptr_at_offset(Coord(0)), row_major(Coord(n)))
@@ -1723,6 +2152,21 @@ def reduce_axis[
     arithmetic over extents, not over types, so it carries across unchanged
     -- `rank` and `axis` are still compile-time, and only the extents they
     multiply are read at run time.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        XsLayout: The row-major layout of `xs`, with at least one run-time
+            extent.
+        OutLayout: The row-major layout of `dst`.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+        axis: The axis to fold or broadcast along, in `[0, rank)`.
+
+    Args:
+        xs: The input tensor, of any rank.
+        dst: The output, holding the surviving axes' element count in row-major
+            order.
+        init: The starting accumulator for every output element.
     """
     comptime rank = type_of(xs).rank
 
@@ -1796,7 +2240,23 @@ def broadcast_op_axis[
 ):
     """`broadcast_op_axis` for a runtime-shaped tensor -- the inverse of the
     runtime `reduce_axis`, so the two compose the same way their static
-    counterparts do."""
+    counterparts do.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        XsLayout: The row-major layout of `xs`, with at least one run-time
+            extent.
+        ValuesLayout: The row-major layout of `values`.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+        axis: The axis to fold or broadcast along, in `[0, rank)`.
+
+    Args:
+        xs: The input tensor, of any rank.
+        values: The tensor missing `axis`, the surviving axes' element count in
+            row-major order.
+        ys: The output, the same shape as `xs`; every element is overwritten.
+    """
     comptime rank = type_of(xs).rank
 
     var length = Int(xs.dim[axis]())
@@ -1860,6 +2320,20 @@ def map_strided[
     register from in general, and the one case that does -- a slice whose
     innermost axis is intact -- is not worth a second code path when a
     `copy` into row-major storage hands the whole vectorized family back.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        XsLayout: The layout of `xs`, any strides.
+        XsStorage: The storage engine of `xs`, which a sliced view may change.
+        YsLayout: The layout of `ys`, same rank and extents as `xs` but any
+            strides.
+        YsStorage: The storage engine of `ys`.
+        step: The elementwise kernel, instantiated only at width `1` here.
+
+    Args:
+        xs: The input view, read through its strides.
+        ys: The output view, written through its strides at every coordinate of
+            `xs`.
     """
     comptime rank = type_of(xs).rank
     var n = xs.num_elements()
@@ -1894,6 +2368,20 @@ def reduce_strided[
     element -- and therefore bit for bit -- with `reduce` over a compacted
     copy of the same view, for a `combine` that is not associative as well
     as one that is.
+
+    Parameters:
+        dtype: The element type of every tensor involved.
+        XsLayout: The layout of `xs`, any strides.
+        XsStorage: The storage engine of `xs`, which a sliced view may change.
+        combine: The non-capturing binary fold, such as `add_combine` or
+            `max_combine`.
+
+    Args:
+        xs: The view to fold, read through its strides.
+        init: The starting accumulator, normally `combine`'s identity.
+
+    Returns:
+        `init` folded with every element of `xs` in row-major coordinate order.
     """
     comptime rank = type_of(xs).rank
     var n = xs.num_elements()
@@ -1957,7 +2445,29 @@ def map[
     `gpu=True` as one `elementwise` launch on the tensors' device, one
     element per thread, the grid sized here. The tile overloads above are
     the kernel-author form, for a caller writing its own launch; this one
-    reads the dtype and layout from the tensors' types."""
+    reads the dtype and layout from the tensors' types.
+
+    Parameters:
+        _dt: The element type, inferred from the tensors.
+        _Lt: The layout, inferred from the tensors; it must be statically shaped
+            and row-major.
+        step: The elementwise kernel, generic over its SIMD width `w` and
+            non-capturing so it can be bound at compile time.
+        width: Elements per SIMD register on the host path; ignored at
+            `gpu=True`, which runs one element per thread. Defaults to `1`.
+        gpu: `False` (the default) walks on the host; `True` runs one
+            `elementwise` launch on the tensors' device and synchronizes before
+            returning.
+
+    Args:
+        xs: The input tensor, read and never written.
+        ys: The output tensor, same type and device as `xs`; every element is
+            overwritten.
+
+    Raises:
+        Raises if `gpu=True` and reading the tensors' device context, the launch
+        or the synchronize fails.
+    """
     comptime if gpu:
         var ctx = xs.context()
         var n = xs.size()
@@ -1998,7 +2508,30 @@ def map[
     ].is_row_major
 ):
     """`out[i] = step(lhs[i], rhs[i])` over `Tensor`s, on the host at `width`, or at `gpu=True`
-    as one `elementwise` launch on the tensors' device. See the unary form."""
+    as one `elementwise` launch on the tensors' device. See the unary form.
+
+    Parameters:
+        _dt: The element type, inferred from the tensors.
+        _Lt: The layout, inferred from the tensors; it must be statically shaped
+            and row-major.
+        step: The two-input elementwise kernel `out = step(lhs, rhs)`, generic
+            over its SIMD width `w` and non-capturing.
+        width: Elements per SIMD register on the host path; ignored at
+            `gpu=True`, which runs one element per thread. Defaults to `1`.
+        gpu: `False` (the default) walks on the host; `True` runs one
+            `elementwise` launch on the tensors' device and synchronizes before
+            returning.
+
+    Args:
+        lhs: The first input tensor; its context picks the device.
+        rhs: The second input tensor, same type and device as `lhs`.
+        out_tensor: The output tensor, same type and device as `lhs`; every
+            element is overwritten.
+
+    Raises:
+        Raises if `gpu=True` and reading the tensors' device context, the launch
+        or the synchronize fails.
+    """
     comptime if gpu:
         var ctx = lhs.context()
         var n = lhs.size()
@@ -2042,7 +2575,30 @@ def map[
     ].is_row_major
 ):
     """`ys[i] = step(xs[i], p0)` over `Tensor`s, on the host at `width`, or at `gpu=True`
-    as one `elementwise` launch on the tensors' device. See the unary form."""
+    as one `elementwise` launch on the tensors' device. See the unary form.
+
+    Parameters:
+        _dt: The element type, inferred from the tensors.
+        _Lt: The layout, inferred from the tensors; it must be statically shaped
+            and row-major.
+        step: The kernel `step(x, p0)`, generic over the SIMD width `w` of `x`;
+            `p0` stays scalar.
+        width: Elements per SIMD register on the host path; ignored at
+            `gpu=True`, which runs one element per thread. Defaults to `1`.
+        gpu: `False` (the default) walks on the host; `True` runs one
+            `elementwise` launch on the tensors' device and synchronizes before
+            returning.
+
+    Args:
+        xs: The input tensor; its context picks the device.
+        ys: The output tensor, same type and device as `xs`; every element is
+            overwritten.
+        p0: The first run-time scalar, passed unchanged to every `step` call.
+
+    Raises:
+        Raises if `gpu=True` and reading the tensors' device context, the launch
+        or the synchronize fails.
+    """
     comptime if gpu:
         var ctx = xs.context()
         var n = xs.size()
@@ -2088,7 +2644,31 @@ def map[
     ].is_row_major
 ):
     """`ys[i] = step(xs[i], p0, p1)` over `Tensor`s, on the host at `width`, or at `gpu=True`
-    as one `elementwise` launch on the tensors' device. See the unary form."""
+    as one `elementwise` launch on the tensors' device. See the unary form.
+
+    Parameters:
+        _dt: The element type, inferred from the tensors.
+        _Lt: The layout, inferred from the tensors; it must be statically shaped
+            and row-major.
+        step: The kernel `step(x, p0, p1)`, generic over the SIMD width `w` of
+            `x`; `p0` and `p1` stay scalar.
+        width: Elements per SIMD register on the host path; ignored at
+            `gpu=True`, which runs one element per thread. Defaults to `1`.
+        gpu: `False` (the default) walks on the host; `True` runs one
+            `elementwise` launch on the tensors' device and synchronizes before
+            returning.
+
+    Args:
+        xs: The input tensor; its context picks the device.
+        ys: The output tensor, same type and device as `xs`; every element is
+            overwritten.
+        p0: The first run-time scalar, passed unchanged to every `step` call.
+        p1: The second run-time scalar, passed unchanged to every `step` call.
+
+    Raises:
+        Raises if `gpu=True` and reading the tensors' device context, the launch
+        or the synchronize fails.
+    """
     comptime if gpu:
         var ctx = xs.context()
         var n = xs.size()

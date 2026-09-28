@@ -87,7 +87,18 @@ def exp[
     dtype: DType, width: SIMDLength, //
 ](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
     """`e^x`, correctly rounded to within one ulp at float64; `std.math.exp`
-    at every other dtype."""
+    at every other dtype.
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The exponent, per lane.
+
+    Returns:
+        `e^x` per lane: `inf` above `709.78`, `0` below `-745.13`, NaN for NaN.
+    """
     comptime if dtype != DType.float64:
         return _std_exp(x)
     else:
@@ -126,7 +137,18 @@ def log[
 ](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
     """`ln x`, correctly rounded to within one ulp at float64 for every
     positive finite `x` including the denormals, with `ln 0 = -inf`, `ln
-    inf = inf` and NaN for `x < 0`; `std.math.log` at every other dtype."""
+    inf = inf` and NaN for `x < 0`; `std.math.log` at every other dtype.
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The argument, per lane.
+
+    Returns:
+        `ln x` per lane, with the IEEE special values listed above.
+    """
     comptime if dtype != DType.float64:
         return _std_log(x)
     else:
@@ -176,7 +198,18 @@ def erf[
     dtype: DType, width: SIMDLength, //
 ](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
     """`erf x`, to within one ulp at float64; `std.math.erf` at every other
-    dtype."""
+    dtype.
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The argument, per lane, any sign.
+
+    Returns:
+        `erf x` per lane.
+    """
     comptime if dtype != DType.float64:
         return _std_erf(x)
     else:

@@ -121,6 +121,23 @@ def quad[
 
     var result = quad[peaked](0.0, 1.0)
     ```
+
+    Parameters:
+        f: The `FloatLike`-generic integrand, evaluated here at `Plain`
+            float64.
+        n: The Gauss-Legendre order applied to each panel.
+
+    Args:
+        a: The lower limit of integration.
+        b: The upper limit of integration; `b < a` negates the result.
+        tol: The absolute error tolerance, shared across panels in
+            proportion to their width.
+        max_panels: The panel budget; once reached, remaining panels are
+            accepted as they are and `converged` is false.
+
+    Returns:
+        A `QuadResult` with the integral, the summed panel error estimate,
+        the accepted panel count and whether the tolerance was met.
     """
     if a == b:
         return QuadResult(0.0, 0.0, 0, True)
@@ -207,6 +224,23 @@ def quad_vec[
     Breakpoints outside `[a, b]` are ignored; duplicates and unsorted
     input are handled. Sums the sub-integrals' errors and reports
     `converged` false if any piece failed.
+
+    Parameters:
+        f: The `FloatLike`-generic integrand, evaluated here at `Plain`
+            float64.
+        n: The Gauss-Legendre order applied to each panel.
+
+    Args:
+        a: The lower limit of integration.
+        b: The upper limit of integration.
+        breakpoints: Points forced to be panel boundaries; those outside
+            `(a, b)` are dropped and the rest are sorted.
+        tol: The absolute error tolerance, split evenly across the pieces
+            between consecutive cuts.
+
+    Returns:
+        A `QuadResult` summing the pieces' values, errors and panel counts,
+        with `converged` false if any piece did not converge.
     """
     var cuts = List[Float64](capacity=len(breakpoints) + 2)
     cuts.append(a)
@@ -304,6 +338,22 @@ def solve_ivp[
     `f` is still an ordinary `FloatLike` kernel, so the same equation can be
     integrated by the tier-1 `rk4` or `dopri5` inside a GPU kernel -- see
     `examples/advanced/ode.mojo`, which runs an ensemble that way.
+
+    Parameters:
+        f: The right-hand side `f(t, y)`, a `FloatLike`-generic kernel
+            evaluated here at `Plain` float64.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`.
+        t1: The final time; it may be less than `t0` to integrate backward.
+        rtol: The relative error tolerance per step.
+        atol: The absolute error tolerance per step.
+        max_steps: The cap on attempted steps, accepted plus rejected.
+
+    Returns:
+        A `ScalarIVPResult` with the time reached, the state there, the
+        accepted and rejected step counts and whether `t1` was reached.
     """
     if t0 == t1:
         return ScalarIVPResult(t0, y0, 0, 0, True)
@@ -489,6 +539,28 @@ def solve_ivp[
     The step decision is host control flow over one scalar per step, which
     is what makes this tier 2; at `gpu=True` the ratio itself is computed on
     the device and the state never leaves it.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y0`.
+        f: The right-hand side `f(t, y, ctx)`, returning `dy/dt` as a
+            `Static` tensor of `y`'s length.
+        gpu: Whether the stages and the error ratio run on the state's
+            device; a host-resident state falls back to the host path.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`, of length `dim[T, 0]`.
+        t1: The final time; it may be less than `t0` to integrate backward.
+        rtol: The relative error tolerance per component and step.
+        atol: The absolute error tolerance per component and step.
+        max_steps: The cap on attempted steps, accepted plus rejected.
+
+    Returns:
+        An `IVPResult` with the time reached, the state there as a
+        `Static` tensor, the step counts and whether `t1` was reached.
+
+    Raises:
+        If `f` raises, or if a tensor copy, launch or transfer fails.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -676,6 +748,18 @@ def fixed_quad[
     `numax.integrate.gauss_legendre` is the same rule at any
     `FloatLike`, so it differentiates and runs in a kernel; this is its
     `Float64` front door under SciPy's name.
+
+    Parameters:
+        f: The `FloatLike`-generic integrand, evaluated here at `Plain`
+            float64.
+        n: The number of Gauss-Legendre nodes.
+
+    Args:
+        a: The lower limit of integration.
+        b: The upper limit of integration.
+
+    Returns:
+        The `n`-point Gauss-Legendre estimate of the integral.
     """
     return gauss_legendre[_P, f, n](_P(a), _P(b)).v[0]
 
@@ -704,6 +788,21 @@ def dblquad[
     both variables at once is what sidesteps it. The argument order is
     `f(x, y)`, not SciPy's reversed `f(y, x)`; swapping it silently would
     be worse than saying so.
+
+    Parameters:
+        f: The integrand `f(x, y)`, a `FloatLike`-generic kernel evaluated
+            here at `Plain` float64.
+        n: The number of Gauss-Legendre nodes along each axis.
+
+    Args:
+        ax: The lower limit in `x`.
+        bx: The upper limit in `x`.
+        ay: The lower limit in `y`.
+        by: The upper limit in `y`.
+
+    Returns:
+        The `n * n`-point tensor-product estimate of the integral over the
+        rectangle.
     """
     comptime nodes = _gauss_legendre_nodes[n]()
     comptime weights = _gauss_legendre_weights[n]()

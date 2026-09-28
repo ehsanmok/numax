@@ -164,6 +164,10 @@ one tensor type; this is a pair of them, not a new one.
 
 The shape is `Static`'s own: `Spectrum[dtype, n]` is the sequence `fft`
 takes and `Spectrum[dtype, rows, cols]` the image `fft2` does.
+
+Parameters:
+    dtype: The floating-point element type of both halves.
+    dims: The shape shared by the real and imaginary tensors.
 """
 
 comptime _Lanes[dtype: DType, LayoutType: TensorLayout] = TileTensor[
@@ -224,6 +228,12 @@ def next_fast_len(n: Int) -> Int:
     but not what the spectrum says about the signal.
 
     Usable at compile time: `comptime m = next_fast_len(1000)` is `1024`.
+
+    Args:
+        n: The minimum length the caller needs.
+
+    Returns:
+        The smallest power of two `>= n`, or `1` for `n <= 1`.
     """
     return _next_power_of_two(n)
 
@@ -803,6 +813,22 @@ def fft[
 
     `numax.fft.fft` is the sibling that differentiates and runs inside
     a kernel body, at register-resident sizes.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The transform length, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The input sequence as a `(real, imaginary)` pair of length `n`.
+
+    Returns:
+        The length-`n` spectrum `X` as a `(real, imaginary)` pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _dft1[gpu=gpu, inverse=False](x^)
 
@@ -817,6 +843,23 @@ def ifft[
 
     The forward engine with the twiddle angles negated and a scaling pass,
     so `ifft(fft(x))` returns `x` to rounding.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The transform length, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The spectrum as a `(real, imaginary)` pair of length `n`.
+
+    Returns:
+        The length-`n` sequence, scaled by `1/n`, as a `(real, imaginary)`
+        pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _dft1[gpu=gpu, inverse=True](x^)
 
@@ -839,6 +882,23 @@ def rfft[
     path rather than two, and the transform is memory-bound at the sizes
     this tier is for. Specializing it is a later commit, not a missing
     feature.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of the real input, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The real input sequence of length `n`.
+
+    Returns:
+        The half spectrum `X[0..n/2]` as a `(real, imaginary)` pair of length
+        `n // 2 + 1`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _rfft[gpu=gpu](x^)
 
@@ -910,6 +970,23 @@ def irfft[
     Handed a half spectrum that is not, this returns the transform of its
     symmetrized version, silently, as NumPy does -- the imaginary parts of
     bins `0` and `n/2` are the information that has nowhere to go.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        keep: The number of half-spectrum bins in `x`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        n: The output length, `2 * keep - 2` (the default) or `2 * keep - 1`.
+
+    Args:
+        x: The half spectrum as a `(real, imaginary)` pair of length `keep`.
+
+    Returns:
+        The real length-`n` sequence, scaled by `1/n`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     comptime assert n == 2 * keep - 2 or n == 2 * keep - 1, (
         "irfft: a half spectrum of `keep` bins comes from a signal of length"
@@ -977,6 +1054,23 @@ def fft2[
     engine over a transposed view of the same buffer, so a second extent
     costs a second twiddle table and nothing else. Either extent may be any
     length; each axis picks radix-2 or Bluestein on its own.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        rows: The number of rows, any `rows > 0`.
+        cols: The number of columns, any `cols > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The `rows x cols` image as a `(real, imaginary)` pair.
+
+    Returns:
+        The `rows x cols` 2-D spectrum as a `(real, imaginary)` pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _dft2[gpu=gpu, inverse=False](x^)
 
@@ -992,6 +1086,24 @@ def ifft2[
     The inverse engine along both axes; each pass contributes its own
     `1/extent` and the two compose to the full normalization, so
     `ifft2(fft2(x))` returns `x` to rounding.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        rows: The number of rows, any `rows > 0`.
+        cols: The number of columns, any `cols > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The `rows x cols` spectrum as a `(real, imaginary)` pair.
+
+    Returns:
+        The `rows x cols` image, scaled by `1/(rows * cols)`, as a
+        `(real, imaginary)` pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _dft2[gpu=gpu, inverse=True](x^)
 
@@ -1010,6 +1122,24 @@ def rfft2[
     dropping it *before* the column pass halves that pass too. The column
     transforms are complex, so nothing further is dropped; the result is
     exactly the first `cols/2 + 1` columns of `fft2` on the same image.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        rows: The number of rows, any `rows > 0`.
+        cols: The number of columns, any `cols > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The real `rows x cols` image.
+
+    Returns:
+        The `rows x (cols // 2 + 1)` half spectrum as a `(real, imaginary)`
+        pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     comptime keep = cols // 2 + 1
     var ctx = x.context()
@@ -1131,6 +1261,23 @@ def fftshift[
     spectrum's two halves are shifted by calling this on each. Bin `k`
     lands at `(k + n // 2) % n`, so for odd `n` this and `ifftshift` are
     different rotations and only `ifftshift` undoes it.
+
+    Parameters:
+        dtype: The element type of `x`.
+        n: The length of `x`, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The length-`n` sequence to rotate, typically one half of a
+            spectrum or an `fftfreq` grid.
+
+    Returns:
+        `x` rotated left by `(n + 1) // 2`, zero frequency in the middle.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _rolled[gpu=gpu](x^, (n + 1) // 2)
 
@@ -1141,7 +1288,25 @@ def fftshift[
     rows > 0 and cols > 0
 ):
     """`fftshift` over both axes of a matrix -- NumPy's default for a 2-D
-    input, so `fftshift(fft2(image))` puts DC at the centre pixel."""
+    input, so `fftshift(fft2(image))` puts DC at the centre pixel.
+
+    Parameters:
+        dtype: The element type of `x`.
+        rows: The number of rows, any `rows > 0`.
+        cols: The number of columns, any `cols > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The `rows x cols` matrix to rotate along both axes.
+
+    Returns:
+        `x` rotated by `(rows + 1) // 2` rows and `(cols + 1) // 2` columns.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
     return _rolled2[gpu=gpu](x^, (rows + 1) // 2, (cols + 1) // 2)
 
 
@@ -1153,6 +1318,22 @@ def ifftshift[
 
     For even `n` the same rotation as `fftshift`; for odd `n` it is the
     other one, which is why both names exist.
+
+    Parameters:
+        dtype: The element type of `x`.
+        n: The length of `x`, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The centered length-`n` sequence to rotate back.
+
+    Returns:
+        `x` rotated left by `n // 2`, zero frequency back at index 0.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _rolled[gpu=gpu](x^, n // 2)
 
@@ -1162,7 +1343,25 @@ def ifftshift[
 ](var x: Static[dtype, rows, cols]) raises -> Static[dtype, rows, cols] where (
     rows > 0 and cols > 0
 ):
-    """`ifftshift` over both axes of a matrix."""
+    """`ifftshift` over both axes of a matrix.
+
+    Parameters:
+        dtype: The element type of `x`.
+        rows: The number of rows, any `rows > 0`.
+        cols: The number of columns, any `cols > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The centered `rows x cols` matrix to rotate back.
+
+    Returns:
+        `x` rotated by `rows // 2` rows and `cols // 2` columns.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
     return _rolled2[gpu=gpu](x^, rows // 2, cols // 2)
 
 
@@ -1200,6 +1399,20 @@ def fftfreq[
     `[0, 1, ..., n/2-1, -n/2, ..., -1] / (n * spacing)` -- the second half
     is negative, which is what `fftshift` reorders. On a device context
     it fills there in one launch; see `rfftfreq`.
+
+    Parameters:
+        dtype: The floating-point element type of the grid.
+        n: The transform length the grid describes.
+
+    Args:
+        spacing: The sample spacing, so the grid is in cycles per unit.
+        ctx: The device to build the grid on; `None` means the host.
+
+    Returns:
+        The length-`n` frequency grid in `fft` bin order.
+
+    Raises:
+        If allocating or filling the tensor on `ctx`'s device fails.
     """
     comptime if _DEVICE_FILL[dtype]:
         if ctx and ctx.value().api() != "cpu":
@@ -1226,6 +1439,20 @@ def rfftfreq[
     at the tensor's dtype, rather than uploading a host table; the gate is
     `numax.core.tensor`'s factories' (`_DEVICE_FILL`: not at `float64`,
     which Metal cannot compile).
+
+    Parameters:
+        dtype: The floating-point element type of the grid.
+        n: The real signal length the grid describes.
+
+    Args:
+        spacing: The sample spacing, so the grid is in cycles per unit.
+        ctx: The device to build the grid on; `None` means the host.
+
+    Returns:
+        The length-`n // 2 + 1` non-negative frequency grid.
+
+    Raises:
+        If allocating or filling the tensor on `ctx`'s device fails.
     """
     comptime keep = n // 2 + 1
     comptime if _DEVICE_FILL[dtype]:
@@ -1245,7 +1472,18 @@ def fft[
 ](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.fft`."""
+    at `numax.fft._array.fft.fft`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the transform length `n = 2^log2n`.
+
+    Args:
+        x: The complex sequence of length `2^log2n`.
+
+    Returns:
+        The unnormalized length-`2^log2n` spectrum.
+    """
     return _array_fft[T=T, log2n=log2n](x)
 
 
@@ -1256,14 +1494,36 @@ def fft2[
 ]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.fft2`."""
+    at `numax.fft._array.fft.fft2`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of each side `n = 2^log2n`.
+
+    Args:
+        x: The `n x n` complex image, flattened row-major.
+
+    Returns:
+        The unnormalized `n x n` 2-D spectrum, flattened row-major.
+    """
     return _array_fft2[T=T, log2n=log2n](x)
 
 
 def fftfreq[T: FloatLike, log2n: Int](spacing: T) -> Array[T, 1 << log2n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.fftfreq`."""
+    at `numax.fft._array.fft.fftfreq`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the transform length `n = 2^log2n`.
+
+    Args:
+        spacing: The sample spacing, so the grid is in cycles per unit.
+
+    Returns:
+        The length-`2^log2n` frequency grid in `fft` bin order.
+    """
     return _array_fftfreq[T=T, log2n=log2n](spacing)
 
 
@@ -1272,7 +1532,18 @@ def fftshift[
 ](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.fftshift`."""
+    at `numax.fft._array.fft.fftshift`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the transform length `n = 2^log2n`.
+
+    Args:
+        x: The complex length-`2^log2n` spectrum to rotate.
+
+    Returns:
+        `x` rotated so the zero-frequency bin sits in the middle.
+    """
     return _array_fftshift[T=T, log2n=log2n](x)
 
 
@@ -1281,7 +1552,18 @@ def ifft[
 ](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.ifft`."""
+    at `numax.fft._array.fft.ifft`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the transform length `n = 2^log2n`.
+
+    Args:
+        x: The complex spectrum of length `2^log2n`.
+
+    Returns:
+        The length-`2^log2n` sequence, scaled by `1/n`.
+    """
     return _array_ifft[T=T, log2n=log2n](x)
 
 
@@ -1292,7 +1574,18 @@ def ifft2[
 ]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.ifft2`."""
+    at `numax.fft._array.fft.ifft2`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of each side `n = 2^log2n`.
+
+    Args:
+        x: The `n x n` complex spectrum, flattened row-major.
+
+    Returns:
+        The `n x n` image scaled by `1/n^2`, flattened row-major.
+    """
     return _array_ifft2[T=T, log2n=log2n](x)
 
 
@@ -1301,7 +1594,18 @@ def ifftshift[
 ](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.ifftshift`."""
+    at `numax.fft._array.fft.ifftshift`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the transform length `n = 2^log2n`.
+
+    Args:
+        x: The centered complex length-`2^log2n` spectrum.
+
+    Returns:
+        `x` rotated so the zero-frequency bin is back at index 0.
+    """
     return _array_ifftshift[T=T, log2n=log2n](x)
 
 
@@ -1310,7 +1614,18 @@ def irfft[
 ](spectrum: Array[Complex[T], (1 << log2n) // 2 + 1]) -> Array[T, 1 << log2n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.irfft`."""
+    at `numax.fft._array.fft.irfft`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the output length `n = 2^log2n`.
+
+    Args:
+        spectrum: The half spectrum of `2^log2n // 2 + 1` complex bins.
+
+    Returns:
+        The real length-`2^log2n` sequence whose `rfft` is `spectrum`.
+    """
     return _array_irfft[T=T, log2n=log2n](spectrum)
 
 
@@ -1319,7 +1634,18 @@ def rfft[
 ](x: Array[T, 1 << log2n]) -> Array[Complex[T], (1 << log2n) // 2 + 1]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.rfft`."""
+    at `numax.fft._array.fft.rfft`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the input length `n = 2^log2n`.
+
+    Args:
+        x: The real sequence of length `2^log2n`.
+
+    Returns:
+        The half spectrum of `2^log2n // 2 + 1` complex bins.
+    """
     return _array_rfft[T=T, log2n=log2n](x)
 
 
@@ -1328,5 +1654,16 @@ def rfftfreq[
 ](spacing: T) -> Array[T, (1 << log2n) // 2 + 1]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.fft._array.fft.rfftfreq`."""
+    at `numax.fft._array.fft.rfftfreq`.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        log2n: The base-2 logarithm of the real signal length `n = 2^log2n`.
+
+    Args:
+        spacing: The sample spacing, so the grid is in cycles per unit.
+
+    Returns:
+        The length-`2^log2n // 2 + 1` non-negative frequency grid.
+    """
     return _array_rfftfreq[T=T, log2n=log2n](spacing)

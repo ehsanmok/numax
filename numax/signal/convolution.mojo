@@ -177,6 +177,28 @@ def convolve[
     One `elementwise` launch, `O(m k)`; `fftconvolve` is the same answer by
     the transform route for a long kernel. Both inputs are borrowed, since
     the same taps are usually applied to many signals.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, rank 1 with a static length `m`.
+        B: The `TensorLike` type of `b`, rank 1 with a static length `k`
+            and the same dtype as `A`.
+        mode: `MODE_FULL`, `MODE_SAME` or `MODE_VALID`, which fixes the
+            output length.
+        gpu: Whether the launches target the GPU rather than the CPU; the
+            inputs must live on the matching device.
+
+    Args:
+        a: The signal, of length `m`.
+        b: The kernel, of length `k`.
+
+    Returns:
+        A new `Static` tensor on `a`'s device holding the `mode` slice of the
+        convolution: `m + k - 1`, `max(m, k)` or `max(m, k) - min(m, k) + 1`
+        elements.
+
+    Raises:
+        If allocating the output or launching the kernel on `a`'s device
+        fails.
     """
     comptime m = dim[A, 0]
     comptime k = dim[B, 0]
@@ -210,6 +232,27 @@ def correlate[
     same loop rather than reversing it. The zero-lag term of the `full`
     result sits at index `k - 1`, not `0` -- NumPy's convention, and the
     one thing about correlation a caller has to know.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, rank 1 with a static length `m`.
+        B: The `TensorLike` type of `b`, rank 1 with a static length `k`
+            and the same dtype as `A`.
+        mode: `MODE_FULL`, `MODE_SAME` or `MODE_VALID`, which fixes the
+            output length.
+        gpu: Whether the launches target the GPU rather than the CPU; the
+            inputs must live on the matching device.
+
+    Args:
+        a: The signal, of length `m`.
+        b: The template correlated against `a`, of length `k`.
+
+    Returns:
+        A new `Static` tensor on `a`'s device holding the `mode` slice of the
+        correlation, with the zero-lag term of `full` at index `k - 1`.
+
+    Raises:
+        If allocating the output or launching the kernel on `a`'s device
+        fails.
     """
     comptime m = dim[A, 0]
     comptime k = dim[B, 0]
@@ -248,6 +291,27 @@ def fftconvolve[
     product and one slice, all device-resident; `O(n log n)` where the
     direct sum is `O(m k)`, so this is the one to call when `k` is long.
     Agrees with `convolve` to rounding, which the tests check.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, rank 1 with a static length `m`.
+        B: The `TensorLike` type of `b`, rank 1 with a static length `k`
+            and the same dtype as `A`.
+        mode: `MODE_FULL`, `MODE_SAME` or `MODE_VALID`, which fixes the
+            output length.
+        gpu: Whether the launches target the GPU rather than the CPU; the
+            inputs must live on the matching device.
+
+    Args:
+        a: The signal, of length `m`.
+        b: The kernel, of length `k`.
+
+    Returns:
+        A new `Static` tensor on `a`'s device holding the `mode` slice of the
+        linear convolution, equal to `convolve(a, b)` to rounding.
+
+    Raises:
+        If allocating a buffer, a transform, or a kernel launch on `a`'s
+        device fails.
     """
     comptime m = dim[A, 0]
     comptime k = dim[B, 0]
@@ -379,7 +443,23 @@ def convolve[
 ] where (mode == MODE_FULL or mode == MODE_SAME):
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.convolve`."""
+    at `numax.signal._array.signal.convolve`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        m: The length of `a`.
+        k: The length of `b`.
+        mode: `MODE_FULL` or `MODE_SAME`; `MODE_VALID` is not offered at this
+            tier.
+
+    Args:
+        a: The signal, of length `m`.
+        b: The kernel, of length `k`.
+
+    Returns:
+        The `mode` slice of the linear convolution: `m + k - 1` elements for
+        `MODE_FULL`, `m` (the length of `a`) for `MODE_SAME`.
+    """
     return _array_convolve[T=T, m=m, k=k, mode=mode](a, b)
 
 
@@ -388,5 +468,19 @@ def correlate[
 ](a: Array[T, m], b: Array[T, k]) -> Array[T, m + k - 1]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.correlate`."""
+    at `numax.signal._array.signal.correlate`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        m: The length of `a`.
+        k: The length of `b`.
+
+    Args:
+        a: The signal, of length `m`.
+        b: The template correlated against `a`, of length `k`.
+
+    Returns:
+        The full cross-correlation, `m + k - 1` elements with the zero-lag
+        term at index `k - 1`.
+    """
     return _array_correlate[T=T, m=m, k=k](a, b)

@@ -218,6 +218,26 @@ def uniform[
     filled there with values drawn uniformly from `[low, high)`.
     `numpy.random.uniform`. Pass `gpu=True` with a device `ctx` to fill one
     thread per element; the module docstring has the stream layout.
+
+    Parameters:
+        dtype: The element type of the result.
+        dims: The result's compile-time shape.
+        gpu: Whether to fill one thread per element on `ctx`'s device, which
+            must then be an accelerator; `False` fills on the host, threaded at
+            native SIMD width.
+
+    Args:
+        low: The inclusive lower bound.
+        high: The exclusive upper bound.
+        ctx: The device to allocate and fill on; `None` means the host.
+
+    Returns:
+        A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+        uniform draws from `[low, high)`.
+
+    Raises:
+        When the host context cannot be created, or the allocation or the fill
+        launch fails.
     """
     return _fill[dtype, dtype, _uniform_step[dtype], gpu, *dims](
         _next_seed(), low, high, ctx
@@ -235,6 +255,26 @@ def normal[
     filled there with values drawn from a normal distribution with the
     given `mean` and `stddev`, by Box-Muller on two uniforms per element.
     `numpy.random.normal`. `gpu=True` fills on the device.
+
+    Parameters:
+        dtype: The floating-point element type of the result.
+        dims: The result's compile-time shape.
+        gpu: Whether to fill one thread per element on `ctx`'s device, which
+            must then be an accelerator; `False` fills on the host, threaded at
+            native SIMD width.
+
+    Args:
+        mean: The mean of the distribution.
+        stddev: The standard deviation of the distribution.
+        ctx: The device to allocate and fill on; `None` means the host.
+
+    Returns:
+        A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+        normal draws.
+
+    Raises:
+        When the host context cannot be created, or the allocation or the fill
+        launch fails.
     """
     return _fill[dtype, dtype, _normal_step[dtype], gpu, *dims](
         _next_seed(), mean, stddev, ctx
@@ -251,6 +291,25 @@ def exponential[
     the given `scale` (`1/rate`), by inverse CDF: `-scale ln(1 - U)`, with
     `U` in `[0, 1)` so `1 - U` never reaches `0`. `numpy.random.exponential`.
     `gpu=True` fills on the device.
+
+    Parameters:
+        dtype: The floating-point element type of the result.
+        dims: The result's compile-time shape.
+        gpu: Whether to fill one thread per element on `ctx`'s device, which
+            must then be an accelerator; `False` fills on the host, threaded at
+            native SIMD width.
+
+    Args:
+        scale: The mean of the distribution, `1 / rate`.
+        ctx: The device to allocate and fill on; `None` means the host.
+
+    Returns:
+        A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+        exponential draws.
+
+    Raises:
+        When the host context cannot be created, or the allocation or the fill
+        launch fails.
     """
     return _fill[dtype, dtype, _exponential_step[dtype], gpu, *dims](
         _next_seed(), scale, scale, ctx
@@ -270,6 +329,27 @@ def randint[
     `double`. `dtype` is the tensor's own -- an integer dtype gives exact
     integers, a floating one gives integral values in floating storage.
     `gpu=True` fills on the device.
+
+    Parameters:
+        dtype: The element type of the result; an integer dtype gives exact
+            integers, a floating one integral values in floating storage.
+        dims: The result's compile-time shape.
+        gpu: Whether to fill one thread per element on `ctx`'s device, which
+            must then be an accelerator; `False` fills on the host, threaded at
+            native SIMD width.
+
+    Args:
+        low: The inclusive lower bound.
+        high: The exclusive upper bound; `high - low` must be below `2^32`.
+        ctx: The device to allocate and fill on; `None` means the host.
+
+    Returns:
+        A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+        integers drawn uniformly from `[low, high)`.
+
+    Raises:
+        When the host context cannot be created, or the allocation or the fill
+        launch fails.
     """
     return _fill[dtype, DType.int64, _randint_step[dtype], gpu, *dims](
         _next_seed(), Int64(low), Int64(high), ctx
@@ -291,6 +371,26 @@ def randbool[
     `randbool[DType.bool, 4](ctx=ctx)` beside `uniform[DType.float32, 4](ctx=ctx)`
     does not have to remember that this one is shaped differently.
     `gpu=True` fills on the device.
+
+    Parameters:
+        dtype: Must be `DType.bool`; there so the spelling matches the other
+            draws.
+        dims: The result's compile-time shape.
+        gpu: Whether to fill one thread per element on `ctx`'s device, which
+            must then be an accelerator; `False` fills on the host, threaded at
+            native SIMD width.
+
+    Args:
+        p: The probability that an element is true.
+        ctx: The device to allocate and fill on; `None` means the host.
+
+    Returns:
+        A new `Static` tensor of shape `dims` on `ctx`'s device, a `DType.bool`
+        mask true with probability `p`.
+
+    Raises:
+        When the host context cannot be created, or the allocation or the fill
+        launch fails.
     """
     return _fill[
         DType.bool, DType.float32, _randbool_step[DType.bool], gpu, *dims
@@ -305,6 +405,9 @@ def seed(value: Int):
     `seed(value)` call reproduce identically, on the host or the device
     (checked in `tests/stats/test_random.mojo`). Has no effect on a
     `Generator`, which owns its seed.
+
+    Args:
+        value: The seed handed to `std.random.seed`.
     """
     _std_seed(value)
 
@@ -334,7 +437,12 @@ struct Generator(Copyable):
     """The seed the next draw will use; advanced by one after each."""
 
     def __init__(out self, seed: Int = 0):
-        """A generator whose first draw uses `seed`."""
+        """A generator whose first draw uses `seed`.
+
+        Args:
+            seed: The Philox seed of the first draw; later draws use `seed + 1`,
+                `seed + 2`, and so on.
+        """
         self._seed = UInt64(seed)
 
     def _advance(mut self) -> UInt64:
@@ -350,7 +458,29 @@ struct Generator(Copyable):
         high: Scalar[dtype] = 1,
         ctx: Optional[DeviceContext] = None,
     ) raises -> Static[dtype, *dims]:
-        """`uniform`, from this generator's stream."""
+        """`uniform`, from this generator's stream.
+
+        Parameters:
+            dtype: The element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device, which
+                must then be an accelerator; `False` fills on the host, threaded
+                at native SIMD width.
+
+        Args:
+            low: The inclusive lower bound.
+            high: The exclusive upper bound.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+            uniform draws from `[low, high)`; this generator's seed advances by
+            one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
         return _fill[dtype, dtype, _uniform_step[dtype], gpu, *dims](
             self._advance(), low, high, ctx
         )
@@ -363,7 +493,28 @@ struct Generator(Copyable):
         stddev: Scalar[dtype] = 1,
         ctx: Optional[DeviceContext] = None,
     ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
-        """`normal`, from this generator's stream."""
+        """`normal`, from this generator's stream.
+
+        Parameters:
+            dtype: The floating-point element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device, which
+                must then be an accelerator; `False` fills on the host, threaded
+                at native SIMD width.
+
+        Args:
+            mean: The mean of the distribution.
+            stddev: The standard deviation of the distribution.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+            normal draws; this generator's seed advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
         return _fill[dtype, dtype, _normal_step[dtype], gpu, *dims](
             self._advance(), mean, stddev, ctx
         )
@@ -375,7 +526,27 @@ struct Generator(Copyable):
         scale: Scalar[dtype] = 1,
         ctx: Optional[DeviceContext] = None,
     ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
-        """`exponential`, from this generator's stream."""
+        """`exponential`, from this generator's stream.
+
+        Parameters:
+            dtype: The floating-point element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device, which
+                must then be an accelerator; `False` fills on the host, threaded
+                at native SIMD width.
+
+        Args:
+            scale: The mean of the distribution, `1 / rate`.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+            exponential draws; this generator's seed advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
         return _fill[dtype, dtype, _exponential_step[dtype], gpu, *dims](
             self._advance(), scale, scale, ctx
         )
@@ -385,7 +556,30 @@ struct Generator(Copyable):
     ](
         mut self, low: Int, high: Int, ctx: Optional[DeviceContext] = None
     ) raises -> Static[dtype, *dims]:
-        """`randint`, from this generator's stream."""
+        """`randint`, from this generator's stream.
+
+        Parameters:
+            dtype: The element type of the result; an integer dtype gives exact
+                integers, a floating one integral values in floating storage.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device, which
+                must then be an accelerator; `False` fills on the host, threaded
+                at native SIMD width.
+
+        Args:
+            low: The inclusive lower bound.
+            high: The exclusive upper bound; `high - low` must be below `2^32`.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of shape `dims` on `ctx`'s device, filled with
+            integers drawn uniformly from `[low, high)`; this generator's seed
+            advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
         return _fill[dtype, DType.int64, _randint_step[dtype], gpu, *dims](
             self._advance(), Int64(low), Int64(high), ctx
         )
@@ -395,7 +589,29 @@ struct Generator(Copyable):
     ](
         mut self, p: Float64 = 0.5, ctx: Optional[DeviceContext] = None
     ) raises -> Static[DType.bool, *dims] where (dtype == DType.bool):
-        """`randbool`, from this generator's stream."""
+        """`randbool`, from this generator's stream.
+
+        Parameters:
+            dtype: Must be `DType.bool`; there so the spelling matches the other
+                draws.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device, which
+                must then be an accelerator; `False` fills on the host, threaded
+                at native SIMD width.
+
+        Args:
+            p: The probability that an element is true.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of shape `dims` on `ctx`'s device, a
+            `DType.bool` mask true with probability `p`; this generator's seed
+            advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
         return _fill[
             DType.bool, DType.float32, _randbool_step[DType.bool], gpu, *dims
         ](self._advance(), Float32(p), Float32(p), ctx)

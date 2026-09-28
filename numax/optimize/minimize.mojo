@@ -750,6 +750,33 @@ def minimize[
     downhill step, returns `converged=False` with the best point it reached
     rather than raising. See `minimize` in `numax.optimize`'s `Array` tier for why an
     unrecognized `method` raises rather than failing to compile.
+
+    Parameters:
+        T: The tensor type of `x0`, a static rank-1 floating-point vector
+            of `n_vars` entries.
+        f: The objective, mapping a length-`n_vars` point to a scalar.
+        jac: The gradient of `f`, length `n_vars`; the default raises when
+            called and is only valid for `"powell"`.
+        method: `"bfgs"`, `"l-bfgs"`, `"cg"` or `"powell"`.
+        gpu: Run `"bfgs"`'s inverse-Hessian `matvec` and `outer` updates on
+            the device `x0` lives on; a residency mismatch falls back to
+            the host with a notice. The other methods do not read it.
+        memory: The number of `(s, y)` pairs `"l-bfgs"` keeps.
+
+    Args:
+        x0: The starting point; borrowed, not consumed.
+        tol: The stopping threshold: `max|grad|` (`1e-8` by default) for
+            the gradient methods, the relative decrease (`1e-10`) for
+            `"powell"`.
+        max_iter: The iteration cap; `200` by default.
+
+    Returns:
+        A `MinimizeResult` with the final point, `f` there, the gradient
+        infinity-norm, the iteration count, and whether `tol` was met.
+
+    Raises:
+        If `method` is not one of the four, if a gradient method is chosen
+        with the default `jac`, or if `f` or `jac` raises.
     """
     comptime dtype = T.dtype
     comptime n_vars = dim[T, 0]
@@ -822,6 +849,38 @@ def minimize[
     its ceiling against L-BFGS-B. The same four methods, defaulting to
     `"l-bfgs"` here as SciPy does with bounds; `tol` is on the projected
     gradient (or, for `"powell"`, the relative decrease).
+
+    Parameters:
+        A: The tensor type of `x0`, a static rank-1 floating-point vector
+            of `n_vars` entries.
+        B: The tensor type of `lower`, length `n_vars`.
+        C: The tensor type of `upper`, length `n_vars`.
+        f: The objective, mapping a length-`n_vars` point to a scalar.
+        jac: The gradient of `f`, length `n_vars`; the default raises when
+            called and is only valid for `"powell"`.
+        method: `"l-bfgs"` (default), `"bfgs"`, `"cg"` or `"powell"`.
+        gpu: Run `"bfgs"`'s inverse-Hessian `matvec` and `outer` updates on
+            the device `x0` lives on; a residency mismatch falls back to
+            the host with a notice. The other methods do not read it.
+        memory: The number of `(s, y)` pairs `"l-bfgs"` keeps.
+
+    Args:
+        x0: The starting point; borrowed, not consumed.
+        lower: The per-variable lower bounds.
+        upper: The per-variable upper bounds.
+        tol: The stopping threshold: projected `max|grad|` (`1e-8` by
+            default) for the gradient methods, the relative decrease
+            (`1e-10`) for `"powell"`.
+        max_iter: The iteration cap; `200` by default.
+
+    Returns:
+        A `MinimizeResult` with the final point inside the box, `f` there,
+        the projected-gradient norm, the iteration count, and whether `tol`
+        was met.
+
+    Raises:
+        If `method` is not one of the four, if a gradient method is chosen
+        with the default `jac`, or if `f` or `jac` raises.
     """
     comptime dtype = A.dtype
     comptime n_vars = dim[A, 0]
@@ -1130,7 +1189,29 @@ def minimize[
 ) raises -> ArrayMinimizeResult[n_vars, dtype] where dtype.is_floating_point():
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.optimize._array.optimize.minimize`."""
+    at `numax.optimize._array.optimize.minimize`.
+
+    Parameters:
+        n_vars: The number of variables.
+        f: The objective, generic over the `FloatLike` conformer so its
+            gradient is read off `Gradient`.
+        method: `"bfgs"` (default), `"cg"` or `"nelder-mead"`.
+        dtype: The floating-point element type.
+
+    Args:
+        x0: The starting point.
+        tol: The stopping threshold; per method by default, `max|grad| <
+            1e-8` for `"bfgs"` and `"cg"`, the simplex spread `1e-10` for
+            `"nelder-mead"`.
+        max_iter: The iteration cap; `200`, or `1000` for `"nelder-mead"`,
+            by default.
+
+    Returns:
+        An `ArrayMinimizeResult` with the final point and `f` there.
+
+    Raises:
+        If `method` is not `"bfgs"`, `"cg"` or `"nelder-mead"`.
+    """
     return _array_minimize[n_vars=n_vars, f=f, method=method, dtype=dtype](
         x0, tol, max_iter
     )

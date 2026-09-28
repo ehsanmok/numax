@@ -48,6 +48,16 @@ def logsumexp[T: FloatLike, n: Int](xs: Array[T, n]) -> T where n > 0:
     Tier 1: `n - 1` `max_of`s for the shift, `n` exponentials, one log.
     At `Dual` the derivative is the softmax of `xs`, which is the quantity
     a cross-entropy gradient needs.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        n: The comptime length of `xs`, at least 1.
+
+    Args:
+        xs: The values to reduce.
+
+    Returns:
+        `max(xs) + ln(sum(exp(xs - max(xs))))`.
     """
     var m = xs[0].copy()
     for i in range(1, n):
@@ -74,6 +84,21 @@ def logsumexp[
     `numax.linalg.dot`'s shape with a different fold -- so the tensor is
     read once, no `exp(x)` is ever materialized, and only the scalar
     returns. Tier 2; the `Array` overload is the tier-1 sibling.
+
+    Parameters:
+        T: The `TensorLike` input type: rank 1, static, row-major, floating
+            point.
+        gpu: Launch the `rowwise` reduction with `target="gpu"` on `xs`'s
+            device context instead of on CPU threads.
+
+    Args:
+        xs: The values to reduce.
+
+    Returns:
+        The scalar `log(sum(exp(xs)))`, copied back to the host.
+
+    Raises:
+        If the launch or the device-to-host copy of the result fails.
     """
     comptime n = dim[T, 0]
     comptime target = "gpu" if gpu else "cpu"

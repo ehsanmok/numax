@@ -126,6 +126,13 @@ struct LU[dtype: DType, n: Int, gpu: Bool = False](
         var pivots: Static[DType.int32, Self.n],
         sign: Int,
     ):
+        """Wraps a finished factorization; `lu_factor` is what builds one.
+
+        Args:
+            factored: The packed `n x n` `L`/`U` factor.
+            pivots: The `n` LAPACK-style row interchanges.
+            sign: The swap parity, `+1` or `-1`.
+        """
         self.factored = factored^
         self.pivots = pivots^
         self.sign = sign
@@ -138,6 +145,16 @@ struct LU[dtype: DType, n: Int, gpu: Bool = False](
         A copy, so the caller cannot invalidate this factorization by
         writing through it. `ctx` is accepted for signature compatibility
         and ignored -- the copy stays on the factorization's own device.
+
+        Args:
+            ctx: Ignored; accepted for signature compatibility.
+
+        Returns:
+            A copy of the packed `n x n` `L`/`U` factor, on the factorization's
+            device.
+
+        Raises:
+            If the copy's allocation or launch fails.
         """
         var out = Static[Self.dtype, Self.n, Self.n](self.factored.context())
         pack_block[target=_target[Self.gpu]()](
@@ -174,6 +191,22 @@ struct LU[dtype: DType, n: Int, gpu: Bool = False](
         solves; the `O(n^2)` update between them is one row per thread. The
         factor stays where the factorization left it, which is the point of
         `lu_factor` returning this object rather than a matrix.
+
+        Parameters:
+            T: The `TensorLike` type of `b`, a length-`n` vector with the
+                factorization's dtype.
+            block: Width of the diagonal blocks the substitutions step by.
+
+        Args:
+            b: The right-hand side, length `n`, on the factorization's device.
+
+        Returns:
+            The solution `x`, length `n`, on the factorization's device; not
+            finite when `A` is singular.
+
+        Raises:
+            If a device allocation, copy or kernel launch fails; a singular
+            matrix is not reported.
         """
         return self._solve_vector[block=block](b)
 
@@ -254,6 +287,23 @@ struct LU[dtype: DType, n: Int, gpu: Bool = False](
         a GEMM.
 
         `inverse` is this with `B` the identity.
+
+        Parameters:
+            T: The `TensorLike` type of `b`, an `n x k` matrix with the
+                factorization's dtype.
+            block: Width of the diagonal blocks the substitutions step by.
+
+        Args:
+            b: The `n x k` right-hand sides, one per column, on the
+                factorization's device.
+
+        Returns:
+            The `n x k` solution `X`, on the factorization's device; not finite
+            when `A` is singular.
+
+        Raises:
+            If a device allocation, copy or kernel launch fails; a singular
+            matrix is not reported.
         """
         return self._solve_matrix[block=block](b)
 
@@ -330,6 +380,12 @@ struct LU[dtype: DType, n: Int, gpu: Bool = False](
         the `O(n^2)` a copy of the factor would be. The product itself is
         `n` multiplications and stays on the host, where an overflow is at
         least visible.
+
+        Returns:
+            The determinant of the factored matrix, `0` when it is singular.
+
+        Raises:
+            If the diagonal gather or its copy back to the host fails.
         """
         var values = self._diagonal()
         var product = Scalar[Self.dtype](self.sign)
@@ -360,6 +416,13 @@ struct LU[dtype: DType, n: Int, gpu: Bool = False](
 
         Shares `det`'s gather: the diagonal comes back as an `n`-vector, so
         the transfer is `O(n)` and not a copy of the factor.
+
+        Returns:
+            The pair `(sign, ln|det(A)|)`; `(0, -inf)` when the matrix is
+            singular.
+
+        Raises:
+            If the diagonal gather or its copy back to the host fails.
         """
         var values = self._diagonal()
         var sign = Scalar[Self.dtype](self.sign)
@@ -480,6 +543,25 @@ def lu_factor[
     matrices should pass it. On Metal the sweep is flat to within noise
     (4.6-4.8 GFLOP/s at `n = 512`, 16.1-18.6 at `1024`), so `16` stands
     there rather than being tuned to a difference that is not there.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the panel, block-row solve and trailing GEMM run as
+            kernels on `a`'s accelerator; carried into the returned `LU`.
+        block: Width of each panel.
+        base: Column width at which the recursive panel `getrf2` stops
+            splitting.
+
+    Args:
+        a: The `n x n` matrix to factor.
+
+    Returns:
+        The `LU` holding the packed factors, the pivots and the swap parity,
+        on `a`'s device.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails; a singular
+        matrix is not reported.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -622,6 +704,21 @@ def slogdet[
     perfectly ordinary matrices well before the answer stops being useful;
     a sum of logarithms cannot. `LU.slogdet` carries the full
     reasoning and the singular-matrix convention.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the factorization runs as kernels on `a`'s accelerator
+            rather than on the host.
+        block: Panel width of the blocked `lu_factor`.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        The pair `(sign, ln|det(a)|)`; `(0, -inf)` when `a` is singular.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     var factored = lu_factor[gpu=gpu, block=block](a)
@@ -647,6 +744,21 @@ def det[
 
     Pivoted, unlike the `Array[T, n*n]` sibling, so the swap parity is
     folded into the sign and a matrix with a zero leading entry is fine.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the factorization runs as kernels on `a`'s accelerator
+            rather than on the host.
+        block: Panel width of the blocked `lu_factor`.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        The determinant of `a`, `0` when it is singular.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     var factorization = lu_factor[gpu=gpu, block=block](a)
@@ -656,7 +768,18 @@ def det[
 def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.lu.det`."""
+    at `numax.linalg._array.lu.det`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The determinant of `a`, from an unpivoted LU.
+    """
     return _array_det[T=T, n=n](a)
 
 
@@ -667,7 +790,18 @@ def lu_factor[
 ] where dtype.is_floating_point():
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.lu.lu_factor`."""
+    at `numax.linalg._array.lu.lu_factor`.
+
+    Parameters:
+        dtype: The floating-point element type.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix, row-major, at `Plain[dtype, 1]`.
+
+    Returns:
+        The partially pivoted factorization, as a `PivotedLU`.
+    """
     return _array_lu_factor[dtype=dtype, n=n](a)
 
 
@@ -678,5 +812,16 @@ def slogdet[
 ] where dtype.is_floating_point():
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.lu.slogdet`."""
+    at `numax.linalg._array.lu.slogdet`.
+
+    Parameters:
+        dtype: The floating-point element type.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix, row-major, at `Plain[dtype, 1]`.
+
+    Returns:
+        The pair `(sign, ln|det(a)|)`, from a pivoted LU.
+    """
     return _array_slogdet[dtype=dtype, n=n](a)

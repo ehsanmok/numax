@@ -490,6 +490,25 @@ def quantile[
 
     One `O(n)` selection on a host copy, not a sort: see the module
     docstring; at `gpu=True`, a device sort and a two-element gather.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The quantile to compute, in `[0, 1]`.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        The quantile at `xs`'s dtype; NaN when `xs` is empty or holds a NaN.
+
+    Raises:
+        When a requested value lies outside `[0, 1]` or `method` is unknown, or
+        on a residency mismatch under the `"raise"` fallback policy, or a failed
+        device operation.
     """
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -514,6 +533,28 @@ def quantile[
     `3 m < log2 n`, one sort above it -- and the answer is the same either
     way. At `gpu=True`, one device sort and one gather of all `2 m` order
     statistics.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        m: The number of values requested; positive.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The `m` quantiles to compute, each in `[0, 1]`, as a rank-1 tensor at
+            `xs`'s dtype.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        A rank-1 tensor of the `m` results in the order of `q`, at `xs`'s dtype,
+        on `q`'s device; all NaN when `xs` is empty or holds a NaN.
+
+    Raises:
+        When a requested value lies outside `[0, 1]` or `method` is unknown, or
+        on a residency mismatch under the `"raise"` fallback policy, or a failed
+        device operation.
     """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs):
@@ -534,7 +575,27 @@ def percentile[
 ](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
     T.dtype
 ] where T.dtype.is_floating_point():
-    """`quantile` with `q` in percent. `numpy.percentile(a, q)`."""
+    """`quantile` with `q` in percent. `numpy.percentile(a, q)`.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The percentile to compute, in `[0, 100]`.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        The percentile at `xs`'s dtype; NaN when `xs` is empty or holds a NaN.
+
+    Raises:
+        When a requested value lies outside `[0, 100]` or `method` is unknown,
+        or on a residency mismatch under the `"raise"` fallback policy, or a
+        failed device operation.
+    """
     return quantile[gpu=gpu](xs, q / 100.0, method)
 
 
@@ -545,7 +606,30 @@ def percentile[
     q: Static[T.dtype, m],
     method: StaticString = "linear",
 ) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
-    """Several percentiles at once, on `quantile`'s selection route."""
+    """Several percentiles at once, on `quantile`'s selection route.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        m: The number of values requested; positive.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The `m` percentiles to compute, each in `[0, 100]`, as a rank-1
+            tensor at `xs`'s dtype.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        A rank-1 tensor of the `m` results in the order of `q`, at `xs`'s dtype,
+        on `q`'s device; all NaN when `xs` is empty or holds a NaN.
+
+    Raises:
+        When a requested value lies outside `[0, 100]` or `method` is unknown,
+        or on a residency mismatch under the `"raise"` fallback policy, or a
+        failed device operation.
+    """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -566,7 +650,27 @@ def nanquantile[
     T.dtype
 ] where T.dtype.is_floating_point():
     """`quantile` over the non-NaN elements. `numpy.nanquantile`. Raises
-    when every element is NaN, where NumPy warns and returns NaN."""
+    when every element is NaN, where NumPy warns and returns NaN.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The quantile to compute, in `[0, 1]`.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        The quantile of the non-NaN elements, at `xs`'s dtype.
+
+    Raises:
+        When `xs` holds no non-NaN element, a requested value lies outside `[0,
+        1]` or `method` is unknown, or on a residency mismatch under the
+        `"raise"` fallback policy, or a failed device operation.
+    """
     if _check_device[T, gpu](xs):
         comptime if gpu:
             return _quantiles_device(xs, [q], method, True, False)[0]
@@ -583,7 +687,30 @@ def nanquantile[
     q: Static[T.dtype, m],
     method: StaticString = "linear",
 ) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
-    """Several NaN-ignoring quantiles at once, on the same route."""
+    """Several NaN-ignoring quantiles at once, on the same route.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        m: The number of values requested; positive.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The `m` quantiles to compute, each in `[0, 1]`, as a rank-1 tensor at
+            `xs`'s dtype.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        A rank-1 tensor of the `m` results in the order of `q`, at `xs`'s dtype,
+        on `q`'s device, over the non-NaN elements.
+
+    Raises:
+        When `xs` holds no non-NaN element, a requested value lies outside `[0,
+        1]` or `method` is unknown, or on a residency mismatch under the
+        `"raise"` fallback policy, or a failed device operation.
+    """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -603,7 +730,27 @@ def nanpercentile[
 ](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
     T.dtype
 ] where T.dtype.is_floating_point():
-    """`percentile` over the non-NaN elements. `numpy.nanpercentile`."""
+    """`percentile` over the non-NaN elements. `numpy.nanpercentile`.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        q: The percentile to compute, in `[0, 100]`.
+        method: One of NumPy's thirteen quantile methods, listed in the module
+            docstring; `"linear"` by default.
+
+    Returns:
+        The percentile of the non-NaN elements, at `xs`'s dtype.
+
+    Raises:
+        When `xs` holds no non-NaN element, a requested value lies outside `[0,
+        100]` or `method` is unknown, or on a residency mismatch under the
+        `"raise"` fallback policy, or a failed device operation.
+    """
     return nanquantile[gpu=gpu](xs, q / 100.0, method)
 
 
@@ -612,7 +759,23 @@ def nanmedian[
 ](xs: T) raises -> Scalar[T.dtype] where T.dtype.is_floating_point():
     """The median of the non-NaN elements. `numpy.nanmedian` -- the
     `"linear"` quantile at `1/2`, which is `median`'s even-count average,
-    and like `median` a selection rather than a sort."""
+    and like `median` a selection rather than a sort.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+
+    Returns:
+        The median of the non-NaN elements, at `xs`'s dtype.
+
+    Raises:
+        When `xs` holds no non-NaN element, or on a residency mismatch under the
+        `"raise"` fallback policy, or a failed device operation.
+    """
     return nanquantile[gpu=gpu](xs, 0.5)
 
 
@@ -634,6 +797,27 @@ def iqr[
     Two selections over one host copy -- the second runs on what the first
     left behind, which is a permutation of the same sample, so the answer
     does not depend on the order they run in.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype, any shape.
+        gpu: Whether to sort and gather on the tensor's device; a residency
+            mismatch falls back to the host selection with a notice.
+
+    Args:
+        xs: The sample; every element counts, whatever the shape.
+        interpolation: Any `quantile` method, used for both quartiles;
+            `"linear"` by default.
+        nan_policy: `"propagate"` to return NaN when `xs` holds a NaN, or
+            `"omit"` to drop the NaNs first.
+
+    Returns:
+        The 75th percentile less the 25th, at `xs`'s dtype; NaN when no values
+        remain or a NaN propagates.
+
+    Raises:
+        When `nan_policy` is neither `"propagate"` nor `"omit"` or
+        `interpolation` is unknown, or on a residency mismatch under the
+        `"raise"` fallback policy, or a failed device operation.
     """
     comptime dtype = T.dtype
     if not (nan_policy == "propagate" or nan_policy == "omit"):

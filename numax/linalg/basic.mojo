@@ -78,6 +78,25 @@ def solve[
     Both halves do run on the accelerator at `gpu=True` -- the
     factorization and the two substitutions alike, since `LU` carries
     `gpu` in its type and cannot be solved against on the wrong device.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a square `n x n` floating-point
+            matrix with static extents.
+        B: The `TensorLike` type of `b`, a length-`n` vector of `A.dtype`.
+        gpu: Run the factorization and both substitutions on the tensors'
+            device rather than the host.
+        block: The panel width of the blocked LU and the substitutions.
+
+    Args:
+        a: The `n x n` coefficient matrix.
+        b: The length-`n` right-hand side.
+
+    Returns:
+        The length-`n` solution `x`, on `a`'s device.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails; a singular `a`
+        does not raise and yields non-finite entries instead.
     """
     comptime n = dim[A, 0]
     var factorization = lu_factor[gpu=gpu, block=block](a)
@@ -109,6 +128,23 @@ def inverse[
     and `cholesky_solve` cheaper again when the matrix is positive
     definite. This exists for the cases that genuinely need the entries of
     `A^-1` -- a covariance matrix's precision, for instance.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square `n x n` floating-point
+            matrix with static extents.
+        gpu: Run the factorization and the substitutions on `a`'s device
+            rather than the host.
+        block: The panel width of the blocked LU and the substitutions.
+
+    Args:
+        a: The `n x n` matrix to invert.
+
+    Returns:
+        The `n x n` inverse `A^-1`, on `a`'s device.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails; a singular `a`
+        does not raise and yields non-finite entries instead.
     """
     comptime n = dim[T, 0]
     var factorization = lu_factor[gpu=gpu, block=block](a)
@@ -142,6 +178,24 @@ def pinv[
     which is `linalg.matmul` reading `U` transposed in place. `rcond`
     defaults to NumPy's `1e-15`; the `Array` tier uses `1e-12`, because at
     a fixed Jacobi sweep count its small singular values carry more noise.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, an `m x n` floating-point matrix
+            with static extents and `m >= n >= 1`.
+        gpu: Run the `svd` and the final product on `a`'s device; the
+            `n x n` column scaling always runs on the host.
+
+    Args:
+        a: The `m x n` matrix to pseudo-invert.
+        rcond: Singular values at or below `rcond` times the largest are
+            treated as zero.
+
+    Returns:
+        The `n x m` pseudoinverse, on `a`'s device.
+
+    Raises:
+        If a device operation fails, or the `svd` iteration does not
+        converge (in practice, a NaN or infinity in `a`).
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -206,6 +260,25 @@ def orth[
     a multiplier of the largest singular value, matching `pinv` above.
 
     **Tier 2**, through `svd`, whose device path `gpu=True` takes.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, an `m x n` floating-point matrix
+            with static extents and `m >= n >= 1`.
+        gpu: Run the underlying `svd` on `a`'s device; the column selection
+            runs on the host.
+
+    Args:
+        a: The `m x n` matrix whose range is wanted.
+        rcond: A multiplier of the largest singular value to use as the
+            cutoff; `None` selects SciPy's `max(m, n) * eps` default.
+
+    Returns:
+        An `m x rank` `Dynamic` tensor whose orthonormal columns span the
+        range of `a`.
+
+    Raises:
+        If a device operation fails, or the `svd` iteration does not
+        converge (in practice, a NaN or infinity in `a`).
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -251,6 +324,25 @@ def null_space[
     A full-rank `a` gives a basis with zero columns rather than an error,
     which is SciPy's behavior and the useful one -- the emptiness is the
     answer.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, an `m x n` floating-point matrix
+            with static extents and `m >= n >= 1`.
+        gpu: Run the underlying `svd` on `a`'s device; the column selection
+            runs on the host.
+
+    Args:
+        a: The `m x n` matrix whose null space is wanted.
+        rcond: A multiplier of the largest singular value to use as the
+            cutoff; `None` selects SciPy's `max(m, n) * eps` default.
+
+    Returns:
+        An `n x (n - rank)` `Dynamic` tensor whose orthonormal columns span
+        the null space of `a`, with zero columns when `a` has full rank.
+
+    Raises:
+        If a device operation fails, or the `svd` iteration does not
+        converge (in practice, a NaN or infinity in `a`).
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -304,6 +396,13 @@ struct Polar[dtype: DType, n: Int](
         var u: Static[Self.dtype, Self.n, Self.n],
         var p: Static[Self.dtype, Self.n, Self.n],
     ):
+        """Pair the two factors of a polar decomposition.
+
+        Args:
+            u: The `n x n` orthogonal factor, taken by move.
+            p: The `n x n` symmetric positive semidefinite factor, taken by
+                move.
+        """
         self.u = u^
         self.p = p^
 
@@ -341,6 +440,23 @@ def polar[
     number.
 
     **Tier 2**, through `svd`, whose device path `gpu=True` takes.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square `n x n` floating-point
+            matrix with static extents.
+        gpu: Run the `svd` and both products on `a`'s device; scaling `V`
+            by the singular values runs on the host.
+
+    Args:
+        a: The `n x n` matrix to decompose.
+
+    Returns:
+        A `Polar` holding the `n x n` orthogonal factor `u` and the `n x n`
+        symmetric positive semidefinite factor `p`.
+
+    Raises:
+        If a device operation fails, or the `svd` iteration does not
+        converge (in practice, a NaN or infinity in `a`).
     """
     comptime n = dim[T, 0]
     var factored = svd[gpu=gpu](a)
@@ -410,6 +526,26 @@ def tensorsolve[
     retyping of the same buffer. `M` is the integer square root of `a`'s
     element count, fixed at compile time from its layout; `b`'s size and
     `a`'s leading extents are checked against it at run time.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a floating-point tensor whose
+            element count is a perfect square `M * M`.
+        B: The `TensorLike` type of `b`, of `A.dtype` and lower rank than
+            `A`.
+        gpu: Run the underlying `solve` on the tensors' device rather than
+            the host.
+
+    Args:
+        a: The coefficient tensor, of shape `b.shape + x.shape`.
+        b: The right-hand side tensor, with `M` elements.
+
+    Returns:
+        The solution `x` as a `Dynamic` tensor of rank `A.rank - B.rank`,
+        shaped by `a`'s trailing extents.
+
+    Raises:
+        If `b` does not hold `M` elements, if `a`'s leading `b.rank` extents
+        do not multiply to `M`, or if a device operation fails.
     """
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -464,6 +600,25 @@ def tensorinv[
     element count, the split checked at run time; `a` read as `M x M` is
     inverted with `inverse` and the result read back with the two halves
     of the shape swapped, so it contracts against `a`'s leading axes.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a floating-point tensor whose
+            element count is a perfect square `M * M`.
+        ind: The number of leading axes contracted by `tensordot`; must lie
+            in `[1, T.rank)`.
+        gpu: Run the underlying `inverse` on `a`'s device rather than the
+            host.
+
+    Args:
+        a: The tensor to invert, whose first `ind` extents multiply to `M`.
+
+    Returns:
+        The inverse as a `Dynamic` tensor of `a`'s rank, with `a`'s trailing
+        extents first and its leading `ind` extents last.
+
+    Raises:
+        If `a`'s first `ind` extents do not multiply to `M`, or if a device
+        operation fails.
     """
     comptime ALayout = T.LayoutType
     comptime total = _static_size[ALayout]()
@@ -502,7 +657,18 @@ def tensorinv[
 def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.basic.inverse`."""
+    at `numax.linalg._array.basic.inverse`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix to invert, row-major.
+
+    Returns:
+        The `n x n` inverse, row-major.
+    """
     return _array_inverse[T=T, n=n](a)
 
 
@@ -511,7 +677,21 @@ def pinv[
 ](a: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.basic.pinv`."""
+    at `numax.linalg._array.basic.pinv`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of one-sided Jacobi sweeps.
+        rcond: Singular values at or below `rcond` times the largest are
+            treated as zero.
+
+    Args:
+        a: The `n x n` matrix to pseudo-invert, row-major.
+
+    Returns:
+        The `n x n` pseudoinverse, row-major.
+    """
     return _array_pinv[T=T, n=n, sweeps=sweeps, rcond=rcond](a)
 
 
@@ -520,5 +700,17 @@ def solve[
 ](a: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.basic.solve`."""
+    at `numax.linalg._array.basic.solve`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The system order.
+
+    Args:
+        a: The `n x n` coefficient matrix, row-major.
+        b: The length-`n` right-hand side.
+
+    Returns:
+        The length-`n` solution `x` with `a @ x == b`.
+    """
     return _array_solve[T=T, n=n](a, b)

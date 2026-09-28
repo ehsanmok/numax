@@ -424,6 +424,27 @@ def histogram[
     edges so rounding never moves a sample one bin over. `bins` is a
     compile-time parameter because it shapes the result; the explicit-edges
     form takes an `edges` tensor instead. Host-side, one pass.
+
+    Parameters:
+        T: The tensor type of `xs`, with a floating-point dtype.
+        bins: The number of equal-width bins, fixed at compile time.
+        gpu: Tally on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        xs: The samples, every element counted.
+        low: The lower end of the range; the data's minimum when `None`.
+        high: The upper end of the range; the data's maximum when `None`.
+        density: Divide each bin by the total and its width, so the result
+            integrates to one.
+
+    Returns:
+        A `Histogram` holding the `bins` counts (or densities) and the
+        `bins + 1` edges.
+
+    Raises:
+        If `high <= low`, if `xs` is empty or holds NaN, or if a residency
+        mismatch occurs under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs):
@@ -467,7 +488,31 @@ def histogram[
 ):
     """`histogram` with each sample contributing its weight rather than
     one. `numpy.histogram(a, bins, weights=w)`; `density` normalizes the
-    weighted total."""
+    weighted total.
+
+    Parameters:
+        T: The tensor type of `xs`, with a floating-point dtype.
+        bins: The number of equal-width bins, fixed at compile time.
+        gpu: Tally on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        xs: The samples, every element counted.
+        weights: One weight per sample, the same shape as `xs`.
+        low: The lower end of the range; the data's minimum when `None`.
+        high: The upper end of the range; the data's maximum when `None`.
+        density: Divide each bin by the weighted total and its width, so the
+            result integrates to one.
+
+    Returns:
+        A `Histogram` holding the `bins` summed weights (or densities) and
+        the `bins + 1` edges.
+
+    Raises:
+        If `high <= low`, if `xs` is empty or holds NaN, if `weights` is not
+        contiguous on the device path, or if a residency mismatch occurs under
+        the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs) and _check_device[T, gpu](weights):
         comptime if gpu:
@@ -514,6 +559,25 @@ def histogram[
     When `edges` happens to have exactly `xs`'s shape this call is
     ambiguous with the weighted uniform form; spell the parameter list out
     (`histogram[bins=...]`) in that one case.
+
+    Parameters:
+        T: The tensor type of `xs`, with a floating-point dtype.
+        m: The number of edges, giving `m - 1` bins.
+        gpu: Tally on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        xs: The samples, every element counted.
+        edges: The `m` ascending bin edges, the last one inclusive.
+        density: Divide each bin by the total and its width, so the result
+            integrates to one.
+
+    Returns:
+        A `Histogram` holding the `m - 1` counts (or densities) and a copy of
+        `edges`.
+
+    Raises:
+        If a residency mismatch occurs under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs):
@@ -543,7 +607,29 @@ def histogram[
 ) raises -> Histogram[T.dtype, m - 1] where (
     T.dtype.is_floating_point() and m >= 2
 ):
-    """The explicit-edges `histogram` with weights."""
+    """The explicit-edges `histogram` with weights.
+
+    Parameters:
+        T: The tensor type of `xs`, with a floating-point dtype.
+        m: The number of edges, giving `m - 1` bins.
+        gpu: Tally on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        xs: The samples, every element counted.
+        edges: The `m` ascending bin edges, the last one inclusive.
+        weights: One weight per sample, the same shape as `xs`.
+        density: Divide each bin by the weighted total and its width, so the
+            result integrates to one.
+
+    Returns:
+        A `Histogram` holding the `m - 1` summed weights (or densities) and a
+        copy of `edges`.
+
+    Raises:
+        If `weights` is not contiguous on the device path, or if a residency
+        mismatch occurs under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     if _check_device[T, gpu](xs) and _check_device[T, gpu](weights):
         comptime if gpu:
@@ -607,6 +693,28 @@ def histogram2d[
     The same edge rules as `histogram` along each axis, a sample counted
     only when it is inside both ranges. `histogramdd` is the same tally at
     any rank; this is its two-axis spelling with the edges as tensors.
+
+    Parameters:
+        A: The rank-1, static-shape floating-point tensor type of `x`.
+        B: The tensor type of `y`, matching `A`'s dtype and length.
+        xbins: The number of equal-width bins along `x`.
+        ybins: The number of equal-width bins along `y`.
+        gpu: Tally on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        x: The first coordinate of each sample.
+        y: The second coordinate of each sample, paired with `x` by index.
+        density: Divide each cell by the total and its area, so the result
+            integrates to one.
+
+    Returns:
+        A `Histogram2D` holding the `xbins x ybins` counts (or densities) and
+        both edge tensors.
+
+    Raises:
+        If `x` or `y` holds NaN, if `y` is not contiguous on the device path, or
+        if a residency mismatch occurs under the `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
@@ -717,6 +825,26 @@ def histogramdd[
     (`histogramdd[3, 4](points)`; the dtype and shape are inferred), so the
     count tensor has the grid's shape. `histogram2d` is the `d = 2` case
     with the edges as tensors.
+
+    Parameters:
+        T: The rank-2, static-shape floating-point tensor type of `points`,
+            inferred.
+        bins: One bin count per dimension, as many as `points` has columns.
+        gpu: Tally on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        points: The `n x d` samples, one per row.
+        density: Divide each cell by the total and its volume, so the result
+            integrates to one.
+
+    Returns:
+        A `HistogramDD` holding counts (or densities) of shape `bins` and one
+        edge list per dimension.
+
+    Raises:
+        If `points` holds NaN, if it is not contiguous on the device path, or if
+        a residency mismatch occurs under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -891,6 +1019,23 @@ def bincount[
     whichever is greater. `numpy.bincount(x, minlength)`. A negative value
     raises, as NumPy's does. At `gpu=True` the counts are `int32` atomics
     on the device, widened to `int64` there.
+
+    Parameters:
+        T: The row-major tensor type of `xs`, with an integral dtype.
+        gpu: Count with atomics on the tensor's device; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        xs: The non-negative integers to count, walked flat.
+        minlength: The smallest length the result may have.
+
+    Returns:
+        A rank-1 `int64` tensor of length `max(max(xs) + 1, minlength)`
+        holding the count of each value.
+
+    Raises:
+        If any element of `xs` is negative, or if a residency mismatch occurs
+        under the `"raise"` fallback policy.
     """
     if _check_device[T, gpu](xs):
         comptime if gpu:
@@ -923,7 +1068,28 @@ def bincount[
     is_row_major[T] and T.dtype.is_integral() and wdtype.is_floating_point()
 ):
     """`bincount` summing each value's weight instead of counting it.
-    `numpy.bincount(x, weights=w, minlength)`."""
+    `numpy.bincount(x, weights=w, minlength)`.
+
+    Parameters:
+        T: The row-major tensor type of `xs`, with an integral dtype.
+        wdtype: The floating-point dtype of `weights` and of the result.
+        gpu: Sum with atomics on the tensor's device; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        xs: The non-negative integers to bin, walked flat.
+        weights: One weight per element of `xs`, at `xs`'s layout.
+        minlength: The smallest length the result may have.
+
+    Returns:
+        A rank-1 `wdtype` tensor of length `max(max(xs) + 1, minlength)`
+        holding the summed weight of each value.
+
+    Raises:
+        If any element of `xs` is negative, if `weights` is not contiguous on
+        the device path, or if a residency mismatch occurs under the `"raise"`
+        fallback policy.
+    """
     if _check_device[T, gpu](xs):
         comptime if gpu:
             _require_contiguous(weights)
@@ -1009,6 +1175,24 @@ def digitize[
     definition, and decreasing `bins` handled as NumPy handles them, by
     searching the reversed edges and counting from the far end. Host-side,
     one bisection per element.
+
+    Parameters:
+        T: The tensor type of `xs`, with a floating-point dtype.
+        m: The number of bin edges.
+        gpu: Search on the tensor's device; a residency mismatch falls back to
+            the host with a notice.
+
+    Args:
+        xs: The values to place, walked flat.
+        bins: The `m` monotonic (ascending or descending) bin edges.
+        right: Close each bin on the right, `bins[i-1] < x <= bins[i]`,
+            instead of on the left.
+
+    Returns:
+        A rank-1 `int64` tensor of `xs.size()` bin indices in `[0, m]`.
+
+    Raises:
+        If a residency mismatch occurs under the `"raise"` fallback policy.
     """
     var edges = _as_float64(bins.to_host())
     var increasing = m == 1 or edges[m - 1] >= edges[0]

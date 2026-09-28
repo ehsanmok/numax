@@ -286,6 +286,32 @@ def lsq_linear[
     the projected gradient relative to `max|A^T b|`; `max_iter` defaults
     to `50 n`. Infinite bounds are ordinary entries -- pass a large value
     for an unbounded side, or `numax.linalg.lstsq` for no bounds at all.
+
+    Parameters:
+        A: The tensor type of the `m x n` design matrix.
+        B: The tensor type of the length-`m` right-hand side.
+        C: The tensor type of the length-`n` lower bounds.
+        D: The tensor type of the length-`n` upper bounds.
+        gpu: Form `A^T A`, `A^T b` and the final residual on the device `a`
+            lives on; a residency mismatch falls back to the host with a
+            notice.
+
+    Args:
+        a: The `m x n` design matrix.
+        b: The length-`m` right-hand side.
+        lower: The per-variable lower bounds, length `n`.
+        upper: The per-variable upper bounds, length `n`.
+        tol: The projected-gradient tolerance relative to `max|A^T b|`;
+            `1e-10` by default.
+        max_iter: The iteration cap; `50 n` by default.
+
+    Returns:
+        A `LinearResult` with the length-`n` solution, `||A x - b||_2` at
+        it, the iteration count, and whether `tol` was met.
+
+    Raises:
+        If forming the normal equations or the residual on the device
+        fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[A, 1]
@@ -332,6 +358,29 @@ def nnls[
 
     `lsq_linear` with the box `[0, inf)`; the module docstring has the
     algorithm and the comparison with Lawson-Hanson.
+
+    Parameters:
+        A: The tensor type of the `m x n` design matrix.
+        B: The tensor type of the length-`m` right-hand side.
+        gpu: Form `A^T A`, `A^T b` and the final residual on the device `a`
+            lives on; a residency mismatch falls back to the host with a
+            notice.
+
+    Args:
+        a: The `m x n` design matrix.
+        b: The length-`m` right-hand side.
+        tol: The projected-gradient tolerance relative to `max|A^T b|`;
+            `1e-10` by default.
+        max_iter: The iteration cap; `50 n` by default.
+
+    Returns:
+        A `LinearResult` with the nonnegative length-`n` solution,
+        `||A x - b||_2` at it, the iteration count, and whether `tol` was
+        met.
+
+    Raises:
+        If forming the normal equations or the residual on the device
+        fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[A, 1]

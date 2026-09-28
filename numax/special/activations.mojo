@@ -45,28 +45,78 @@ from ..core.tensorlike import TensorLike, is_row_major
 
 
 def gaussian[T: FloatLike](x: T) -> T:
-    """The unnormalized Gaussian bump, `exp(-x^2)`."""
+    """The unnormalized Gaussian bump, `exp(-x^2)`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `exp(-x^2)`, in `(0, 1]`.
+    """
     return (-(x * x)).exp()
 
 
 def sigmoid[T: FloatLike](x: T) -> T:
-    """The logistic function, `1 / (1 + exp(-x))`."""
+    """The logistic function, `1 / (1 + exp(-x))`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `1 / (1 + exp(-x))`, in `(0, 1)`.
+    """
     return T.one() / (T.one() + (-x).exp())
 
 
 def swish[T: FloatLike](x: T) -> T:
-    """`x * sigmoid(x)`, the SiLU activation."""
+    """`x * sigmoid(x)`, the SiLU activation.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `x * sigmoid(x)`.
+    """
     return x * sigmoid(x)
 
 
 def tanh[T: FloatLike](x: T) -> T:
-    """Hyperbolic tangent, via `(exp(2x) - 1) / (exp(2x) + 1)`."""
+    """Hyperbolic tangent, via `(exp(2x) - 1) / (exp(2x) + 1)`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `tanh(x)`, in `(-1, 1)`.
+    """
     var e2x = (x + x).exp()
     return (e2x - T.one()) / (e2x + T.one())
 
 
 def relu[T: FloatLike](x: T) -> T:
-    """`max(x, 0)`, via `(x + |x|) / 2` -- no branch on `Self`'s sign."""
+    """`max(x, 0)`, via `(x + |x|) / 2` -- no branch on `Self`'s sign.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `x` where `x >= 0`, zero elsewhere.
+    """
     return (x + x.abs()) / T.constant(2.0)
 
 
@@ -76,6 +126,16 @@ def leaky_relu[T: FloatLike](x: T, alpha: Float64) -> T:
     `((1 + alpha) * x + (1 - alpha) * |x|) / 2` is the same function with no
     branch: at `x >= 0` the two terms are `(1 + alpha)x + (1 - alpha)x = 2x`;
     at `x < 0`, `|x| = -x` and they cancel down to `2*alpha*x`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+        alpha: The slope applied to negative `x`.
+
+    Returns:
+        `x` where `x >= 0`, `alpha * x` elsewhere.
     """
     var ax = x.abs()
     return (
@@ -90,6 +150,15 @@ def gelu[T: FloatLike](x: T) -> T:
     above rather than `erf` directly, since `erf` isn't defined in closed
     form and GELU's usual definition already has this near-equivalent
     approximation in wide use.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        The tanh-approximated GELU of `x`.
     """
     var x3 = x * x * x
     var inner = T.constant(0.7978845608028654) * (x + T.constant(0.044715) * x3)
@@ -138,6 +207,20 @@ def softmax[
     module boundary. **The last axis only**: MAX's kernel handles the
     innermost axis, raises on another on a device and answers wrongly on
     the host, so another `axis` raises here.
+
+    Parameters:
+        dtype: The floating-point element type of `xs` and `ys`.
+        RowsLayout: The layout shared by `xs` and `ys`.
+        target: `"cpu"` or `"gpu"`, forwarded to `nn.softmax`.
+
+    Args:
+        xs: The input tensor.
+        ys: The output tensor, same layout as `xs`, overwritten in place.
+        axis: The axis to normalize along; must be the last.
+        ctx: The device context, required when `target` is `"gpu"`.
+
+    Raises:
+        If `axis` is not the last axis, or if `nn.softmax` raises.
     """
 
     @always_inline
@@ -175,6 +258,21 @@ def softmax[
     MAX's `nn.softmax` handles the innermost axis and no other. The upgrade
     for another axis is to move it last with a permuting gather, softmax,
     and move it back.
+
+    Parameters:
+        T: The `TensorLike` input type, floating-point and row-major.
+        gpu: Run MAX's device kernel when `xs` lives on a device.
+
+    Args:
+        xs: The input tensor.
+        axis: The axis to normalize along; must be the last.
+
+    Returns:
+        A new tensor of `xs`'s shape on `xs`'s device, each slice along
+        `axis` summing to one.
+
+    Raises:
+        If `axis` is not the last axis, or if `nn.softmax` raises.
     """
     var ctx = xs.context()
     var ys = Tensor[T.dtype, T.LayoutType]._uninitialized(ctx, xs.tile().layout)

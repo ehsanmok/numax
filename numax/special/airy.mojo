@@ -43,6 +43,15 @@ comptime _SERIES_TERMS = 14
 def airy[T: FloatLike](x: T) -> Tuple[T, T, T, T]:
     """`(Ai(x), Ai'(x), Bi(x), Bi'(x))` for `|x| <= 44`.
     `scipy.special.airy(x)`. The module docstring has the three regions.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at, with `|x| <= 44`.
+
+    Returns:
+        The tuple `(Ai(x), Ai'(x), Bi(x), Bi'(x))`, each a `T`.
     """
     var ax = x.abs()
     var far = max_of(ax, T.constant(1.5))

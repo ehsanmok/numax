@@ -798,6 +798,25 @@ def butter[
     second-order sections -- SciPy's `output="sos"` -- which this does not
     produce; the `(b, a)` of a long polynomial lose digits a cascade keeps.
     `wn` must lie in `(0, 1)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the filter, at least 1; `b` and `a` are each
+            `order + 1` long.
+
+    Args:
+        wn: The critical frequency as a fraction of Nyquist, strictly
+            inside `(0, 1)`.
+        btype: `"lowpass"` (the default) or `"highpass"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
+        `(0, 1)`, or if the upload to `ctx` fails.
     """
     _check_edge("butter", btype, wn)
     return _to_transfer_function[dtype=dtype, order=order](
@@ -821,6 +840,26 @@ def butter[
     `lp2bp`/`lp2bs` split every prototype root in two, so the result has
     order `2 * order` -- named in the return type, which is why this is an
     overload rather than a `btype` on the one above.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the lowpass prototype, at least 1; the result
+            has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+
+    Args:
+        wn: The `(low, high)` band edges as fractions of Nyquist, an
+            increasing pair strictly inside `(0, 1)`.
+        btype: `"bandpass"` (the default) or `"bandstop"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
+        increasing pair inside `(0, 1)`, or if the upload to
+        `ctx` fails.
     """
     _check_band("butter", btype, wn)
     return _to_transfer_function[dtype=dtype, order=2 * order](
@@ -845,6 +884,26 @@ def cheby1[
     `wn` is the edge where the response last leaves the ripple band, not
     the half-power point, which is SciPy's convention too. `rp` must be
     positive; `"lowpass"` or `"highpass"` here, a pair for the band forms.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the filter, at least 1; `b` and `a` are each
+            `order + 1` long.
+
+    Args:
+        rp: The maximum passband ripple in dB, positive.
+        wn: The critical frequency as a fraction of Nyquist, strictly
+            inside `(0, 1)`.
+        btype: `"lowpass"` (the default) or `"highpass"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
+        `(0, 1)`, or if the upload to `ctx` fails.
     """
     _check_edge("cheby1", btype, wn)
     return _to_transfer_function[dtype=dtype, order=order](
@@ -863,7 +922,29 @@ def cheby1[
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Chebyshev type I bandpass or bandstop filter at order
-    `2 * order`. `scipy.signal.cheby1(order, rp, (low, high), btype)`."""
+    `2 * order`. `scipy.signal.cheby1(order, rp, (low, high), btype)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the lowpass prototype, at least 1; the result
+            has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+
+    Args:
+        rp: The maximum passband ripple in dB, positive.
+        wn: The `(low, high)` band edges as fractions of Nyquist, an
+            increasing pair strictly inside `(0, 1)`.
+        btype: `"bandpass"` (the default) or `"bandstop"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
+        increasing pair inside `(0, 1)`, or if the upload to
+        `ctx` fails.
+    """
     _check_band("cheby1", btype, wn)
     return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_cheb1ap(order, rp), wn[0], wn[1], btype), ctx
@@ -887,6 +968,26 @@ def cheby2[
     `wn` is the edge where the stopband attenuation first reaches `rs`.
     Unlike type I this one has finite zeros, so `b` is not a scaled
     `(1 + z)^order`; an odd order has one fewer zero than pole.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the filter, at least 1; `b` and `a` are each
+            `order + 1` long.
+
+    Args:
+        rs: The minimum stopband attenuation in dB, positive.
+        wn: The critical frequency as a fraction of Nyquist, strictly
+            inside `(0, 1)`.
+        btype: `"lowpass"` (the default) or `"highpass"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
+        `(0, 1)`, or if the upload to `ctx` fails.
     """
     _check_edge("cheby2", btype, wn)
     return _to_transfer_function[dtype=dtype, order=order](
@@ -905,7 +1006,29 @@ def cheby2[
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Chebyshev type II bandpass or bandstop filter at order
-    `2 * order`. `scipy.signal.cheby2(order, rs, (low, high), btype)`."""
+    `2 * order`. `scipy.signal.cheby2(order, rs, (low, high), btype)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the lowpass prototype, at least 1; the result
+            has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+
+    Args:
+        rs: The minimum stopband attenuation in dB, positive.
+        wn: The `(low, high)` band edges as fractions of Nyquist, an
+            increasing pair strictly inside `(0, 1)`.
+        btype: `"bandpass"` (the default) or `"bandstop"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
+        increasing pair inside `(0, 1)`, or if the upload to
+        `ctx` fails.
+    """
     _check_band("cheby2", btype, wn)
     return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_cheb2ap(order, rs), wn[0], wn[1], btype), ctx
@@ -930,6 +1053,28 @@ def ellip[
     The steepest transition an IIR filter of this order can have, paid for
     with ripple in both bands and the worst phase response of the four.
     Raises when `rp` and `rs` cannot both be met at any order.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the filter, at least 1; `b` and `a` are each
+            `order + 1` long.
+
+    Args:
+        rp: The maximum passband ripple in dB, positive.
+        rs: The minimum stopband attenuation in dB, positive.
+        wn: The critical frequency as a fraction of Nyquist, strictly
+            inside `(0, 1)`.
+        btype: `"lowpass"` (the default) or `"highpass"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
+        `(0, 1)`, if no filter of this order meets both `rp` and `rs`, or
+        if the upload to `ctx` fails.
     """
     _check_edge("ellip", btype, wn)
     return _to_transfer_function[dtype=dtype, order=order](
@@ -949,7 +1094,30 @@ def ellip[
     dtype.is_floating_point() and order >= 1
 ):
     """A digital elliptic bandpass or bandstop filter at order
-    `2 * order`. `scipy.signal.ellip(order, rp, rs, (low, high), btype)`."""
+    `2 * order`. `scipy.signal.ellip(order, rp, rs, (low, high), btype)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the lowpass prototype, at least 1; the result
+            has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+
+    Args:
+        rp: The maximum passband ripple in dB, positive.
+        rs: The minimum stopband attenuation in dB, positive.
+        wn: The `(low, high)` band edges as fractions of Nyquist, an
+            increasing pair strictly inside `(0, 1)`.
+        btype: `"bandpass"` (the default) or `"bandstop"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
+        increasing pair inside `(0, 1)`, if no filter meets both `rp` and
+        `rs`, or if the upload to `ctx` fails.
+    """
     _check_band("ellip", btype, wn)
     return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_ellipap(order, rp, rs), wn[0], wn[1], btype), ctx
@@ -980,6 +1148,32 @@ def iirfilter[
     names neither. An unknown `ftype` raises rather than defaulting,
     since a typo that silently designed a different filter would be worse
     than a failure.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the filter, at least 1; `b` and `a` are each
+            `order + 1` long.
+
+    Args:
+        wn: The critical frequency as a fraction of Nyquist, strictly
+            inside `(0, 1)`.
+        rp: The passband ripple in dB, read only by `"cheby1"` and
+            `"ellip"`.
+        rs: The stopband attenuation in dB, read only by `"cheby2"` and
+            `"ellip"`.
+        btype: `"lowpass"` (the default) or `"highpass"`.
+        ftype: The family: `"butter"` (the default), `"cheby1"`,
+            `"cheby2"` or `"ellip"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
+        `(0, 1)`, if `ftype` is unknown, if an `"ellip"` design cannot meet
+        both `rp` and `rs`, or if the upload to `ctx` fails.
     """
     _check_edge("iirfilter", btype, wn)
     return _to_transfer_function[dtype=dtype, order=order](
@@ -1001,7 +1195,35 @@ def iirfilter[
 ):
     """The named-`ftype` front door for the band forms, at order
     `2 * order`. `scipy.signal.iirfilter(order, (low, high), rp, rs,
-    btype, ftype=...)`."""
+    btype, ftype=...)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+        order: The order of the lowpass prototype, at least 1; the result
+            has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+
+    Args:
+        wn: The `(low, high)` band edges as fractions of Nyquist, an
+            increasing pair strictly inside `(0, 1)`.
+        rp: The passband ripple in dB, read only by `"cheby1"` and
+            `"ellip"`.
+        rs: The stopband attenuation in dB, read only by `"cheby2"` and
+            `"ellip"`.
+        btype: `"bandpass"` (the default) or `"bandstop"`.
+        ftype: The family: `"butter"` (the default), `"cheby1"`,
+            `"cheby2"` or `"ellip"`.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` holding the numerator `b` and denominator `a`.
+
+    Raises:
+        If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
+        increasing pair inside `(0, 1)`, if `ftype` is unknown, if an
+        `"ellip"` design cannot meet both `rp` and `rs`, or if the upload
+        to `ctx` fails.
+    """
     _check_band("iirfilter", btype, wn)
     return _to_transfer_function[dtype=dtype, order=2 * order](
         _design(_prototype(ftype, order, rp, rs), wn[0], wn[1], btype), ctx
@@ -1033,6 +1255,27 @@ def freqz[
     One lane per frequency: both polynomials by complex Horner in
     `e^{-jw}`, then one complex division. `worN` is a parameter because it
     shapes the result; SciPy's default of 512 is kept.
+
+    Parameters:
+        A: The `TensorLike` type of `b`, rank 1 with a static length.
+        B: The `TensorLike` type of `a`, rank 1 with a static length and
+            the same dtype as `A`.
+        worN: The number of frequencies on the grid, default 512.
+        gpu: Whether the per-frequency launch targets the GPU rather than
+            the CPU; `b` and `a` must live on the matching device.
+
+    Args:
+        b: The numerator coefficients, highest power of `z^-1` last.
+        a: The denominator coefficients, highest power of `z^-1` last.
+
+    Returns:
+        A `FrequencyResponse` on `b`'s device: the grid `w = pi k / worN`
+        for `k` in `[0, worN)`, and the real and imaginary parts of `H` at
+        each.
+
+    Raises:
+        If allocating the result or launching the kernel on `b`'s device
+        fails.
     """
     comptime nb = dim[A, 0]
     comptime na = dim[B, 0]

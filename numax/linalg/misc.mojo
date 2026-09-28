@@ -91,6 +91,21 @@ def trace[
 
     MAX ships no `trace`, so the composition is numax's; the fold is
     MAX's. Reassociated, unlike the `Array` overload's ordered sum.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square `n x n` floating-point
+            matrix with static extents.
+        gpu: Run the diagonal gather and the fold on `a`'s device rather
+            than the host.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        The sum of `a`'s `n` diagonal entries, on the host.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -162,6 +177,22 @@ def norm[
     way.
 
     MAX ships no norm of any kind, so the arrangement is numax's.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major square `n x n`
+            floating-point matrix with static extents.
+        ord: Which norm: `NORM_FRO` (Frobenius), `1` (maximum column sum)
+            or `NORM_INF` (maximum row sum).
+        gpu: Run the reductions on `a`'s device rather than the host.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        The requested norm of `a`, on the host.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     return _matrix_norm[ord=ord, gpu=gpu](a)
 
@@ -272,6 +303,23 @@ def norm[
     Unrescaled, like the matrix overload: `ord == 2` on a vector whose
     entries approach the square root of `T.dtype`'s overflow threshold
     overflows. Take the `1`- or infinity-norm, which cannot.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a length-`n` floating-point vector
+            with a static extent.
+        ord: Which norm: `2` (Euclidean), `1` (sum of magnitudes),
+            `NORM_INF` (largest magnitude) or `NORM_NEG_INF` (smallest
+            magnitude).
+        gpu: Run the reduction on `a`'s device rather than the host.
+
+    Args:
+        a: The length-`n` vector.
+
+    Returns:
+        The requested norm of `a`, on the host.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     return _vector_norm[ord=ord, gpu=gpu](a)
 
@@ -351,6 +399,23 @@ def cond[
     the division gives. The `Array` tier's `cond` floors the divisor and
     reports a very large finite number instead, because a branchless kernel
     cannot decide to return an infinity; at this tier the decision is free.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, an `m x n` floating-point matrix
+            with static extents and `m >= n >= 1`.
+        gpu: Run the underlying `svdvals` on `a`'s device rather than the
+            host.
+
+    Args:
+        a: The `m x n` matrix.
+
+    Returns:
+        The largest singular value over the smallest, `inf` for a singular
+        `a`.
+
+    Raises:
+        If a device operation fails, or the `svdvals` iteration does not
+        converge (in practice, a NaN or infinity in `a`).
     """
     comptime n = dim[T, 1]
     var s = svdvals[gpu=gpu](a).to_host()
@@ -360,7 +425,19 @@ def cond[
 def cond[T: FloatLike, n: Int, sweeps: Int = 12](a: Array[T, n * n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.misc.cond`."""
+    at `numax.linalg._array.misc.cond`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of one-sided Jacobi sweeps.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The 2-norm condition number, large but finite for a singular `a`.
+    """
     return _array_cond[T=T, n=n, sweeps=sweeps](a)
 
 
@@ -369,12 +446,36 @@ def norm[
 ](a: Array[T, n * n]) -> T where ord == NORM_FRO or ord == 1 or ord == NORM_INF:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.misc.norm`."""
+    at `numax.linalg._array.misc.norm`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        ord: Which norm: `NORM_FRO` (Frobenius), `1` (maximum column sum)
+            or `NORM_INF` (maximum row sum).
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The requested norm of `a`.
+    """
     return _array_norm[T=T, n=n, ord=ord](a)
 
 
 def trace[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.misc.trace`."""
+    at `numax.linalg._array.misc.trace`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The sum of `a`'s `n` diagonal entries.
+    """
     return _array_trace[T=T, n=n](a)

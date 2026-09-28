@@ -231,6 +231,22 @@ def sytrd[
     `numax.linalg.eigh` is the small-matrix route and needs none of
     this: cyclic Jacobi at a fixed sweep count, differentiable, and
     launchable inside a GPU thread.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; a square matrix of floating dtype.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The reduction's panel width, also the width `.q()` forms `Q` in.
+
+    Args:
+        a: The `n x n` symmetric matrix; only its lower triangle and
+            diagonal are read.
+
+    Returns:
+        A `Tridiagonal` holding the diagonal `d`, the subdiagonal `e` and
+        the packed Householder reflectors that form `Q`.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     comptime width = min(block, n)
@@ -1032,6 +1048,23 @@ def eigvalsh[
     the two agree as multisets, and a test pins that.
 
     `a` is read as symmetric and not checked; see `sytrd`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; a square matrix of floating dtype.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `sytrd` panel width.
+
+    Args:
+        a: The `n x n` symmetric matrix; only its lower triangle and
+            diagonal are read.
+
+    Returns:
+        The `n` eigenvalues, ascending.
+
+    Raises:
+        If an eigenvalue fails to converge within the QL sweep budget,
+        which means `a` holds a NaN or an infinity, or if a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -1121,6 +1154,25 @@ def eigh[
     is for the sizes it cannot reach.
 
     `a` is read as symmetric and not checked; see `sytrd`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; a square matrix of floating dtype.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `sytrd` panel width, the rotation window and the `.q()`
+            panel width at once.
+
+    Args:
+        a: The `n x n` symmetric matrix; only its lower triangle and
+            diagonal are read.
+
+    Returns:
+        An `Eigh` with the eigenvalues ascending in `values` and the
+        orthonormal eigenvectors as the columns of `vectors`.
+
+    Raises:
+        If an eigenvalue fails to converge within the QL sweep budget,
+        which means `a` holds a NaN or an infinity, or if a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -1445,6 +1497,21 @@ def hessenberg[
 
     `numax.linalg.hessenberg` is the `FloatLike`-generic sibling for
     matrices small enough to live in registers.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; a square matrix of floating dtype.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `lahr2` panel width, also the width `.q()` forms `Q` in.
+
+    Args:
+        a: The general `n x n` matrix to reduce.
+
+    Returns:
+        A `Hessenberg` holding `H`, the packed reflectors and their scales,
+        from which `.q()` forms `Q`.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     comptime width = min(block, n)
@@ -1967,6 +2034,23 @@ def eigvals[
     entry whatever it says. The deflation order is not continuous in `H`,
     and a different panel width moves `H` in the last bits, so two widths
     may report the same spectrum in a different order.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; a square matrix of floating dtype.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `hessenberg` panel width.
+
+    Args:
+        a: The general `n x n` matrix.
+
+    Returns:
+        An `Eigenvalues` holding the `n` real parts in `re` and imaginary
+        parts in `im`, in deflation order.
+
+    Raises:
+        If the Francis QR iteration does not converge within `30 n`
+        sweeps, which means `a` holds a NaN or an infinity, or if a device
+        operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -2107,6 +2191,24 @@ def schur[
 
     This is the form every matrix function in `numax.linalg.matfuncs`
     beyond `expm` is built on.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; a square matrix of floating dtype.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `hessenberg` panel width, the `.q()` panel width and
+            twice the number of Francis sweeps batched per rotation window.
+
+    Args:
+        a: The general `n x n` matrix.
+
+    Returns:
+        A `Schur` holding the real quasi-triangular form `t` and the
+        orthogonal Schur vectors `z`, with `a == z t z^T`.
+
+    Raises:
+        If the Francis QR iteration does not converge within `30 n`
+        sweeps, which means `a` holds a NaN or an infinity, or if a device
+        operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -3014,6 +3116,22 @@ def svdvals[
     `block` is `gebrd`'s `labrd` panel width, which is the whole of what
     it decides here: the rotation window it also names costs nothing when
     no rotation is ever logged.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; an `m x n` matrix, `m >= n >= 1`.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `gebrd` panel width.
+
+    Args:
+        a: The `m x n` matrix, `m >= n`.
+
+    Returns:
+        The `n` singular values, descending.
+
+    Raises:
+        If the bidiagonal QR iteration exceeds its `6 n^2` step budget,
+        which means `a` holds a NaN or an infinity, or if a device operation
+        fails.
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -3128,6 +3246,24 @@ def svd[
 
     Rectangular, unlike the `Array` tier's square-only one-sided Jacobi,
     and descending where that one is unsorted; both docstrings say so.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; an `m x n` matrix, `m >= n >= 1`.
+        gpu: Run the reduction and every `O(n^3)` product on the device of `a`.
+        block: The `gebrd` panel width, the rotation window and the width
+            `U` and `V` are formed in.
+
+    Args:
+        a: The `m x n` matrix, `m >= n`.
+
+    Returns:
+        An `SVD` holding the `m x n` thin `u`, the `n` singular values `s`
+        descending and the `n x n` `v`, with `a == u diag(s) v^T`.
+
+    Raises:
+        If the bidiagonal QR iteration exceeds its `6 n^2` step budget,
+        which means `a` holds a NaN or an infinity, or if a device operation
+        fails.
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -3224,6 +3360,21 @@ def matrix_rank[
 
     An `Int`, where the `Array` tier returns `T`: one `Tensor` is one
     matrix, so there is one rank, and nothing here needs to stay branchless.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; an `m x n` matrix, `m >= n >= 1`.
+        gpu: Run the `svdvals` call on the device of `a`.
+
+    Args:
+        a: The `m x n` matrix, `m >= n`.
+        tol: The singular-value threshold; `None` uses `s_max * max(m, n)`
+            times the machine epsilon of `T.dtype`.
+
+    Returns:
+        The number of singular values strictly greater than the threshold.
+
+    Raises:
+        If `svdvals` fails to converge or a device operation fails.
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
@@ -3248,7 +3399,20 @@ def eigh[
 ](a: Array[T, n * n]) -> Tuple[Array[T, n], Array[T, n * n]]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.eigh`."""
+    at `numax.linalg._array.eigen.eigh`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of Jacobi sweeps.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The `(eigenvalues, eigenvectors)` pair, eigenvalues unordered and
+        eigenvectors as the columns of the `n x n` matrix.
+    """
     return _array_eigh[T=T, n=n, sweeps=sweeps](a)
 
 
@@ -3257,7 +3421,21 @@ def eigvals[
 ](a: Array[T, n * n]) -> Array[Complex[T], n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.eigvals`."""
+    at `numax.linalg._array.eigen.eigvals`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of shifted QR steps.
+        tol: The relative threshold below which a subdiagonal entry counts
+            as converged to zero rather than part of a `2 x 2` block.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The `n` eigenvalues as `Complex[T]`.
+    """
     return _array_eigvals[T=T, n=n, sweeps=sweeps, tol=tol](a)
 
 
@@ -3266,14 +3444,37 @@ def eigvalsh[
 ](a: Array[T, n * n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.eigvalsh`."""
+    at `numax.linalg._array.eigen.eigvalsh`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of Jacobi sweeps.
+
+    Args:
+        a: The `n x n` symmetric matrix, row-major.
+
+    Returns:
+        The `n` eigenvalues, unordered.
+    """
     return _array_eigvalsh[T=T, n=n, sweeps=sweeps](a)
 
 
 def hessenberg[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.hessenberg`."""
+    at `numax.linalg._array.eigen.hessenberg`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The upper Hessenberg matrix `H = Q^T A Q`, row-major, without `Q`.
+    """
     return _array_hessenberg[T=T, n=n](a)
 
 
@@ -3282,7 +3483,21 @@ def matrix_rank[
 ](a: Array[T, n * n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.matrix_rank`."""
+    at `numax.linalg._array.eigen.matrix_rank`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of Jacobi sweeps.
+        rcond: The threshold relative to the largest singular value.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The count of singular values above `rcond * s_max`, per lane, as
+        a `T`.
+    """
     return _array_matrix_rank[T=T, n=n, sweeps=sweeps, rcond=rcond](a)
 
 
@@ -3291,7 +3506,20 @@ def svd[
 ](a: Array[T, n * n]) -> Tuple[Array[T, n * n], Array[T, n], Array[T, n * n]]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.svd`."""
+    at `numax.linalg._array.eigen.svd`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of Jacobi sweeps.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The `(U, s, V)` triple with `a == U diag(s) V^T`, `s` unordered and
+        non-negative.
+    """
     return _array_svd[T=T, n=n, sweeps=sweeps](a)
 
 
@@ -3300,5 +3528,17 @@ def svdvals[
 ](a: Array[T, n * n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.eigen.svdvals`."""
+    at `numax.linalg._array.eigen.svdvals`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of Jacobi sweeps.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The `n` singular values, unordered and non-negative.
+    """
     return _array_svdvals[T=T, n=n, sweeps=sweeps](a)

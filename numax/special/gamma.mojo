@@ -100,6 +100,15 @@ def lgamma[T: FloatLike](x: T) -> T:
     what lets `_ge_half_indicator`'s `0`/`1` blend stand in for a real
     per-lane branch without ever multiplying anything by (or discarding) a
     NaN.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at, not a non-positive integer.
+
+    Returns:
+        `ln|Gamma(x)|`.
     """
     var s = _ge_half_indicator(x)
 
@@ -133,6 +142,15 @@ def gamma[T: FloatLike](x: T) -> T:
 
     `exp(lgamma(x))` recovers the magnitude; `_gamma_sign` recovers the
     sign `lgamma` (`ln|Gamma(x)|`) discards.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at, not a non-positive integer.
+
+    Returns:
+        `Gamma(x)`, with its sign.
     """
     return lgamma(x).exp() * _gamma_sign(x)
 
@@ -252,6 +270,15 @@ def digamma[T: FloatLike](x: T) -> T:
     Note this costs one `lgamma` evaluation carrying a derivative
     alongside, not two evaluations -- forward-mode propagates the
     derivative through the same pass that computes the value.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at, not a non-positive integer.
+
+    Returns:
+        `psi(x)`, the derivative of `lgamma` at `x`.
     """
     var seeded = lgamma(Dual[T](x.copy(), T.one()))
     return seeded.deriv.copy()

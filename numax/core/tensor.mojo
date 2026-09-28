@@ -310,6 +310,11 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     Conforms to `Writable`, so `print(a)` works; `a.format(precision=8)`
     is the same output with the precision and truncation under the
     caller's control.
+
+    Parameters:
+        dtype_: The element type, re-exposed as `dtype`.
+        LayoutType_: The layout type, carrying each extent as a compile-time or
+            run-time value; re-exposed as `LayoutType`.
     """
 
     comptime dtype = Self.dtype_
@@ -354,7 +359,15 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
     def __init__(out self, ctx: Optional[DeviceContext] = None) raises:
         """A zero-filled tensor at a compile-time shape, on `ctx`'s device or
-        the host. See the layout-taking form below."""
+        the host. See the layout-taking form below.
+
+        Args:
+            ctx: The device to allocate on; the host when absent.
+
+        Raises:
+            If the shape is not compile-time, or if allocating or zeroing the
+            buffer fails.
+        """
         self = Self(Self._static_layout(), ctx)
 
     def __init__(
@@ -363,7 +376,17 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         ctx: Optional[DeviceContext] = None,
     ) raises:
         """A tensor holding `values`, row-major, at a compile-time shape, on
-        `ctx`'s device or the host: `Static[f32, 3]([1.0, 2.0, 3.0], gpu)`."""
+        `ctx`'s device or the host: `Static[f32, 3]([1.0, 2.0, 3.0], gpu)`.
+
+        Args:
+            values: The elements in row-major order, one per element of the
+                shape.
+            ctx: The device to allocate on; the host when absent.
+
+        Raises:
+            If the shape is not compile-time, if `values` does not hold one
+            entry per element, or if allocation fails.
+        """
         self = Self(Self._static_layout(), values^, ctx)
 
     def __init__(
@@ -394,6 +417,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         itself against queued work the way a host mapping does. Without it,
         a read immediately after construction can see unwritten memory
         (caught by `tests/core/test_tensor.mojo`'s zero-content check).
+
+        Args:
+            layout: The layout giving the tensor's shape and strides.
+            ctx: The device to allocate on; the host when absent.
+
+        Raises:
+            If allocating or zeroing the buffer on the device fails.
         """
         var device = ctx.value() if ctx else DeviceContext(api="cpu")
         self._layout = layout
@@ -455,6 +485,15 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         the escape hatch the factory functions below fall back to on a host
         context (and at `float64` or `bool`, where they cannot fill on the
         device).
+
+        Args:
+            layout: The layout giving the tensor's shape and strides.
+            values: The elements in row-major order, `layout.size()` of them.
+            ctx: The device to allocate on; the host when absent.
+
+        Raises:
+            If `len(values)` differs from `layout.size()`, or if allocation
+            fails.
         """
         if len(values) != layout.size():
             raise Error(
@@ -489,6 +528,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
         Unchecked: both callers have already established that
         `layout.size()` matches the buffer.
+
+        Args:
+            buffer: The buffer to adopt; shared by reference, not copied.
+            layout: The layout describing the buffer's elements; unchecked
+                against its size.
+            host_addressable: Whether the buffer can be read through a plain
+                host pointer.
         """
         self._buffer = buffer^
         self._layout = layout
@@ -499,11 +545,22 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
         What the derived manipulations use to allocate their result next to
         their input rather than on a device the caller has to name again.
+
+        Returns:
+            The `DeviceContext` that owns this tensor's buffer.
+
+        Raises:
+            If the buffer's context cannot be retrieved.
         """
         return self._buffer.context()
 
     def on_host(self) -> Bool:
-        """`host_addressable`, as the `TensorLike` method."""
+        """`host_addressable`, as the `TensorLike` method.
+
+        Returns:
+            `True` when the storage is host-addressable, which is exactly a CPU
+            context.
+        """
         return self.host_addressable
 
     def size(self) -> Int:
@@ -512,11 +569,21 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         Correct whether or not the shape is fully compile-time; the
         `num_elements` alias is the comptime answer and is only meaningful
         when `LayoutType.all_dims_known`.
+
+        Returns:
+            The number of elements, the product of the extents.
         """
         return self._layout.size()
 
     def dim[i: Int](self) -> Int:
-        """The extent of axis `i`."""
+        """The extent of axis `i`.
+
+        Parameters:
+            i: The axis to read, in `[0, rank)`.
+
+        Returns:
+            The extent of axis `i`.
+        """
         return Int(self._layout.shape[i]().value())
 
     def dim_at(self, axis: Int) -> Int:
@@ -526,6 +593,12 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `a.dim[0]()` wants and what a loop over a computed axis cannot use.
         This walks the compile-time axis list and picks one, so an axis
         outside the rank returns `0` rather than failing to compile.
+
+        Args:
+            axis: The axis to read.
+
+        Returns:
+            The extent of `axis`, or `0` when `axis` is outside the rank.
         """
         var extent = 0
         comptime for i in range(Self.rank):
@@ -539,6 +612,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         The distance in memory between neighbors along `axis`. Row-major
         for every tensor this module builds, but read from the layout
         rather than assumed, so it stays correct for a layout that is not.
+
+        Args:
+            axis: The axis to read.
+
+        Returns:
+            The stride of `axis` in elements, or `0` when `axis` is outside the
+            rank.
         """
         var stride = 0
         comptime for i in range(Self.rank):
@@ -565,6 +645,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         because MAX's `DeviceBuffer` constructor pins the tile to the
         buffer field's origin, which is narrower than `self`'s and not what
         `TensorLike.view` promises.
+
+        Returns:
+            A `TileTensor` over this tensor's buffer at its layout, carrying the
+            origin of this borrow of `self`.
         """
         return TileTensor[Self.dtype, Self.LayoutType, origin_of(self)](
             ptr=self._buffer.unsafe_ptr()
@@ -599,6 +683,11 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
     @staticmethod
     def get_type_name() -> String:
+        """The type's name for diagnostics, with its dtype and rank.
+
+        Returns:
+            A string of the form `Tensor[<dtype>, rank=<rank>]`.
+        """
         return String(t"Tensor[{Self.dtype}, rank={Self.rank}]")
 
     @staticmethod
@@ -625,6 +714,17 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         already an owning device-resident `Tensor`, `to_host()` plus a
         factory is the route; `from_tile` is for the borrowed-storage case,
         which is a host case by construction.
+
+        Args:
+            v: The host-resident view to copy from, at this tensor's dtype and
+                layout type.
+            ctx: The device to allocate on; the host when absent.
+
+        Returns:
+            A new tensor owning a row-major copy of `v`'s elements.
+
+        Raises:
+            If the host context cannot be created or allocation fails.
         """
         var device = _context(ctx)
         var src = v.ptr_at_offset(Coord(0))
@@ -651,6 +751,14 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         and `numax.stats`'s distributions still reach the device from here:
         they launch through `max.algorithm.elementwise`, whose grid comes
         from a run-time `Coord`. Going back is `as_static`.
+
+        Returns:
+            A `Dynamic` tensor of the same rank sharing this buffer, its extents
+            carried at run time.
+
+        Raises:
+            Never in practice: the buffer is handed over and no extent is
+            checked.
         """
         var extents = List[Int](capacity=Self.rank)
         for d in range(Self.rank):
@@ -678,6 +786,15 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         the tensor does not have is a run-time error, not a compile-time
         one -- that is the whole point, since the compiler is exactly what
         cannot see the extent being checked.
+
+        Parameters:
+            dims: The compile-time extents to assert, one per axis.
+
+        Returns:
+            A `Static` tensor of shape `dims` sharing this buffer.
+
+        Raises:
+            If any axis's extent differs from the matching entry of `dims`.
         """
         comptime for i in range(Self.rank):
             if self.dim_at(i) != dims[i]:
@@ -703,6 +820,16 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `DeviceBuffer.unsafe_ptr()` alone is not a safe substitute. `dtype`
         is the `TensorLike` escape for a two-conformer body and defaults to
         this tensor's own; the cast is the identity there.
+
+        Parameters:
+            dtype: The element type of the returned list; this tensor's own by
+                default, and each element is cast to it.
+
+        Returns:
+            Every element in row-major order, as a host `List`.
+
+        Raises:
+            If mapping the buffer to the host fails.
         """
         var n = self.size()
         var out = List[Scalar[dtype]](capacity=n)
@@ -721,6 +848,15 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
         An index outside `[0, size())` raises rather than reading past the
         buffer.
+
+        Args:
+            i: The flat row-major index, in `[0, size())`.
+
+        Returns:
+            The element at flat index `i`.
+
+        Raises:
+            If `i` is out of range, or if the host mapping fails.
         """
         self._check_flat(i)
         if self.host_addressable:
@@ -737,6 +873,17 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `.tile()[i, j, k]` is the general form, and the same per-access
         mapping cost applies on a GPU. Each index is checked against its
         own axis, so `a[0, cols]` raises rather than reading `a[1, 0]`.
+
+        Args:
+            r: The row index, in `[0, dim[0]())`.
+            c: The column index, in `[0, dim[1]())`.
+
+        Returns:
+            The element at row `r`, column `c`.
+
+        Raises:
+            If an index is out of range for its axis, or if the host mapping
+            fails.
         """
         self._check_axis(0, r)
         self._check_axis(1, c)
@@ -747,14 +894,37 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ) raises -> Scalar[Self.dtype] where Self.rank == 3:
         """`a[i, j, k]` on a rank-3 tensor, row-major, each index checked
         against its axis. The per-access device cost of the flat read
-        applies."""
+        applies.
+
+        Args:
+            i: The index along axis `0`.
+            j: The index along axis `1`.
+            k: The index along axis `2`.
+
+        Returns:
+            The element at `(i, j, k)`.
+
+        Raises:
+            If an index is out of range for its axis, or if the host mapping
+            fails.
+        """
         self._check_axis(0, i)
         self._check_axis(1, j)
         self._check_axis(2, k)
         return self[(i * self.dim_at(1) + j) * self.dim_at(2) + k]
 
     def __setitem__(mut self, r: Int, c: Int, value: Scalar[Self.dtype]) raises:
-        """`a[r, c] = v` on a rank-2 tensor. See `__getitem__` above."""
+        """`a[r, c] = v` on a rank-2 tensor. See `__getitem__` above.
+
+        Args:
+            r: The row index, in `[0, dim[0]())`.
+            c: The column index, in `[0, dim[1]())`.
+            value: The element to store.
+
+        Raises:
+            If an index is out of range for its axis, or if the host mapping
+            fails.
+        """
         self._check_axis(0, r)
         self._check_axis(1, c)
         self[r * self.dim[1]() + c] = value
@@ -762,7 +932,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __setitem__(
         mut self, i: Int, j: Int, k: Int, value: Scalar[Self.dtype]
     ) raises where Self.rank == 3:
-        """`a[i, j, k] = v` on a rank-3 tensor. See `__getitem__` above."""
+        """`a[i, j, k] = v` on a rank-3 tensor. See `__getitem__` above.
+
+        Args:
+            i: The index along axis `0`.
+            j: The index along axis `1`.
+            k: The index along axis `2`.
+            value: The element to store.
+
+        Raises:
+            If an index is out of range for its axis, or if the host mapping
+            fails.
+        """
         self._check_axis(0, i)
         self._check_axis(1, j)
         self._check_axis(2, k)
@@ -871,6 +1052,17 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `v * 2.0`. Chained inline, `a[1:3] * 2.0` fails to compile: the
         pinned toolchain cannot infer the origin of a view returned from a
         `mut self` call inside a larger expression.
+
+        Args:
+            rows: The unit-step slice of the first axis; its ends may be omitted
+                or negative, and clip.
+
+        Returns:
+            A contiguous `TensorView` over the selected rows of this tensor's
+            storage.
+
+        Raises:
+            If `rows` has a step other than one.
         """
         var starts = IndexList[Self.rank](0)
         var stops = IndexList[Self.rank](0)
@@ -890,7 +1082,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         no copy. A box that does not span every column is strided -- its
         rows are `a`'s rows apart -- so the routines that flatten their
         argument refuse it with a clear error, and `copy(v)` (or `to_host`)
-        makes it contiguous; `a[i:j, :]` stays contiguous."""
+        makes it contiguous; `a[i:j, :]` stays contiguous.
+
+        Args:
+            rows: The unit-step slice of the first axis.
+            cols: The unit-step slice of the second axis.
+
+        Returns:
+            A `TensorView` over the box, strided unless `cols` spans every
+            column.
+
+        Raises:
+            If either slice has a step other than one.
+        """
         var starts = IndexList[Self.rank](0)
         var stops = IndexList[Self.rank](0)
         for d in range(Self.rank):
@@ -913,7 +1117,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         one quadrant in place, `cholesky(a.block[2, 2](0, 0))`, in place of
         `TensorView(a.tile().tile[2, 2](0, 0), a.context())`. Element
         offsets, not tile indices, and the parent's strides; a block that
-        does not fit raises."""
+        does not fit raises.
+
+        Parameters:
+            m: The block's row count.
+            n: The block's column count.
+
+        Args:
+            r: The row of the block's top-left element.
+            c: The column of the block's top-left element.
+
+        Returns:
+            A `TensorView` of compile-time shape `m x n` over this tensor's
+            storage, with the parent's strides.
+
+        Raises:
+            If the block does not fit inside the matrix.
+        """
         if r < 0 or c < 0 or r + m > self.dim_at(0) or c + n > self.dim_at(1):
             raise Error(
                 "Tensor.block: a ",
@@ -946,6 +1166,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         context, a per-access host mapping on a GPU (flushed to the device
         when this call's mapping scope exits). `copy_from_host` is the bulk
         path.
+
+        Args:
+            i: The flat row-major index; not bounds-checked.
+            value: The element to store.
+
+        Raises:
+            If the host mapping fails on a device tensor.
         """
         if self.host_addressable:
             self._buffer.unsafe_ptr()[unsafe_offset=i] = value
@@ -974,6 +1201,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
         NumPy's line-wrapping (`linewidth`) is not reproduced: a row is one
         line however long it is.
+
+        Args:
+            precision: Digits printed after the decimal point; `4` by default.
+            threshold: The element count past which long axes are elided; `1000`
+                by default.
+            edge_items: Entries kept from each end of an elided axis; `3` by
+                default.
+
+        Returns:
+            The tensor's contents as nested, bracketed rows.
+
+        Raises:
+            If reading the elements back to the host fails.
         """
         return _format_tensor(self, precision, threshold, edge_items)
 
@@ -988,6 +1228,9 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         it is a device mapping. A failed read prints as `<unreadable>`
         rather than taking the process down inside a `print`; a caller who
         needs the error takes `to_host()` itself, which does raise.
+
+        Args:
+            writer: The writer the formatted contents go to.
         """
         try:
             writer.write(_format_tensor(self, 4, 1000, 3))
@@ -1020,6 +1263,16 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         notice, on every backend; `add[gpu=True]` still reaches a CUDA
         device at `float64`. The upgrade is a target capability query for
         `float64`, if the stdlib grows one.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Returns:
+            A new tensor holding `self + other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
         """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
@@ -1029,7 +1282,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __add__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a + b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        """`a + b` with a scalar `b`. Follows the tensor; see `__add__`.
+
+        Args:
+            other: The scalar added to every element.
+
+        Returns:
+            A new tensor holding `self + other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _add[gpu=True](self, other)
@@ -1038,6 +1302,16 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __sub__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a - b`, elementwise. Forwards to `numax.core.ops.subtract`. Follows the tensor to its
         device, as `__add__` describes.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Returns:
+            A new tensor holding `self - other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
         """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
@@ -1047,7 +1321,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __sub__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a - b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        """`a - b` with a scalar `b`. Follows the tensor; see `__add__`.
+
+        Args:
+            other: The scalar subtracted from every element.
+
+        Returns:
+            A new tensor holding `self - other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _subtract[gpu=True](self, other)
@@ -1056,6 +1341,16 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __mul__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a * b`, elementwise. Forwards to `numax.core.ops.multiply`. Follows the tensor to its
         device, as `__add__` describes.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Returns:
+            A new tensor holding `self * other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
         """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
@@ -1065,7 +1360,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __mul__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a * b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        """`a * b` with a scalar `b`. Follows the tensor; see `__add__`.
+
+        Args:
+            other: The scalar every element is multiplied by.
+
+        Returns:
+            A new tensor holding `self * other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _multiply[gpu=True](self, other)
@@ -1074,6 +1380,16 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __truediv__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a / b`, elementwise. Forwards to `numax.core.ops.divide`. Follows the tensor to its
         device, as `__add__` describes.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Returns:
+            A new tensor holding `self / other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
         """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
@@ -1083,7 +1399,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __truediv__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a / b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        """`a / b` with a scalar `b`. Follows the tensor; see `__add__`.
+
+        Args:
+            other: The scalar every element is divided by.
+
+        Returns:
+            A new tensor holding `self / other` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _divide[gpu=True](self, other)
@@ -1092,6 +1419,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def __neg__(self) raises -> Self where is_row_major[Self]:
         """`-a`, elementwise. Forwards to `numax.core.ops.negative`. Follows the tensor to its
         device, as `__add__` describes.
+
+        Returns:
+            A new tensor holding `-self` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
         """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
@@ -1102,21 +1436,54 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
         """`b + a` with a scalar `b` on the left, so `2.0 + a` compiles.
-        The same launch as `a + b`, which commutes."""
+        The same launch as `a + b`, which commutes.
+
+        Args:
+            other: The scalar on the left of `+`.
+
+        Returns:
+            A new tensor holding `other + self` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         return self.__add__(other)
 
     def __rmul__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
         """`b * a` with a scalar `b` on the left, so `2.0 * a` compiles.
-        The same launch as `a * b`, which commutes."""
+        The same launch as `a * b`, which commutes.
+
+        Args:
+            other: The scalar on the left of `*`.
+
+        Returns:
+            A new tensor holding `other * self` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         return self.__mul__(other)
 
     def __rsub__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
         """`b - a` with a scalar `b` on the left. One launch with the
-        operands swapped inside the op; follows the tensor, see `__add__`."""
+        operands swapped inside the op; follows the tensor, see `__add__`.
+
+        Args:
+            other: The scalar on the left of `-`.
+
+        Returns:
+            A new tensor holding `other - self` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _reflected[kind="sub", gpu=True](self, other)
@@ -1126,7 +1493,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
         """`b / a` with a scalar `b` on the left. One launch with the
-        operands swapped inside the op; follows the tensor, see `__add__`."""
+        operands swapped inside the op; follows the tensor, see `__add__`.
+
+        Args:
+            other: The scalar on the left of `/`.
+
+        Returns:
+            A new tensor holding `other / self` elementwise, on `self`'s device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _reflected[kind="div", gpu=True](self, other)
@@ -1138,7 +1516,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         is_row_major[Self] and Self.dtype.is_floating_point()
     ):
         """`a ** b`, elementwise. Forwards to `numax.core.ops.power` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The elementwise exponents, of the same type as `self`.
+
+        Returns:
+            A new tensor holding `self ** other` elementwise, on `self`'s
+            device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _power[gpu=True](self, other)
@@ -1149,7 +1539,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ) raises -> Self where (
         is_row_major[Self] and Self.dtype.is_floating_point()
     ):
-        """`a ** b` with a scalar exponent. Follows the tensor."""
+        """`a ** b` with a scalar exponent. Follows the tensor.
+
+        Args:
+            other: The exponent applied to every element.
+
+        Returns:
+            A new tensor holding `self ** other` elementwise, on `self`'s
+            device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _power[gpu=True](self, other)
@@ -1160,7 +1562,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ) raises -> Self where (
         is_row_major[Self] and Self.dtype.is_floating_point()
     ):
-        """`b ** a` with a scalar base on the left. Follows the tensor."""
+        """`b ** a` with a scalar base on the left. Follows the tensor.
+
+        Args:
+            other: The scalar base raised to each element.
+
+        Returns:
+            A new tensor holding `other ** self` elementwise, on `self`'s
+            device.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _rpower[gpu=True](self, other)
@@ -1170,7 +1584,15 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a += b` with a tensor `b`: `a = a + b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__add__(other)
 
     def __iadd__(
@@ -1179,14 +1601,30 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a += b` with a scalar `b`: `a = a + b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The scalar right operand.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__add__(other)
 
     def __isub__(mut self, other: Self) raises where is_row_major[Self]:
         """`a -= b` with a tensor `b`: `a = a - b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__sub__(other)
 
     def __isub__(
@@ -1195,14 +1633,30 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a -= b` with a scalar `b`: `a = a - b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The scalar right operand.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__sub__(other)
 
     def __imul__(mut self, other: Self) raises where is_row_major[Self]:
         """`a *= b` with a tensor `b`: `a = a * b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__mul__(other)
 
     def __imul__(
@@ -1211,14 +1665,30 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a *= b` with a scalar `b`: `a = a * b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The scalar right operand.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__mul__(other)
 
     def __itruediv__(mut self, other: Self) raises where is_row_major[Self]:
         """`a /= b` with a tensor `b`: `a = a / b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__truediv__(other)
 
     def __itruediv__(
@@ -1227,19 +1697,43 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a /= b` with a scalar `b`: `a = a / b`, on `a`'s device.
         The result replaces `a`'s buffer rather than overwriting it, which
         no borrowed `TensorView` can observe -- a view borrows `a` and so
-        cannot outlive the mutation."""
+        cannot outlive the mutation.
+
+        Args:
+            other: The scalar right operand.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__truediv__(other)
 
     def __ipow__(
         mut self, other: Self
     ) raises where is_row_major[Self] and Self.dtype.is_floating_point():
-        """`a **= b` with a tensor `b`: `a = a ** b`."""
+        """`a **= b` with a tensor `b`: `a = a ** b`.
+
+        Args:
+            other: The right operand, of the same type as `self`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__pow__(other)
 
     def __ipow__(
         mut self, other: Scalar[Self.dtype]
     ) raises where is_row_major[Self] and Self.dtype.is_floating_point():
-        """`a **= b` with a scalar `b`: `a = a ** b`."""
+        """`a **= b` with a scalar `b`: `a = a ** b`.
+
+        Args:
+            other: The scalar right operand.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         self = self.__pow__(other)
 
     def __lt__(
@@ -1248,7 +1742,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a < b` against a tensor, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.less` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The tensor compared against, of the same type as `self`.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self < other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less[gpu=True](self, other)
@@ -1260,7 +1765,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a < b` against a scalar, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.less` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The scalar every element is compared against.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self < other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less[gpu=True](self, other)
@@ -1272,7 +1788,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a <= b` against a tensor, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.less_equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The tensor compared against, of the same type as `self`.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self <= other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less_equal[gpu=True](self, other)
@@ -1284,7 +1811,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a <= b` against a scalar, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.less_equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The scalar every element is compared against.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self <= other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less_equal[gpu=True](self, other)
@@ -1296,7 +1834,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a > b` against a tensor, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.greater` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The tensor compared against, of the same type as `self`.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self > other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater[gpu=True](self, other)
@@ -1308,7 +1857,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a > b` against a scalar, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.greater` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The scalar every element is compared against.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self > other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater[gpu=True](self, other)
@@ -1320,7 +1880,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a >= b` against a tensor, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.greater_equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The tensor compared against, of the same type as `self`.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self >= other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater_equal[gpu=True](self, other)
@@ -1332,7 +1903,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a >= b` against a scalar, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.greater_equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The scalar every element is compared against.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self >= other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater_equal[gpu=True](self, other)
@@ -1344,7 +1926,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a == b` against a tensor, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The tensor compared against, of the same type as `self`.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self == other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _equal[gpu=True](self, other)
@@ -1356,7 +1949,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a == b` against a scalar, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The scalar every element is compared against.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self == other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _equal[gpu=True](self, other)
@@ -1368,7 +1972,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a != b` against a tensor, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.not_equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The tensor compared against, of the same type as `self`.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self != other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _not_equal[gpu=True](self, other)
@@ -1380,7 +1995,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """`a != b` against a scalar, elementwise, as a bool tensor of
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.not_equal` and
-        follows the tensor, as `__add__` describes."""
+        follows the tensor, as `__add__` describes.
+
+        Args:
+            other: The scalar every element is compared against.
+
+        Returns:
+            A `bool` tensor of `self`'s shape, true where `self != other`.
+
+        Raises:
+            If the device launch fails, or when a host fallback runs under the
+            `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _not_equal[gpu=True](self, other)
@@ -1399,7 +2025,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a + b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.add`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A new `Dynamic` tensor at the broadcast shape holding `self +
+            other`, on `self`'s device.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _add[gpu=True](self, other)
@@ -1412,7 +2054,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a - b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.subtract`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A new `Dynamic` tensor at the broadcast shape holding `self -
+            other`, on `self`'s device.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _subtract[gpu=True](self, other)
@@ -1425,7 +2083,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a * b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.multiply`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A new `Dynamic` tensor at the broadcast shape holding `self *
+            other`, on `self`'s device.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _multiply[gpu=True](self, other)
@@ -1438,7 +2112,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a / b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.divide`'s
-        broadcasting overload and follows `a` to its device."""
+        broadcasting overload and follows `a` to its device.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A new `Dynamic` tensor at the broadcast shape holding `self /
+            other`, on `self`'s device.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _divide[gpu=True](self, other)
@@ -1450,7 +2140,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a < b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A `bool` `Dynamic` tensor at the broadcast shape, true where `self <
+            other`.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less[gpu=True](self, other)
@@ -1462,7 +2168,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a <= b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A `bool` `Dynamic` tensor at the broadcast shape, true where `self
+            <= other`.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less_equal[gpu=True](self, other)
@@ -1474,7 +2196,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a > b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A `bool` `Dynamic` tensor at the broadcast shape, true where `self >
+            other`.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater[gpu=True](self, other)
@@ -1486,7 +2224,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a >= b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A `bool` `Dynamic` tensor at the broadcast shape, true where `self
+            >= other`.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater_equal[gpu=True](self, other)
@@ -1498,7 +2252,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a == b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A `bool` `Dynamic` tensor at the broadcast shape, true where `self
+            == other`.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _equal[gpu=True](self, other)
@@ -1510,7 +2280,23 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
     ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
         """`a != b` against any `TensorLike` `b` of the same dtype, at two
-        broadcastable shapes, as a `bool` tensor."""
+        broadcastable shapes, as a `bool` tensor.
+
+        Parameters:
+            B: The type of the right operand, any row-major `TensorLike` of
+                `self`'s dtype.
+
+        Args:
+            other: The right operand, broadcast against `self`.
+
+        Returns:
+            A `bool` `Dynamic` tensor at the broadcast shape, true where `self
+            != other`.
+
+        Raises:
+            If the shapes do not broadcast, if the device launch fails, or when
+            a host fallback runs under the `"raise"` fallback policy.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _not_equal[gpu=True](self, other)
@@ -1537,6 +2323,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         the tensor as `__add__` describes: a device `a` multiplies on its
         device, a `float64` one on the host. A shape mismatch is a compile
         error, since both extents are in the types.
+
+        Parameters:
+            B: The type of the right matrix, compile-time `k x n` where `self`
+                is `m x k`.
+
+        Args:
+            other: The right matrix, of `self`'s dtype.
+
+        Returns:
+            A new `m x n` tensor holding the matrix product, on `self`'s device.
+
+        Raises:
+            If allocation, MAX's `matmul` or the device synchronization fails.
         """
         comptime m = dim[Self, 0]
         comptime n = dim[B, 1]
@@ -1572,6 +2371,13 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `values` must have exactly `size()` entries, or this raises. On a
         GPU context the write is flushed to the device when the mapping
         scope exits, which is inside this call.
+
+        Args:
+            values: The new elements in row-major order, `size()` of them.
+
+        Raises:
+            If `len(values)` differs from `size()`, or if the host mapping
+            fails.
         """
         var n = self.size()
         if len(values) != n:
@@ -1698,7 +2504,21 @@ def zeros[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
-    filled with `0`."""
+    filled with `0`.
+
+    Parameters:
+        dtype: The element type.
+        dims: The compile-time extents, one per axis.
+
+    Args:
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new zero-filled `Static` tensor of shape `dims`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return Static[dtype, *dims](_context(ctx))
 
 
@@ -1711,6 +2531,20 @@ def zeros_dyn[
 
     The run-time-shaped sibling of `zeros`: `zeros_dyn[f32, 2](rows, cols)`
     where `zeros[f32, 4, 3]()` would have compiled the shape in.
+
+    Parameters:
+        dtype: The element type.
+        rank: The number of axes.
+
+    Args:
+        extents: The run-time extents, `rank` of them.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new zero-filled `Dynamic` tensor of shape `extents`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     return Dynamic[dtype, rank](
         row_major(_dyn_shape[rank](*extents)), _context(ctx)
@@ -1729,6 +2563,19 @@ def asarray[
     producing a count instead of a constant -- a boolean mask, `unique`, a
     file read -- had no way to hand back a right-sized tensor. This does,
     and it is what those functions return.
+
+    Parameters:
+        dtype: The element type.
+
+    Args:
+        values: The elements to hold, in order.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new rank-1 `Dynamic` tensor of length `len(values)`.
+
+    Raises:
+        If allocating the buffer or copying `values` into it fails.
     """
     var n = len(values)
     var result = Dynamic[dtype, 1](row_major(_dyn_shape[1](n)), _context(ctx))
@@ -2115,7 +2962,21 @@ def ones[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
-    filled with `1`."""
+    filled with `1`.
+
+    Parameters:
+        dtype: The element type.
+        dims: The compile-time extents, one per axis.
+
+    Args:
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new one-filled `Static` tensor of shape `dims`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return full[dtype, *dims](1, ctx=ctx)
 
 
@@ -2124,7 +2985,22 @@ def ones_dyn[
 ](*extents: Int, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
     dtype, rank
 ]:
-    """A new one-filled tensor sized by `extents`; see `zeros_dyn`."""
+    """A new one-filled tensor sized by `extents`; see `zeros_dyn`.
+
+    Parameters:
+        dtype: The element type.
+        rank: The number of axes.
+
+    Args:
+        extents: The run-time extents, `rank` of them.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new one-filled `Dynamic` tensor of shape `extents`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return _filled(zeros_dyn[dtype, rank](*extents, ctx=ctx), 1)
 
 
@@ -2150,7 +3026,22 @@ def full[
     fill_value: Scalar[dtype], ctx: Optional[DeviceContext] = None
 ) raises -> Static[dtype, *dims]:
     """A new tensor of the given compile-time shape on `ctx`'s device,
-    filled with `fill_value`."""
+    filled with `fill_value`.
+
+    Parameters:
+        dtype: The element type.
+        dims: The compile-time extents, one per axis.
+
+    Args:
+        fill_value: The value every element is set to.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new `Static` tensor of shape `dims` with every element `fill_value`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return _filled(zeros[dtype, *dims](ctx), fill_value)
 
 
@@ -2161,7 +3052,24 @@ def full_dyn[
     *extents: Int,
     ctx: Optional[DeviceContext] = None,
 ) raises -> Dynamic[dtype, rank]:
-    """A new `fill_value`-filled tensor sized by `extents`; see `zeros_dyn`."""
+    """A new `fill_value`-filled tensor sized by `extents`; see `zeros_dyn`.
+
+    Parameters:
+        dtype: The element type.
+        rank: The number of axes.
+
+    Args:
+        fill_value: The value every element is set to.
+        extents: The run-time extents, `rank` of them.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new `Dynamic` tensor of shape `extents` with every element
+        `fill_value`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return _filled(zeros_dyn[dtype, rank](*extents, ctx=ctx), fill_value)
 
 
@@ -2175,6 +3083,19 @@ def empty[
     the small allocation-time saving, matching every other factory function
     here. Callers that write every element before reading (the usual reason
     to reach for `empty` at all) pay nothing extra in practice.
+
+    Parameters:
+        dtype: The element type.
+        dims: The compile-time extents, one per axis.
+
+    Args:
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new `Static` tensor of shape `dims`, zero-initialized.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     return Static[dtype, *dims](_context(ctx))
 
@@ -2185,14 +3106,44 @@ def empty_dyn[
     dtype, rank
 ]:
     """A new tensor sized by `extents`; see `empty` for why this
-    zero-initializes rather than leaving memory uninitialized."""
+    zero-initializes rather than leaving memory uninitialized.
+
+    Parameters:
+        dtype: The element type.
+        rank: The number of axes.
+
+    Args:
+        extents: The run-time extents, `rank` of them.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new `Dynamic` tensor of shape `extents`, zero-initialized.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return zeros_dyn[dtype, rank](*extents, ctx=ctx)
 
 
 def eye[
     n: Int, dtype: DType = DType.float64
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
-    """The `n`x`n` identity matrix."""
+    """The `n`x`n` identity matrix.
+
+    Parameters:
+        n: The number of rows and columns.
+        dtype: The element type; `float64` by default.
+
+    Args:
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new `n x n` tensor with ones on the main diagonal and zeros elsewhere.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     comptime if _DEVICE_FILL[dtype]:
         var device = _context(ctx)
         if device.api() != "cpu":
@@ -2217,18 +3168,44 @@ def zeros[T: FloatLike, n: Int]() -> Array[T, n]:
     `to_array[P](eye[3]())` -- a tensor built and immediately copied.
 
     A matrix is `n*n` elements row-major, so `zeros[P, 3 * 3]()` is a 3x3.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        n: The element count.
+
+    Returns:
+        An `Array[T, n]` of zeros.
     """
     return Array[T, n](fill=T.constant(0.0))
 
 
 def ones[T: FloatLike, n: Int]() -> Array[T, n]:
     """`n` ones as an `Array`. See `zeros` above for why this sits beside
-    the tensor factory of the same name."""
+    the tensor factory of the same name.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        n: The element count.
+
+    Returns:
+        An `Array[T, n]` of ones.
+    """
     return Array[T, n](fill=T.one())
 
 
 def full[T: FloatLike, n: Int](fill_value: Float64) -> Array[T, n]:
-    """`n` copies of `fill_value` as an `Array`. See `zeros` above."""
+    """`n` copies of `fill_value` as an `Array`. See `zeros` above.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        n: The element count.
+
+    Args:
+        fill_value: The value every element is built from, via `T.constant`.
+
+    Returns:
+        An `Array[T, n]` with every element `fill_value`.
+    """
     return Array[T, n](fill=T.constant(fill_value))
 
 
@@ -2237,6 +3214,13 @@ def eye[T: FloatLike, n: Int]() -> Array[T, n * n]:
 
     `eye[P, 3]()` is what `numax.linalg.solve`, `cholesky` and `inverse`
     take directly, where the tensor `eye[3]()` needs a `to_array` first.
+
+    Parameters:
+        T: The `FloatLike` conformer of each element.
+        n: The number of rows and columns.
+
+    Returns:
+        An `Array[T, n * n]` holding the `n x n` identity, row-major.
     """
     var values = Array[T, n * n](fill=T.constant(0.0))
     for i in range(n):
@@ -2264,6 +3248,22 @@ def linspace[
     the literals and hand back an integer tensor, since inference outranks
     a default. Every factory below is shaped the same way for the same
     reason.
+
+    Parameters:
+        num: The number of values.
+        dtype: The element type; `float64` by default.
+
+    Args:
+        start: The first value.
+        stop: The last value, included.
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new rank-1 tensor of `num` evenly spaced values.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     comptime if _DEVICE_FILL[dtype] and num > 1:
         var device = _context(ctx)
@@ -2296,7 +3296,26 @@ def logspace[
     `linspace(start, stop, num)`. Matches `numpy.logspace`'s defaults.
 
     Count first, `dtype` defaulted -- see `linspace` for why the arguments
-    are `Float64`."""
+    are `Float64`.
+
+    Parameters:
+        num: The number of values.
+        dtype: The element type; `float64` by default.
+
+    Args:
+        start: The exponent of the first value.
+        stop: The exponent of the last value, included.
+        base: The base the exponents apply to; `10` by default.
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new rank-1 tensor of `base ** x` for `num` evenly spaced exponents
+        `x`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     comptime if _DEVICE_FILL[dtype] and num > 1:
         var device = _context(ctx)
         if device.api() != "cpu":
@@ -2332,6 +3351,22 @@ def arange_n[
     length is a run-time fact and whose result is therefore `Dynamic`.
     `numax.core.tensor.linspace` is the one to reach for when the endpoints
     are what matter.
+
+    Parameters:
+        num: The number of values.
+        dtype: The element type; `float64` by default.
+
+    Args:
+        start: The first value; `0` by default.
+        step: The spacing between consecutive values; `1` by default.
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new rank-1 `Static` tensor of the `num` values `start + i * step`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     comptime if _DEVICE_FILL[dtype]:
         var device = _context(ctx)
@@ -2362,6 +3397,23 @@ def arange[
     arguments' values, so the result is `Dynamic`; `arange_n[num]` puts the
     count in the type instead. An empty range gives an empty tensor, as in
     NumPy, and a zero `step` raises.
+
+    Parameters:
+        dtype: The element type; `float64` by default.
+
+    Args:
+        start: The first value.
+        stop: The end of the range, excluded.
+        step: The spacing; `1` by default, and must be nonzero.
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new rank-1 `Dynamic` tensor of `ceil((stop - start) / step)` values,
+        empty when that count is not positive.
+
+    Raises:
+        If `step` is zero, or if allocating or filling the buffer fails.
     """
     if step == 0:
         raise Error("arange: step must be nonzero")
@@ -2390,19 +3442,60 @@ def arange[
     dtype, 1
 ]:
     """`0, 1, ..., ceil(stop) - 1`. `numpy.arange(stop)`; see the
-    three-argument form."""
+    three-argument form.
+
+    Parameters:
+        dtype: The element type; `float64` by default.
+
+    Args:
+        stop: The end of the range, excluded.
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new rank-1 `Dynamic` tensor holding `0, 1, ...` below `stop`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     return arange[dtype](0, stop, 1, ctx=ctx)
 
 
 def zeros_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
-    """A new zero-filled tensor with `a`'s dtype, shape and device."""
+    """A new zero-filled tensor with `a`'s dtype, shape and device.
+
+    Parameters:
+        T: The type of the template tensor `a`.
+
+    Args:
+        a: The tensor whose dtype, layout and device the result takes.
+
+    Returns:
+        A new zero-filled tensor of `a`'s dtype and layout, on `a`'s device.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return Tensor[dtype, LayoutType](a.tile().layout, a.context())
 
 
 def ones_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
-    """A new one-filled tensor with `a`'s dtype, shape and device."""
+    """A new one-filled tensor with `a`'s dtype, shape and device.
+
+    Parameters:
+        T: The type of the template tensor `a`.
+
+    Args:
+        a: The tensor whose dtype, layout and device the result takes.
+
+    Returns:
+        A new one-filled tensor of `a`'s dtype and layout, on `a`'s device.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     comptime dtype = T.dtype
     return full_like(a, 1)
 
@@ -2410,7 +3503,22 @@ def ones_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
 def full_like[
     T: TensorLike
 ](a: T, fill_value: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType]:
-    """A new `fill_value`-filled tensor with `a`'s dtype, shape and device."""
+    """A new `fill_value`-filled tensor with `a`'s dtype, shape and device.
+
+    Parameters:
+        T: The type of the template tensor `a`.
+
+    Args:
+        a: The tensor whose dtype, layout and device the result takes.
+        fill_value: The value every element is set to.
+
+    Returns:
+        A new tensor of `a`'s dtype and layout with every element `fill_value`,
+        on `a`'s device.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     comptime dtype = T.dtype
     return _filled(zeros_like(a), fill_value)
 
@@ -2419,6 +3527,19 @@ def empty_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new tensor with `a`'s dtype, shape and device; see `empty`'s own
     docstring for why this zero-initializes rather than leaving memory
     uninitialized.
+
+    Parameters:
+        T: The type of the template tensor `a`.
+
+    Args:
+        a: The tensor whose dtype, layout and device the result takes.
+
+    Returns:
+        A new zero-initialized tensor of `a`'s dtype and layout, on `a`'s
+        device.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     comptime dtype = T.dtype
     return zeros_like(a)
@@ -2460,6 +3581,20 @@ def transpose[
     with every axis reversed over the *same* memory -- this allocates a new
     buffer, for when the result needs its own storage (e.g. to outlive the
     source, or to feed something that wants a plain `Tensor`).
+
+    Parameters:
+        T: The type of `a`, a compile-time-shaped matrix.
+        gpu: Whether to run the `elementwise` gather on `a`'s device rather than
+            MAX's host `linalg.transpose`; `False` by default.
+
+    Args:
+        a: The `m x n` matrix to transpose.
+
+    Returns:
+        A new `n x m` tensor on `a`'s device.
+
+    Raises:
+        If allocation, the transpose kernel or the device synchronization fails.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -2504,6 +3639,21 @@ def transpose[
     describes -- and the reason it does not use MAX -- applies here too,
     and an `elementwise` gather at a run-time permutation would have to
     address through strides the kernel cannot see.
+
+    Parameters:
+        T: The type of `a`.
+
+    Args:
+        a: The tensor whose axes are permuted.
+        axes: A permutation of `0 .. rank - 1`; the result's axis `d` is `a`'s
+            axis `axes[d]`.
+
+    Returns:
+        A new `Dynamic` tensor at the permuted extents, on `a`'s device.
+
+    Raises:
+        If `axes` is not one entry per axis, names an axis out of range or
+        repeats one, or if MAX's kernel fails.
     """
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
@@ -2538,6 +3688,20 @@ def swapaxes[
     The two-axis case of `transpose`, which is what most callers of a
     permutation actually want and which they would otherwise spell as a
     full list with two entries out of order.
+
+    Parameters:
+        T: The type of `a`.
+
+    Args:
+        a: The tensor whose axes are exchanged.
+        axis1: The first axis to exchange; negative counts from the back.
+        axis2: The second axis to exchange; negative counts from the back.
+
+    Returns:
+        A new `Dynamic` tensor with the two axes exchanged, on `a`'s device.
+
+    Raises:
+        If either axis is out of range, or if MAX's kernel fails.
     """
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
@@ -2564,6 +3728,21 @@ def moveaxis[
 
     Not `swapaxes`: moving axis 0 to position 2 of a rank-3 tensor gives
     the order `(1, 2, 0)`, where swapping them would give `(2, 1, 0)`.
+
+    Parameters:
+        T: The type of `a`.
+
+    Args:
+        a: The tensor whose axis is moved.
+        source: The axis to move; negative counts from the back.
+        destination: The position the axis moves to; negative counts from the
+            back.
+
+    Returns:
+        A new `Dynamic` tensor with the axis moved, on `a`'s device.
+
+    Raises:
+        If either axis is out of range, or if MAX's kernel fails.
     """
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
@@ -2608,7 +3787,22 @@ def squeeze[
 ](a: T) raises -> Static[T.dtype, dim[T, 1]] where (
     T.LayoutType.rank == 2 and T.LayoutType.all_dims_known and dim[T, 0] == 1
 ):
-    """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
+    """Drop a size-1 leading axis: `(1, n) -> (n,)`.
+
+    Parameters:
+        T: The type of `a`, a compile-time `(1, n)` matrix.
+
+    Args:
+        a: The `(1, n)` matrix to squeeze.
+
+    Returns:
+        A new rank-1 tensor of length `n` holding `a`'s elements, on `a`'s
+        device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
+    """
     comptime dtype = T.dtype
     comptime n = dim[T, 1]
     return _same_order(a, Static[dtype, n]._static_layout())
@@ -2619,7 +3813,22 @@ def squeeze[
 ](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
     T.LayoutType.rank == 2 and T.LayoutType.all_dims_known and dim[T, 1] == 1
 ):
-    """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
+    """Drop a size-1 trailing axis: `(n, 1) -> (n,)`.
+
+    Parameters:
+        T: The type of `a`, a compile-time `(n, 1)` matrix.
+
+    Args:
+        a: The `(n, 1)` matrix to squeeze.
+
+    Returns:
+        A new rank-1 tensor of length `n` holding `a`'s elements, on `a`'s
+        device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
+    """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     return _same_order(a, Static[dtype, n]._static_layout())
@@ -2640,6 +3849,20 @@ def squeeze[
     drop is a run-time property and the result rank is part of the type.
 
     Row-major order is unchanged -- only the shape is.
+
+    Parameters:
+        T: The type of `a`.
+        axis: The axis to drop, which must have extent 1.
+
+    Args:
+        a: The tensor to squeeze.
+
+    Returns:
+        A new `Dynamic` tensor of one rank lower holding `a`'s elements in
+        row-major order.
+
+    Raises:
+        If axis `axis` does not have extent 1, or if the copy fails.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -2669,6 +3892,19 @@ def atleast_1d[
     can receive. It exists so a caller writing shape-agnostic code can
     spell the intent, the way `numpy.atleast_1d` is written before code
     that indexes.
+
+    Parameters:
+        T: The type of `a`, a rank-1 tensor.
+
+    Args:
+        a: The vector to return.
+
+    Returns:
+        A new rank-1 `Dynamic` copy of `a`, on `a`'s device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     return _same_order(a, row_major(_dyn_shape[1](a.size())))
 
@@ -2682,6 +3918,19 @@ def atleast_2d[
     convention that makes `atleast_2d(v) @ m` the product a caller expects
     and is worth stating, since the opposite choice is equally plausible.
     `expand_dims[axis=1]` is the column.
+
+    Parameters:
+        T: The type of `a`, a rank-1 tensor.
+
+    Args:
+        a: The vector to promote.
+
+    Returns:
+        A new `(1, n)` `Dynamic` copy of `a`, on `a`'s device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     var extents = List[Int](capacity=2)
@@ -2695,7 +3944,21 @@ def atleast_2d[
 ](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
     T.LayoutType.rank >= 2
 ):
-    """`a` unchanged, at rank 2 or above. `numpy.atleast_2d`."""
+    """`a` unchanged, at rank 2 or above. `numpy.atleast_2d`.
+
+    Parameters:
+        T: The type of `a`, of rank 2 or above.
+
+    Args:
+        a: The tensor to return.
+
+    Returns:
+        A new `Dynamic` copy of `a` at its own shape, on `a`'s device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
@@ -2715,6 +3978,19 @@ def atleast_3d[
     `(1, n)` row, and promoting that row again would give `(1, n, 1)` --
     which is what this does, so the two compose. A `(n, 1, 1)` would be
     the other plausible reading and is not it.
+
+    Parameters:
+        T: The type of `a`, a rank-1 tensor.
+
+    Args:
+        a: The vector to promote.
+
+    Returns:
+        A new `(1, n, 1)` `Dynamic` copy of `a`, on `a`'s device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     var extents = List[Int](capacity=3)
@@ -2732,6 +4008,19 @@ def atleast_3d[
     A trailing axis rather than a leading one, again NumPy's rule: a
     matrix of values becomes a matrix of length-1 pixels, which is the
     convention image code depends on.
+
+    Parameters:
+        T: The type of `a`, a rank-2 tensor.
+
+    Args:
+        a: The matrix to promote.
+
+    Returns:
+        A new `(rows, cols, 1)` `Dynamic` copy of `a`, on `a`'s device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     var extents = List[Int](capacity=3)
@@ -2746,7 +4035,21 @@ def atleast_3d[
 ](a: T) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
     T.LayoutType.rank >= 3
 ):
-    """`a` unchanged, at rank 3 or above. `numpy.atleast_3d`."""
+    """`a` unchanged, at rank 3 or above. `numpy.atleast_3d`.
+
+    Parameters:
+        T: The type of `a`, of rank 3 or above.
+
+    Args:
+        a: The tensor to return.
+
+    Returns:
+        A new `Dynamic` copy of `a` at its own shape, on `a`'s device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
@@ -2779,6 +4082,23 @@ def stack[
     parameter (`stack[dtype, n, 3](a, b, c)`) and checked against the pack
     at runtime. Two spellings of the same number is worse than two
     arguments.
+
+    Parameters:
+        A: The type of `a`, a compile-time rank-1 tensor.
+        B: The type of `b`, of `a`'s dtype and length.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The result's row `0`.
+        b: The result's row `1`.
+
+    Returns:
+        A new `(2, n)` tensor with `a` above `b`, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
@@ -2828,6 +4148,21 @@ def reshape[
     call to an ordinary `def` such as `_product`. `squeeze` above takes the
     same shape for the same kind of reason. `ravel` is the inverse, and the
     two compose into any reshape this module can express.
+
+    Parameters:
+        T: The type of `a`, a compile-time rank-1 tensor.
+        rows: The result's row count.
+        cols: The result's column count; `rows * cols` must be `a`'s length.
+
+    Args:
+        a: The vector to reshape.
+
+    Returns:
+        A new `rows x cols` tensor holding `a`'s elements in row-major order.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -2845,7 +4180,25 @@ def reshape[
     and T.LayoutType.all_dims_known
 ):
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
-    overload above for why the ranks are spelled out."""
+    overload above for why the ranks are spelled out.
+
+    Parameters:
+        T: The type of `a`, a compile-time rank-1 tensor.
+        d0: The result's extent on axis `0`.
+        d1: The result's extent on axis `1`.
+        d2: The result's extent on axis `2`; `d0 * d1 * d2` must be `a`'s
+            length.
+
+    Args:
+        a: The vector to reshape.
+
+    Returns:
+        A new `d0 x d1 x d2` tensor holding `a`'s elements in row-major order.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
+    """
     comptime dtype = T.dtype
     return _same_order(a, Static[dtype, d0, d1, d2]._static_layout())
 
@@ -2864,6 +4217,22 @@ def reshape_dyn[
     the price of a shape the compiler cannot see. Prefer `reshape` when the
     shape is a constant: there the same check is a `where` clause and the
     mismatch is a compile error.
+
+    Parameters:
+        T: The type of `a`.
+        rank: The result's rank.
+
+    Args:
+        a: The tensor to reshape, of any rank.
+        extents: The result's extents, `rank` of them, multiplying to
+            `a.size()`.
+
+    Returns:
+        A new `Dynamic` tensor of shape `extents` holding `a`'s elements in
+        row-major order.
+
+    Raises:
+        If `extents` does not multiply to `a.size()`, or if the copy fails.
     """
     comptime dtype = T.dtype
     var wanted = 1
@@ -2899,6 +4268,24 @@ def slice[
     Bounds are checked, and a `stop` below its `start` raises rather than
     quietly producing an empty axis, since that is far more often a bug
     than an intent.
+
+    Parameters:
+        T: The type of `a`.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to slice.
+        starts: The inclusive lower bound on each axis, one per axis.
+        stops: The exclusive upper bound on each axis, one per axis.
+
+    Returns:
+        A new compact `Dynamic` tensor holding the sub-box, on `a`'s device.
+
+    Raises:
+        If a list is not one bound per axis, a bound falls outside its axis or a
+        stop is below its start, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -2976,6 +4363,24 @@ def concatenate_dyn[
     same layout type, and the result's length is their combined size rather
     than a sum the compiler has to see. Reach for `concatenate` when both
     lengths are constants and the result's should be too.
+
+    Parameters:
+        A: The type of `a`, of any shape.
+        B: The type of `b`, of `a`'s dtype and any shape.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor whose elements come first, in row-major order.
+        b: The tensor whose elements follow, in row-major order.
+
+    Returns:
+        A new rank-1 `Dynamic` tensor of length `a.size() + b.size()`, on `a`'s
+        device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     if _check_device[A, gpu](a) and _check_device[B, gpu](b):
         comptime if gpu:
@@ -3007,6 +4412,23 @@ def split_dyn[
     `split` needs `at` as a parameter because both output lengths are part
     of their types; here they are not, so the cut point is an ordinary
     argument and can be computed.
+
+    Parameters:
+        T: The type of `a`.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to cut, read flat.
+        at: The flat index to cut at, in `[0, a.size()]`.
+
+    Returns:
+        The elements `[0, at)` and `[at, size())` as two rank-1 `Dynamic`
+        tensors on `a`'s device.
+
+    Raises:
+        If `at` is out of range, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     var n = a.size()
@@ -3049,6 +4471,23 @@ def stack_dyn[
     The run-time-shaped `stack`. Where `stack` needs both inputs to be rank
     1 with the same extent in their types, this takes any two layouts and
     checks the lengths agree at run time.
+
+    Parameters:
+        A: The type of `a`, of any shape.
+        B: The type of `b`, of `a`'s dtype and any shape.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor flattened into row `0`.
+        b: The tensor flattened into row `1`, of `a`'s size.
+
+    Returns:
+        A new `(2, size)` `Dynamic` tensor on `a`'s device.
+
+    Raises:
+        If the sizes differ, or when a host fallback runs under the `"raise"`
+        fallback policy.
     """
     comptime dtype = A.dtype
     if a.size() != b.size():
@@ -3099,6 +4538,16 @@ def broadcast_shapes(a: List[Int], b: List[Int]) raises -> List[Int]:
     and anything else raises. This is the one place the rule is written
     down; `broadcast_to` and every broadcasting binary op read it from here
     rather than restating it.
+
+    Args:
+        a: The first shape, one extent per axis.
+        b: The second shape, one extent per axis.
+
+    Returns:
+        The broadcast shape, at the rank of the longer input.
+
+    Raises:
+        If an aligned pair of extents differs and neither is 1.
     """
     var ra = len(a)
     var rb = len(b)
@@ -3156,6 +4605,25 @@ def broadcast_to[
     not own, the same reason `slice` copies. `numax.core.functional`'s
     `broadcast_op_axis` is the route that avoids the copy where the
     broadcast only exists to be consumed by an elementwise op.
+
+    Parameters:
+        T: The type of `a`.
+        rank: The target rank, at least `a`'s own.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to broadcast.
+        extents: The target shape, `rank` extents.
+
+    Returns:
+        A new `Dynamic` tensor of shape `extents` holding `a` broadcast, on
+        `a`'s device.
+
+    Raises:
+        If `rank` is below `a`'s rank, an extent is negative or an axis does not
+        stretch to its target, or when a host fallback runs under the `"raise"`
+        fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -3230,6 +4698,19 @@ def ravel[
     does not need to outlive its source.
 
     The overload below flattens a tensor whose extents are run-time values.
+
+    Parameters:
+        T: The type of `a`, with a compile-time shape.
+
+    Args:
+        a: The tensor to flatten.
+
+    Returns:
+        A new rank-1 `Static` tensor of `a`'s elements in row-major order.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -3245,6 +4726,19 @@ def ravel[
 
     Same copy as the overload above; the result's length is a run-time
     value because the input's is.
+
+    Parameters:
+        T: The type of `a`, with a run-time shape.
+
+    Args:
+        a: The tensor to flatten.
+
+    Returns:
+        A new rank-1 `Dynamic` tensor of `a`'s elements in row-major order.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     return _same_order(a, row_major(_dyn_shape[1](a.size())))
 
@@ -3262,6 +4756,19 @@ def flatten[
     and every manipulation in this module copies. Both names ship so that
     neither reads as missing; `ravel`'s docstring has the reason for the
     copy.
+
+    Parameters:
+        T: The type of `a`, with a compile-time shape.
+
+    Args:
+        a: The tensor to flatten.
+
+    Returns:
+        A new rank-1 `Static` tensor of `a`'s elements in row-major order.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     return ravel(a)
 
@@ -3270,7 +4777,21 @@ def flatten[
     T: TensorLike
 ](a: T) raises -> Dynamic[T.dtype, 1] where not T.LayoutType.all_dims_known:
     """A rank-1 copy in row-major order, for a run-time shape.
-    `numpy.flatten`, and the same call as `ravel`."""
+    `numpy.flatten`, and the same call as `ravel`.
+
+    Parameters:
+        T: The type of `a`, with a run-time shape.
+
+    Args:
+        a: The tensor to flatten.
+
+    Returns:
+        A new rank-1 `Dynamic` tensor of `a`'s elements in row-major order.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
+    """
     return ravel(a)
 
 
@@ -3300,6 +4821,23 @@ def concatenate[
     the two buffers still carry different origins (`origin_of(a._buffer)` vs
     `origin_of(b.buffer)`), which only an unsafe origin cast erases. Two
     buffers, one memcpy each, is not worth that.
+
+    Parameters:
+        A: The type of `a`, a compile-time rank-1 tensor.
+        B: The type of `b`, a compile-time rank-1 tensor of `a`'s dtype.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The leading `n` elements.
+        b: The trailing `m` elements.
+
+    Returns:
+        A new rank-1 `Static` tensor of length `n + m`, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
@@ -3346,6 +4884,23 @@ def split[
     variable-length list; both make the *number* of outputs a runtime value,
     which a comptime-shaped tensor cannot express. One index, two outputs,
     is the part that survives that constraint.
+
+    Parameters:
+        T: The type of `a`, a compile-time rank-1 tensor.
+        at: The index to cut at, in `[0, n]`.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The vector to cut.
+
+    Returns:
+        The elements `[0, at)` and `[at, n)` as two `Static` tensors on `a`'s
+        device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -3395,6 +4950,24 @@ def array_split[
     `sections` parts, the first `n % sections` parts get `n // sections + 1`
     entries and the rest get `n // sections`. `numpy.split` raises on an
     uneven division instead; this never does.
+
+    Parameters:
+        T: The type of `a`.
+        axis: The axis to cut along; `0` by default.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to cut.
+        sections: The number of parts, at least 1.
+
+    Returns:
+        A list of `sections` `Dynamic` tensors, the first `n % sections` of them
+        one entry longer along `axis`.
+
+    Raises:
+        If `sections` is below 1, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -3476,6 +5049,21 @@ def geomspace[
     geometric progression through zero does not exist. Unchecked, like
     NumPy's own, because the check costs a branch the caller is better
     placed to make.
+
+    Parameters:
+        num: The number of values.
+        dtype: The floating-point element type; `float64` by default.
+
+    Args:
+        start: The first value, nonzero and of `stop`'s sign.
+        stop: The last value, included.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new rank-1 tensor of `num` values in geometric progression.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
@@ -3496,6 +5084,20 @@ def identity[
 
     Same result as `eye`; both names exist in NumPy and a caller reaching
     for one should not have to discover the other.
+
+    Parameters:
+        n: The number of rows and columns.
+        dtype: The element type; `float64` by default.
+
+    Args:
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new `n x n` tensor with ones on the main diagonal and zeros elsewhere.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     return eye[n, dtype](ctx)
 
@@ -3509,6 +5111,22 @@ def diag[
     """A square matrix with `a` on its main diagonal. `numpy.diag`.
 
     The vector-to-matrix direction only; `diagonal` is the inverse.
+
+    Parameters:
+        T: The type of `a`, a compile-time rank-1 tensor.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The vector placed on the diagonal.
+
+    Returns:
+        A new `n x n` tensor with `a` on its main diagonal and zeros elsewhere,
+        on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -3532,7 +5150,23 @@ def diagonal[
     and T.LayoutType.all_dims_known
     and dim[T, 1] == dim[T, 0]
 ):
-    """The main diagonal of a square matrix. `numpy.diagonal`."""
+    """The main diagonal of a square matrix. `numpy.diagonal`.
+
+    Parameters:
+        T: The type of `a`, a compile-time square matrix.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The `n x n` matrix to read.
+
+    Returns:
+        A new rank-1 tensor of `a`'s `n` diagonal entries, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     if _check_device[T, gpu](a):
@@ -3559,6 +5193,22 @@ def diagflat[
     `numpy.diagflat`.
 
     The overload below takes a tensor whose extents are run-time values.
+
+    Parameters:
+        T: The type of `a`, with a compile-time shape.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor whose flattened elements form the diagonal.
+
+    Returns:
+        A new square `Static` tensor whose side is `a`'s element count, zero off
+        the diagonal.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -3580,7 +5230,24 @@ def diagflat[
     gpu: Bool = False,
 ](a: T) raises -> Dynamic[T.dtype, 2] where not T.LayoutType.all_dims_known:
     """`a` flattened onto the diagonal of a square matrix, for a run-time
-    shape. `numpy.diagflat`."""
+    shape. `numpy.diagflat`.
+
+    Parameters:
+        T: The type of `a`, with a run-time shape.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor whose flattened elements form the diagonal.
+
+    Returns:
+        A new square `Dynamic` tensor whose side is `a.size()`, zero off the
+        diagonal.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     if _check_device[T, gpu](a):
         comptime if gpu:
@@ -3603,7 +5270,22 @@ def diagflat[
 def tri[
     dtype: DType, n: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
-    """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`."""
+    """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`.
+
+    Parameters:
+        dtype: The element type.
+        n: The number of rows and columns.
+
+    Args:
+        ctx: The device to allocate on; the host when absent, and a GPU context
+            fills on the device.
+
+    Returns:
+        A new `n x n` tensor of ones on and below the diagonal and zeros above.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
+    """
     comptime if _DEVICE_FILL[dtype]:
         var device = _context(ctx)
         if device.api() != "cpu":
@@ -3687,6 +5369,21 @@ def tril[
     device -- an earlier version here copied to the host and filled a
     triangle one element at a time, which also meant it could only do
     square matrices.
+
+    Parameters:
+        T: The type of `a`, a compile-time-shaped matrix.
+        gpu: Whether to run MAX's band kernel on the device, where `a` must then
+            live; `False` by default.
+
+    Args:
+        a: The matrix to mask, of any compile-time shape.
+
+    Returns:
+        A new tensor of `a`'s shape with the entries above the diagonal zeroed,
+        on `a`'s device.
+
+    Raises:
+        If allocation, MAX's kernel or the device synchronization fails.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -3703,6 +5400,21 @@ def triu[
     """`a` with everything below the diagonal zeroed. `numpy.triu` at `k=0`.
 
     The mirror of `tril` and the same MAX kernel.
+
+    Parameters:
+        T: The type of `a`, a compile-time-shaped matrix.
+        gpu: Whether to run MAX's band kernel on the device, where `a` must then
+            live; `False` by default.
+
+    Args:
+        a: The matrix to mask, of any compile-time shape.
+
+    Returns:
+        A new tensor of `a`'s shape with the entries below the diagonal zeroed,
+        on `a`'s device.
+
+    Raises:
+        If allocation, MAX's kernel or the device synchronization fails.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -3803,6 +5515,25 @@ def pad[
     `gpu=True` is available for the constant mode only -- MAX's device
     padding kernel implements no other -- and the `where` clause above turns
     the other two into a compile error rather than a silent host fallback.
+
+    Parameters:
+        T: The type of `a`, a compile-time rank-1 tensor.
+        before: The number of elements added in front.
+        after: The number of elements added behind.
+        mode: `pad_constant` (the default), `pad_reflect` or `pad_edge`.
+        gpu: Whether to pad on the device, where `a` must then live; constant
+            mode only, and `False` by default.
+
+    Args:
+        a: The vector to pad.
+        constant: The fill value under `pad_constant`; `0` by default, and
+            unused by the other modes.
+
+    Returns:
+        A new rank-1 tensor of length `before + n + after`, on `a`'s device.
+
+    Raises:
+        If allocation or MAX's padding kernel fails.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -3840,6 +5571,28 @@ def pad[
 
     The rank-1 form above documents why the widths are parameters and why
     `gpu=True` is constant-only.
+
+    Parameters:
+        T: The type of `a`, a compile-time-shaped matrix.
+        top: The number of rows added above.
+        bottom: The number of rows added below.
+        left: The number of columns added on the left.
+        right: The number of columns added on the right.
+        mode: `pad_constant` (the default), `pad_reflect` or `pad_edge`.
+        gpu: Whether to pad on the device, where `a` must then live; constant
+            mode only, and `False` by default.
+
+    Args:
+        a: The matrix to pad.
+        constant: The fill value under `pad_constant`; `0` by default, and
+            unused by the other modes.
+
+    Returns:
+        A new `(top + rows + bottom, left + cols + right)` tensor, on `a`'s
+        device.
+
+    Raises:
+        If allocation or MAX's padding kernel fails.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -3902,6 +5655,25 @@ def concatenate[
     reason the rank-1 overload records: `nn.concat` takes its inputs as a
     `StaticTuple`, so every input must share one layout *type* and one
     origin, and two separately owned buffers share neither.
+
+    Parameters:
+        A: The type of `a`.
+        B: The type of `b`, of `a`'s dtype and rank.
+        axis: The axis to join along, in `[0, rank)`.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor that comes first along `axis`.
+        b: The tensor that follows along `axis`.
+
+    Returns:
+        A new `Dynamic` tensor whose `axis` extent is the sum of the two, on
+        `a`'s device.
+
+    Raises:
+        If the extents differ on any other axis, or when a host fallback runs
+        under the `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
@@ -3978,6 +5750,25 @@ def stack[
 
     Both inputs must have identical extents -- there is no axis for them to
     differ on.
+
+    Parameters:
+        A: The type of `a`.
+        B: The type of `b`, of `a`'s dtype and rank.
+        axis: The position of the new axis, in `[0, rank]`.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor at index `0` of the new axis.
+        b: The tensor at index `1` of the new axis, of `a`'s extents.
+
+    Returns:
+        A new `Dynamic` tensor of one rank higher with extent 2 at `axis`, on
+        `a`'s device.
+
+    Raises:
+        If `a` and `b` differ in any extent, or when a host fallback runs under
+        the `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
@@ -4050,6 +5841,24 @@ def split[
 
     Mojo 1.0 cannot destructure a `Tuple` of two `Tensor`s, so read the
     halves as `parts[0]` and `parts[1]`.
+
+    Parameters:
+        T: The type of `a`.
+        axis: The axis to cut along.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to cut.
+        at: The index to cut at, in `[0, extent]`.
+
+    Returns:
+        The positions `[0, at)` and `[at, extent)` along `axis`, as two
+        `Dynamic` tensors on `a`'s device.
+
+    Raises:
+        If `at` is out of range, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -4132,6 +5941,20 @@ def expand_dims[
     Row-major order is unchanged -- only the shape is -- so this is a copy
     for the reason every manipulation here copies: a view would borrow from
     a tensor this module does not own.
+
+    Parameters:
+        T: The type of `a`.
+        axis: The position of the new size-1 axis, in `[0, rank]`.
+
+    Args:
+        a: The tensor to expand.
+
+    Returns:
+        A new `Dynamic` tensor of one rank higher holding `a`'s elements.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -4163,6 +5986,24 @@ def roll[
     that expresses a cyclic shift without materializing the index tensor --
     so this is numax's own walk over the `outer`/`length`/`inner`
     decomposition.
+
+    Parameters:
+        T: The type of `a`.
+        axis: The axis to roll along.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to roll.
+        shift: The number of places to shift; negative rolls the other way.
+
+    Returns:
+        A new tensor of `a`'s type and shape with the elements shifted
+        cyclically, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -4212,6 +6053,23 @@ def tile[
     above 1, and has no rank limit. One limit is numax's on both paths:
     `reps` must give one count per axis, where `numpy.tile` prepends 1s for
     a shorter tuple.
+
+    Parameters:
+        T: The type of `a`.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor to repeat as a block.
+        reps: The repeat count per axis, one per axis and each at least 1.
+
+    Returns:
+        A new `Dynamic` tensor whose extent on axis `d` is `a`'s times
+        `reps[d]`, on `a`'s device.
+
+    Raises:
+        If `reps` is not one count per axis or a count is below 1, or when a
+        host fallback runs under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -4285,6 +6143,24 @@ def repeat[
     counts are not exposed: the kernel accepts them, but the result's
     extent is then a sum over a tensor the caller would also have to build,
     and no caller in numax needs it yet.
+
+    Parameters:
+        T: The type of `a`.
+        axis: The axis along which each element repeats.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The tensor whose elements repeat.
+        count: How many times each element repeats, at least 1.
+
+    Returns:
+        A new `Dynamic` tensor whose `axis` extent is `count` times `a`'s, on
+        `a`'s device.
+
+    Raises:
+        If `count` is below 1, or when a host fallback runs under the `"raise"`
+        fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -4335,7 +6211,25 @@ def vander[
     and T.LayoutType.all_dims_known
 ):
     """The Vandermonde matrix of `a`: `out[i, j] = a[i] ** (cols - 1 - j)`.
-    `numpy.vander` with its default `increasing=False`."""
+    `numpy.vander` with its default `increasing=False`.
+
+    Parameters:
+        T: The type of `a`, a compile-time floating-point vector.
+        cols: The number of columns, one more than the highest power.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The `n` nodes, one per row.
+
+    Returns:
+        A new `n x cols` tensor with `a[i] ** (cols - 1 - j)` at `(i, j)`, on
+        `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     if _check_device[T, gpu](a):
@@ -4369,7 +6263,26 @@ def meshgrid[
     and B.LayoutType.all_dims_known
 ):
     """Coordinate matrices from two coordinate vectors. `numpy.meshgrid`
-    with its default `indexing="xy"`, so both outputs are `(m, n)`."""
+    with its default `indexing="xy"`, so both outputs are `(m, n)`.
+
+    Parameters:
+        A: The type of `x`, a compile-time rank-1 tensor.
+        B: The type of `y`, a compile-time rank-1 tensor of `x`'s dtype.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        x: The `n` coordinates along the columns.
+        y: The `m` coordinates along the rows.
+
+    Returns:
+        The `(m, n)` grids `xx`, with `xx[r, c] = x[c]`, and `yy`, with `yy[r,
+        c] = y[r]`, on `x`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
+    """
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
     comptime m = dim[B, 0]
@@ -4411,7 +6324,23 @@ def flip[
     T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
 ):
     """A rank-1 tensor reversed. `numpy.flip` at `axis=0`. `gpu=True`
-    reverses a device tensor on its device."""
+    reverses a device tensor on its device.
+
+    Parameters:
+        T: The type of `a`, a compile-time rank-1 tensor.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The vector to reverse.
+
+    Returns:
+        A new rank-1 tensor of `a`'s elements in reverse order, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     if _check_device[T, gpu](a):
@@ -4435,6 +6364,20 @@ def copy[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     buffer, and copying one should be a decision rather than something
     that happens because a value was passed by value. This is that
     decision, spelled out.
+
+    Parameters:
+        T: The type of `a`.
+
+    Args:
+        a: The tensor to copy.
+
+    Returns:
+        A new tensor of `a`'s dtype and layout holding its elements, on `a`'s
+        device.
+
+    Raises:
+        If copying `a`'s elements fails, as it does for a strided device view at
+        `float64`.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -4459,6 +6402,23 @@ def vstack[
 
     Row-major storage makes this the concatenating direction: the two
     buffers go back to back with no interleaving.
+
+    Parameters:
+        A: The type of `a`, a compile-time-shaped matrix.
+        B: The type of `b`, a matrix of `a`'s dtype and column count.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The rows that come first.
+        b: The rows that follow.
+
+    Returns:
+        A new `(rows_a + rows_b, cols)` tensor on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime rows_a = dim[A, 0]
@@ -4508,6 +6468,23 @@ def dstack[
     `b[r, c]`, so the two inputs interleave element by element rather than
     going back to back the way `vstack`'s do. Two inputs rather than a
     variadic pack, for the reason `stack` records.
+
+    Parameters:
+        A: The type of `a`, a compile-time-shaped matrix.
+        B: The type of `b`, a matrix of `a`'s dtype and shape.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The matrix at depth `0`.
+        b: The matrix at depth `1`.
+
+    Returns:
+        A new `(rows, cols, 2)` tensor on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = A.dtype
     comptime rows = dim[A, 0]
@@ -4554,6 +6531,23 @@ def rot90[
     discharge. NumPy reduces a larger or negative `k` itself; here a caller
     writing a literal writes the reduced one, and `k = 3` is the single
     clockwise turn that `k = -1` would mean there.
+
+    Parameters:
+        T: The type of `a`, a compile-time-shaped matrix.
+        k: The number of counterclockwise quarter turns, `1` or `3` for this
+            overload; `1` by default.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The `rows x cols` matrix to rotate.
+
+    Returns:
+        A new `cols x rows` tensor holding the rotation, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -4593,6 +6587,23 @@ def rot90[
     unchanged, which is why this is a separate overload from the odd case
     above -- see it for why `k` is a parameter and why it must already be
     in `0 .. 3`.
+
+    Parameters:
+        T: The type of `a`, a compile-time-shaped matrix.
+        k: The number of counterclockwise quarter turns, `0` or `2` for this
+            overload.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The matrix to rotate.
+
+    Returns:
+        A new tensor of `a`'s shape holding the rotation, on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
@@ -4636,7 +6647,25 @@ def hstack[
     and B.LayoutType.all_dims_known
     and dim[B, 0] == dim[A, 0]
 ):
-    """Two matrices joined along their columns. `numpy.hstack`."""
+    """Two matrices joined along their columns. `numpy.hstack`.
+
+    Parameters:
+        A: The type of `a`, a compile-time-shaped matrix.
+        B: The type of `b`, a matrix of `a`'s dtype and row count.
+        gpu: Whether to run on the device; `False` by default, and a mismatch
+            with the input's residency falls back to the host with a notice.
+
+    Args:
+        a: The leading columns.
+        b: The trailing columns.
+
+    Returns:
+        A new `(rows, cols_a + cols_b)` tensor on `a`'s device.
+
+    Raises:
+        If reading or allocating fails, or when a host fallback runs under the
+        `"raise"` fallback policy.
+    """
     comptime dtype = A.dtype
     comptime rows = dim[A, 0]
     comptime cols_a = dim[A, 1]
@@ -4826,6 +6855,20 @@ def to_array[
     tensor does not raise here, it fails to compile: its `static_product`
     is negative and an `Array` of negative length is rejected outright.
     Name the shape with `as_static` first.
+
+    Parameters:
+        T: The `FloatLike` conformer each element is built as.
+        X: The type of `a`, with a compile-time shape.
+
+    Args:
+        a: The tensor to lift.
+
+    Returns:
+        An `Array[T, n]` of `a`'s `n` elements in row-major order, each built
+        through `T.constant`.
+
+    Raises:
+        If reading `a` back to the host fails.
     """
     comptime LayoutType = X.LayoutType
     comptime n = LayoutType.static_product
@@ -4855,6 +6898,20 @@ def to_tensor[
     The shape is named rather than inferred because an `Array` is flat: an
     `Array[Plain[dtype], 4]` is as good a 2x2 as it is a rank-1 of four, and
     only the caller knows which was meant.
+
+    Parameters:
+        dtype: The element type.
+        dims: The result's compile-time extents, whose product is `a`'s length.
+
+    Args:
+        a: The `Plain` values to lower, row-major.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        A new `Static` tensor of shape `dims` holding `a`'s values.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     comptime n = _LayoutOf[*dims].static_product
     var values = List[Scalar[dtype]](capacity=n)
@@ -4885,6 +6942,20 @@ def to_tensor[
     element does not move out (`expression does not designate a value with
     an origin`), so the halves are read through the tuple -- `got[0][i]`,
     `got[1].to_host()` -- rather than unpacked.
+
+    Parameters:
+        dtype: The floating-point element type.
+        dims: The result's compile-time extents, whose product is `a`'s length.
+
+    Args:
+        a: The dual numbers to lower, row-major.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        The values and the derivatives, as two `Static` tensors of shape `dims`.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     comptime n = _LayoutOf[*dims].static_product
     var values = List[Scalar[dtype]](capacity=n)
@@ -4925,6 +6996,22 @@ def to_tensor[
 
     The pair is read through the tuple rather than unpacked, as the `Dual`
     overload above documents.
+
+    Parameters:
+        dtype: The floating-point element type.
+        n_vars: The number of variables each gradient carries.
+        dims: The result's compile-time extents, whose product is `a`'s length.
+
+    Args:
+        a: The gradient numbers to lower, row-major.
+        ctx: The device to allocate on; the host when absent.
+
+    Returns:
+        The values at shape `dims`, and the partials as a rank-1 tensor of
+        `n_vars * product(dims)` elements in `(variable, element)` order.
+
+    Raises:
+        If allocating or filling the buffer on the device fails.
     """
     comptime n = _LayoutOf[*dims].static_product
     var values = List[Scalar[dtype]](capacity=n)

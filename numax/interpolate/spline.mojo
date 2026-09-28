@@ -105,7 +105,15 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         extrapolate: Bool,
     ):
         """The `PPoly` form directly: knots and local coefficients already
-        on the device. What the constructors below hand in."""
+        on the device. What the constructors below hand in.
+
+        Args:
+            x: The `n` strictly ascending knots.
+            c: The `4 x (n-1)` local coefficients, row `k` the `s^k`
+                coefficient of every interval.
+            extrapolate: Whether a query outside the knots takes the end
+                interval's cubic rather than NaN.
+        """
         self.x = x^
         self.c = c^
         self.extrapolate = extrapolate
@@ -119,7 +127,18 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
     ) raises where Self.dtype.is_floating_point() and Self.n >= 2:
         """The spline through `(x, y)` with slope `dydx` at every knot.
         `x` must be strictly ascending, which is not checked. Built where
-        the knots live; see the module docstring."""
+        the knots live; see the module docstring.
+
+        Args:
+            x: The `n` strictly ascending knots; their device is kept.
+            y: The `n` values at the knots.
+            dydx: The `n` slopes at the knots.
+            extrapolate: Whether a query outside the knots takes the end
+                interval's cubic rather than NaN.
+
+        Raises:
+            If a host-device copy or a device launch fails.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not x.on_host():
                 self = Self._from_device(copy(x), y, dydx, extrapolate)
@@ -231,6 +250,21 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         One launch: each lane bisects the knots to its interval (clamped
         to the end intervals when extrapolating) and evaluates the local
         cubic by Horner. `nu` past 3 is identically zero.
+
+        Parameters:
+            T: The tensor type of `points`, rank 1 with `m > 0` elements.
+            nu: The derivative order; `0` is the value, above `3` is zero.
+            gpu: Whether the evaluation launch targets the GPU on the
+                device of `points` rather than the host CPU.
+
+        Args:
+            points: The `m` points to evaluate at.
+
+        Returns:
+            A length-`m` tensor of the `nu`-th derivative at `points`.
+
+        Raises:
+            If allocating the output or the launch fails.
         """
         comptime m = dim[T, 0]
         var ctx = points.context()
@@ -289,6 +323,17 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         range that leaves the knots integrates to NaN, as SciPy's does.
         Host-side, `O(n)`, one download of the coefficients -- an integral
         is a scalar and the sum is sequential.
+
+        Args:
+            a: The lower limit; `a > b` negates the integral.
+            b: The upper limit.
+
+        Returns:
+            The integral, or NaN if `[a, b]` leaves the knots and the
+            spline does not extrapolate.
+
+        Raises:
+            If downloading the knots or coefficients fails.
         """
         comptime pieces = Self.n - 1
         var lo = Float64(a)
@@ -413,7 +458,19 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
         Self.dtype.is_floating_point() and Self.n >= 2 and Self.n >= 1
     ):
         """Solve for the knot slopes under `bc_type`, then build the
-        `PPoly` form."""
+        `PPoly` form.
+
+        Args:
+            x: The `n` strictly ascending knots; their device is kept.
+            y: The `n` values at the knots.
+            bc_type: `"not-a-knot"`, `"natural"` or `"clamped"`.
+            extrapolate: Whether a query outside the knots takes the end
+                interval's cubic rather than NaN.
+
+        Raises:
+            If `bc_type` is not one of the three names, or the banded
+            solve, a copy or a device launch fails.
+        """
         if not (
             bc_type == "not-a-knot"
             or bc_type == "natural"
@@ -554,14 +611,42 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
         and T.LayoutType.rank == 1
         and T.LayoutType.all_dims_known
     ):
-        """The spline, or its `nu`-th derivative, at every point."""
+        """The spline, or its `nu`-th derivative, at every point.
+
+        Parameters:
+            T: The tensor type of `points`, rank 1 with `m > 0` elements.
+            nu: The derivative order; `0` is the value, above `3` is zero.
+            gpu: Whether the evaluation launch targets the GPU on the
+                device of `points` rather than the host CPU.
+
+        Args:
+            points: The `m` points to evaluate at.
+
+        Returns:
+            A length-`m` tensor of the `nu`-th derivative at `points`.
+
+        Raises:
+            If allocating the output or the launch fails.
+        """
         comptime m = dim[T, 0]
         return self.spline.__call__[nu=nu, gpu=gpu](points)
 
     def integrate(
         mut self, a: Scalar[Self.dtype], b: Scalar[Self.dtype]
     ) raises -> Scalar[Self.dtype] where Self.n >= 2:
-        """The definite integral over `[a, b]`."""
+        """The definite integral over `[a, b]`.
+
+        Args:
+            a: The lower limit; `a > b` negates the integral.
+            b: The upper limit.
+
+        Returns:
+            The integral, or NaN if `[a, b]` leaves the knots and the
+            spline does not extrapolate.
+
+        Raises:
+            If downloading the knots or coefficients fails.
+        """
         return self.spline.integrate(a, b)
 
 
@@ -699,6 +784,18 @@ struct PchipInterpolator[dtype: DType, n: Int](Movable):
         mut y: Static[Self.dtype, Self.n],
         extrapolate: Bool = True,
     ) raises where Self.dtype.is_floating_point() and Self.n >= 2:
+        """Compute the PCHIP knot slopes, then build the `PPoly` form where
+        the knots live.
+
+        Args:
+            x: The `n` strictly ascending knots; their device is kept.
+            y: The `n` values at the knots.
+            extrapolate: Whether a query outside the knots takes the end
+                interval's cubic rather than NaN.
+
+        Raises:
+            If a host-device copy or a device launch fails.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not x.on_host():
                 var d = _pchip_slopes_device(x, y)
@@ -757,14 +854,42 @@ struct PchipInterpolator[dtype: DType, n: Int](Movable):
         and T.LayoutType.rank == 1
         and T.LayoutType.all_dims_known
     ):
-        """The interpolant, or its `nu`-th derivative, at every point."""
+        """The interpolant, or its `nu`-th derivative, at every point.
+
+        Parameters:
+            T: The tensor type of `points`, rank 1 with `m > 0` elements.
+            nu: The derivative order; `0` is the value, above `3` is zero.
+            gpu: Whether the evaluation launch targets the GPU on the
+                device of `points` rather than the host CPU.
+
+        Args:
+            points: The `m` points to evaluate at.
+
+        Returns:
+            A length-`m` tensor of the `nu`-th derivative at `points`.
+
+        Raises:
+            If allocating the output or the launch fails.
+        """
         comptime m = dim[T, 0]
         return self.spline.__call__[nu=nu, gpu=gpu](points)
 
     def integrate(
         mut self, a: Scalar[Self.dtype], b: Scalar[Self.dtype]
     ) raises -> Scalar[Self.dtype] where Self.n >= 2:
-        """The definite integral over `[a, b]`."""
+        """The definite integral over `[a, b]`.
+
+        Args:
+            a: The lower limit; `a > b` negates the integral.
+            b: The upper limit.
+
+        Returns:
+            The integral, or NaN if `[a, b]` leaves the knots and the
+            spline does not extrapolate.
+
+        Raises:
+            If downloading the knots or coefficients fails.
+        """
         return self.spline.integrate(a, b)
 
 
@@ -954,6 +1079,19 @@ struct Akima1DInterpolator[dtype: DType, n: Int](Movable):
     ) raises where (
         Self.dtype.is_floating_point() and Self.n >= 3 and Self.n >= 2
     ):
+        """Compute Akima's knot slopes, then build the `PPoly` form where
+        the knots live.
+
+        Args:
+            x: The `n >= 3` strictly ascending knots; their device is kept.
+            y: The `n` values at the knots.
+            extrapolate: Whether a query outside the knots takes the end
+                interval's cubic rather than NaN, SciPy's default.
+
+        Raises:
+            If a host-device copy, the `reduce_all` or a device launch
+            fails.
+        """
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not x.on_host():
                 var d = _akima_slopes_device(x, y)
@@ -1011,12 +1149,40 @@ struct Akima1DInterpolator[dtype: DType, n: Int](Movable):
         and T.LayoutType.all_dims_known
     ):
         """The interpolant, or its `nu`-th derivative, at every point;
-        NaN outside the knots unless built with `extrapolate=True`."""
+        NaN outside the knots unless built with `extrapolate=True`.
+
+        Parameters:
+            T: The tensor type of `points`, rank 1 with `m > 0` elements.
+            nu: The derivative order; `0` is the value, above `3` is zero.
+            gpu: Whether the evaluation launch targets the GPU on the
+                device of `points` rather than the host CPU.
+
+        Args:
+            points: The `m` points to evaluate at.
+
+        Returns:
+            A length-`m` tensor of the `nu`-th derivative at `points`.
+
+        Raises:
+            If allocating the output or the launch fails.
+        """
         comptime m = dim[T, 0]
         return self.spline.__call__[nu=nu, gpu=gpu](points)
 
     def integrate(
         mut self, a: Scalar[Self.dtype], b: Scalar[Self.dtype]
     ) raises -> Scalar[Self.dtype] where Self.n >= 2:
-        """The definite integral over `[a, b]`."""
+        """The definite integral over `[a, b]`.
+
+        Args:
+            a: The lower limit; `a > b` negates the integral.
+            b: The upper limit.
+
+        Returns:
+            The integral, or NaN if `[a, b]` leaves the knots and the
+            spline does not extrapolate.
+
+        Raises:
+            If downloading the knots or coefficients fails.
+        """
         return self.spline.integrate(a, b)

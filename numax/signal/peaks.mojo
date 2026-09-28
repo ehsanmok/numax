@@ -153,6 +153,28 @@ def find_peaks[
     and `distance` thins peaks closer than that many samples, keeping the
     higher one first -- SciPy's greedy order, so the same peaks survive.
     `prominence`, `width` and `plateau_size` are not provided.
+
+    Parameters:
+        T: The `TensorLike` type of `x`, rank 1, row-major, with a static
+            nonzero length.
+        gpu: Whether the marking and compaction run on the GPU; a mismatch
+            with `x`'s residency falls back to the host path under the
+            `set_fallback` policy.
+
+    Args:
+        x: The signal to search.
+        height: The minimum peak value, or `None` for no height condition.
+        threshold: The minimum rise above both neighbors, or `None`.
+        distance: The minimum spacing in samples between kept peaks, or
+            `None`; the higher peak wins a conflict.
+
+    Returns:
+        A run-time-length `int64` tensor on `x`'s device holding the
+        surviving peak indices in ascending order.
+
+    Raises:
+        If a device transfer or launch fails, or if the fallback policy is
+        `"raise"` and `gpu` disagrees with `x`'s residency.
     """
     comptime n = dim[T, 0]
     if _check_device[T, gpu](x):

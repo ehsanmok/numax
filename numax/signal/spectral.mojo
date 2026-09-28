@@ -340,6 +340,28 @@ def periodogram[
     `sum(w)^2`). One frame of `welch` -- the estimator with the least bias
     and the most variance, which averaging over frames trades the other
     way.
+
+    Parameters:
+        T: Rank-1, row-major, static-length floating-point tensor type.
+        gpu: Run the framing, transforms and projection on the device
+            holding `x` when `True`; host kernels when `False`.
+
+    Args:
+        x: Signal of length `n`, at least 2.
+        fs: Sampling frequency, which scales the frequency grid and the
+            density.
+        window: `get_window` name of the (periodic) window; `"boxcar"` by
+            default.
+        scaling: `"density"` for `V^2/Hz` or `"spectrum"` for `V^2` per
+            bin.
+
+    Returns:
+        A `Periodogram` of `n // 2 + 1` one-sided frequencies and powers on
+        `x`'s device.
+
+    Raises:
+        If `scaling` or `window` is not recognized, or a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     if not (scaling == "density" or scaling == "spectrum"):
@@ -392,6 +414,32 @@ def welch[
     samples the window's taper discounts. `frames` transforms as one batch
     on the lane engine; `noverlap` is a parameter because the frame count
     shapes the work. `scaling` as for `periodogram`.
+
+    Parameters:
+        T: Rank-1, static-length floating-point tensor type, of length at
+            least `nperseg`.
+        nperseg: Frame length, at least 2.
+        noverlap: Samples shared by consecutive frames, in `[0, nperseg)`;
+            half a frame by default.
+        gpu: Run the framing, transforms and projection on the device
+            holding `x` when `True`; host kernels when `False`.
+
+    Args:
+        x: Signal to estimate.
+        fs: Sampling frequency, which scales the frequency grid and the
+            density.
+        window: `get_window` name of the (periodic) window.
+        detrend: Remove each frame's mean before windowing when `True`.
+        scaling: `"density"` for `V^2/Hz` or `"spectrum"` for `V^2` per
+            bin.
+
+    Returns:
+        A `Periodogram` of `nperseg // 2 + 1` one-sided frequencies and the
+        frame-averaged powers on `x`'s device.
+
+    Raises:
+        If `scaling` or `window` is not recognized, or a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     if not (scaling == "density" or scaling == "spectrum"):
@@ -450,6 +498,32 @@ def spectrogram[
     `nperseg // 8`, an eighth rather than `welch`'s half, and its default
     window is a Tukey taper this module does not have -- pass `"hann"` (the
     default here) or any `get_window` name.
+
+    Parameters:
+        T: Rank-1, static-length floating-point tensor type, of length at
+            least `nperseg`.
+        nperseg: Frame length, at least 2.
+        noverlap: Samples shared by consecutive frames, in `[0, nperseg)`;
+            an eighth of a frame by default.
+        gpu: Run the framing, transforms and projection on the device
+            holding `x` when `True`; host kernels when `False`.
+
+    Args:
+        x: Signal to analyze.
+        fs: Sampling frequency, which scales the frequency and time grids
+            and the density.
+        window: `get_window` name of the (periodic) window.
+        detrend: Remove each frame's mean before windowing when `True`.
+        scaling: `"density"` for `V^2/Hz` or `"spectrum"` for `V^2` per
+            bin.
+
+    Returns:
+        A `Spectrogram` with `nperseg // 2 + 1` frequencies, one time per
+        frame, and the `(frequencies, frames)` power matrix.
+
+    Raises:
+        If `scaling` or `window` is not recognized, or a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     if not (scaling == "density" or scaling == "spectrum"):
@@ -543,6 +617,27 @@ def stft[
     value is divided by `sum(w)` so a pure tone reads its amplitude. The
     time of frame `f` is `f * step / fs`. Every frame is one row of one
     batched transform.
+
+    Parameters:
+        T: Rank-1, row-major, static-length floating-point tensor type.
+        nperseg: Frame length, at least 2.
+        noverlap: Samples shared by consecutive frames, in `[0, nperseg)`;
+            half a frame by default.
+        gpu: Run the framing, transforms and projection on the device
+            holding `x` when `True`; host kernels when `False`.
+
+    Args:
+        x: Signal to transform, of length at least 1.
+        fs: Sampling frequency, which scales the frequency and time grids.
+        window: `get_window` name of the (periodic) window.
+
+    Returns:
+        An `STFT` with `nperseg // 2 + 1` frequencies, one time per frame
+        of the zero-padded signal, and the real and imaginary
+        `(frequencies, frames)` matrices scaled by `1 / sum(w)`.
+
+    Raises:
+        If `window` is not recognized, or a device operation fails.
     """
     comptime n = dim[T, 0]
     comptime assert (

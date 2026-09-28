@@ -178,7 +178,26 @@ def _not_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[DType.bool, w]:
 def equal[
     T: TensorLike, gpu: Bool = False
 ](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
-    """`a == b`, elementwise. `numpy.equal`."""
+    """`a == b`, elementwise. `numpy.equal`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `==`.
+        b: Right-hand side of `==`, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a == b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return binary_to[
@@ -193,7 +212,26 @@ def equal[
 def not_equal[
     T: TensorLike, gpu: Bool = False
 ](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
-    """`a != b`, elementwise. `numpy.not_equal`."""
+    """`a != b`, elementwise. `numpy.not_equal`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `!=`.
+        b: Right-hand side of `!=`, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a != b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return binary_to[
@@ -208,7 +246,26 @@ def not_equal[
 def less[
     T: TensorLike, gpu: Bool = False
 ](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
-    """`a < b`, elementwise. `numpy.less`."""
+    """`a < b`, elementwise. `numpy.less`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `<`.
+        b: Right-hand side of `<`, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a < b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return binary_to[T, DType.bool, op=_lt_op[dtype, _], gpu=gpu, name="less"](
@@ -219,7 +276,26 @@ def less[
 def less_equal[
     T: TensorLike, gpu: Bool = False
 ](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
-    """`a <= b`, elementwise. `numpy.less_equal`."""
+    """`a <= b`, elementwise. `numpy.less_equal`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `<=`.
+        b: Right-hand side of `<=`, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a <= b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return binary_to[
@@ -234,7 +310,26 @@ def less_equal[
 def greater[
     T: TensorLike, gpu: Bool = False
 ](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
-    """`a > b`, elementwise. `numpy.greater`."""
+    """`a > b`, elementwise. `numpy.greater`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `>`.
+        b: Right-hand side of `>`, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a > b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return binary_to[
@@ -249,7 +344,26 @@ def greater[
 def greater_equal[
     T: TensorLike, gpu: Bool = False
 ](a: T, b: T) raises -> Tensor[DType.bool, T.LayoutType] where is_row_major[T]:
-    """`a >= b`, elementwise. `numpy.greater_equal`."""
+    """`a >= b`, elementwise. `numpy.greater_equal`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `>=`.
+        b: Right-hand side of `>=`, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a >= b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return binary_to[
@@ -266,7 +380,26 @@ def equal[
 ](a: T, b: Scalar[T.dtype]) raises -> Tensor[
     DType.bool, T.LayoutType
 ] where is_row_major[T]:
-    """`a == b` against one scalar `b`, elementwise. `numpy.equal(a, b)`."""
+    """`a == b` against one scalar `b`, elementwise. `numpy.equal(a, b)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; it fixes the dtype and the row-major
+            layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `==`.
+        b: Scalar right-hand side, compared against every element of `a`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a == b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     return binary_scalar_to[
         T, DType.bool, op=_eq_op[dtype, _], gpu=gpu, name="equal"
@@ -278,7 +411,26 @@ def not_equal[
 ](a: T, b: Scalar[T.dtype]) raises -> Tensor[
     DType.bool, T.LayoutType
 ] where is_row_major[T]:
-    """`a != b` against one scalar `b`, elementwise. `numpy.not_equal(a, b)`."""
+    """`a != b` against one scalar `b`, elementwise. `numpy.not_equal(a, b)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; it fixes the dtype and the row-major
+            layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `!=`.
+        b: Scalar right-hand side, compared against every element of `a`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a != b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     return binary_scalar_to[
         T, DType.bool, op=_ne_op[dtype, _], gpu=gpu, name="not_equal"
@@ -290,7 +442,26 @@ def less[
 ](a: T, b: Scalar[T.dtype]) raises -> Tensor[
     DType.bool, T.LayoutType
 ] where is_row_major[T]:
-    """`a < b` against one scalar `b`, elementwise. `numpy.less(a, b)`."""
+    """`a < b` against one scalar `b`, elementwise. `numpy.less(a, b)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; it fixes the dtype and the row-major
+            layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `<`.
+        b: Scalar right-hand side, compared against every element of `a`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a < b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     return binary_scalar_to[
         T, DType.bool, op=_lt_op[dtype, _], gpu=gpu, name="less"
@@ -303,6 +474,24 @@ def less_equal[
     DType.bool, T.LayoutType
 ] where is_row_major[T]:
     """`a <= b` against one scalar `b`, elementwise. `numpy.less_equal(a, b)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; it fixes the dtype and the row-major
+            layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `<=`.
+        b: Scalar right-hand side, compared against every element of `a`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a <= b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     return binary_scalar_to[
@@ -315,7 +504,26 @@ def greater[
 ](a: T, b: Scalar[T.dtype]) raises -> Tensor[
     DType.bool, T.LayoutType
 ] where is_row_major[T]:
-    """`a > b` against one scalar `b`, elementwise. `numpy.greater(a, b)`."""
+    """`a > b` against one scalar `b`, elementwise. `numpy.greater(a, b)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; it fixes the dtype and the row-major
+            layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `>`.
+        b: Scalar right-hand side, compared against every element of `a`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a > b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     return binary_scalar_to[
         T, DType.bool, op=_gt_op[dtype, _], gpu=gpu, name="greater"
@@ -328,6 +536,24 @@ def greater_equal[
     DType.bool, T.LayoutType
 ] where is_row_major[T]:
     """`a >= b` against one scalar `b`, elementwise. `numpy.greater_equal(a, b)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`; it fixes the dtype and the row-major
+            layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `>=`.
+        b: Scalar right-hand side, compared against every element of `a`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a >= b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     return binary_scalar_to[
@@ -340,7 +566,25 @@ def isnan[
 ](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
-    """Which elements are NaN. `numpy.isnan`."""
+    """Which elements are NaN. `numpy.isnan`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose elements are classified.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `True` where an
+        element is NaN.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return unary_to[
@@ -357,7 +601,25 @@ def isinf[
 ](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
-    """Which elements are an infinity of either sign. `numpy.isinf`."""
+    """Which elements are an infinity of either sign. `numpy.isinf`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose elements are classified.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `True` where an
+        element is `+inf` or `-inf`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return unary_to[
@@ -374,7 +636,25 @@ def isfinite[
 ](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
-    """Which elements are neither NaN nor infinite. `numpy.isfinite`."""
+    """Which elements are neither NaN nor infinite. `numpy.isfinite`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose elements are classified.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `True` where an
+        element is neither NaN nor infinite.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return unary_to[
@@ -391,7 +671,25 @@ def isposinf[
 ](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
-    """Which elements are `+inf`. `numpy.isposinf`."""
+    """Which elements are `+inf`. `numpy.isposinf`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose elements are classified.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `True` where an
+        element is `+inf`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return unary_to[
@@ -408,7 +706,25 @@ def isneginf[
 ](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
-    """Which elements are `-inf`. `numpy.isneginf`."""
+    """Which elements are `-inf`. `numpy.isneginf`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose elements are classified.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `True` where an
+        element is `-inf`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     return unary_to[
@@ -425,7 +741,25 @@ def logical_and[
 ](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
     T.dtype == DType.bool and is_row_major[T]
 ):
-    """`a and b`, elementwise. `numpy.logical_and`."""
+    """`a and b`, elementwise. `numpy.logical_and`.
+
+    Parameters:
+        T: The `TensorLike` type of the operands, row-major over `DType.bool`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First boolean mask.
+        b: Second boolean mask, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a and b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime LayoutType = T.LayoutType
     return binary[T, op=_and_op[T.dtype, _], gpu=gpu, name="logical_and"](a, b)
 
@@ -435,7 +769,25 @@ def logical_or[
 ](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
     T.dtype == DType.bool and is_row_major[T]
 ):
-    """`a or b`, elementwise. `numpy.logical_or`."""
+    """`a or b`, elementwise. `numpy.logical_or`.
+
+    Parameters:
+        T: The `TensorLike` type of the operands, row-major over `DType.bool`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First boolean mask.
+        b: Second boolean mask, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a or b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime LayoutType = T.LayoutType
     return binary[T, op=_or_op[T.dtype, _], gpu=gpu, name="logical_or"](a, b)
 
@@ -445,7 +797,25 @@ def logical_xor[
 ](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
     T.dtype == DType.bool and is_row_major[T]
 ):
-    """`a xor b`, elementwise. `numpy.logical_xor`."""
+    """`a xor b`, elementwise. `numpy.logical_xor`.
+
+    Parameters:
+        T: The `TensorLike` type of the operands, row-major over `DType.bool`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First boolean mask.
+        b: Second boolean mask, at `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `a xor b` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime LayoutType = T.LayoutType
     return binary[T, op=_xor_op[T.dtype, _], gpu=gpu, name="logical_xor"](a, b)
 
@@ -455,7 +825,24 @@ def logical_not[
 ](a: T) raises -> Tensor[DType.bool, T.LayoutType] where (
     T.dtype == DType.bool and is_row_major[T]
 ):
-    """`not a`, elementwise. `numpy.logical_not`."""
+    """`not a`, elementwise. `numpy.logical_not`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, row-major over `DType.bool`.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Boolean mask to negate.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `not a` per
+        element.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     comptime LayoutType = T.LayoutType
     return unary_to[
         T, DType.bool, op=_not_op[T.dtype, _], gpu=gpu, name="logical_not"
@@ -516,6 +903,21 @@ def all[
     Mojo's builtin `all` in any file that imports it -- the price
     `from numpy import all` charges in Python too, and worth paying for the
     name a NumPy caller actually reaches for.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a `DType.bool` mask at any layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Boolean mask to test.
+
+    Returns:
+        `True` when every element of `a` is true, including when `a` is empty.
+
+    Raises:
+        If reading `a` back or the device count fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
     """
     if _check_device[T, gpu](a):
         comptime if gpu:
@@ -534,7 +936,24 @@ def any[
 ](a: T) raises -> Bool where T.dtype == DType.bool:
     """Whether any element is true. `numpy.any`. A short-circuiting host
     loop, or at `gpu=True` the device count `all` describes; it hides the
-    builtin `any` in an importing file the same way."""
+    builtin `any` in an importing file the same way.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a `DType.bool` mask at any layout.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Boolean mask to test.
+
+    Returns:
+        `True` when at least one element of `a` is true; `False` for an empty
+        `a`.
+
+    Raises:
+        If reading `a` back or the device count fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
     if _check_device[T, gpu](a):
         comptime if gpu:
             return _count_nonzero_device(a) > 0
@@ -563,6 +982,27 @@ def isclose[
     carries its own body instead of going through `_drive.binary_to`; both
     are captured by value at `Scalar[dtype]` and splatted to the launch
     width, which keeps a `Float64` out of a kernel Metal has no `double` in.
+
+    Parameters:
+        T: The `TensorLike` type of both operands, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of values under test.
+        b: Reference tensor at `a`'s shape; the relative tolerance scales with
+            `abs(b)`.
+        rtol: Relative tolerance; defaults to `1e-5`.
+        atol: Absolute tolerance; defaults to `1e-8`.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `DType.bool` holding `True` where
+        `abs(a - b) <= atol + rtol * abs(b)`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -616,6 +1056,27 @@ def allclose[
 
     Both halves run where `gpu` says: the comparison, and the fold back to
     one `Bool` through `all`, so only that `Bool` crosses back.
+
+    Parameters:
+        T: The `TensorLike` type of both operands, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of values under test.
+        b: Reference tensor at `a`'s shape; the relative tolerance scales with
+            `abs(b)`.
+        rtol: Relative tolerance; defaults to `1e-5`.
+        atol: Absolute tolerance; defaults to `1e-8`.
+
+    Returns:
+        `True` when every element pair satisfies `isclose`; a NaN anywhere gives
+        `False`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -631,6 +1092,24 @@ def array_equal[
     Exact, so NaN compares unequal to itself and two tensors of NaN are not
     equal -- matching NumPy. The comparison and the fold through `all` both
     run where `gpu` says.
+
+    Parameters:
+        T: The `TensorLike` type of both operands; it fixes the dtype and the
+            row-major layout they share.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First tensor compared.
+        b: Second tensor compared, at `a`'s shape.
+
+    Returns:
+        `True` when every element of `a` equals the matching element of `b`; a
+        NaN anywhere gives `False`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -651,7 +1130,28 @@ def equal[
 ](a: A, b: B) raises -> Dynamic[
     DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
 ] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
-    """`a == b` at two broadcastable shapes. `numpy.equal`."""
+    """`a == b` at two broadcastable shapes. `numpy.equal`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `==`; read through stride 0 on any axis it
+            stretches.
+        b: Right-hand side of `==`, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a == b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -672,7 +1172,28 @@ def not_equal[
 ](a: A, b: B) raises -> Dynamic[
     DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
 ] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
-    """`a != b` at two broadcastable shapes. `numpy.not_equal`."""
+    """`a != b` at two broadcastable shapes. `numpy.not_equal`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `!=`; read through stride 0 on any axis it
+            stretches.
+        b: Right-hand side of `!=`, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a != b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -693,7 +1214,28 @@ def less[
 ](a: A, b: B) raises -> Dynamic[
     DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
 ] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
-    """`a < b` at two broadcastable shapes. `numpy.less`."""
+    """`a < b` at two broadcastable shapes. `numpy.less`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `<`; read through stride 0 on any axis it
+            stretches.
+        b: Right-hand side of `<`, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a < b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -714,7 +1256,28 @@ def less_equal[
 ](a: A, b: B) raises -> Dynamic[
     DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
 ] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
-    """`a <= b` at two broadcastable shapes. `numpy.less_equal`."""
+    """`a <= b` at two broadcastable shapes. `numpy.less_equal`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `<=`; read through stride 0 on any axis it
+            stretches.
+        b: Right-hand side of `<=`, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a <= b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -735,7 +1298,28 @@ def greater[
 ](a: A, b: B) raises -> Dynamic[
     DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
 ] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
-    """`a > b` at two broadcastable shapes. `numpy.greater`."""
+    """`a > b` at two broadcastable shapes. `numpy.greater`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `>`; read through stride 0 on any axis it
+            stretches.
+        b: Right-hand side of `>`, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a > b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -756,7 +1340,28 @@ def greater_equal[
 ](a: A, b: B) raises -> Dynamic[
     DType.bool, _BroadcastRank[A.LayoutType, B.LayoutType]
 ] where (A.dtype == B.dtype and is_row_major[A] and is_row_major[B]):
-    """`a >= b` at two broadcastable shapes. `numpy.greater_equal`."""
+    """`a >= b` at two broadcastable shapes. `numpy.greater_equal`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Left-hand side of `>=`; read through stride 0 on any axis it
+            stretches.
+        b: Right-hand side of `>=`, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a >= b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     comptime dtype = A.dtype
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -780,7 +1385,27 @@ def logical_and[
     and is_row_major[A]
     and is_row_major[B]
 ):
-    """`a and b` at two broadcastable shapes. `numpy.logical_and`."""
+    """`a and b` at two broadcastable shapes. `numpy.logical_and`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major over `DType.bool`.
+        B: The `TensorLike` type of `b`, row-major over `DType.bool`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First boolean mask; read through stride 0 on any axis it stretches.
+        b: Second boolean mask, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a and b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     return broadcast_binary[
         A, B, op=_and_op[A.dtype, _], gpu=gpu, name="logical_and"
     ](a, b)
@@ -796,7 +1421,27 @@ def logical_or[
     and is_row_major[A]
     and is_row_major[B]
 ):
-    """`a or b` at two broadcastable shapes. `numpy.logical_or`."""
+    """`a or b` at two broadcastable shapes. `numpy.logical_or`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major over `DType.bool`.
+        B: The `TensorLike` type of `b`, row-major over `DType.bool`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First boolean mask; read through stride 0 on any axis it stretches.
+        b: Second boolean mask, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a or b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     return broadcast_binary[
         A, B, op=_or_op[A.dtype, _], gpu=gpu, name="logical_or"
     ](a, b)
@@ -812,7 +1457,27 @@ def logical_xor[
     and is_row_major[A]
     and is_row_major[B]
 ):
-    """`a xor b` at two broadcastable shapes. `numpy.logical_xor`."""
+    """`a xor b` at two broadcastable shapes. `numpy.logical_xor`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major over `DType.bool`.
+        B: The `TensorLike` type of `b`, row-major over `DType.bool`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First boolean mask; read through stride 0 on any axis it stretches.
+        b: Second boolean mask, at a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `DType.bool` at the broadcast
+        shape of `a` and `b`, holding `a xor b`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
     return broadcast_binary[
         A, B, op=_xor_op[A.dtype, _], gpu=gpu, name="logical_xor"
     ](a, b)

@@ -28,12 +28,32 @@ from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
 
 
 def erf[T: FloatLike](x: T) -> T:
-    """The error function, `(2/sqrt(pi)) * integral(exp(-t^2), 0, x)`."""
+    """The error function, `(2/sqrt(pi)) * integral(exp(-t^2), 0, x)`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `erf(x)`, in `[-1, 1]`, from the conformer's own `erf` method.
+    """
     return x.erf()
 
 
 def erfc[T: FloatLike](x: T) -> T:
-    """The complementary error function, `1 - erf(x)`."""
+    """The complementary error function, `1 - erf(x)`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at.
+
+    Returns:
+        `erfc(x)`, in `[0, 2]`, from the conformer's own `erfc` method.
+    """
     return x.erfc()
 
 
@@ -84,6 +104,15 @@ def erfinv[T: FloatLike](y: T) -> T:
     relative precision -- `std.math.erfc` is accurate to a few ULP out to
     `x = 6`. Near `y = 0` the roles reverse, which is why neither form is
     used alone.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        y: The target value, in `(-1, 1)`; `+-1` is clamped as described.
+
+    Returns:
+        The `x` with `erf(x) == y`; NaN when `|y| > 1`.
     """
     var one = T.one()
     var two = T.constant(2.0)
@@ -139,5 +168,14 @@ def erfcinv[T: FloatLike](y: T) -> T:
     so for `y` below about `1e-8` the answer is `erfinv`'s clamped value
     rather than the large `x` SciPy would return. A tail formula in `y`
     itself is what would fix that; no caller in numax needs it yet.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        y: The target value, in `(0, 2)`.
+
+    Returns:
+        The `x` with `erfc(x) == y`, computed as `erfinv(1 - y)`.
     """
     return erfinv(T.one() - y)

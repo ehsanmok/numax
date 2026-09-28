@@ -104,6 +104,23 @@ def dot[
     Reassociated, unlike the `Array` overload's strict left-to-right sum.
     A caller who needs the rounding pinned, or who needs `Compensated`,
     wants that one.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a rank-1 floating-point tensor.
+        B: The `TensorLike` type of `b`, same dtype and length as `A`.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The first vector, of length `n`.
+        b: The second vector, of length `n`.
+
+    Returns:
+        The scalar `sum(a[i] * b[i])`, copied back to the host.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime n = dim[A, 0]
     var ctx = a.context()
@@ -138,6 +155,21 @@ def nrm2[
     would not -- the same limit the `Array` overload documents, and for a
     different reason: there the fixed-iteration invariant rules out the
     running maximum, here it would cost a second pass over the data.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-1 floating-point tensor.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The vector whose norm is taken, of length `n`.
+
+    Returns:
+        The scalar `sqrt(sum(a[i]**2))`, computed without rescaling.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -167,6 +199,21 @@ def asum[
 
     Cannot overflow the way `nrm2` can, which is why a convergence check
     that only needs a magnitude usually wants this one.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-1 floating-point tensor.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The vector whose magnitudes are summed, of length `n`.
+
+    Returns:
+        The scalar `sum(|a[i]|)`, copied back to the host.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -208,6 +255,24 @@ def axpy[
     Returns a new vector rather than updating `y` in place, matching the
     `Array` overload, so the two spellings can be checked against each
     other.
+
+    Parameters:
+        A: The `TensorLike` type of `x`, a rank-1 floating-point tensor.
+        B: The `TensorLike` type of `y`, same dtype and length as `A`.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        alpha: The scale applied to `x`, converted to `A.dtype`.
+        x: The scaled vector, of length `n`.
+        y: The added vector, of length `n`; it is not modified.
+
+    Returns:
+        A new length-`n` vector `alpha * x + y` on `x`'s device.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `x`'s
+        device context fails.
     """
     var scale = Scalar[A.dtype](alpha)
     comptime n = dim[A, 0]
@@ -257,6 +322,23 @@ def outer[
 
     Unlike the `Array` overload this is not restricted to a square result:
     `a` and `b` may have different lengths, as `numpy.outer` allows.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a rank-1 floating-point tensor.
+        B: The `TensorLike` type of `b`, a rank-1 tensor of `A`'s dtype.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The column factor, of length `m`.
+        b: The row factor, of length `n`.
+
+    Returns:
+        A new `m x n` tensor with `out[i, j] = a[i] * b[j]`.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[B, 0]
@@ -343,6 +425,24 @@ def matvec[
     measurement moves. This is a workaround for the pinned `max ==26.5`,
     not a design choice, and it should go when MAX's GEMV masks its own
     tail.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static rank-2 tensor.
+        B: The `TensorLike` type of `x`, a row-major rank-1 tensor of
+            `A`'s dtype whose length is `a`'s column count.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `m x k` matrix.
+        x: The length-`k` vector.
+
+    Returns:
+        A new length-`m` vector `a @ x` on `a`'s device.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime m = dim[A, 0]
     comptime k = dim[A, 1]
@@ -460,6 +560,24 @@ def matmul[
     The sibling `matmul` over `Array[T, n*n]` is the one to call inside a
     kernel, or at any conformer other than a raw `A.dtype`; `to_tensor`
     crosses from there to here and `to_array` back.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static rank-2 tensor.
+        B: The `TensorLike` type of `b`, a static rank-2 tensor of `A`'s
+            dtype whose row count is `a`'s column count.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `m x k` left operand.
+        b: The `k x n` right operand.
+
+    Returns:
+        A new `m x n` tensor `a @ b` on `a`'s device.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[B, 1]
@@ -504,6 +622,24 @@ def inner[
     two vectors is their dot product, and numax already has that name for
     it at both tiers; a second spelling would be one more name meaning
     exactly what an existing one means.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static rank-2 tensor.
+        B: The `TensorLike` type of `b`, a static rank-2 tensor of `A`'s
+            dtype with the same column count as `a`.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `m x k` matrix whose rows are the left vectors.
+        b: The `n x k` matrix whose rows are the right vectors.
+
+    Returns:
+        A new `m x n` tensor `a @ b.T` on `a`'s device.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime m = dim[A, 0]
     comptime k = dim[A, 1]
@@ -552,6 +688,24 @@ def kron[
     block and wrap at every block edge; a wider store would have to special
     -case that boundary for no gain, since the multiplier `a[i, j]` changes
     there too.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static rank-2 tensor.
+        B: The `TensorLike` type of `b`, a static rank-2 tensor of `A`'s
+            dtype.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `m x n` matrix whose entries scale the blocks.
+        b: The `p x q` matrix tiled into every block.
+
+    Returns:
+        A new `(m*p) x (n*q)` tensor holding the Kronecker product.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[A, 1]
@@ -611,6 +765,22 @@ def matrix_power[
     depends on `lu`, which depends on this one -- a cycle for a
     convenience. The compile error names the constraint, so a caller who
     wants it is told what to write.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a static square rank-2 tensor.
+        power: The non-negative integer exponent, fixed at compile time.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `n x n` matrix to raise to `power`.
+
+    Returns:
+        A new `n x n` tensor `a**power`, the identity when `power == 0`.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -673,6 +843,25 @@ def matmul[
 
     Raises when `a`'s columns and `b`'s rows disagree, which is the check
     the static overload gets from the type system for free.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a rank-2 tensor whose extents are
+            known only at run time.
+        B: The `TensorLike` type of `b`, a run-time-shaped rank-2 tensor of
+            `A`'s dtype.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `m x k` left operand.
+        b: The `k x n` right operand.
+
+    Returns:
+        A new run-time-shaped `m x n` tensor `a @ b` on `a`'s device.
+
+    Raises:
+        If `a`'s column count differs from `b`'s row count, or if a
+        buffer allocation or kernel launch on `a`'s device context fails.
     """
     if a.dim[1]() != b.dim[0]():
         raise Error(
@@ -715,6 +904,25 @@ def batched_matmul[
     small matrices is what a `map` over a conformer already expresses, one
     matrix per SIMD lane, so the batched form only earns its own kernel at
     sizes past the crossover.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static rank-3 tensor.
+        B: The `TensorLike` type of `b`, a static rank-3 tensor of `A`'s
+            dtype with `a`'s batch count and `a`'s last extent as its
+            middle one.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `batch x m x k` stack of left operands.
+        b: The `batch x k x n` stack of right operands.
+
+    Returns:
+        A new `batch x m x n` tensor whose slice `i` is `a[i] @ b[i]`.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     comptime batch = dim[A, 0]
     comptime m = dim[A, 1]
@@ -751,6 +959,23 @@ def cross[
     - a[i+2] b[i+1]` with the indices mod 3 -- MAX ships no cross product,
     and there is nothing to delegate three multiplies to. The `n x 3`
     overload takes rows of vectors.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static length-3 vector.
+        B: The `TensorLike` type of `b`, a length-3 vector of `A`'s dtype.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The left 3-vector.
+        b: The right 3-vector.
+
+    Returns:
+        A new length-3 vector holding `a x b`.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
     """
     var ctx = a.context()
     var out = Static[A.dtype, 3]._uninitialized(ctx)
@@ -786,7 +1011,25 @@ def cross[
     and dim[B, 1] == 3
 ):
     """Row-wise cross products of two `n x 3` tensors, `out[r] = cross(a[r],
-    b[r])`. `numpy.cross` on stacks of vectors."""
+    b[r])`. `numpy.cross` on stacks of vectors.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a static `n x 3` tensor.
+        B: The `TensorLike` type of `b`, an `n x 3` tensor of `A`'s dtype.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `n x 3` stack of left vectors, one per row.
+        b: The `n x 3` stack of right vectors, one per row.
+
+    Returns:
+        A new `n x 3` tensor whose row `r` is `cross(a[r], b[r])`.
+
+    Raises:
+        If a buffer allocation, host copy, or kernel launch on `a`'s
+        device context fails.
+    """
     comptime n = dim[A, 0]
     var ctx = a.context()
     var out = Static[A.dtype, n, 3]._uninitialized(ctx)
@@ -844,6 +1087,26 @@ def tensordot[
     The result is a `Dynamic` because its rank, not its extents, is what
     the types carry here: the extents of `a` and `b` are behind two
     different layouts and cannot both be spelled in one compile-time pack.
+
+    Parameters:
+        A: The `TensorLike` type of `a`.
+        B: The `TensorLike` type of `b`, of `A`'s dtype.
+        axes: How many trailing dimensions of `a` are contracted against
+            the same number of leading dimensions of `b`.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The left tensor, whose last `axes` extents are contracted.
+        b: The right tensor, whose first `axes` extents are contracted.
+
+    Returns:
+        A new run-time-shaped tensor of rank `rank(a) + rank(b) - 2*axes`,
+        the uncontracted extents of `a` followed by those of `b`.
+
+    Raises:
+        If a contracted extent of `a` differs from the matching extent of
+        `b`, or if a buffer allocation or kernel launch fails.
     """
     comptime ALayout = A.LayoutType
     comptime BLayout = B.LayoutType
@@ -934,7 +1197,18 @@ def tensordot[
 def asum[T: FloatLike, n: Int](a: Array[T, n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.asum`."""
+    at `numax.linalg._array.blas.asum`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The vector length.
+
+    Args:
+        a: The length-`n` vector whose magnitudes are summed.
+
+    Returns:
+        The sum of magnitudes `sum(|a[i]|)`.
+    """
     return _array_asum[T=T, n=n](a)
 
 
@@ -943,14 +1217,39 @@ def axpy[
 ](alpha: T, x: Array[T, n], y: Array[T, n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.axpy`."""
+    at `numax.linalg._array.blas.axpy`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The vector length.
+
+    Args:
+        alpha: The scale applied to `x`.
+        x: The scaled length-`n` vector.
+        y: The added length-`n` vector.
+
+    Returns:
+        A new length-`n` array `alpha * x + y`.
+    """
     return _array_axpy[T=T, n=n](alpha, x, y)
 
 
 def dot[T: FloatLike, n: Int](a: Array[T, n], b: Array[T, n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.dot`."""
+    at `numax.linalg._array.blas.dot`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The vector length.
+
+    Args:
+        a: The first length-`n` vector.
+        b: The second length-`n` vector.
+
+    Returns:
+        The inner product `sum(a[i] * b[i])`.
+    """
     return _array_dot[T=T, n=n](a, b)
 
 
@@ -959,7 +1258,20 @@ def inner[
 ](a: Array[T, n * n], b: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.inner`."""
+    at `numax.linalg._array.blas.inner`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The matrix order.
+
+    Args:
+        a: The row-major `n x n` left matrix.
+        b: The row-major `n x n` matrix whose rows are paired with
+            `a`'s.
+
+    Returns:
+        The row-major `n x n` product `a @ b.T`.
+    """
     return _array_inner[T=T, n=n](a, b)
 
 
@@ -968,7 +1280,20 @@ def kron[
 ](a: Array[T, m * m], b: Array[T, n * n]) -> Array[T, (m * n) * (m * n)]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.kron`."""
+    at `numax.linalg._array.blas.kron`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        m: The order of `a`.
+        n: The order of `b`.
+
+    Args:
+        a: The row-major `m x m` matrix scaling the blocks.
+        b: The row-major `n x n` matrix tiled into every block.
+
+    Returns:
+        The row-major `(m*n) x (m*n)` Kronecker product.
+    """
     return _array_kron[T=T, m=m, n=n](a, b)
 
 
@@ -977,7 +1302,19 @@ def matmul[
 ](a: Array[T, n * n], b: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.matmul`."""
+    at `numax.linalg._array.blas.matmul`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The matrix order.
+
+    Args:
+        a: The row-major `n x n` left operand.
+        b: The row-major `n x n` right operand.
+
+    Returns:
+        The row-major `n x n` product `a @ b`.
+    """
     return _array_matmul[T=T, n=n](a, b)
 
 
@@ -986,7 +1323,19 @@ def matrix_power[
 ](a: Array[T, n * n]) -> Array[T, n * n] where power >= 0:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.matrix_power`."""
+    at `numax.linalg._array.blas.matrix_power`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The matrix order.
+        power: The non-negative integer exponent.
+
+    Args:
+        a: The row-major `n x n` matrix to raise to `power`.
+
+    Returns:
+        The row-major `n x n` matrix `a**power`.
+    """
     return _array_matrix_power[T=T, n=n, power=power](a)
 
 
@@ -995,14 +1344,37 @@ def matvec[
 ](a: Array[T, n * n], x: Array[T, n]) -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.matvec`."""
+    at `numax.linalg._array.blas.matvec`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The matrix order and vector length.
+
+    Args:
+        a: The row-major `n x n` matrix.
+        x: The length-`n` vector.
+
+    Returns:
+        The length-`n` product `a @ x`.
+    """
     return _array_matvec[T=T, n=n](a, x)
 
 
 def nrm2[T: FloatLike, n: Int](a: Array[T, n]) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.nrm2`."""
+    at `numax.linalg._array.blas.nrm2`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The vector length.
+
+    Args:
+        a: The length-`n` vector whose norm is taken.
+
+    Returns:
+        The Euclidean norm `sqrt(sum(a[i]**2))`.
+    """
     return _array_nrm2[T=T, n=n](a)
 
 
@@ -1011,5 +1383,17 @@ def outer[
 ](a: Array[T, n], b: Array[T, n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.blas.outer`."""
+    at `numax.linalg._array.blas.outer`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the elements.
+        n: The length of both vectors.
+
+    Args:
+        a: The length-`n` column factor.
+        b: The length-`n` row factor.
+
+    Returns:
+        The row-major `n x n` matrix with `out[i, j] = a[i] * b[j]`.
+    """
     return _array_outer[T=T, n=n](a, b)

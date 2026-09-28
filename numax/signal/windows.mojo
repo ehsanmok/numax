@@ -140,7 +140,22 @@ def boxcar[
     dtype, n
 ] where (dtype.is_floating_point() and n > 0):
     """The rectangular window: all ones. `scipy.signal.windows.boxcar`.
-    `sym` is accepted for uniformity and changes nothing."""
+    `sym` is accepted for uniformity and changes nothing.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        sym: Accepted for uniformity with the other windows; ignored.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        A length-`n` tensor of ones at `dtype` on `ctx`.
+
+    Raises:
+        If creating the host context or allocating the tensor fails.
+    """
     _ = sym
     comptime if _DEVICE_FILL[dtype]:
         if _on_device[dtype](ctx):
@@ -163,6 +178,21 @@ def hann[
     The default for spectral analysis: -31 dB sidelobes falling at 18
     dB/octave. Symmetric, the ends are exactly zero; periodic, the window
     tiles without a seam.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        sym: Symmetric window (ends match) when `True`; periodic (sampled
+            for `n + 1` points, last dropped) when `False`.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        A length-`n` window tensor at `dtype` on `ctx`.
+
+    Raises:
+        If creating the host context or allocating the tensor fails.
     """
     return _cosine_window[dtype=dtype, n=n](0.5, 0.5, 0.0, sym, ctx)
 
@@ -175,7 +205,23 @@ def hamming[
     """The Hamming window, `0.54 - 0.46 cos(2 pi i / d)`.
     `scipy.signal.windows.hamming(n, sym)`. The classic `0.54/0.46`
     coefficients, matching NumPy and SciPy, rather than the exactly optimal
-    `0.53836/0.46164`."""
+    `0.53836/0.46164`.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        sym: Symmetric window (ends match) when `True`; periodic (sampled
+            for `n + 1` points, last dropped) when `False`.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        A length-`n` window tensor at `dtype` on `ctx`.
+
+    Raises:
+        If creating the host context or allocating the tensor fails.
+    """
     return _cosine_window[dtype=dtype, n=n](0.54, 0.46, 0.0, sym, ctx)
 
 
@@ -186,7 +232,23 @@ def blackman[
 ] where (dtype.is_floating_point() and n > 0):
     """The Blackman window, `0.42 - 0.5 cos(2 pi i / d) + 0.08 cos(4 pi i
     / d)`. `scipy.signal.windows.blackman(n, sym)`: -58 dB sidelobes for a
-    main lobe half again as wide as Hann's."""
+    main lobe half again as wide as Hann's.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        sym: Symmetric window (ends match) when `True`; periodic (sampled
+            for `n + 1` points, last dropped) when `False`.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        A length-`n` window tensor at `dtype` on `ctx`.
+
+    Raises:
+        If creating the host context or allocating the tensor fails.
+    """
     return _cosine_window[dtype=dtype, n=n](0.42, 0.5, 0.08, sym, ctx)
 
 
@@ -196,7 +258,23 @@ def bartlett[
     dtype, n
 ] where (dtype.is_floating_point() and n > 0):
     """The Bartlett (triangular, zero-ended) window, `1 - |2i/d - 1|`.
-    `scipy.signal.windows.bartlett(n, sym)`."""
+    `scipy.signal.windows.bartlett(n, sym)`.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        sym: Symmetric window (ends match) when `True`; periodic (sampled
+            for `n + 1` points, last dropped) when `False`.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        A length-`n` window tensor at `dtype` on `ctx`.
+
+    Raises:
+        If creating the host context or allocating the tensor fails.
+    """
     var d = _denominator(n, sym)
     comptime if _DEVICE_FILL[dtype]:
         if _on_device[dtype](ctx):
@@ -247,6 +325,23 @@ def kaiser[
     height continuously, `0` being the boxcar and `14` roughly the
     Blackman. `I_0` is evaluated by its power series, per sample on the
     device when `ctx` is one.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        beta: Shape parameter; `0` is the boxcar, larger values lower the
+            sidelobes and widen the main lobe.
+        sym: Symmetric window (ends match) when `True`; periodic (sampled
+            for `n + 1` points, last dropped) when `False`.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        A length-`n` Kaiser window tensor at `dtype` on `ctx`.
+
+    Raises:
+        If creating the host context or allocating the tensor fails.
     """
     var d = _denominator(n, sym)
     var scale = 1.0 / _bessel_i0(beta)
@@ -281,6 +376,24 @@ def get_window[
     which is the opposite of the named factories' default and is SciPy's
     choice too: this is the spelling the spectral estimators use, and they
     want the window that tiles. An unknown name raises.
+
+    Parameters:
+        dtype: Floating-point element type of the window.
+        n: Window length, at least 1.
+
+    Args:
+        name: Window name: `"boxcar"`, `"hann"`, `"hanning"`, `"hamming"`,
+            `"blackman"`, `"bartlett"` or `"kaiser"`.
+        beta: Kaiser shape parameter; ignored by every other window.
+        fftbins: Periodic window when `True` (the default), symmetric when
+            `False`.
+        ctx: Device to allocate on and fill from; `None` uses the host.
+
+    Returns:
+        The named length-`n` window tensor at `dtype` on `ctx`.
+
+    Raises:
+        If `name` is not a known window, or if allocation fails.
     """
     var sym = not fftbins
     if name == "boxcar":
@@ -305,19 +418,43 @@ def get_window[
 def blackman[T: FloatLike, n: Int]() -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.blackman`."""
+    at `numax.signal._array.signal.blackman`.
+
+    Parameters:
+        T: `FloatLike` conformer of each element.
+        n: Window length.
+
+    Returns:
+        The length-`n` symmetric Blackman window as an `Array`.
+    """
     return _array_blackman[T=T, n=n]()
 
 
 def hamming[T: FloatLike, n: Int]() -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.hamming`."""
+    at `numax.signal._array.signal.hamming`.
+
+    Parameters:
+        T: `FloatLike` conformer of each element.
+        n: Window length.
+
+    Returns:
+        The length-`n` symmetric Hamming window as an `Array`.
+    """
     return _array_hamming[T=T, n=n]()
 
 
 def hann[T: FloatLike, n: Int]() -> Array[T, n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.signal._array.signal.hann`."""
+    at `numax.signal._array.signal.hann`.
+
+    Parameters:
+        T: `FloatLike` conformer of each element.
+        n: Window length.
+
+    Returns:
+        The length-`n` symmetric Hann window as an `Array`.
+    """
     return _array_hann[T=T, n=n]()

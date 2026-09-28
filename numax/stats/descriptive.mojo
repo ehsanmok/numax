@@ -136,7 +136,26 @@ def skew[
     """The sample skewness `m3 / m2^(3/2)`, or with `bias=False` the
     adjusted Fisher-Pearson `G1 = sqrt(n(n-1)) / (n-2) * g1`.
     `scipy.stats.skew(a, bias)`. Zero for a symmetric sample; `0` too when
-    `m2` is zero, as SciPy returns."""
+    `m2` is zero, as SciPy returns.
+
+    Parameters:
+        T: The tensor type of `xs`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        xs: The sample, read as one flat vector of every element.
+        bias: Whether to return the biased `g1`; `False` applies the adjusted
+            Fisher-Pearson `G1` correction.
+
+    Returns:
+        The skewness of `xs` as a `Float64`; `0` when `m2` is zero.
+
+    Raises:
+        On a residency mismatch under the `"raise"` fallback policy, or a failed
+        device operation.
+    """
     return _skew_of(_moments[gpu=gpu](xs), bias)
 
 
@@ -147,7 +166,28 @@ def kurtosis[
 ):
     """The sample kurtosis `m4 / m2^2`, less `3` when `fisher` (the
     default, so a normal sample reads `0`), and with `bias=False` the
-    unbiased `G2` correction. `scipy.stats.kurtosis(a, fisher, bias)`."""
+    unbiased `G2` correction. `scipy.stats.kurtosis(a, fisher, bias)`.
+
+    Parameters:
+        T: The tensor type of `xs`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        xs: The sample, read as one flat vector of every element.
+        fisher: Whether to subtract `3`, so a normal sample reads `0`; `False`
+            gives Pearson's kurtosis.
+        bias: Whether to return the biased `g2`; `False` applies the `G2`
+            correction when `n > 3`.
+
+    Returns:
+        The kurtosis of `xs` as a `Float64`.
+
+    Raises:
+        On a residency mismatch under the `"raise"` fallback policy, or a failed
+        device operation.
+    """
     return _kurtosis_of(_moments[gpu=gpu](xs), fisher, bias)
 
 
@@ -157,7 +197,25 @@ def sem[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The standard error of the mean, `std(ddof) / sqrt(n)`, `ddof = 1` by
-    default as SciPy's is. `scipy.stats.sem(a, ddof)`."""
+    default as SciPy's is. `scipy.stats.sem(a, ddof)`.
+
+    Parameters:
+        T: The tensor type of `xs`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        xs: The sample, read as one flat vector of every element.
+        ddof: The delta degrees of freedom; the variance divides by `n - ddof`.
+
+    Returns:
+        The standard error of the mean as a `Float64`.
+
+    Raises:
+        When `n - ddof <= 0`, or on a residency mismatch under the `"raise"`
+        fallback policy, or a failed device operation.
+    """
     var n = xs.size()
     if n - ddof <= 0:
         raise Error("sem: not enough elements for ddof ", ddof)
@@ -171,7 +229,24 @@ def gmean[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The geometric mean, `exp(mean(log x))`. `scipy.stats.gmean(a)`. A
-    non-positive element raises rather than returning NaN."""
+    non-positive element raises rather than returning NaN.
+
+    Parameters:
+        T: The tensor type of `xs`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        xs: The sample, read as one flat vector; every element must be positive.
+
+    Returns:
+        The geometric mean of `xs` as a `Float64`.
+
+    Raises:
+        When an element of `xs` is not positive, or on a residency mismatch
+        under the `"raise"` fallback policy, or a failed device operation.
+    """
     if _check_device[T, gpu](xs):
         comptime if gpu:
             if Float64(_tmin[gpu=True](xs)) <= 0:
@@ -197,7 +272,22 @@ def gmean[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The weighted geometric mean, `exp(sum(w log x) / sum(w))`.
-    `scipy.stats.gmean(a, weights=w)`."""
+    `scipy.stats.gmean(a, weights=w)`.
+
+    Parameters:
+        T: The tensor type of `xs` and `weights`; row-major with a
+            floating-point dtype. Host only: both are copied to the host.
+
+    Args:
+        xs: The sample, read as one flat vector; every element must be positive.
+        weights: One weight per element of `xs`, in the same order.
+
+    Returns:
+        The weighted geometric mean `exp(sum(w log x) / sum(w))` as a `Float64`.
+
+    Raises:
+        When an element of `xs` is not positive, or a host copy fails.
+    """
     var values = _values(xs)
     var ws = _values(weights)
     var total = 0.0
@@ -216,7 +306,24 @@ def hmean[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The harmonic mean, `n / sum(1 / x)`. `scipy.stats.hmean(a)`. A
-    non-positive element raises."""
+    non-positive element raises.
+
+    Parameters:
+        T: The tensor type of `xs`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        xs: The sample, read as one flat vector; every element must be positive.
+
+    Returns:
+        The harmonic mean of `xs` as a `Float64`.
+
+    Raises:
+        When an element of `xs` is not positive, or on a residency mismatch
+        under the `"raise"` fallback policy, or a failed device operation.
+    """
     if _check_device[T, gpu](xs):
         comptime if gpu:
             if Float64(_tmin[gpu=True](xs)) <= 0:
@@ -243,7 +350,25 @@ def entropy[
     """The Shannon entropy `-sum(p log p)` of the distribution `pk`,
     normalized to sum to one first, in nats or in the given `base`.
     `scipy.stats.entropy(pk, base=base)`. Zero-probability terms
-    contribute zero."""
+    contribute zero.
+
+    Parameters:
+        T: The tensor type of `pk`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        pk: Probabilities or counts, divided by their sum first.
+        base: The logarithm base; `None` gives the entropy in nats.
+
+    Returns:
+        The Shannon entropy of the normalized `pk` as a `Float64`.
+
+    Raises:
+        On a residency mismatch under the `"raise"` fallback policy, or a failed
+        device operation.
+    """
     if _check_device[T, gpu](pk):
         comptime if gpu:
             # `q log q` with `q` clipped up to `1e-30` before the log: a
@@ -286,7 +411,29 @@ def entropy[
     """The relative entropy `sum(p log(p / q))`, the Kullback-Leibler
     divergence of `pk` from `qk`, both normalized first.
     `scipy.stats.entropy(pk, qk, base)`. Infinite where `qk` is zero and
-    `pk` is not, as SciPy's is."""
+    `pk` is not, as SciPy's is.
+
+    Parameters:
+        T: The tensor type of `pk` and `qk`; row-major with a floating-point
+            dtype.
+        gpu: Whether to run on the tensors' device; a residency mismatch of
+            either falls back to the host with a notice.
+
+    Args:
+        pk: The distribution whose divergence is measured, normalized to sum to
+            one first.
+        qk: The reference distribution, as many elements as `pk`, normalized
+            first.
+        base: The logarithm base; `None` gives the divergence in nats.
+
+    Returns:
+        The Kullback-Leibler divergence of `pk` from `qk` as a `Float64`; `inf`
+        where `qk` is zero and `pk` is not.
+
+    Raises:
+        On a residency mismatch under the `"raise"` fallback policy, or a failed
+        device operation.
+    """
     if _check_device[T, gpu](pk) and _check_device[T, gpu](qk):
         comptime if gpu:
             var a = divide[gpu=True](pk, _tsum[gpu=True](pk))
@@ -337,7 +484,24 @@ def trim_mean[
     """The mean after dropping `int(proportiontocut * n)` of the smallest
     and as many of the largest values. `scipy.stats.trim_mean(a,
     proportiontocut)`. Raises when the cuts would leave nothing, as SciPy
-    does."""
+    does.
+
+    Parameters:
+        T: The tensor type of `xs`; floating-point dtype. Host only: the values
+            are copied and sorted there.
+
+    Args:
+        xs: The sample, read as one flat vector of every element.
+        proportiontocut: The fraction cut from each end; `int(proportiontocut *
+            n)` values go from each side.
+
+    Returns:
+        The mean of the values that remain, as a `Float64`.
+
+    Raises:
+        When the cut from each end exceeds what the other leaves (`2 * cut >
+        n`), or the host copy fails.
+    """
     var values = _values(xs)
     var n = len(values)
     var cut = Int(proportiontocut * Float64(n))
@@ -372,7 +536,27 @@ def describe[
 ):
     """The summary SciPy's `describe(a, ddof, bias)` returns: count,
     minimum and maximum, mean, variance with `ddof` degrees of freedom,
-    skewness and Fisher kurtosis with the given `bias`."""
+    skewness and Fisher kurtosis with the given `bias`.
+
+    Parameters:
+        T: The tensor type of `xs`; row-major with a floating-point dtype.
+        gpu: Whether to run the sums on the tensor's device at its dtype; a
+            residency mismatch falls back to the host `Float64` walk with a
+            notice.
+
+    Args:
+        xs: The sample, read as one flat vector of every element.
+        ddof: The delta degrees of freedom; the variance divides by `n - ddof`.
+        bias: Passed to the skewness and kurtosis, as in `skew` and `kurtosis`.
+
+    Returns:
+        A `Description` holding the count, minimum, maximum, mean, variance,
+        skewness and Fisher kurtosis of `xs`.
+
+    Raises:
+        When `n - ddof <= 0`, or on a residency mismatch under the `"raise"`
+        fallback policy, or a failed device operation.
+    """
     var n = xs.size()
     if n - ddof <= 0:
         raise Error("describe: not enough elements for ddof ", ddof)

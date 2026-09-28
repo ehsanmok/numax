@@ -38,7 +38,18 @@ def xlogy[T: FloatLike](x: T, y: T) -> T:
     `scipy.special.xlogy(x, y)`. The term an entropy or a log-likelihood
     is built from, with the `0 log 0` convention applied rather than left
     as NaN. `y == 0` with `x != 0` is `-inf` times the sign of `x`, as
-    SciPy's is."""
+    SciPy's is.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        x: The multiplier; lanes where it is zero give exactly zero.
+        y: The argument of the logarithm.
+
+    Returns:
+        `x * log(y)`, or `0` where `x == 0`.
+    """
     var zero = _is_zero(x)
     var guarded = blend(zero, T.one(), y)
     return blend(zero, T.constant(0.0), x * guarded.ln())
@@ -48,7 +59,18 @@ def xlog1py[T: FloatLike](x: T, y: T) -> T:
     """`x * log(1 + y)`, `0` where `x == 0`. `scipy.special.xlog1py`.
     `log(1 + y)` is formed as such -- `FloatLike` has no `log1p` -- so a
     `y` near `-1` or within rounding of `0` loses the digits `log1p` would
-    keep; the docstring is the bound."""
+    keep; the docstring is the bound.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        x: The multiplier; lanes where it is zero give exactly zero.
+        y: The shifted argument, so the logarithm is taken of `1 + y`.
+
+    Returns:
+        `x * log(1 + y)`, or `0` where `x == 0`.
+    """
     var zero = _is_zero(x)
     var guarded = blend(zero, T.constant(0.0), y)
     return blend(zero, T.constant(0.0), x * (T.one() + guarded).ln())
@@ -57,7 +79,17 @@ def xlog1py[T: FloatLike](x: T, y: T) -> T:
 def entr[T: FloatLike](x: T) -> T:
     """The entropy term `-x log(x)`: `0` at `x == 0`, `-inf` for `x < 0`.
     `scipy.special.entr(x)`. Summed over a distribution it is the Shannon
-    entropy `numax.stats.entropy` returns."""
+    entropy `numax.stats.entropy` returns.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The probability or mass to take the entropy term of.
+
+    Returns:
+        `-x log(x)`, `0` at `x == 0` and `-inf` for `x < 0`.
+    """
     # Finite for every `x` (`-0 * ln(tiny)` is `0` at zero), plus a term
     # that is `ln(1) = 0` for `x >= 0` and `ln(0) = -inf` below -- an
     # infinity *added* rather than blended in, since `blend` would
@@ -77,6 +109,16 @@ def rel_entr[T: FloatLike](x: T, y: T) -> T:
     reaches the result as `-ln(0) = +inf` with no division by zero on the
     way, and the `x = 0` lane is selected to `0` before its `ln` can be
     `-inf`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        x: The first distribution's mass, `x >= 0`.
+        y: The second distribution's mass, `y >= 0`.
+
+    Returns:
+        `x log(x / y)`, `0` where `x == 0` and `inf` where only `y == 0`.
     """
     var zero = _is_zero(x)
     var guarded_x = max_of(x, T.constant(_TINY))
@@ -88,12 +130,33 @@ def kl_div[T: FloatLike](x: T, y: T) -> T:
     """`x log(x / y) - x + y`, the Kullback-Leibler term that is
     non-negative pointwise and zero exactly at `x == y`.
     `scipy.special.kl_div(x, y)`. `rel_entr` plus the linear terms that
-    make it a Bregman divergence."""
+    make it a Bregman divergence.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        x: The first distribution's mass, `x >= 0`.
+        y: The second distribution's mass, `y >= 0`.
+
+    Returns:
+        `rel_entr(x, y) - x + y`, non-negative pointwise.
+    """
     return rel_entr(x, y) - x + y
 
 
 def logit[T: FloatLike](p: T) -> T:
     """The log-odds `log(p / (1 - p))`, the inverse of `sigmoid`
     (`scipy.special.expit`). `scipy.special.logit(p)`. `-inf` at `0`,
-    `inf` at `1`, NaN outside `[0, 1]`, as SciPy's."""
+    `inf` at `1`, NaN outside `[0, 1]`, as SciPy's.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        p: The probability, in `[0, 1]`.
+
+    Returns:
+        `log(p / (1 - p))`.
+    """
     return (p / (T.one() - p)).ln()

@@ -116,6 +116,11 @@ struct Interval[Inner: FloatLike](
     def write_to(
         self, mut writer: Some[Writer]
     ) where conforms_to(Self.Inner, Writable):
+        """Write `[lo, hi]`.
+
+        Args:
+            writer: The destination both bounds are written to.
+        """
         writer.write("[", self.lo, ", ", self.hi, "]")
 
     @staticmethod
@@ -124,23 +129,51 @@ struct Interval[Inner: FloatLike](
 
         Not part of `FloatLike` -- it's the constructor a caller needs when
         an input is known exactly and only some other input is uncertain.
+
+        Args:
+            value: The exactly known value.
+
+        Returns:
+            `[value, value]`.
         """
         return Self(value.copy(), value.copy())
 
     @staticmethod
     def one() -> Self:
+        """The point interval `[1, 1]`.
+
+        Returns:
+            `[Inner.one(), Inner.one()]`.
+        """
         return Self(Self.Inner.one(), Self.Inner.one())
 
     @staticmethod
     def constant(v: Float64) -> Self:
+        """The point interval `[v, v]`.
+
+        Args:
+            v: The literal value.
+
+        Returns:
+            `[Inner.constant(v), Inner.constant(v)]`.
+        """
         return Self(Self.Inner.constant(v), Self.Inner.constant(v))
 
     def width(self) -> Self.Inner:
         """`hi - lo`, the size of the interval -- an `Inner`, not an
-        `Interval`, since the width of a range is a single number."""
+        `Interval`, since the width of a range is a single number.
+
+        Returns:
+            `hi - lo`, as an `Inner`.
+        """
         return self.hi - self.lo
 
     def midpoint(self) -> Self.Inner:
+        """The center of the interval, `(lo + hi) / 2`.
+
+        Returns:
+            `(lo + hi) / 2`, as an `Inner`.
+        """
         return (self.lo + self.hi) / Self.Inner.constant(2.0)
 
     def inflate(self, relative: Float64) -> Self:
@@ -151,6 +184,13 @@ struct Interval[Inner: FloatLike](
         docstring. Pass something on the order of a few times your
         precision's machine epsilon (about `1e-7` for `float32`, `2e-16` for
         `float64`) to absorb the rounding error accumulated so far.
+
+        Args:
+            relative: The fractional slack, a small multiple of machine epsilon.
+
+        Returns:
+            `[lo - pad_lo, hi + pad_hi]` with each pad `relative * (width +
+            |bound|)`.
         """
         var pad_from_width = self.width() * Self.Inner.constant(relative)
         var pad_lo = pad_from_width + self.lo.abs() * Self.Inner.constant(
@@ -162,13 +202,35 @@ struct Interval[Inner: FloatLike](
         return Self(self.lo - pad_lo, self.hi + pad_hi)
 
     def __add__(self, rhs: Self) -> Self:
+        """Interval addition: lower bounds add, upper bounds add.
+
+        Args:
+            rhs: The addend interval.
+
+        Returns:
+            `[lo + rhs.lo, hi + rhs.hi]`.
+        """
         return Self(self.lo + rhs.lo, self.hi + rhs.hi)
 
     def __neg__(self) -> Self:
+        """Negation, which swaps the bounds.
+
+        Returns:
+            `[-hi, -lo]`.
+        """
         # Negation flips the interval end for end.
         return Self(-self.hi, -self.lo)
 
     def __mul__(self, rhs: Self) -> Self:
+        """Interval multiplication over all four endpoint products.
+
+        Args:
+            rhs: The multiplier interval.
+
+        Returns:
+            The min and max of `lo*rhs.lo`, `lo*rhs.hi`, `hi*rhs.lo`,
+            `hi*rhs.hi`.
+        """
         # The extremes of a product over a box are at its corners, so all
         # four are computed and the outer two kept -- cheaper than the
         # per-lane branching sign analysis would need.
@@ -182,6 +244,15 @@ struct Interval[Inner: FloatLike](
         )
 
     def __truediv__(self, rhs: Self) -> Self:
+        """Interval division, as multiplication by `[1/rhs.hi, 1/rhs.lo]`.
+
+        Args:
+            rhs: The divisor interval; one containing zero gives no finite
+                enclosure.
+
+        Returns:
+            `self * [1/rhs.hi, 1/rhs.lo]`.
+        """
         # Multiplication by the reciprocal interval. An `rhs` straddling
         # zero gives infinite endpoints and a meaningless result; the
         # module docstring says why that is not detected here.
@@ -189,18 +260,43 @@ struct Interval[Inner: FloatLike](
         return self * Self(one / rhs.hi, one / rhs.lo)
 
     def exp(self) -> Self:
+        """`exp` of each bound, since `exp` is increasing.
+
+        Returns:
+            `[exp(lo), exp(hi)]`.
+        """
         return Self(self.lo.exp(), self.hi.exp())
 
     def ln(self) -> Self:
+        """`ln` of each bound, since `ln` is increasing.
+
+        Returns:
+            `[ln(lo), ln(hi)]`; only meaningful for `lo > 0`.
+        """
         return Self(self.lo.ln(), self.hi.ln())
 
     def sqrt(self) -> Self:
+        """`sqrt` of each bound, since `sqrt` is increasing.
+
+        Returns:
+            `[sqrt(lo), sqrt(hi)]`; only meaningful for `lo >= 0`.
+        """
         return Self(self.lo.sqrt(), self.hi.sqrt())
 
     def erf(self) -> Self:
+        """`erf` of each bound, since `erf` is increasing.
+
+        Returns:
+            `[erf(lo), erf(hi)]`.
+        """
         return Self(self.lo.erf(), self.hi.erf())
 
     def erfc(self) -> Self:
+        """`erfc` of each bound, swapped since `erfc` is decreasing.
+
+        Returns:
+            `[erfc(hi), erfc(lo)]`.
+        """
         # Decreasing, so the endpoints swap.
         return Self(self.hi.erfc(), self.lo.erfc())
 
@@ -223,6 +319,9 @@ struct Interval[Inner: FloatLike](
         which (since extrema are spaced `pi` apart) also proves `sin` is
         monotonic on `[lo, hi]` -- so the two endpoint values already
         bracket every value in between.
+
+        Returns:
+            The enclosure, `-1` or `1` at a bound whose extremum lies inside.
         """
         var sin_lo = self.lo.sin()
         var sin_hi = self.hi.sin()
@@ -240,7 +339,11 @@ struct Interval[Inner: FloatLike](
     def cos(self) -> Self:
         """A tight enclosure of `{cos(x) : x in [lo, hi]}`, the same
         construction as `sin` shifted by a quarter period: `cos`'s peaks
-        are at `2*k*pi`, its troughs at `pi + 2*k*pi`."""
+        are at `2*k*pi`, its troughs at `pi + 2*k*pi`.
+
+        Returns:
+            The enclosure, `-1` or `1` at a bound whose extremum lies inside.
+        """
         var cos_lo = self.lo.cos()
         var cos_hi = self.hi.cos()
         var has_peak = _period_contains(
@@ -260,6 +363,9 @@ struct Interval[Inner: FloatLike](
         The lower bound is zero whenever the interval straddles zero, which
         `max_of(0, max_of(lo, -hi))` produces without a branch -- the inner
         `max_of` is negative exactly when `lo < 0 < hi`.
+
+        Returns:
+            `[mig, mag]`, with `mig = 0` when the interval straddles zero.
         """
         var zero = Self.Inner.constant(0.0)
         var mig = max_of(zero, max_of(self.lo.copy(), zero - self.hi))
@@ -275,6 +381,13 @@ struct Interval[Inner: FloatLike](
         gives `[-mag, -mig]`, and one straddling zero gives `[-mag, mag]`,
         since both signs are then reachable. Zero counts as positive here,
         matching `copysign`'s own convention throughout `numax`.
+
+        Args:
+            sign_source: The interval of possible signs to copy.
+
+        Returns:
+            `[mig, mag]`, `[-mag, -mig]` or `[-mag, mag]` by the sign cases
+            above.
         """
         var zero = Self.Inner.constant(0.0)
         var magnitudes = self.abs()
@@ -303,12 +416,20 @@ struct Interval[Inner: FloatLike](
     def floor(self) -> Self:
         """`[floor(lo), floor(hi)]` -- `floor` is monotonic non-decreasing,
         so applying it to each bound separately still encloses every
-        `floor(x)` for `x` in `self`, and does so tightly."""
+        `floor(x)` for `x` in `self`, and does so tightly.
+
+        Returns:
+            `[floor(lo), floor(hi)]`.
+        """
         return Self(self.lo.floor(), self.hi.floor())
 
     def ceil(self) -> Self:
         """`[ceil(lo), ceil(hi)]`, for the same monotonicity reason as
-        `floor`."""
+        `floor`.
+
+        Returns:
+            `[ceil(lo), ceil(hi)]`.
+        """
         return Self(self.lo.ceil(), self.hi.ceil())
 
     def trunc(self) -> Self:
@@ -320,6 +441,9 @@ struct Interval[Inner: FloatLike](
         hi_result` the way `floor`/`ceil` do. Sorting the two `trunc`ed
         bounds keeps this a valid interval (`lo <= hi`) in every case,
         including one that straddles zero.
+
+        Returns:
+            The two truncated bounds, ordered so the lower comes first.
         """
         var t_lo = self.lo.trunc()
         var t_hi = self.hi.trunc()

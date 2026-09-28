@@ -170,6 +170,15 @@ def zeta[T: FloatLike](s: T) -> T:
     there and the relative error away from it, as the Bessel rows do.
     `pixi run accuracy` measures `3e-14` relative over `[-20, 0.9]`, all of
     it rounding through `Gamma` and the `(k+q)^{-s}` powers.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        s: The exponent, `s != 1`.
+
+    Returns:
+        The Riemann `zeta(s)`, analytically continued for `s < 1`.
     """
     var above = ge_indicator(s, T.constant(_REFLECT_AT))
 
@@ -204,5 +213,15 @@ def zeta[T: FloatLike](s: T, q: T) -> T:
     Lerch transcendents, not one term). SciPy returns NaN for `s < 1` in
     this form; numax returns the continuation while it is good and loses
     digits below `-2.5` rather than refusing.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        s: The exponent, `s != 1`; accurate down to about `s = -2.5`.
+        q: The shift, `q > 0`.
+
+    Returns:
+        The Hurwitz `zeta(s, q)`.
     """
     return _euler_maclaurin[T, False](s, q)

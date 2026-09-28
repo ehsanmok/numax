@@ -796,6 +796,16 @@ def jv[T: FloatLike](v: T, x: T) -> T:
     Negative orders through `J_{-v} = cos(pi v) J_v - sin(pi v) Y_v`, so
     `jv(-2, x)` is `jv(2, x)` exactly. The module docstring has the
     algorithm and the bound.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        v: The real order, `|v| <= 30`; negative orders are reflected.
+        x: The argument, `0 < x <= 200`.
+
+    Returns:
+        `J_v(x)`.
     """
     var av = v.abs()
     var jy = _bessel_jy(av, x)
@@ -809,6 +819,16 @@ def yv[T: FloatLike](v: T, x: T) -> T:
     for `|v| <= 30` and `0 < x <= 200`. `scipy.special.yv(v, x)`.
 
     Negative orders through `Y_{-v} = sin(pi v) J_v + cos(pi v) Y_v`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        v: The real order, `|v| <= 30`; negative orders are reflected.
+        x: The argument, `0 < x <= 200`.
+
+    Returns:
+        `Y_v(x)`.
     """
     var av = v.abs()
     var jy = _bessel_jy(av, x)
@@ -848,14 +868,36 @@ def kve[T: FloatLike](v: T, x: T) -> T:
 def iv[T: FloatLike](v: T, x: T) -> T:
     """`I_v(x)`, the modified Bessel function of the first kind of real
     order `v`, for `|v| <= 30` and `0 < x <= 200`. `scipy.special.iv(v,
-    x)`. `ive(v, x) e^{x}`; overflows where `e^x` does."""
+    x)`. `ive(v, x) e^{x}`; overflows where `e^x` does.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        v: The real order, `|v| <= 30`; negative orders are reflected.
+        x: The argument, `0 < x <= 200`.
+
+    Returns:
+        `I_v(x)`, infinite where `e^x` overflows.
+    """
     return ive(v, x) * x.exp()
 
 
 def kv[T: FloatLike](v: T, x: T) -> T:
     """`K_v(x)`, the modified Bessel function of the second kind of real
     order `v`, for `|v| <= 30` and `0 < x <= 200`. `scipy.special.kv(v,
-    x)`. `kve(v, x) e^{-x}`."""
+    x)`. `kve(v, x) e^{-x}`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        v: The real order, `|v| <= 30`; negative orders are reflected.
+        x: The argument, `0 < x <= 200`.
+
+    Returns:
+        `K_v(x)`, the same for `v` and `-v`.
+    """
     return kve(v, x) * (-x).exp()
 
 

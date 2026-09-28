@@ -87,6 +87,15 @@ def exp1[T: FloatLike](x: T) -> T:
     The power series below `x = 1.5` and the continued fraction above it,
     each clamped to its side and blended; `x <= 0` gives NaN or infinity
     from the logarithm, as SciPy's real `exp1` does off its domain.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The lower integration limit, `x > 0`.
+
+    Returns:
+        `E_1(x)`.
     """
     var near = ge_indicator(T.constant(1.5), x)
     var small = min_of(x, T.constant(1.5))
@@ -104,6 +113,15 @@ def expi[T: FloatLike](x: T) -> T:
     k! / x^k` beyond, where the series would need more terms than it is
     worth and the asymptotic sum is already at `5e-14`. Overflows past
     `x ~ 700`, as `e^x` does.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The point to evaluate at, any real `x != 0`.
+
+    Returns:
+        `Ei(x)`, negative for `x < 0` and overflowing past `x ~ 700`.
     """
     var positive = ge_indicator(x, T.constant(0.0))
     var ax = x.abs()
@@ -141,6 +159,16 @@ def expn[T: FloatLike](n: Int, x: T) -> T:
     loop over it is fixed work. `E_0` is `e^{-x} / x`; for `n >= 1`, the
     series with its digamma term below `x = 1` (Numerical Recipes 6.3) and
     the continued fraction above, blended.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        n: The integer order, `n >= 0`, shared by every lane.
+        x: The point to evaluate at, `x > 0`.
+
+    Returns:
+        `E_n(x)`.
     """
     if n == 0:
         return (-x).exp() / x
@@ -189,6 +217,15 @@ def sici[T: FloatLike](x: T) -> Tuple[T, T]:
     the `i pi` of the complex value too). Power series below `|x| = 2`,
     `E_1(i|x|)` over `Complex[T]` by the continued fraction above it: `Ci
     = -Re`, `Si = pi/2 + Im`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The upper integration limit, any real.
+
+    Returns:
+        The tuple `(Si(x), Ci(x))`, with `Ci` the real part for `x < 0`.
     """
     var ax = x.abs()
     var sign = T.one().copysign(x)
@@ -238,6 +275,15 @@ def fresnel[T: FloatLike](x: T) -> Tuple[T, T]:
     `|x| = 2`; above it, `C + i S = (1 + i) / 2 * erf(z)` at `z = (1 - i)
     sqrt(pi) x / 2`, with `erfc(z)` by its continued fraction over
     `Complex[T]` from the tail at depth 80.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The upper integration limit, any real.
+
+    Returns:
+        The tuple `(S(x), C(x))`, both odd in `x`.
     """
     var ax = x.abs()
     var sign = T.one().copysign(x)

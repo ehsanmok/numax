@@ -185,6 +185,26 @@ def reduce_all[
     `dtype` and `Contribute` are inferred from the arguments, so a call
     names only what it chooses: `reduce_all[monoid="sum"](...)`, with
     `target=` added for a device.
+
+    Parameters:
+        dtype: The element type, inferred from `xs`.
+        Contribute: The type of `contribute`, inferred.
+        monoid: The fold: `"sum"`, `"prod"`, `"max"` or `"min"`; anything else
+            fails to compile.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The rank-1 input view, at least `n` elements.
+        dst: The destination; the result is stored at `Coord(0)`.
+        contribute: The per-tile transform applied between the load and the
+            fold, the identity for a plain reduction.
+        n: The number of elements of `xs` to fold.
+        ctx: The device context; required when `gpu=True`, unused otherwise.
+            Defaults to `None`.
+
+    Raises:
+        Raises if MAX's `rowwise.launch` fails on the chosen target.
     """
     comptime target = "gpu" if gpu else "cpu"
     comptime simd_width = _monoid_width[dtype, monoid, target]()
@@ -352,6 +372,23 @@ def argmax_all[
     index wins a tie, and a NaN candidate is skipped rather than taken,
     which is what `nn.argmaxmin` does too. `ctx` allocates the one-element
     index destination, so it is required on both targets.
+
+    Parameters:
+        dtype: The element type of `xs`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The rank-1 input view.
+        ctx: The context the one-element index buffer is allocated on, and the
+            launch runs on; required on both targets.
+
+    Returns:
+        The position of the largest element, the first on a tie.
+
+    Raises:
+        Raises if allocating the index buffer, the launch, or the copy back to
+        the host fails.
     """
     comptime target = "gpu" if gpu else "cpu"
     return _argn_all[dtype, True, target](xs, ctx)
@@ -370,7 +407,25 @@ def argmin_all[
     ctx: DeviceContext,
 ) raises -> Int:
     """The index of the smallest element of a rank-1 `xs`.
-    `numpy.argmin(a)`, `argmax_all`'s mirror through `ArgMin`."""
+    `numpy.argmin(a)`, `argmax_all`'s mirror through `ArgMin`.
+
+    Parameters:
+        dtype: The element type of `xs`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The rank-1 input view.
+        ctx: The context the one-element index buffer is allocated on, and the
+            launch runs on; required on both targets.
+
+    Returns:
+        The position of the smallest element, the first on a tie.
+
+    Raises:
+        Raises if allocating the index buffer, the launch, or the copy back to
+        the host fails.
+    """
     comptime target = "gpu" if gpu else "cpu"
     return _argn_all[dtype, False, target](xs, ctx)
 
@@ -515,6 +570,24 @@ def sum_axis[
 
     The sum is reassociated, so it will differ from
     `reduce_axis[add_combine]` in the last bits. See the module docstring.
+
+    Parameters:
+        dtype: The element type of `xs` and `dst`.
+        XsLayout: The row-major layout of `xs`, static or run-time shaped.
+        OutLayout: The layout of `dst`, consulted only for its element count.
+        axis: The axis to fold, in `[0, rank)`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The input tensor, of any rank.
+        dst: The output, the surviving axes' element count written in row-major
+            order.
+        ctx: The device context; required when `gpu=True`, unused otherwise.
+            Defaults to `None`.
+
+    Raises:
+        Raises if MAX's `rowwise.launch` fails on the chosen target.
     """
     comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="sum", target=target](xs, dst, ctx)
@@ -549,6 +622,24 @@ def prod_axis[
     `reduce_axis[mul_combine]` in the last bits; unlike the sum the CPU
     accumulator is not widened, because a product's rounding depends on
     the order the factors arrive in.
+
+    Parameters:
+        dtype: The element type of `xs` and `dst`.
+        XsLayout: The row-major layout of `xs`, static or run-time shaped.
+        OutLayout: The layout of `dst`, consulted only for its element count.
+        axis: The axis to fold, in `[0, rank)`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The input tensor, of any rank.
+        dst: The output, the surviving axes' element count written in row-major
+            order.
+        ctx: The device context; required when `gpu=True`, unused otherwise.
+            Defaults to `None`.
+
+    Raises:
+        Raises if MAX's `rowwise.launch` fails on the chosen target.
     """
     comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="prod", target=target](xs, dst, ctx)
@@ -582,6 +673,24 @@ def max_axis[
     scaffolder as `sum_axis`; unlike the sum, a maximum is exact whatever
     order it is folded in, so this agrees with
     `reduce_axis[max_combine]` bit for bit.
+
+    Parameters:
+        dtype: The element type of `xs` and `dst`.
+        XsLayout: The row-major layout of `xs`, static or run-time shaped.
+        OutLayout: The layout of `dst`, consulted only for its element count.
+        axis: The axis to fold, in `[0, rank)`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The input tensor, of any rank.
+        dst: The output, the surviving axes' element count written in row-major
+            order.
+        ctx: The device context; required when `gpu=True`, unused otherwise.
+            Defaults to `None`.
+
+    Raises:
+        Raises if MAX's `rowwise.launch` fails on the chosen target.
     """
     comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="max", target=target](xs, dst, ctx)
@@ -611,7 +720,26 @@ def min_axis[
 ):
     """The smallest element of `xs` along `axis`, into `dst`, on either
     target. `numpy.min(a, axis=k)`, `max_axis`'s mirror through
-    `ReduceMin`, and exact for the same reason."""
+    `ReduceMin`, and exact for the same reason.
+
+    Parameters:
+        dtype: The element type of `xs` and `dst`.
+        XsLayout: The row-major layout of `xs`, static or run-time shaped.
+        OutLayout: The layout of `dst`, consulted only for its element count.
+        axis: The axis to fold, in `[0, rank)`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The input tensor, of any rank.
+        dst: The output, the surviving axes' element count written in row-major
+            order.
+        ctx: The device context; required when `gpu=True`, unused otherwise.
+            Defaults to `None`.
+
+    Raises:
+        Raises if MAX's `rowwise.launch` fails on the chosen target.
+    """
     comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="min", target=target](xs, dst, ctx)
 
@@ -664,6 +792,27 @@ def mean_variance_axis[
     subtract-of-squares form returns noise or a negative number. That is
     also why the result will not match a two-pass host computation in the
     last bits: this one is the more accurate of the two.
+
+    Parameters:
+        dtype: The floating-point element type.
+        XsLayout: The row-major layout of `xs`, static or run-time shaped.
+        OutLayout: The layout `means` and `variances` share, consulted only for
+            its element count.
+        axis: The axis to reduce, in `[0, rank)`.
+        gpu: `False` (the default) runs on the CPU; `True` launches on the GPU
+            `ctx` names.
+
+    Args:
+        xs: The input tensor, of any rank.
+        means: The output means, the surviving axes in row-major order.
+        variances: The output variances, laid out like `means`.
+        ddof: Subtracted from the axis length to form the divisor; `0` (the
+            default) is the population variance, `1` the sample one.
+        ctx: The device context; required when `gpu=True`, unused otherwise.
+            Defaults to `None`.
+
+    Raises:
+        Raises if MAX's `rowwise.launch` fails on the chosen target.
     """
     comptime target = "gpu" if gpu else "cpu"
     comptime rank = type_of(xs).rank

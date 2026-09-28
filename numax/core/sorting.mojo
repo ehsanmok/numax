@@ -126,6 +126,23 @@ def sort[
 
     The overload below takes a tensor whose extents are run-time values
     and returns one, so `sort(extract(mask, a))` works.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, with every extent known at compile
+            time; read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to sort, at any rank.
+
+    Returns:
+        A new `Static` rank-1 tensor of `T.dtype` holding all `a.size()`
+        elements ascending, NaN last.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -150,6 +167,23 @@ def sort[
 
     Same sort as the overload above; the result's length is a run-time
     value because the input's is.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, with at least one run-time extent; read
+            as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to sort, at any rank.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `T.dtype` holding all `a.size()`
+        elements ascending, NaN last.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     if _check_device[T, gpu](a):
         comptime if gpu:
@@ -184,6 +218,22 @@ def argsort[
     The flattening is the `axis=None` contract every other routine in this
     module follows, and it is what makes the input rank-1 the way
     `nn.argsort` requires. NaN sorts last, as in NumPy.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose flat order is computed.
+
+    Returns:
+        A new `Dynamic` rank-1 `int64` tensor of length `a.size()` on `a`'s
+        device: the stable ascending order of `a`'s flat elements, NaN last.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     var n = a.size()
     var ctx = a.context()
@@ -350,6 +400,21 @@ def searchsorted[
     Binary search, so `O(log n)` comparisons -- but a data-dependent
     number of them, which is what makes this tier 2 rather than something
     that could live in a kernel.
+
+    Parameters:
+        T: The `TensorLike` type of `sorted_values`: rank 1 with a compile-time
+            length.
+
+    Args:
+        sorted_values: Rank-1 tensor sorted ascending; not checked.
+        value: Value whose insertion point is wanted.
+
+    Returns:
+        The first index `i` in `[0, n]` with `sorted_values[i] >= value`, or `n`
+        if there is none.
+
+    Raises:
+        If copying `sorted_values` to the host fails.
     """
     comptime n = dim[T, 0]
     var values = sorted_values.to_host()
@@ -440,6 +505,26 @@ def searchsorted[
     own binary search there and the indices stay on the device; both must
     be contiguous. A residency mismatch takes the host loop with the
     `_drive` notice.
+
+    Parameters:
+        A: The `TensorLike` type of `sorted_values`, read as flat.
+        B: The `TensorLike` type of `values`, with `A`'s dtype.
+        right: `False` gives the leftmost insertion point (`side="left"`),
+            `True` the rightmost (`side="right"`).
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        sorted_values: Values sorted ascending; not checked.
+        values: Queries, one insertion index each, read in flat order.
+
+    Returns:
+        A new `Dynamic` rank-1 `int64` tensor of length `values.size()` holding
+        each query's insertion index into `sorted_values`.
+
+    Raises:
+        If either tensor is a strided view on the device path, if a launch
+        fails, or on a residency mismatch under the `"raise"` fallback policy.
     """
     if _check_device[A, gpu](sorted_values) and _check_device[B, gpu](values):
         comptime if gpu:
@@ -578,6 +663,26 @@ def take[
     Rank-1 `indices` only, which is ONNX `Gather`'s own restriction on the
     shape numax passes; the flat `List[Int]` overload above is the one for
     an already-flat selection.
+
+    Parameters:
+        T: The `TensorLike` type of `a`.
+        IndexLayout: The rank-1 layout of `indices`.
+        axis: Axis of `a` the indices select along, in `[0, rank)`.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to select slices from.
+        indices: Rank-1 `int64` positions along `axis`, each in `[0,
+            a.dim_at(axis))`; repeats allowed.
+
+    Returns:
+        A new `Dynamic` tensor of `T.dtype` and `a`'s rank, shaped like `a`
+        except that extent `axis` is `indices.size()`.
+
+    Raises:
+        If an index is out of range, if `a` is a strided view on the device
+        path, or on a residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -711,6 +816,28 @@ def take_along_axis[
     a device and contiguous, numax's own gather runs one lane per output
     element, and the bounds check is a device `min`/`max` of the indices.
     A residency mismatch takes the host path with the `_drive` notice.
+
+    Parameters:
+        T: The `TensorLike` type of `a`.
+        IndexLayout: The layout of `indices`, at `a`'s rank.
+        axis: Axis along which `indices` index `a`, in `[0, rank)`.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to gather elements from.
+        indices: `int64` positions along `axis`, one per output element,
+            matching `a`'s extents off `axis`.
+
+    Returns:
+        A new `Dynamic` tensor of `T.dtype` at `indices`'s shape, each element
+        read from `a` at its index along `axis`.
+
+    Raises:
+        If an index is out of range along `axis`, if an extent off `axis`
+        differs between `a` and `indices`, if a tensor is a strided view on the
+        device path, or on a residency mismatch under the `"raise"` fallback
+        policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -782,6 +909,22 @@ def unique[
     flagging each element that differs from its predecessor, and the
     compaction `nonzero` uses; only the count is read back. A residency
     mismatch takes the host path with the `_drive` notice.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose distinct values are wanted.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `T.dtype` holding each distinct value
+        once, ascending, with every NaN kept.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     var n = a.size()
     if _check_device[T, gpu](a):
@@ -831,6 +974,21 @@ def count_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Int:
     NaN counts as nonzero, also matching NumPy, since `nan != 0`. At
     `gpu=True` it is a device count, one flag launch and one `ReduceSum`,
     and so are `any_nonzero` and `all_nonzero` below.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose nonzero elements are counted.
+
+    Returns:
+        How many elements of `a` differ from zero, NaN included.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     if _check_device[T, gpu](a):
         comptime if gpu:
@@ -855,6 +1013,21 @@ def any_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Bool:
 
     Short-circuits, which is the point of having it rather than
     `count_nonzero(a) > 0`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to test.
+
+    Returns:
+        `True` when some element of `a` is nonzero; `False` for an empty `a`.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     if _check_device[T, gpu](a):
         comptime if gpu:
@@ -871,7 +1044,23 @@ def any_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Bool:
 
 def all_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Bool:
     """Whether every element is nonzero. `numpy.all`, named for the same
-    reason as `any_nonzero`. Short-circuits on the first zero."""
+    reason as `any_nonzero`. Short-circuits on the first zero.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to test.
+
+    Returns:
+        `True` when no element of `a` is zero, including when `a` is empty.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
     if _check_device[T, gpu](a):
         comptime if gpu:
             return _count_nonzero_device(a) == a.size()
@@ -968,6 +1157,22 @@ def nonzero[
     shape `argsort` returns and `take` consumes. At `gpu=True` the mask,
     the offsets scan and the scatter all run on the device and only the
     count is read back (`_pack_device`).
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose nonzero positions are wanted.
+
+    Returns:
+        A new `Dynamic` rank-1 `int64` tensor on `a`'s device holding the
+        ascending flat indices of the nonzero elements.
+
+    Raises:
+        If `a` is a strided view on the device path, if a launch or read-back
+        fails, or on a residency mismatch under the `"raise"` fallback policy.
     """
     var n = a.size()
     if _check_device[T, gpu](a):
@@ -1039,6 +1244,22 @@ def argwhere[
 
     Right-sized: the row count depends on the data, which is what a
     run-time-shaped tensor is for.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, at any rank.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose nonzero coordinates are wanted.
+
+    Returns:
+        A new `Dynamic` rank-2 `int64` tensor of shape `(count, rank)` whose row
+        `i` is the coordinate of the `i`-th nonzero element in row-major order.
+
+    Raises:
+        If `a` is a strided view on the device path, if a launch or read-back
+        fails, or on a residency mismatch under the `"raise"` fallback policy.
     """
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
@@ -1128,7 +1349,24 @@ def put[
     form reads them; at `gpu=True`, with `a` and `indices` on a device and
     contiguous, the scatter runs there (`_put_device`) and the indices
     never come back. A residency mismatch takes the host path with the
-    `_drive` notice."""
+    `_drive` notice.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, written as flat row-major.
+        I: The `TensorLike` type of `indices`, over `DType.int64`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor written in place.
+        indices: Flat positions in `a`, each in `[0, a.size())`.
+        values: One value per index, or a single value written at every index.
+
+    Raises:
+        If `values` has neither one element nor one per index, if an index is
+        out of range, if a tensor is a strided view on the device path, or on a
+        residency mismatch under the `"raise"` fallback policy.
+    """
     if _check_device[T, gpu](a) and _check_device[I, gpu](indices):
         comptime if gpu:
             _require_contiguous(a)
@@ -1187,6 +1425,21 @@ def put[
     there in one launch, so `a` itself never crosses; duplicate indices
     then race, where on the host the last one wins. A residency mismatch
     takes the host path with the `_drive` notice.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, written as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor written in place.
+        indices: Flat positions in `a`, each in `[0, a.size())`.
+        values: One value per index, or a single value written at every index.
+
+    Raises:
+        If `values` has neither one element nor one per index, if an index is
+        out of range, if `a` is a strided view on the device path, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     var n = a.size()
     if _check_device[T, gpu](a):
@@ -1238,6 +1491,26 @@ def extract[
     composes without a conversion in between. A tensor of values becomes a
     mask with `numax.core.ops.astype[DType.bool]`, which is
     nonzero-means-true and is the one place that rule now lives.
+
+    Parameters:
+        C: The `TensorLike` type of `condition`, over `DType.bool` at `T`'s
+            layout.
+        T: The `TensorLike` type of `a`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        condition: Boolean mask over `a`'s layout.
+        a: Tensor whose selected elements are kept.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `T.dtype` holding the elements of `a`
+        where `condition` is true, in flat order.
+
+    Raises:
+        If a tensor is a strided view on the device path, if a launch or
+        read-back fails, or on a residency mismatch under the `"raise"` fallback
+        policy.
     """
     comptime dtype = T.dtype
     var n = a.size()
@@ -1273,6 +1546,27 @@ def compress[
     past its end are dropped rather than treated as false-by-default or
     raising, which is NumPy's rule and the reason both names exist. A
     condition longer than `a` is the error case and raises.
+
+    Parameters:
+        A: The `TensorLike` type of `condition`, rank 1 over `DType.bool`.
+        B: The `TensorLike` type of `a`, read as flat.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        condition: Rank-1 mask over the first `condition.size()` flat elements
+            of `a`.
+        a: Tensor selected from; positions past the end of `condition` are
+            dropped.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `B.dtype` holding the flat elements of
+        `a` where `condition` is true.
+
+    Raises:
+        If `condition` is longer than `a`, if a tensor is a strided view on the
+        device path, or on a residency mismatch under the `"raise"` fallback
+        policy.
     """
     comptime dtype = B.dtype
     var n = a.size()
@@ -1319,6 +1613,24 @@ def partition[
     from here because `numax.core` depends on no other numax subpackage,
     so sharing it means moving it down into this package, which is a
     change to a measured hot path rather than a new name.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, with every extent known at compile
+            time; read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to partition, at any rank.
+        kth: Flat position that must hold its sorted value, in `[0, a.size())`.
+
+    Returns:
+        A new `Static` rank-1 tensor of `T.dtype` holding `a`'s elements with
+        position `kth` in sorted place; currently fully sorted.
+
+    Raises:
+        If `kth` is outside `[0, a.size())`, if the sort fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     if kth < 0 or kth >= a.size():
         raise Error(
@@ -1337,7 +1649,26 @@ def partition[
     T.dtype, 1
 ] where not T.LayoutType.all_dims_known:
     """`numpy.partition` for a run-time shape. See the overload above,
-    including why it sorts."""
+    including why it sorts.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, with at least one run-time extent; read
+            as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to partition, at any rank.
+        kth: Flat position that must hold its sorted value, in `[0, a.size())`.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `T.dtype` holding `a`'s elements with
+        position `kth` in sorted place; currently fully sorted.
+
+    Raises:
+        If `kth` is outside `[0, a.size())`, if the sort fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
+    """
     if kth < 0 or kth >= a.size():
         raise Error(
             "partition: kth ",
@@ -1358,6 +1689,23 @@ def argpartition[
     `argsort`'s indices, which satisfy the partition contract for the same
     reason `partition` sorts -- a full ordering is a partition about every
     `kth` at once. The ceiling `partition` names applies here too.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to partition, at any rank.
+        kth: Flat position that must hold its sorted value, in `[0, a.size())`.
+
+    Returns:
+        A new `Dynamic` rank-1 `int64` tensor of flat indices that partition `a`
+        about `kth`; currently the full `argsort` order.
+
+    Raises:
+        If `kth` is outside `[0, a.size())`, if the sort fails, or on a
+        residency mismatch under the `"raise"` fallback policy.
     """
     if kth < 0 or kth >= a.size():
         raise Error(
@@ -1388,6 +1736,24 @@ def take[
     caller's host data, checked on the host -- is uploaded once and the
     gather runs there (`take[axis=0, gpu=True]` over a flat view). A
     residency mismatch takes the host path with the `_drive` notice.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to read from.
+        indices: Flat row-major positions in `a`, each in `[0, a.size())`;
+            repeats allowed.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `T.dtype` holding `a`'s flat element at
+        each index, in the order given.
+
+    Raises:
+        If an index is out of range, if `a` is a strided view on the device
+        path, or on a residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     var n = a.size()
@@ -1550,6 +1916,26 @@ def select[
     `numpy.where` next to `nonzero` and `extract`, and because the branching
     version reads more clearly at `Plain`. Reach for
     `numax.core.numeric.blend` when the selection has to happen inside a kernel.
+
+    Parameters:
+        C: The `TensorLike` type of `condition`, over `DType.bool` at `T`'s
+            layout.
+        T: The `TensorLike` type of `x` and `y`.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        condition: Boolean mask choosing between `x` and `y` per element.
+        x: Values taken where `condition` is true.
+        y: Values taken where `condition` is false.
+
+    Returns:
+        A new `Tensor` of `T.dtype` at `x`'s layout holding `x` where
+        `condition` is true and `y` elsewhere.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -1600,6 +1986,26 @@ def select[
     `numax.core.elementwise` and `numax.core.logic`, the walk reads through
     zero strides rather than materializing any operand, and the result is a
     `Dynamic` because the extents are computed at run time.
+
+    Parameters:
+        A: The `TensorLike` type of `condition`, over `DType.bool`.
+        B: The `TensorLike` type of `x`; its dtype is the result's.
+        C: The `TensorLike` type of `y`, with `B`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        condition: Boolean mask, broadcast against `x` and `y`.
+        x: Values taken where `condition` is true.
+        y: Values taken where `condition` is false.
+
+    Returns:
+        A new `Dynamic` tensor of `B.dtype` at the broadcast shape of all three
+        inputs, whose rank is the largest of theirs.
+
+    Raises:
+        If the three shapes do not broadcast, if a launch or read-back fails, or
+        on a residency mismatch under the `"raise"` fallback policy.
     """
     comptime dtype = B.dtype
     comptime CLayout = A.LayoutType
@@ -1712,6 +2118,24 @@ def top_k[
     A whole delegation to `nn.top_k`, so unlike `argsort` this one has a
     real device path: `gpu=True` runs MAX's GPU kernel over the tensor where
     it already lives, with no host copy in either direction.
+
+    Parameters:
+        T: The `TensorLike` type of `a`: rank 1 with a compile-time length.
+        k: How many elements to return, in `[1, n]`.
+        largest: `True` picks the `k` largest, `False` the `k` smallest.
+        gpu: `True` runs MAX's device kernel where `a` lives, `False` its CPU
+            one.
+
+    Args:
+        a: Rank-1 tensor to select from.
+        sorted: Whether the result is ordered by value; defaults to `True`.
+
+    Returns:
+        A `(values, indices)` tuple of `Static` length-`k` tensors: the selected
+        values of `T.dtype` and their `int64` positions in `a`.
+
+    Raises:
+        If `nn.top_k` fails or the device synchronize fails.
     """
     comptime dtype = T.dtype
     var ctx = a.context()
@@ -1742,6 +2166,25 @@ def top_k[
     module departs from its own "flat, not axis-wise" rule -- `nn.top_k`
     takes an axis, so routing it flat would be numax throwing away a
     capability MAX already has.
+
+    Parameters:
+        T: The `TensorLike` type of `a`: rank 2 with compile-time extents.
+        k: How many elements to return per row, in `[1, cols]`.
+        largest: `True` picks the `k` largest, `False` the `k` smallest.
+        gpu: `True` runs MAX's device kernel where `a` lives, `False` its CPU
+            one.
+
+    Args:
+        a: Rank-2 tensor selected from row by row.
+        sorted: Whether each row of the result is ordered by value; defaults to
+            `True`.
+
+    Returns:
+        A `(values, indices)` tuple of `Static` `(rows, k)` tensors: each row's
+        selected values of `T.dtype` and their `int64` column indices.
+
+    Raises:
+        If `nn.top_k` fails or the device synchronize fails.
     """
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]

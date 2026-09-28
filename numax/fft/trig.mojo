@@ -336,6 +336,24 @@ def dct[
 
     One complex DFT plus two `elementwise` passes; the module docstring has
     the reduction and the tables.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of `x`, any `n > 0` (`n >= 2` for type I).
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real length-`n` sequence to transform.
+
+    Returns:
+        The real length-`n` transform of `x`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _trig[gpu=gpu, cosine=True, type=type, norm=norm, inverse=False](x^)
 
@@ -360,6 +378,24 @@ def idct[
     for type I) lands here, under `"forward"` it was already applied, and
     under `"ortho"` nothing further is needed -- so `idct(dct(x))` is `x`
     to rounding for every type and every `norm`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of `x`, any `n > 0` (`n >= 2` for type I).
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real length-`n` sequence to transform.
+
+    Returns:
+        The real length-`n` inverse transform of `x`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _trig[gpu=gpu, cosine=True, type=type, norm=norm, inverse=True](x^)
 
@@ -384,6 +420,24 @@ def dst[
 
     `norm` as for `dct`. Type I is the one whose DFT is `2(N+1)` long;
     every other type's is `2N`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of `x`, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real length-`n` sequence to transform.
+
+    Returns:
+        The real length-`n` transform of `x`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
     """
     return _trig[gpu=gpu, cosine=False, type=type, norm=norm, inverse=False](x^)
 
@@ -399,5 +453,24 @@ def idst[
 ):
     """The inverse of `dst` of the same `type` and `norm`. `scipy.fft.idst`.
     The same type pairing and scale placement as `idct`, with `1/(2(N+1))`
-    for type I."""
+    for type I.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of `x`, any `n > 0`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real length-`n` sequence to transform.
+
+    Returns:
+        The real length-`n` inverse transform of `x`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
     return _trig[gpu=gpu, cosine=False, type=type, norm=norm, inverse=True](x^)

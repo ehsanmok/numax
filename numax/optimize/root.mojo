@@ -108,6 +108,28 @@ def root[
     a decrease in `||f||`, returns `converged=False` with the best point it
     reached. `x0` is borrowed rather than consumed, for the reason
     `numax.optimize.common` gives.
+
+    Parameters:
+        T: The tensor type of `x0`, a static rank-1 floating-point vector.
+        f: The residual function, mapping a length-`n` point to `F(x)`.
+        jac: The `n x n` Jacobian of `f` at a point.
+        method: `"newton"` (line-searched Newton) or `"lm"`
+            (Levenberg-Marquardt on `sum(F^2)`).
+        gpu: Run each step's linear solve on the device `x0` lives on; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        x0: The starting point, length `n`; borrowed, not consumed.
+        tol: The convergence threshold on `max|f(x)|`; `1e-10` by default.
+        max_iter: The iteration cap; `100` by default.
+
+    Returns:
+        A `RootResult` with the final point, `max|f(x)|` there, the
+        iteration count, and whether `tol` was met.
+
+    Raises:
+        If `method` is neither `"newton"` nor `"lm"`, or if `f`, `jac`, or
+        the linear solve raises.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -197,5 +219,26 @@ def root[
 ) raises -> ArrayMinimizeResult[n, dtype] where dtype.is_floating_point():
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.optimize._array.optimize.root`."""
+    at `numax.optimize._array.optimize.root`.
+
+    Parameters:
+        n: The number of unknowns and of residuals.
+        f: The residual function, generic over the `FloatLike` conformer so
+            its Jacobian is read off `Gradient`.
+        method: The method; `"lm"` is the only one accepted.
+        dtype: The floating-point element type.
+
+    Args:
+        x0: The starting point.
+        tol: The first-order tolerance on `max|J.T f|`; a dtype-scaled
+            `1e-10` by default.
+        max_iter: The iteration cap; `100` by default.
+
+    Returns:
+        An `ArrayMinimizeResult` whose `f_x` is `sum(f(x)**2) / 2`; near
+        zero means a root was found.
+
+    Raises:
+        If `method` is not `"lm"`.
+    """
     return _array_root[n=n, f=f, method=method, dtype=dtype](x0, tol, max_iter)

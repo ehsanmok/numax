@@ -147,21 +147,51 @@ struct Complex[Inner: FloatLike](
     def write_to(
         self, mut writer: Some[Writer]
     ) where conforms_to(Self.Inner, Writable):
+        """Write `re + imi`.
+
+        Args:
+            writer: The destination both parts are written to.
+        """
         writer.write(self.re, " + ", self.im, "i")
 
     @staticmethod
     def i() -> Self:
-        """The imaginary unit -- a convenience, not part of `FloatLike`."""
+        """The imaginary unit -- a convenience, not part of `FloatLike`.
+
+        Returns:
+            `0 + 1i`.
+        """
         return Self(Self.Inner.constant(0.0), Self.Inner.one())
 
     @staticmethod
     def one() -> Self:
+        """The real unit `1 + 0i`.
+
+        Returns:
+            `Inner.one() + 0i`.
+        """
         return Self(Self.Inner.one(), Self.Inner.constant(0.0))
 
     def __add__(self, rhs: Self) -> Self:
+        """Complex addition, part by part.
+
+        Args:
+            rhs: The addend `c + di`.
+
+        Returns:
+            `(a + c) + (b + d)i`.
+        """
         return Self(self.re + rhs.re, self.im + rhs.im)
 
     def __mul__(self, rhs: Self) -> Self:
+        """Complex multiplication: `(a+bi)(c+di) = (ac-bd) + (ad+bc)i`.
+
+        Args:
+            rhs: The multiplier `c + di`.
+
+        Returns:
+            `(ac - bd) + (ad + bc)i`.
+        """
         # (a+bi)(c+di) = (ac-bd) + (ad+bc)i.
         return Self(
             self.re * rhs.re - (self.im * rhs.im),
@@ -169,9 +199,22 @@ struct Complex[Inner: FloatLike](
         )
 
     def __neg__(self) -> Self:
+        """Negation of both parts.
+
+        Returns:
+            `-a - bi`.
+        """
         return Self(-self.re, -self.im)
 
     def __truediv__(self, rhs: Self) -> Self:
+        """Complex division by multiplying through by the conjugate.
+
+        Args:
+            rhs: The divisor `c + di`.
+
+        Returns:
+            `(a+bi)(c-di) / (c^2+d^2)`, without scaling against overflow.
+        """
         # (a+bi)/(c+di) = (a+bi)(c-di) / (c^2+d^2).
         var denom = rhs.re * rhs.re + rhs.im * rhs.im
         var num_re = self.re * rhs.re + self.im * rhs.im
@@ -187,6 +230,11 @@ struct Complex[Inner: FloatLike](
         return (self.re * self.re + self.im * self.im).sqrt()
 
     def sqrt(self) -> Self:
+        """The principal square root, from the modulus without an argument.
+
+        Returns:
+            `sqrt((|z|+a)/2) + i*sign(b)*sqrt((|z|-a)/2)`, so `sqrt(-4) = 2i`.
+        """
         # sqrt(z) = sqrt((|z|+a)/2) + i*sign(b)*sqrt((|z|-a)/2), avoiding
         # an argument and a halving. `max_of` against zero keeps a lane
         # that rounded a hair below `0` out of `sqrt`; `copysign`'s
@@ -200,11 +248,22 @@ struct Complex[Inner: FloatLike](
         return Self(re_part^, im_magnitude.copysign(self.im))
 
     def exp(self) -> Self:
+        """`exp(a+bi) = exp(a) * (cos(b) + i*sin(b))`.
+
+        Returns:
+            `exp(a)cos(b) + exp(a)sin(b)i`.
+        """
         # exp(a+bi) = exp(a) * (cos(b) + i*sin(b)).
         var mag = self.re.exp()
         return Self(mag * self.im.cos(), mag * self.im.sin())
 
     def ln(self) -> Self:
+        """The principal logarithm, `ln|z| + i*atan2(im, re)`.
+
+        Returns:
+            `ln|z| + i*arg(z)`, the argument from the private `_atan2` (error
+            ~9e-8).
+        """
         # ln(z) = ln(|z|) + i*atan2(im, re) -- see this module's docstring
         # for why `atan2` is a private helper here rather than a trait
         # method.
@@ -213,6 +272,12 @@ struct Complex[Inner: FloatLike](
         return Self(log_mag^, theta^)
 
     def erf(self) -> Self:
+        """The complex error function, by its 40-term defining power series.
+
+        Returns:
+            `erf(z)`, accurate for moderate `|z|` only; see the module
+            docstring.
+        """
         # The defining power series -- see this module's docstring for the
         # term count and its scope.
         comptime num_terms = 40
@@ -235,9 +300,19 @@ struct Complex[Inner: FloatLike](
         return total * scale
 
     def erfc(self) -> Self:
+        """The complex complementary error function, as `1 - erf(z)`.
+
+        Returns:
+            `1 - erf(z)`, with the same `|z|` limit as `erf`.
+        """
         return Self.one() - self.erf()
 
     def sin(self) -> Self:
+        """`sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b)`.
+
+        Returns:
+            `sin(z)`, with `cosh`/`sinh` built from `exp`.
+        """
         # sin(a+bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b).
         var eb = self.im.exp()
         var e_neg_b = (-self.im).exp()
@@ -246,6 +321,11 @@ struct Complex[Inner: FloatLike](
         return Self(self.re.sin() * cosh_b, self.re.cos() * sinh_b)
 
     def cos(self) -> Self:
+        """`cos(a+bi) = cos(a)cosh(b) - i*sin(a)sinh(b)`.
+
+        Returns:
+            `cos(z)`, with `cosh`/`sinh` built from `exp`.
+        """
         # cos(a+bi) = cos(a)*cosh(b) - i*sin(a)*sinh(b).
         var eb = self.im.exp()
         var e_neg_b = (-self.im).exp()
@@ -255,13 +335,34 @@ struct Complex[Inner: FloatLike](
 
     @staticmethod
     def constant(v: Float64) -> Self:
+        """A real literal, `v + 0i`.
+
+        Args:
+            v: The real part.
+
+        Returns:
+            `Inner.constant(v) + 0i`.
+        """
         return Self(Self.Inner.constant(v), Self.Inner.constant(0.0))
 
     def abs(self) -> Self:
+        """The modulus, embedded as a real `Complex`.
+
+        Returns:
+            `|z| + 0i`, per the module docstring's embedding convention.
+        """
         # See this module's docstring for the embedding convention.
         return Self(self._modulus(), Self.Inner.constant(0.0))
 
     def copysign(self, sign_source: Self) -> Self:
+        """The modulus with the sign of `sign_source`'s real part.
+
+        Args:
+            sign_source: The value whose real part's sign is copied.
+
+        Returns:
+            `copysign(|z|, sign_source.re) + 0i`.
+        """
         # See this module's docstring for the embedding convention.
         return Self(
             self._modulus().copysign(sign_source.re),
@@ -269,13 +370,28 @@ struct Complex[Inner: FloatLike](
         )
 
     def floor(self) -> Self:
+        """`floor` of the modulus, embedded as a real `Complex`.
+
+        Returns:
+            `floor(|z|) + 0i`.
+        """
         # Same "no canonical complex meaning" embedding as `abs`/`copysign`
         # above: `self._modulus()` is a real `Inner`, `floor`ed on that real
         # axis, then re-embedded as `Complex(x, 0)`.
         return Self(self._modulus().floor(), Self.Inner.constant(0.0))
 
     def ceil(self) -> Self:
+        """`ceil` of the modulus, embedded as a real `Complex`.
+
+        Returns:
+            `ceil(|z|) + 0i`.
+        """
         return Self(self._modulus().ceil(), Self.Inner.constant(0.0))
 
     def trunc(self) -> Self:
+        """`trunc` of the modulus, embedded as a real `Complex`.
+
+        Returns:
+            `trunc(|z|) + 0i`.
+        """
         return Self(self._modulus().trunc(), Self.Inner.constant(0.0))

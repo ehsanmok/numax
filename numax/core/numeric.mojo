@@ -25,16 +25,41 @@ trait FloatLike(Copyable, Deinitable):
     @staticmethod
     def one() -> Self:
         """The multiplicative identity, at whatever width/precision `Self` is.
+
+        Returns:
+            `1` in every lane, with any auxiliary component (derivative, error
+            term) zero.
         """
         ...
 
     def __add__(self, rhs: Self) -> Self:
+        """The sum `self + rhs`, lane-wise.
+
+        Args:
+            rhs: The addend.
+
+        Returns:
+            `self + rhs`, carrying whatever extra components `Self` tracks.
+        """
         ...
 
     def __mul__(self, rhs: Self) -> Self:
+        """The product `self * rhs`, lane-wise.
+
+        Args:
+            rhs: The multiplier.
+
+        Returns:
+            `self * rhs`, carrying whatever extra components `Self` tracks.
+        """
         ...
 
     def __neg__(self) -> Self:
+        """The negation `-self`, lane-wise.
+
+        Returns:
+            `-self`, exact at every conformer in numax.
+        """
         ...
 
     def __sub__(self, rhs: Self) -> Self:
@@ -50,17 +75,41 @@ trait FloatLike(Copyable, Deinitable):
         A conformer that can subtract more accurately than it can negate and
         add is free to override; none of the ones here can, since negation is
         exact at every one of them.
+
+        Args:
+            rhs: The subtrahend.
+
+        Returns:
+            `self + (-rhs)`.
         """
         return self + (-rhs)
 
     def __truediv__(self, rhs: Self) -> Self:
+        """The quotient `self / rhs`, lane-wise.
+
+        Args:
+            rhs: The divisor.
+
+        Returns:
+            `self / rhs`; a zero divisor gives whatever the conformer's
+            arithmetic produces.
+        """
         ...
 
     def exp(self) -> Self:
+        """The exponential `e^self`, lane-wise.
+
+        Returns:
+            `e^self` at the conformer's precision.
+        """
         ...
 
     def ln(self) -> Self:
-        """The natural logarithm. Only meaningful for `self > 0`."""
+        """The natural logarithm. Only meaningful for `self > 0`.
+
+        Returns:
+            `ln(self)` at the conformer's precision.
+        """
         ...
 
     def sqrt(self) -> Self:
@@ -76,11 +125,18 @@ trait FloatLike(Copyable, Deinitable):
         costs two transcendental calls where hardware has a single `sqrt`
         instruction, and it loses accuracy doing it, since the `ln` result's
         rounding error gets amplified back through `exp`.
+
+        Returns:
+            The non-negative square root of `self`.
         """
         ...
 
     def erf(self) -> Self:
-        """The error function, `(2/sqrt(pi)) * integral(exp(-t^2), 0, self)`."""
+        """The error function, `(2/sqrt(pi)) * integral(exp(-t^2), 0, self)`.
+
+        Returns:
+            `erf(self)` at the conformer's precision.
+        """
         ...
 
     def erfc(self) -> Self:
@@ -92,13 +148,27 @@ trait FloatLike(Copyable, Deinitable):
         exactly the case a conformer with a real `erfc` -- `Plain`, via
         `std.math.erfc` -- exists to avoid. See `default_erf_approx`
         below for the conformers using it as their `erfc`, too.
+
+        Returns:
+            `1 - erf(self)`, without the cancellation where the conformer
+            allows.
         """
         ...
 
     def sin(self) -> Self:
+        """The sine of `self` in radians, lane-wise.
+
+        Returns:
+            `sin(self)` at the conformer's precision.
+        """
         ...
 
     def cos(self) -> Self:
+        """The cosine of `self` in radians, lane-wise.
+
+        Returns:
+            `cos(self)` at the conformer's precision.
+        """
         ...
 
     @staticmethod
@@ -109,10 +179,22 @@ trait FloatLike(Copyable, Deinitable):
         without knowing how `Self` represents a value -- `Dual` gives the
         constant a zero derivative, `Compensated` gets to decide how much
         of `v` survives the trip through a single `dtype` lane.
+
+        Args:
+            v: The literal value to embed.
+
+        Returns:
+            `v` represented as `Self`, with any auxiliary component zero.
         """
         ...
 
     def abs(self) -> Self:
+        """The absolute value `|self|`, lane-wise.
+
+        Returns:
+            `|self|`, with any auxiliary component following the conformer's
+            rule.
+        """
         ...
 
     def copysign(self, sign_source: Self) -> Self:
@@ -121,6 +203,14 @@ trait FloatLike(Copyable, Deinitable):
         Lets a kernel derived for `x >= 0` extend to all `x` via
         `result.copysign(x)`, without ever branching on `Self` itself --
         which may hold a SIMD vector with mixed-sign lanes.
+
+        Args:
+            sign_source: The value whose sign, lane by lane, is copied onto
+                `self`.
+
+        Returns:
+            `|self|` carrying `sign_source`'s sign; a zero `sign_source` counts
+            as positive.
         """
         ...
 
@@ -135,6 +225,9 @@ trait FloatLike(Copyable, Deinitable):
         `numax/core/interval.mojo`'s own docstring). That's a genuine kernel
         that needed a genuinely new capability, the same bar `sqrt`'s
         promotion was held to.
+
+        Returns:
+            `self` rounded toward negative infinity.
         """
         ...
 
@@ -144,6 +237,9 @@ trait FloatLike(Copyable, Deinitable):
         Added alongside `floor` for the same kernel (`numax.core.interval`'s
         tight `sin`/`cos` enclosure needs both directions of rounding, one
         per bound of the interval it's enclosing).
+
+        Returns:
+            `self` rounded toward positive infinity.
         """
         ...
 
@@ -157,6 +253,9 @@ trait FloatLike(Copyable, Deinitable):
         arithmetic comparison of two rounded quantities) is most directly
         expressed with a round-toward-zero, which `floor`/`ceil` alone
         don't give without an extra sign check.
+
+        Returns:
+            `self` rounded toward zero.
         """
         ...
 
@@ -183,6 +282,16 @@ def max_of[T: FloatLike](a: T, b: T) -> T:
 
     Where `a == b` the `>=` side wins, so `max_of(x, x)` is `x`; a NaN in
     either operand propagates, as it did before.
+
+    Parameters:
+        T: The `FloatLike` conformer both operands share.
+
+    Args:
+        a: The first operand, returned where `a >= b`.
+        b: The second operand, returned where `a < b`.
+
+    Returns:
+        The lane-wise maximum, bit-identical to the operand it selects.
     """
     var take_a = ge_indicator(a, b)
     return a * take_a + b * (T.one() - take_a)
@@ -191,7 +300,18 @@ def max_of[T: FloatLike](a: T, b: T) -> T:
 def min_of[T: FloatLike](a: T, b: T) -> T:
     """The smaller of `a` and `b`, lane-wise and branchless -- `max_of`'s
     exact selection with the indicator flipped: `a` where `a <= b`, else
-    `b`."""
+    `b`.
+
+    Parameters:
+        T: The `FloatLike` conformer both operands share.
+
+    Args:
+        a: The first operand, returned where `a <= b`.
+        b: The second operand, returned where `a > b`.
+
+    Returns:
+        The lane-wise minimum, bit-identical to the operand it selects.
+    """
     var take_a = ge_indicator(b, a)
     return a * take_a + b * (T.one() - take_a)
 
@@ -208,6 +328,16 @@ def ge_indicator[T: FloatLike](x: T, threshold: T) -> T:
     `numax`: a `Self` may hold a SIMD vector whose lanes disagree about
     which side of `threshold` they're on, and an ordinary `if` would branch
     on the whole vector. Pair it with `blend` below.
+
+    Parameters:
+        T: The `FloatLike` conformer both operands share.
+
+    Args:
+        x: The value compared against `threshold`.
+        threshold: The boundary; `x == threshold` maps to `1`.
+
+    Returns:
+        `1` in lanes where `x >= threshold` and `0` elsewhere, as a `T`.
     """
     var sign = T.one().copysign(x - threshold)
     return (sign + T.one()) / T.constant(2.0)
@@ -220,6 +350,16 @@ def guard_nonzero[T: FloatLike](x: T, floor: T) -> T:
     it" -- Lentz's continued-fraction guard in `numax.special.beta`, and the
     zero-derivative guard in `numax.optimize`. `copysign`'s `+1`-at-zero
     convention means an exactly-zero `x` comes back as `+floor`.
+
+    Parameters:
+        T: The `FloatLike` conformer both operands share.
+
+    Args:
+        x: The value to guard, typically a denominator.
+        floor: The smallest magnitude allowed through; should be positive.
+
+    Returns:
+        `max(|x|, floor)` with `x`'s sign, `+floor` where `x` is exactly zero.
     """
     return max_of(x.abs(), floor).copysign(x)
 
@@ -233,6 +373,17 @@ def blend[T: FloatLike](indicator: T, if_one: T, if_zero: T) -> T:
     indicator yields NaN, not zero. Clamping the "wrong" side's argument
     into a safe range with `max_of`/`min_of` first is how the kernels here
     guarantee that.
+
+    Parameters:
+        T: The `FloatLike` conformer all three operands share.
+
+    Args:
+        indicator: A `0`/`1` selector per lane, as `ge_indicator` produces.
+        if_one: The value taken in lanes where `indicator` is `1`.
+        if_zero: The value taken in lanes where `indicator` is `0`.
+
+    Returns:
+        `if_one * indicator + if_zero * (1 - indicator)`.
     """
     return if_one * indicator + if_zero * (T.one() - indicator)
 
@@ -253,6 +404,15 @@ def default_erf_approx[T: FloatLike](x: T) -> T:
     Max absolute error ~1.5e-7 for `x >= 0`, extended to negative `x` via
     `copysign` since `erf` is odd -- the formula itself is only derived for
     `x >= 0`.
+
+    Parameters:
+        T: The `FloatLike` conformer to evaluate the approximation in.
+
+    Args:
+        x: The argument, any sign.
+
+    Returns:
+        `erf(x)` to an absolute error of about `1.5e-7`.
     """
     var ax = x.abs()
 

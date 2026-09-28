@@ -263,6 +263,31 @@ def least_squares[
 
     The module docstring says why the Jacobian is an argument here when the
     `Array` tier's `least_squares` takes none, and when to prefer which.
+
+    Parameters:
+        T: The tensor type of `x0`, a static rank-1 floating-point vector
+            of `n_params` entries.
+        n_resid: The length of the residual vector, at least `n_params`.
+        residuals: The residual function, mapping `n_params` parameters to
+            `n_resid` residuals.
+        jacobian: The `n_resid x n_params` Jacobian of `residuals`.
+        gpu: Keep the residuals, the Jacobian and the damped QR solve on
+            the device `x0` lives on; a host-resident `x0` runs the host
+            loop, whose `lstsq` still takes this flag.
+        block: The panel width of the blocked QR in `numax.linalg.lstsq`.
+
+    Args:
+        x0: The starting parameters; borrowed, not consumed.
+        tol: The convergence threshold on `max|J^T r|`.
+        max_iter: The iteration cap.
+
+    Returns:
+        A `FitResult` with the parameters, the cost `sum(r**2) / 2`, the
+        gradient norm, the iteration count, and whether `tol` was met.
+
+    Raises:
+        If `residuals`, `jacobian`, or the device-side least-squares solve
+        raises.
     """
     comptime dtype = T.dtype
     comptime n_params = dim[T, 0]
@@ -521,6 +546,36 @@ def curve_fit[
     residuals as a compile-time parameter, and a non-capturing function
     cannot reach run-time data through one. Here the data is an argument to
     the fit and the model never has to close over it.
+
+    Parameters:
+        A: The tensor type of `xdata`, a length-`n_points` vector.
+        B: The tensor type of `ydata`, the same length as `xdata`.
+        C: The tensor type of `p0`, a length-`n_params` vector with
+            `n_params <= n_points`.
+        model: The whole-curve model, mapping `xdata` and the parameters to
+            the `n_points` predicted values.
+        model_jacobian: The `n_points x n_params` partials of `model` with
+            respect to the parameters.
+        gpu: Keep the data, the model evaluations and the damped QR solve
+            on the device the data lives on; host-resident data runs the
+            host loop, whose `lstsq` still takes this flag.
+        block: The panel width of the blocked QR in `numax.linalg.lstsq`.
+
+    Args:
+        xdata: The independent-variable samples.
+        ydata: The observed values at `xdata`.
+        p0: The starting parameters.
+        tol: The convergence threshold on `max|J^T r|`.
+        max_iter: The iteration cap.
+
+    Returns:
+        A `FitResult` with the fitted parameters, the cost
+        `sum(r**2) / 2`, the gradient norm, the iteration count, and
+        whether `tol` was met.
+
+    Raises:
+        If `model`, `model_jacobian`, or the device-side least-squares
+        solve raises.
     """
     comptime dtype = A.dtype
     comptime n_points = dim[A, 0]
@@ -640,7 +695,27 @@ def curve_fit[
 ) -> ArrayMinimizeResult[n_params, dtype] where dtype.is_floating_point():
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.optimize._array.optimize.curve_fit`."""
+    at `numax.optimize._array.optimize.curve_fit`.
+
+    Parameters:
+        n_params: The number of model parameters.
+        n_points: The number of data points.
+        model: The per-point model `model(x, params)`, generic over the
+            `FloatLike` conformer so its Jacobian is read off `Gradient`.
+        dtype: The floating-point element type.
+
+    Args:
+        xdata: The independent-variable samples.
+        ydata: The observed values at `xdata`.
+        p0: The starting parameters.
+        tol: The convergence threshold on `max|J^T r|`; a dtype-scaled
+            `1e-10` by default.
+        max_iter: The iteration cap.
+
+    Returns:
+        An `ArrayMinimizeResult` with the fitted parameters and the cost
+        `sum(r**2) / 2` at them.
+    """
     return _array_curve_fit[
         n_params=n_params, n_points=n_points, model=model, dtype=dtype
     ](xdata, ydata, p0, tol, max_iter)
@@ -658,7 +733,25 @@ def least_squares[
 ) -> ArrayMinimizeResult[n_params, dtype] where dtype.is_floating_point():
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.optimize._array.optimize.least_squares`."""
+    at `numax.optimize._array.optimize.least_squares`.
+
+    Parameters:
+        n_params: The number of parameters.
+        n_resid: The number of residuals.
+        residuals: The residual function, generic over the `FloatLike`
+            conformer so its Jacobian is read off `Gradient`.
+        dtype: The floating-point element type.
+
+    Args:
+        x0: The starting parameters.
+        tol: The convergence threshold on `max|J^T r|`; a dtype-scaled
+            `1e-10` by default.
+        max_iter: The iteration cap.
+
+    Returns:
+        An `ArrayMinimizeResult` with the parameters and the cost
+        `sum(r**2) / 2` at them.
+    """
     return _array_least_squares[
         n_params=n_params, n_resid=n_resid, residuals=residuals, dtype=dtype
     ](x0, tol, max_iter)

@@ -62,7 +62,24 @@ def trapezoid[
     T.dtype.is_floating_point() and T.LayoutType.rank == 1
 ):
     """The trapezoid rule over samples `y` spaced `dx` apart.
-    `scipy.integrate.trapezoid(y, dx=dx)`."""
+    `scipy.integrate.trapezoid(y, dx=dx)`.
+
+    Parameters:
+        T: The rank-1 floating-point tensor type of `y`.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host walk with a notice.
+
+    Args:
+        y: The samples on a uniform grid.
+        dx: The spacing between consecutive samples.
+
+    Returns:
+        The trapezoid-rule integral; `0` for fewer than two samples.
+
+    Raises:
+        If a host copy, device launch or transfer fails, or if
+        the fallback policy is `"raise"` and a residency mismatch occurs.
+    """
     if y.size() >= 3 and _check_device[T, gpu](y):
         comptime if gpu:
             return _sampled_device["trapezoid", False](y, y, dx)
@@ -84,7 +101,26 @@ def trapezoid[
     T.dtype.is_floating_point() and T.LayoutType.rank == 1 and XLayout.rank == 1
 ):
     """The trapezoid rule over samples `y` at the points `x`, which need
-    not be evenly spaced. `scipy.integrate.trapezoid(y, x)`."""
+    not be evenly spaced. `scipy.integrate.trapezoid(y, x)`.
+
+    Parameters:
+        T: The rank-1 floating-point tensor type of `y`.
+        XLayout: The rank-1 layout of `x`.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host walk with a notice.
+
+    Args:
+        y: The samples.
+        x: The sample points, one per element of `y`.
+
+    Returns:
+        The trapezoid-rule integral; `0` for fewer than two samples.
+
+    Raises:
+        If `x` and `y` differ in length, if `y` or `x` is not contiguous
+        on the device path, if a copy or launch fails, or if
+        the fallback policy is `"raise"` and a residency mismatch occurs.
+    """
     if y.size() >= 3 and _check_device[T, gpu](y):
         comptime if gpu:
             return _sampled_device["trapezoid", True](y, x, 0)
@@ -280,7 +316,25 @@ def simpson[
     T.dtype.is_floating_point() and T.LayoutType.rank == 1
 ):
     """Composite Simpson's rule over samples `y` spaced `dx` apart.
-    `scipy.integrate.simpson(y, dx=dx)`, even sample counts included."""
+    `scipy.integrate.simpson(y, dx=dx)`, even sample counts included.
+
+    Parameters:
+        T: The rank-1 floating-point tensor type of `y`.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host walk with a notice.
+
+    Args:
+        y: The samples on a uniform grid.
+        dx: The spacing between consecutive samples.
+
+    Returns:
+        The composite Simpson integral, with Cartwright's correction on
+        the last interval for an even sample count; `0` below two samples.
+
+    Raises:
+        If a host copy, device launch or transfer fails, or if
+        the fallback policy is `"raise"` and a residency mismatch occurs.
+    """
     if y.size() >= 3 and _check_device[T, gpu](y):
         comptime if gpu:
             return _sampled_device["simpson", False](y, y, dx)
@@ -297,7 +351,27 @@ def simpson[
     T.dtype.is_floating_point() and T.LayoutType.rank == 1 and XLayout.rank == 1
 ):
     """Composite Simpson's rule over samples `y` at the points `x`.
-    `scipy.integrate.simpson(y, x)`."""
+    `scipy.integrate.simpson(y, x)`.
+
+    Parameters:
+        T: The rank-1 floating-point tensor type of `y`.
+        XLayout: The rank-1 layout of `x`.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host walk with a notice.
+
+    Args:
+        y: The samples.
+        x: The sample points, one per element of `y`.
+
+    Returns:
+        The composite Simpson integral by the general three-point formula;
+        `0` below two samples.
+
+    Raises:
+        If `x` and `y` differ in length, if `y` or `x` is not contiguous
+        on the device path, if a copy or launch fails, or if
+        the fallback policy is `"raise"` and a residency mismatch occurs.
+    """
     if y.size() >= 3 and _check_device[T, gpu](y):
         comptime if gpu:
             return _sampled_device["simpson", True](y, x, 0)
@@ -328,6 +402,25 @@ def cumulative_trapezoid[
     is as long as `y` and `out[i]` is the integral up to `y[i]`. A
     compile-time flag rather than an argument because it changes the
     result's length, which is part of the type.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y`,
+            with at least two samples.
+        initial: Whether to prepend a zero so the result has `y`'s length.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host walk with a notice.
+
+    Args:
+        y: The samples on a uniform grid.
+        dx: The spacing between consecutive samples.
+
+    Returns:
+        A `Static` tensor on `y`'s device of the running integrals, of
+        length `n - 1`, or `n` when `initial`.
+
+    Raises:
+        If a copy, device launch or scan fails, or if
+        the fallback policy is `"raise"` and a residency mismatch occurs.
     """
     comptime n = dim[T, 0]
     comptime m = n if initial else n - 1
@@ -361,7 +454,29 @@ def cumulative_trapezoid[
     and B.dtype == A.dtype
 ):
     """The running trapezoid integral of `y` at the points `x`.
-    `scipy.integrate.cumulative_trapezoid(y, x)`."""
+    `scipy.integrate.cumulative_trapezoid(y, x)`.
+
+    Parameters:
+        A: The rank-1, static-extent floating-point tensor type of `y`,
+            with at least two samples.
+        B: The rank-1 tensor type of `x`, of `y`'s dtype.
+        initial: Whether to prepend a zero so the result has `y`'s length.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host walk with a notice.
+
+    Args:
+        y: The samples.
+        x: The sample points, one per element of `y`.
+
+    Returns:
+        A `Static` tensor on `y`'s device of the running integrals, of
+        length `n - 1`, or `n` when `initial`.
+
+    Raises:
+        If `x` and `y` differ in length, if `y` or `x` is not contiguous
+        on the device path, if a copy, launch or scan fails, or if
+        the fallback policy is `"raise"` and a residency mismatch occurs.
+    """
     comptime n = dim[A, 0]
     comptime m = n if initial else n - 1
     if _check_device[A, gpu](y):
@@ -392,7 +507,20 @@ def simpson[
 ](a: T, b: T) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.integrate._array.quadrature.simpson`."""
+    at `numax.integrate._array.quadrature.simpson`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the limits and the result.
+        f: The `FloatLike`-generic integrand.
+        num_panels: The number of Simpson panels, two subintervals each.
+
+    Args:
+        a: The lower limit of integration.
+        b: The upper limit of integration.
+
+    Returns:
+        The composite Simpson estimate of the integral of `f`.
+    """
     return _array_simpson[T=T, f=f, num_panels=num_panels](a, b)
 
 
@@ -403,5 +531,18 @@ def trapezoid[
 ](a: T, b: T) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.integrate._array.quadrature.trapezoid`."""
+    at `numax.integrate._array.quadrature.trapezoid`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the limits and the result.
+        f: The `FloatLike`-generic integrand.
+        num_intervals: The number of equal intervals over `[a, b]`.
+
+    Args:
+        a: The lower limit of integration.
+        b: The upper limit of integration.
+
+    Returns:
+        The composite trapezoid estimate of the integral of `f`.
+    """
     return _array_trapezoid[T=T, f=f, num_intervals=num_intervals](a, b)

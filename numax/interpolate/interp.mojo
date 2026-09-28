@@ -125,6 +125,26 @@ def interp[
     place. `numax.interpolate`'s `Array` tier has no `interp` -- an `Array` of knots
     small enough for registers is a spline's or a polynomial's, not a
     lookup table's.
+
+    Parameters:
+        A: The tensor type of `x`, rank 1 with `m > 0` elements.
+        B: The tensor type of `xp`, rank 1 with `n > 0` elements.
+        C: The tensor type of `fp`, rank 1 with the same length as `xp`.
+        gpu: Whether the lookup launch targets the GPU on the device of `x`
+            rather than the host CPU.
+
+    Args:
+        x: The `m` query points.
+        xp: The `n` ascending sample abscissae.
+        fp: The `n` sample values at `xp`.
+        left: The value below `xp[0]`; `fp[0]` when not given.
+        right: The value above `xp[n-1]`; `fp[n-1]` when not given.
+
+    Returns:
+        A length-`m` tensor of the interpolated values at `x`.
+
+    Raises:
+        If allocating the output or the launch fails.
     """
     comptime m = dim[A, 0]
     comptime n = dim[B, 0]
@@ -201,6 +221,23 @@ def horner[
     one `FloatLike` value -- and the ascending order is NumPy's
     `polynomial` package's, not the descending order of the legacy
     `numpy.polyval`.
+
+    Parameters:
+        A: The tensor type of `coefficients`, rank 1 with `k > 0` elements.
+        B: The tensor type of `x`, rank 1 with `m > 0` elements.
+        gpu: Whether the evaluation launch targets the GPU on the device of
+            `x` rather than the host CPU.
+
+    Args:
+        coefficients: The `k` ascending coefficients, `coefficients[i]`
+            multiplying `x^i`.
+        x: The `m` points to evaluate at.
+
+    Returns:
+        A length-`m` tensor of the polynomial's values at `x`.
+
+    Raises:
+        If allocating the output or the launch fails.
     """
     comptime k = dim[A, 0]
     comptime m = dim[B, 0]
@@ -251,6 +288,22 @@ def polyval[
     one being converted.
 
     One `elementwise` launch of Horner's rule per lane, as `horner`'s is.
+
+    Parameters:
+        A: The tensor type of `p`, rank 1 with `k > 0` elements.
+        B: The tensor type of `x`, rank 1 with `m > 0` elements.
+        gpu: Whether the evaluation launch targets the GPU on the device of
+            `x` rather than the host CPU.
+
+    Args:
+        p: The `k` descending coefficients, `p[0]` the highest power.
+        x: The `m` points to evaluate at.
+
+    Returns:
+        A length-`m` tensor of the polynomial's values at `x`.
+
+    Raises:
+        If allocating the output or the launch fails.
     """
     comptime k = dim[A, 0]
     comptime m = dim[B, 0]
@@ -338,6 +391,21 @@ def polyder[
     `k` coefficient multiplies: a loop on the host, or at `gpu=True` one
     launch on `p`'s device. A residency mismatch takes the host loop and
     prints the `_drive` notice.
+
+    Parameters:
+        T: The tensor type of `p`, rank 1 with `k >= 2` elements.
+        gpu: Whether to run on `p`'s device; a residency mismatch falls back
+            to the host loop with a notice.
+
+    Args:
+        p: The `k` descending coefficients.
+
+    Returns:
+        The `k - 1` descending coefficients of the derivative, on `p`'s
+        device.
+
+    Raises:
+        If a host-device copy or the device launch fails.
     """
     comptime k = dim[T, 0]
     if _check_device[T, gpu](p):
@@ -371,6 +439,22 @@ def polyint[
     because that is the `x ** 0` position in descending order. The inverse
     of `polyder` up to that constant: `polyder(polyint(p))` is `p`. At
     `gpu=True`, one launch on `p`'s device, as `polyder`.
+
+    Parameters:
+        T: The tensor type of `p`, rank 1 with `k >= 1` elements.
+        gpu: Whether to run on `p`'s device; a residency mismatch falls back
+            to the host loop with a notice.
+
+    Args:
+        p: The `k` descending coefficients.
+        constant: The integration constant, stored as the last coefficient.
+
+    Returns:
+        The `k + 1` descending coefficients of the antiderivative, on `p`'s
+        device.
+
+    Raises:
+        If a host-device copy or the device launch fails.
     """
     comptime k = dim[T, 0]
     if _check_device[T, gpu](p):
@@ -414,6 +498,22 @@ def roots[
 
     **Tier 2**, through `numax.linalg.eigvals`, whose device path
     `gpu=True` takes.
+
+    Parameters:
+        T: The tensor type of `p`, rank 1 with `k >= 2` elements.
+        gpu: Whether `companion` and `eigvals` take their device paths on
+            `p`'s device.
+
+    Args:
+        p: The `k` descending coefficients, `p[0]` nonzero.
+
+    Returns:
+        The `k - 1` roots as an `Eigenvalues`, real and imaginary parts in
+        separate tensors.
+
+    Raises:
+        If `companion` or `eigvals` raises, for instance when the
+        eigenvalue iteration does not converge.
     """
     var c = companion[gpu=gpu](p)
     return eigvals[gpu=gpu](c)
@@ -452,6 +552,22 @@ def polyfit[
     takes `cond` of the `vander` matrix, and one wanting the
     minimum-norm answer for a rank-deficient fit spells
     `lstsq[method="svd"]` on `vander(x, deg + 1)` directly.
+
+    Parameters:
+        A: The tensor type of `x`, rank 1 with `n >= deg + 1` elements.
+        B: The tensor type of `y`, rank 1 with the same length as `x`.
+        deg: The degree of the fitted polynomial.
+        gpu: Whether the `lstsq` solve runs on the tensors' device.
+
+    Args:
+        x: The `n` sample abscissae.
+        y: The `n` sample values at `x`.
+
+    Returns:
+        The `deg + 1` descending coefficients of the fit.
+
+    Raises:
+        If building the Vandermonde matrix or the `lstsq` solve raises.
     """
     comptime n = dim[A, 0]
     var design = vander[cols=deg + 1](x)
@@ -461,5 +577,18 @@ def polyfit[
 def horner[T: FloatLike, n: Int](coefficients: Array[T, n], x: T) -> T:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.interpolate._array.interp.horner`."""
+    at `numax.interpolate._array.interp.horner`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the coefficients and the point.
+        n: The number of coefficients.
+
+    Args:
+        coefficients: The `n` ascending coefficients, `coefficients[i]`
+            multiplying `x^i`.
+        x: The point to evaluate at.
+
+    Returns:
+        The polynomial's value at `x`.
+    """
     return _array_horner[T=T, n=n](coefficients, x)

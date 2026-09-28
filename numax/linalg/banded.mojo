@@ -213,6 +213,27 @@ def solve_banded[
     need it (diagonal dominance suffices), and a zero pivot is not
     detected. Any other bandwidth at `gpu=True` takes the host path above
     and prints the `_drive` notice.
+
+    Parameters:
+        A: The `TensorLike` type of `ab`, an `(l + u + 1) x n` floating-point
+            matrix with static extents.
+        B: The `TensorLike` type of `b`, a length-`n` vector of `A.dtype`.
+        l: The number of subdiagonals of `a`.
+        u: The number of superdiagonals of `a`.
+        gpu: Keep a tridiagonal (`l == u == 1`) device-resident solve on
+            `ab`'s device by unpivoted cyclic reduction; any other bandwidth
+            falls back to the host with a notice.
+
+    Args:
+        ab: The band of `a` in diagonal-ordered form, `(l + u + 1) x n`.
+        b: The length-`n` right-hand side.
+
+    Returns:
+        The length-`n` solution `x`, on `ab`'s device.
+
+    Raises:
+        If a column has no nonzero pivot within the band on the host path
+        (a singular or misdescribed matrix), or if a device operation fails.
     """
     comptime n = dim[A, 1]
     var ctx = ab.context()
@@ -616,6 +637,24 @@ def solve_toeplitz[
     raises rather than returning noise; the fallback is
     `numax.linalg.special_matrices.toeplitz` into the dense
     `numax.linalg.solve`, which pivots.
+
+    Parameters:
+        A: The `TensorLike` type of `c`, a length-`n` floating-point vector
+            with `n >= 1`.
+        B: The `TensorLike` type of `r`, a length-`n` vector of `A.dtype`.
+        C: The `TensorLike` type of `b`, a length-`n` vector of `A.dtype`.
+
+    Args:
+        c: The first column of the Toeplitz matrix; `c[0]` is the diagonal.
+        r: The first row of the Toeplitz matrix; `r[0]` is ignored.
+        b: The length-`n` right-hand side.
+
+    Returns:
+        The length-`n` solution `x`, on `c`'s device.
+
+    Raises:
+        If `c[0]` is zero or any leading principal minor is singular, since
+        the Levinson recursion cannot pivot, or if a device copy fails.
     """
     comptime n = dim[A, 0]
     var ctx = c.context()

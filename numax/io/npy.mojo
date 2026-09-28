@@ -281,6 +281,17 @@ struct numpy:
 
         Raises if `T.dtype` has no NumPy equivalent (`bfloat16`, the float8
         formats).
+
+        Parameters:
+            T: The tensor type, a `Tensor` or `TensorView` of any rank.
+
+        Args:
+            a: The tensor to write, in row-major (C) order.
+            path: The `.npy` file to create or overwrite.
+
+        Raises:
+            If `T.dtype` has no NumPy equivalent, or the file cannot be
+            written.
         """
         comptime descr = _descr[T.dtype]()
         var shape = _shape_literal(a)
@@ -350,6 +361,22 @@ struct numpy:
         The `DeviceContext` is what every `numax.core.tensor` root factory
         takes, for the same reason: the bytes have to land on a device, and
         the file does not name one.
+
+        Parameters:
+            dtype: The element type the file's `descr` must name.
+            dims: The exact shape the file must carry, one extent per axis.
+
+        Args:
+            path: The `.npy` file to read.
+            ctx: The device to allocate the result on; `None` means the host.
+
+        Returns:
+            A `Static[dtype, *dims]` tensor holding the file's payload.
+
+        Raises:
+            If the rank or shape differs from `dims`, the dtype differs, the
+            file is Fortran-ordered or big-endian, its payload length
+            disagrees with the header, or it is not a `.npy` file.
         """
         var file_dims = List[Int]()
         var values = _read_npy[dtype=dtype](path, file_dims)
@@ -386,6 +413,22 @@ struct numpy:
 
         Only the rank is named, because a tensor's rank is compile-time
         even when its extents are not. A file of a different rank raises.
+
+        Parameters:
+            dtype: The element type the file's `descr` must name.
+            rank: The number of axes the file must have.
+
+        Args:
+            path: The `.npy` file to read.
+            ctx: The device to allocate the result on; `None` means the host.
+
+        Returns:
+            A `Dynamic[dtype, rank]` tensor with the file's run-time extents.
+
+        Raises:
+            If the file's rank differs from `rank`, the dtype differs, the
+            file is Fortran-ordered or big-endian, its payload length
+            disagrees with the header, or it is not a `.npy` file.
         """
         var file_dims = List[Int]()
         var values = _read_npy[dtype=dtype](path, file_dims)

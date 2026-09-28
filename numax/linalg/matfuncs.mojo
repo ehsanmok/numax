@@ -169,6 +169,22 @@ def expm[
     `expm(a) @ expm(-a)` is the identity to rounding, which the tests check;
     `expm(a + b) == expm(a) @ expm(b)` is **not** generally true and holds
     only when `a` and `b` commute.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the products and the Pade solve run as kernels on `a`'s
+            accelerator rather than on the host.
+        block: Panel width of the blocked `lu_factor` that solves the Pade
+            system.
+
+    Args:
+        a: The `n x n` matrix to exponentiate.
+
+    Returns:
+        The `n x n` matrix `exp(a)`, on `a`'s device.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -733,6 +749,25 @@ def funm[
         return x.exp() * x
     var b = funm[f=my_f](a)
     ```
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        f: The scalar function to lift, generic over `FloatLike` so it can be
+            evaluated at `Plain` and at `Complex[Plain]`.
+        gpu: Whether the Schur reduction and the closing `Z F Z^T` products
+            run as kernels on `a`'s accelerator; the recurrence on the
+            quasi-triangular factor always runs on the host.
+
+    Args:
+        a: The `n x n` matrix to apply `f` to.
+
+    Returns:
+        The `n x n` matrix `f(a)`, on `a`'s device.
+
+    Raises:
+        If two coupled Schur blocks share an eigenvalue (a Jordan block, where
+        the Parlett recurrence is singular), if the Schur QR iteration does
+        not converge, or if a device operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -761,6 +796,23 @@ def sqrtm[
     scalar `sqrt` at `Plain` is NaN and so is the result, which is at least
     loud. `numax.linalg.sqrtm` is the symmetric positive definite
     route through `eigh` for matrices small enough to live in registers.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the Schur reduction and the closing `Z F Z^T` products
+            run as kernels on `a`'s accelerator; the recurrence on the
+            quasi-triangular factor always runs on the host.
+
+    Args:
+        a: The `n x n` matrix whose principal square root is taken.
+
+    Returns:
+        The `n x n` principal square root of `a`, on `a`'s device; NaN where
+        `a` has an eigenvalue on the closed negative real axis.
+
+    Raises:
+        If a `2 x 2` block system in the recurrence is singular, if the Schur
+        QR iteration does not converge, or if a device operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -788,6 +840,24 @@ def logm[
     `log(I + X)`, and `2^k` times that -- then `Z L Z^T`. The module
     docstring has the ceiling. Real for a matrix with no eigenvalue on the
     closed negative real axis, NaN otherwise.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the Schur reduction and the closing `Z F Z^T` products
+            run as kernels on `a`'s accelerator; the recurrence on the
+            quasi-triangular factor always runs on the host.
+
+    Args:
+        a: The `n x n` matrix whose principal logarithm is taken.
+
+    Returns:
+        The `n x n` principal logarithm of `a`, on `a`'s device; NaN where `a`
+        has an eigenvalue on the closed negative real axis.
+
+    Raises:
+        If a square-root step or the Pade approximant meets a singular system,
+        if the Schur QR iteration does not converge, or if a device operation
+        fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
@@ -815,7 +885,24 @@ def cosm[
     and dim[T, 1] == dim[T, 0]
 ):
     """The matrix cosine, `funm` at `cos`. `scipy.linalg.cosm`. `cosm(a) @
-    cosm(a) + sinm(a) @ sinm(a)` is the identity."""
+    cosm(a) + sinm(a) @ sinm(a)` is the identity.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the Schur reduction and the closing `Z F Z^T` products
+            run as kernels on `a`'s accelerator; the recurrence on the
+            quasi-triangular factor always runs on the host.
+
+    Args:
+        a: The `n x n` matrix whose matrix cosine is taken.
+
+    Returns:
+        The `n x n` matrix cosine of `a`, on `a`'s device.
+
+    Raises:
+        If two coupled Schur blocks share an eigenvalue, if the Schur QR
+        iteration does not converge, or if a device operation fails.
+    """
     comptime n = dim[T, 0]
     return funm[f=_cos_f, gpu=gpu](a)
 
@@ -829,7 +916,24 @@ def sinm[
     and T.LayoutType.all_dims_known
     and dim[T, 1] == dim[T, 0]
 ):
-    """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`."""
+    """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the Schur reduction and the closing `Z F Z^T` products
+            run as kernels on `a`'s accelerator; the recurrence on the
+            quasi-triangular factor always runs on the host.
+
+    Args:
+        a: The `n x n` matrix whose matrix sine is taken.
+
+    Returns:
+        The `n x n` matrix sine of `a`, on `a`'s device.
+
+    Raises:
+        If two coupled Schur blocks share an eigenvalue, if the Schur QR
+        iteration does not converge, or if a device operation fails.
+    """
     comptime n = dim[T, 0]
     return funm[f=_sin_f, gpu=gpu](a)
 
@@ -852,6 +956,21 @@ def tanm[
     cosine is singular -- an eigenvalue at an odd multiple of `pi / 2` --
     has no tangent, and `solve`'s pivoting reports that rather than
     returning a large finite answer.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether the two `funm` evaluations, the transposes and the LU
+            solve run as kernels on `a`'s accelerator rather than on the host.
+
+    Args:
+        a: The `n x n` matrix whose matrix tangent is taken.
+
+    Returns:
+        The `n x n` matrix `X` with `X @ cosm(a) == sinm(a)`, on `a`'s device;
+        not finite where `cosm(a)` is singular.
+
+    Raises:
+        If `sinm` or `cosm` raises, or if a device operation fails.
     """
     comptime n = dim[T, 0]
     var s = sinm[gpu=gpu](a)
@@ -879,7 +998,24 @@ def fractional_matrix_power[
     `scipy.linalg.fractional_matrix_power`. Real for a matrix with no
     eigenvalue on the closed negative real axis, and `t = 1/2` agrees with
     `sqrtm` to rounding; SciPy's Schur-Pade route is sharper for `t` near
-    an integer and is the upgrade."""
+    an integer and is the upgrade.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a square floating-point matrix.
+        gpu: Whether `logm` and `expm` run their device parts as kernels on
+            `a`'s accelerator rather than on the host.
+
+    Args:
+        a: The `n x n` matrix to raise to a power.
+        t: The real exponent.
+
+    Returns:
+        The `n x n` matrix `expm(t * logm(a))`, on `a`'s device.
+
+    Raises:
+        If `logm` or `expm` raises: a singular system in the logarithm, a
+        Schur iteration that does not converge, or a failed device operation.
+    """
     comptime n = dim[T, 0]
     var l = logm[gpu=gpu](a)
     var scaled = multiply(l, Scalar[T.dtype](t))
@@ -891,7 +1027,20 @@ def expm[
 ](a: Array[T, n * n]) -> Array[T, n * n] where squarings >= 0:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.matfuncs.expm`."""
+    at `numax.linalg._array.matfuncs.expm`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        squarings: How many times the Pade approximant of `a / 2^squarings` is
+            squared; enough that `||a / 2^squarings||_1` is at most about 5.4.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        The `n x n` matrix exponential of `a`, row-major.
+    """
     return _array_expm[T=T, n=n, squarings=squarings](a)
 
 
@@ -900,5 +1049,19 @@ def sqrtm[
 ](a: Array[T, n * n]) -> Array[T, n * n]:
     """The `Array`-tier overload: one problem in registers, generic over
     the `FloatLike` conformer. The algorithm and its bound are documented
-    at `numax.linalg._array.matfuncs.sqrtm`."""
+    at `numax.linalg._array.matfuncs.sqrtm`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+        sweeps: The fixed number of Jacobi sweeps the underlying `eigh` runs.
+
+    Args:
+        a: The `n x n` symmetric positive definite matrix, row-major; only one
+            triangle is read.
+
+    Returns:
+        The `n x n` symmetric positive definite square root, row-major; NaN
+        where `a` has a negative eigenvalue.
+    """
     return _array_sqrtm[T=T, n=n, sweeps=sweeps](a)
