@@ -3,9 +3,16 @@
 from layout import Coord, TileTensor
 from layout.tile_layout import row_major
 from std.math import exp
-from std.testing import TestSuite, assert_almost_equal, assert_true
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_raises,
+    assert_true,
+)
 
-from numax import Dual, Plain, gelu, leaky_relu, relu, softmax
+from max.gpu.host import DeviceContext
+
+from numax import Dual, Plain, Static, gelu, leaky_relu, relu, softmax
 
 comptime dtype = DType.float64
 comptime width = 1
@@ -109,6 +116,25 @@ def test_softmax_rows_sum_to_one_and_match_reference() raises:
     # keeps `exp` from overflowing here; the largest input should get
     # essentially all the probability mass.
     assert_true(Float64(ys[Coord(1, 3)]) > 0.999)
+
+
+def test_the_tensor_softmax_agrees_with_the_tile_one() raises:
+    """`softmax(tensor)` is the kernel-author `softmax(xs, ys)` with the
+    destination allocated for you: the two spellings give the same rows.
+    Another axis raises, since MAX's kernel handles only the last."""
+    comptime dtype = DType.float64
+    var values: List[Scalar[dtype]] = [1.0, 2.0, 3.0, 4.0, -1.0, 0.0, 1.0, 9.0]
+    var t = Static[dtype, 2, 4](DeviceContext(api="cpu"), values.copy())
+    var got = softmax(t).to_host()
+    var ys_storage = List[Scalar[dtype]](length=8, fill=0)
+    softmax(
+        TileTensor(values, row_major[2, 4]()),
+        TileTensor(ys_storage, row_major[2, 4]()),
+    )
+    for i in range(8):
+        assert_almost_equal(got[i], ys_storage[i])
+    with assert_raises(contains="only the last axis"):
+        _ = softmax(t, 0)
 
 
 def main() raises:

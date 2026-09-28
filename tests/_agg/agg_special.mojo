@@ -30,6 +30,9 @@ from test_activations import (
 from test_activations import (
     test_softmax_rows_sum_to_one_and_match_reference as test_activations__test_softmax_rows_sum_to_one_and_match_reference,
 )
+from test_activations import (
+    test_the_tensor_softmax_agrees_with_the_tile_one as test_activations__test_the_tensor_softmax_agrees_with_the_tile_one,
+)
 from test_airy import (
     test_airy_matches_mpmath_in_all_three_regions as test_airy__test_airy_matches_mpmath_in_all_three_regions,
 )
@@ -443,6 +446,9 @@ def main() raises:
     suite.test[test_activations__test_gelu_matches_known_value]()
     suite.test[
         test_activations__test_softmax_rows_sum_to_one_and_match_reference
+    ]()
+    suite.test[
+        test_activations__test_the_tensor_softmax_agrees_with_the_tile_one
     ]()
     # tests/special/test_airy.mojo
     suite.test[test_airy__test_airy_matches_mpmath_in_all_three_regions]()

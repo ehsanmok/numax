@@ -116,10 +116,18 @@ from layout import Coord, TileTensor
 from layout.tile_layout import row_major, TensorLayout
 from layout.tile_tensor import DefaultEngine
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
+from nn.argmaxmin_gpu import argmaxmin_gpu as _nn_argmaxmin_gpu
 from nn.cumsum import cumsum as _nn_cumsum
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape_from
+from ..core.tensor import (
+    Dynamic,
+    Static,
+    Tensor,
+    _broadcast_gather,
+    _dyn_shape_from,
+    _strides_of,
+)
 from ..core._drive import _check_device, _dense, _flat, _notice
 from ..core.ops import (
     multiply as _multiply,
@@ -818,8 +826,42 @@ def argmin[
     return argmin_all[dtype, _target[gpu]()](_flat(xs), xs.context())
 
 
-def _argn_axis[
+def _argn_axis_device[
     T: TensorLike, axis: Int, largest: Bool
+](xs: T, out_extents: List[Int], rows: Int) raises -> Dynamic[
+    DType.int64, T.LayoutType.rank - 1
+]:
+    """`_argn_axis` on the device. MAX's `argmaxmin_gpu` reduces the
+    innermost axis of a `(rows, length)` view in one streaming pass, so a
+    reduction along any other axis first moves that axis last with one
+    permuting gather -- `_broadcast_gather` with the extents and strides
+    reordered, which reads the input where it is."""
+    comptime rank = T.LayoutType.rank
+    var ctx = xs.context()
+    var length = xs.dim_at(axis)
+    var strides = _strides_of(xs)
+    var moved_extents = List[Int](capacity=rank)
+    var moved_strides = List[Int](capacity=rank)
+    for d in range(rank):
+        if d != axis:
+            moved_extents.append(xs.dim_at(d))
+            moved_strides.append(strides[d])
+    moved_extents.append(length)
+    moved_strides.append(strides[axis])
+    var moved = _broadcast_gather[rank](xs, moved_extents, moved_strides)
+    var result = Dynamic[DType.int64, rank - 1]._uninitialized(
+        ctx, row_major(_dyn_shape_from[rank - 1](out_extents))
+    )
+    var inp = TileTensor(moved.tile().ptr, row_major(Coord(rows, length)))
+    var out = TileTensor(result.tile().ptr, row_major(Coord(rows, 1)))
+    _nn_argmaxmin_gpu[T.dtype, DType.int64, largest](ctx, inp, out)
+    ctx.synchronize()
+    _ = moved^
+    return result^
+
+
+def _argn_axis[
+    T: TensorLike, axis: Int, largest: Bool, gpu: Bool = False
 ](xs: T) raises -> Dynamic[DType.int64, T.LayoutType.rank - 1] where (
     T.dtype.is_floating_point()
     and axis >= 0
@@ -845,6 +887,16 @@ def _argn_axis[
     var count = 1
     for d in range(rank - 1):
         count *= out_extents[d]
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _argn_axis_device[axis=axis, largest=largest](
+                xs, out_extents, count
+            )
+    else:
+        comptime if largest:
+            _notice[gpu]("argmax")
+        else:
+            _notice[gpu]("argmin")
 
     var values = xs.to_host()
     var out = List[Scalar[DType.int64]](length=count, fill=0)
@@ -890,7 +942,7 @@ def _argn_axis[
 
 
 def argmax[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](xs: T) raises -> Dynamic[DType.int64, T.LayoutType.rank - 1] where (
     T.dtype.is_floating_point()
     and axis >= 0
@@ -903,11 +955,11 @@ def argmax[
     this returns a tensor where the whole-tensor overload returns a single
     flat `Int`.
     """
-    return _argn_axis[axis=axis, largest=True](xs)
+    return _argn_axis[axis=axis, largest=True, gpu=gpu](xs)
 
 
 def argmin[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](xs: T) raises -> Dynamic[DType.int64, T.LayoutType.rank - 1] where (
     T.dtype.is_floating_point()
     and axis >= 0
@@ -916,7 +968,7 @@ def argmin[
 ):
     """Indices of the smallest element along `axis`. `numpy.argmin(a, axis=k)`.
     """
-    return _argn_axis[axis=axis, largest=False](xs)
+    return _argn_axis[axis=axis, largest=False, gpu=gpu](xs)
 
 
 def _scan_axis[

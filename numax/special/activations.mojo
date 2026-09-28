@@ -36,7 +36,12 @@ from layout.tile_tensor import DefaultEngine
 from nn.softmax import softmax as nn_softmax
 from std.sys.info import simd_width_of
 
+from max.gpu.host import DeviceContext
+
+from ..core._drive import _check_device, _notice
 from ..core.numeric import FloatLike
+from ..core.tensor import Tensor
+from ..core.tensorlike import TensorLike, is_row_major
 
 
 def gaussian[T: FloatLike](x: T) -> T:
@@ -94,6 +99,7 @@ def gelu[T: FloatLike](x: T) -> T:
 def softmax[
     dtype: DType,
     RowsLayout: TensorLayout,
+    target: StaticString = "cpu",
 ](
     xs: TileTensor[
         dtype,
@@ -108,6 +114,7 @@ def softmax[
         Engine=DefaultEngine[element_width=1],
     ],
     axis: Int = Int(RowsLayout.rank) - 1,
+    ctx: Optional[DeviceContext] = None,
 ) raises where dtype.is_floating_point():
     """**Tier 2.** Softmax along `axis`, delegated to MAX's `nn.softmax`.
 
@@ -123,18 +130,14 @@ def softmax[
     `numax.core.functional.reduce_rows` and `broadcast_op_rows`, with three
     caller-provided scratch buffers, none of which are needed now.
 
-    Tier 2, and host-only, which at `max ==26.6` is numax's choice rather
-    than a wall. The tensor-taking overload numax used to call is gone; what
-    remains takes the input as a fused closure, and that closure is now an
-    *argument* where it used to be a compile-time parameter -- which is
-    exactly what put it out of reach before, since the implicit
+    `target` and `ctx` reach `nn.softmax` unchanged: `target="gpu"` with the
+    tensor's context runs MAX's device kernel, and the `Tensor` overload
+    below is the spelling that picks them for you. The input arrives as a
+    closure *argument*, which is what makes this reachable at all -- the
     `__origins__` of a parameter closure could not be inferred across the
-    module boundary. Passing it by value sidesteps that, and it also means
-    `target` is now reachable: a device softmax is a `target="gpu"` and a
-    `DeviceContext` away, and is not wired up here only because this
-    function has no `gpu` parameter to switch on.
-    `examples/intermediate/softmax.mojo` hand-launches the device path from
-    `numax.core.functional`'s primitives and checks the two against each other.
+    module boundary. **The last axis only**: MAX's kernel handles the
+    innermost axis, raises on another on a device and answers wrongly on
+    the host, so another `axis` raises here.
     """
 
     @always_inline
@@ -143,7 +146,54 @@ def softmax[
     ](coord: Coord) {var xs} -> SIMD[dtype, width]:
         return xs.load[width](coord)
 
+    if axis != Int(RowsLayout.rank) - 1:
+        raise Error(
+            "softmax: only the last axis is supported; MAX's nn.softmax"
+            " answers wrongly on another on the host and raises on a device"
+        )
     var shape = xs.layout.shape_coord()
-    nn_softmax[dtype, Int(RowsLayout.rank), target="cpu"](
-        load, shape, xs.dim(axis), ys, axis
+    nn_softmax[dtype, Int(RowsLayout.rank), target=target](
+        load, shape, xs.dim(axis), ys, axis, ctx
     )
+
+
+def softmax[
+    T: TensorLike, gpu: Bool = False
+](xs: T, axis: Int = T.LayoutType.rank - 1) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where (T.dtype.is_floating_point() and is_row_major[T]):
+    """**Tier 2.** Softmax of `xs` along `axis`, as a new tensor on `xs`'s
+    device. `scipy.special.softmax(x, axis=k)`.
+
+    The `Tensor`-tier spelling of the kernel-author overload above, which
+    it forwards to: MAX's `nn.softmax` does the work, and `gpu=True` hands
+    it `target="gpu"` and the tensor's `DeviceContext`, which is all the
+    device path takes. A residency mismatch prints the stderr notice and
+    runs on the host.
+
+    `ponytail:` **the last axis only**, as the overload above enforces:
+    MAX's `nn.softmax` handles the innermost axis and no other. The upgrade
+    for another axis is to move it last with a permuting gather, softmax,
+    and move it back.
+    """
+    var ctx = xs.context()
+    var ys = Tensor[T.dtype, T.LayoutType]._uninitialized(ctx, xs.tile().layout)
+    var src = xs.tile()
+    var input = TileTensor[
+        T.dtype,
+        T.LayoutType,
+        MutAnyOrigin,
+        Engine=DefaultEngine[element_width=1],
+    ](
+        ptr=src.ptr.unsafe_mut_cast[True]().unsafe_origin_cast[MutAnyOrigin](),
+        layout=src.layout,
+    )
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            softmax[target="gpu"](input, ys.tile(), axis, ctx)
+            ctx.synchronize()
+            return ys^
+    else:
+        _notice[gpu]("softmax")
+    softmax(input, ys.tile(), axis)
+    return ys^
