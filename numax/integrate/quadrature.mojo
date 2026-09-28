@@ -33,7 +33,7 @@ from layout.tile_layout import TensorLayout, row_major
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
+from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape, _scan_device
 from ..core._drive import _check_device, _notice, _require_contiguous
 from ..core.rowwise import reduce_all
 
@@ -192,6 +192,46 @@ def _sampled_device[
     return total.to_host()[0]
 
 
+def _cumulative_device[
+    has_x: Bool, initial: Bool, m: Int, T: TensorLike, X: TensorLike
+](y: T, x: X, dx: Scalar[T.dtype]) raises -> Static[T.dtype, m] where (
+    X.dtype == T.dtype
+):
+    """`cumulative_trapezoid` on the device: one launch writes each
+    interval's trapezoid (after a leading `0` when `initial`), and the
+    device scan accumulates them."""
+    comptime dtype = T.dtype
+    var ctx = y.context()
+    _require_contiguous(y)
+    comptime if has_x:
+        _require_contiguous(x)
+    var terms = Static[dtype, m]._uninitialized(ctx)
+    var yp = y.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var xp = (
+        x.tile()
+        .ptr.unsafe_bitcast[Scalar[dtype]]()
+        .unsafe_origin_cast[ImmutAnyOrigin]()
+    )
+    var tp = terms.tile()
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var yp, var xp, var tp, var dx}:
+        var q = coord_to_index_list(coord)[0]
+        var term = Scalar[dtype](0)
+        var i = q - 1 if initial else q
+        if i >= 0:
+            var h = dx
+            comptime if has_x:
+                h = xp[unsafe_offset=i + 1] - xp[unsafe_offset=i]
+            term = h * (yp[unsafe_offset=i] + yp[unsafe_offset=i + 1]) / 2
+        tp.store[1](coord, term)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(m), ctx)
+    return _scan_device["sum"](terms, Static[dtype, m]._static_layout(), m, 1)
+
+
 def _simpson_general[
     dtype: DType
 ](ys: List[Scalar[dtype]], h: List[Scalar[dtype]]) -> Scalar[dtype]:
@@ -269,6 +309,7 @@ def simpson[
 def cumulative_trapezoid[
     T: TensorLike,
     initial: Bool = False,
+    gpu: Bool = False,
 ](y: T, dx: Scalar[T.dtype] = 1) raises -> Static[
     T.dtype, dim[T, 0] if initial else dim[T, 0] - 1
 ] where (
@@ -286,8 +327,13 @@ def cumulative_trapezoid[
     result's length, which is part of the type.
     """
     comptime n = dim[T, 0]
-    var ys = y.to_host()
     comptime m = n if initial else n - 1
+    if _check_device[T, gpu](y):
+        comptime if gpu:
+            return _cumulative_device[False, initial, m](y, y, dx)
+    else:
+        _notice[gpu]("cumulative_trapezoid")
+    var ys = y.to_host()
     var out = List[Scalar[T.dtype]](capacity=m)
     var running = Scalar[T.dtype](0)
     comptime if initial:
@@ -302,6 +348,7 @@ def cumulative_trapezoid[
     A: TensorLike,
     B: TensorLike,
     initial: Bool = False,
+    gpu: Bool = False,
 ](y: A, x: B) raises -> Static[
     A.dtype, dim[A, 0] if initial else dim[A, 0] - 1
 ] where (
@@ -313,9 +360,18 @@ def cumulative_trapezoid[
     """The running trapezoid integral of `y` at the points `x`.
     `scipy.integrate.cumulative_trapezoid(y, x)`."""
     comptime n = dim[A, 0]
+    comptime m = n if initial else n - 1
+    if _check_device[A, gpu](y):
+        comptime if gpu:
+            if x.size() != n:
+                raise Error(
+                    "integrate: x has ", x.size(), " points for ", n, " samples"
+                )
+            return _cumulative_device[True, initial, m](y, x, 0)
+    else:
+        _notice[gpu]("cumulative_trapezoid")
     var ys = y.to_host()
     var h = _spacings(x, n)
-    comptime m = n if initial else n - 1
     var out = List[Scalar[A.dtype]](capacity=m)
     var running = Scalar[A.dtype](0)
     comptime if initial:

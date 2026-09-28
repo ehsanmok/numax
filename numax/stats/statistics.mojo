@@ -125,6 +125,7 @@ from ..core.tensor import (
     Static,
     Tensor,
     _broadcast_gather,
+    _scan_device,
     _dyn_shape_from,
     _strides_of,
 )
@@ -1021,7 +1022,7 @@ def _scan_axis[
 
 
 def cumprod[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Static[
     T.dtype, T.LayoutType.static_product
 ] where T.LayoutType.all_dims_known:
@@ -1038,6 +1039,13 @@ def cumprod[
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime n = LayoutType.static_product
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _scan_device["prod"](
+                xs, Static[dtype, n]._static_layout(), n, 1
+            )
+    else:
+        _notice[gpu]("cumprod")
     var values = xs.to_host()
     var storage = List[Scalar[dtype]](capacity=n)
     var acc = Scalar[dtype](1)
@@ -1048,7 +1056,7 @@ def cumprod[
 
 
 def cumprod[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](xs: T) raises -> Tensor[T.dtype, T.LayoutType] where (
     axis >= 0 and axis < T.LayoutType.rank
 ):
@@ -1059,6 +1067,14 @@ def cumprod[
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var split = _axis_split[axis=axis](xs)
+            return _scan_device["prod"](
+                xs, xs.tile().layout, split[1], split[2]
+            )
+    else:
+        _notice[gpu]("cumprod")
     return Tensor[dtype, LayoutType](
         xs.context(),
         xs.tile().layout,
@@ -1178,7 +1194,7 @@ def moment[
 
 
 def cumsum[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Static[
     T.dtype, T.LayoutType.static_product
 ] where T.LayoutType.all_dims_known:
@@ -1194,6 +1210,13 @@ def cumsum[
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime n = LayoutType.static_product
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _scan_device["sum"](
+                xs, Static[dtype, n]._static_layout(), n, 1
+            )
+    else:
+        _notice[gpu]("cumsum")
     var values = xs.to_host()
     var storage = List[Scalar[dtype]](length=n, fill=0)
     _nn_cumsum[exclusive=False, reverse=False, axis=0](
@@ -1204,7 +1227,7 @@ def cumsum[
 
 
 def cumsum[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](xs: T) raises -> Tensor[T.dtype, T.LayoutType] where (
     axis >= 0 and axis < T.LayoutType.rank
 ):
@@ -1216,6 +1239,12 @@ def cumsum[
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var split = _axis_split[axis=axis](xs)
+            return _scan_device["sum"](xs, xs.tile().layout, split[1], split[2])
+    else:
+        _notice[gpu]("cumsum")
     return Tensor[dtype, LayoutType](
         xs.context(),
         xs.tile().layout,

@@ -1296,6 +1296,52 @@ def _index_fill[
     ctx.synchronize()
 
 
+def _scan_device[
+    T: TensorLike, L: TensorLayout, //, kind: StaticString
+](a: T, layout: L, length: Int, inner: Int) raises -> Tensor[T.dtype, L]:
+    """An inclusive scan of `a` on the device, laid out as `layout`:
+    `"sum"` or `"prod"` along an axis of `length`, elements `inner` apart
+    (the flat scan is `inner = 1`, `length = a.size()`).
+
+    Hillis-Steele: `ceil(log2(length))` launches, each adding the element
+    `d` places back along the axis for `d = 1, 2, 4, ...`, between two
+    buffers. `nn.cumsum` has no device path (`max-feedback.md` 2.6), so
+    this is **extend**. `ponytail:` `O(n log n)` work in global memory; a
+    blocked scan (per-block scan, scan of the block totals, fix-up) is the
+    work-efficient upgrade. `a` contiguous and on a GPU context.
+    """
+    var ctx = a.context()
+    var total = a.size()
+    var src = _same_order(a, layout)
+    if total == 0 or length <= 1:
+        return src^
+    var dst = Tensor[T.dtype, L]._uninitialized(ctx, layout)
+    var d = 1
+    while d < length:
+        var sv = _flat_unchecked(src)
+        var dv = _flat_out(dst)
+
+        @always_inline
+        def step[
+            width: Int, alignment: Int = 1
+        ](coord: Coord) {var sv, var dv, var d, var length, var inner}:
+            var f = coord_to_index_list(coord)[0]
+            var t = (f // inner) % length
+            var value = sv[coord][0]
+            if t >= d:
+                comptime if kind == "sum":
+                    value = value + sv[Coord(f - d * inner)][0]
+                else:
+                    value = value * sv[Coord(f - d * inner)][0]
+            dv.store[1](coord, value)
+
+        elementwise[simd_width=1, target="gpu"](step, Coord(total), ctx)
+        swap(src, dst)
+        d *= 2
+    ctx.synchronize()
+    return src^
+
+
 def ones[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
