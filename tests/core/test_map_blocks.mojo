@@ -154,6 +154,21 @@ def test_an_identity_step_round_trips_every_block() raises:
     _ = ys^
 
 
+def test_the_tensor_spelling_agrees_with_the_tile_one() raises:
+    """`map_blocks(xs, ys)` over `Tensor`s reads the device from `xs` and
+    must write what the `tile()` spelling writes."""
+    var ctx = DeviceContext(api="cpu")
+    var xs = Static[dtype, 5, batch](_ramp(5), ctx)
+    var by_tile = Static[dtype, 1, batch]._uninitialized(ctx)
+    var by_tensor = Static[dtype, 1, batch](ctx)
+    map_blocks[step=_sum_step](xs.tile(), by_tile.tile(), ctx)
+    map_blocks[step=_sum_step](xs, by_tensor)
+    var a = by_tile.to_host()
+    var b = by_tensor.to_host()
+    for i in range(batch):
+        assert_equal(a[i], b[i])
+
+
 def test_a_block_sum_equals_a_host_loop() raises:
     """`k_out = 1`: five rows folded to one, against the same fold written
     as a scalar loop over the same packing."""

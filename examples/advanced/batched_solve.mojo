@@ -213,12 +213,10 @@ def main() raises:
     var host_slopes = Solutions._uninitialized(cpu)
     var device_slopes = Solutions._uninitialized(gpu)
 
-    map_blocks[step=solve_step](host_a.tile(), host_x.tile(), cpu)
-    map_blocks[step=sensitivity_step](host_a.tile(), host_slopes.tile(), cpu)
-    map_blocks[step=solve_step, gpu=True](device_a.tile(), device_x.tile(), gpu)
-    map_blocks[step=sensitivity_step, gpu=True](
-        device_a.tile(), device_slopes.tile(), gpu
-    )
+    map_blocks[step=solve_step](host_a, host_x)
+    map_blocks[step=sensitivity_step](host_a, host_slopes)
+    map_blocks[step=solve_step, gpu=True](device_a, device_x)
+    map_blocks[step=sensitivity_step, gpu=True](device_a, device_slopes)
 
     print("  max |A x - b|      CPU", worst_residual(host_a, host_x))
     print("  max |A x - b|      GPU", worst_residual(device_a, device_x))

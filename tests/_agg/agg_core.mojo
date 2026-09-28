@@ -865,6 +865,9 @@ from test_map_blocks import (
     test_an_identity_step_round_trips_every_block as test_map_blocks__test_an_identity_step_round_trips_every_block,
 )
 from test_map_blocks import (
+    test_the_tensor_spelling_agrees_with_the_tile_one as test_map_blocks__test_the_tensor_spelling_agrees_with_the_tile_one,
+)
+from test_map_blocks import (
     test_a_block_sum_equals_a_host_loop as test_map_blocks__test_a_block_sum_equals_a_host_loop,
 )
 from test_map_blocks import (
@@ -1985,6 +1988,9 @@ def main() raises:
     ]()
     # tests/core/test_map_blocks.mojo
     suite.test[test_map_blocks__test_an_identity_step_round_trips_every_block]()
+    suite.test[
+        test_map_blocks__test_the_tensor_spelling_agrees_with_the_tile_one
+    ]()
     suite.test[test_map_blocks__test_a_block_sum_equals_a_host_loop]()
     suite.test[
         test_map_blocks__test_one_array_tier_solve_per_lane_matches_the_host_solve

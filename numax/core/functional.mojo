@@ -188,6 +188,7 @@ from max.gpu import block_idx, global_idx, thread_idx
 from std.memory import stack_allocation
 
 from ._drive import _target, _width
+from .tensor import Static
 from .numeric import FloatLike, max_of
 from .plain import Plain
 
@@ -649,6 +650,27 @@ def map_blocks[
 
     elementwise[simd_width=_width[dtype, gpu](), target=_target[gpu]()](
         body, Coord(batch), ctx
+    )
+
+
+def map_blocks[
+    dtype: DType,
+    k_in: Int,
+    k_out: Int,
+    batch: Int,
+    //,
+    step: def[w: Int](Array[SIMD[dtype, w], k_in]) thin -> Array[
+        SIMD[dtype, w], k_out
+    ],
+    gpu: Bool = False,
+](xs: Static[dtype, k_in, batch], mut ys: Static[dtype, k_out, batch]) raises:
+    """`map_blocks` over two `Tensor`s: the same walk, with the device read
+    from `xs` rather than passed, and no `tile()` at the call site --
+    `map_blocks[step=solve, gpu=True](problems, answers)`. The shapes are
+    the tile overload's `(k_in, batch)` and `(k_out, batch)`, and `dtype`,
+    `k_in`, `k_out` and `batch` come from the tensors' types."""
+    map_blocks[dtype, k_in, k_out, batch, step, gpu](
+        xs.tile(), ys.tile(), xs.context()
     )
 
 
