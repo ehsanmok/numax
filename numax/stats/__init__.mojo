@@ -11,7 +11,7 @@ from numax.stats import mean, variance, norm, uniform, seed
 | `histograms` | `histogram` (uniform, ranged, explicit edges, density, weights), `histogram2d`, `histogramdd`, `bincount`, `digitize` -- NumPy's edge rules, host-side |
 | `correlation` | `cov`, `corrcoef`, `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore` -- SciPy's p-values through `t.sf`/`norm.sf`. `cov`/`corrcoef` are Welford plus one GEMM on either target; `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata` and `zscore` run on the device at `gpu=True` |
 | `descriptive` | `skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `trim_mean`, `describe` -- SciPy's bias corrections and conventions, host-side |
-| `hypothesis` | `ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu` -- each a statistic and a tail of `t`/`chi2`/`f`/`norm`, host-side |
+| `hypothesis` | `ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu` -- each a statistic and a tail of `t`/`chi2`/`f`/`norm`; the `t` tests, `chisquare` and `f_oneway` sum on the device at `gpu=True` |
 | `nanfunctions` | `nansum`, `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax` -- `isnan`, `select` and the plain reductions, composed |
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` for a named reproducible stream |

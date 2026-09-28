@@ -2,11 +2,17 @@
 `chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, each returning
 SciPy's statistic and p-value.
 
-**Tier 2, host-side**, in `Float64`: a test statistic is a few sums (or,
-for the rank tests, a sort) and its p-value is one tail of a distribution
-`numax.stats` already has -- `t.sf`, `chi2.sf`, `f.sf`, `norm.sf` -- so
-each test is that arithmetic and that call, the shape
-`numax.stats.correlation` gives its reason for.
+**Tier 2**: a test statistic is a few sums (or, for the rank tests, a
+sort) and its p-value is one tail of a distribution `numax.stats`
+already has -- `t.sf`, `chi2.sf`, `f.sf`, `norm.sf` -- so each test is
+that arithmetic and that call. On the host all of it is `Float64`. The
+`t` tests, both `chisquare`s and `f_oneway` take `gpu: Bool = False`: at
+`gpu=True`, with the samples on a device, their sums are device
+reductions (`_moments_device`: count, mean and the sum of squared
+deviations) and only those scalars come back; the tail is host scalar
+work either way, which the device-complete rule allows. The device sums
+are at the samples' dtype and reassociated, so a `float32` statistic
+agrees with the host's to `float32` precision.
 
 ## SciPy's conventions, and the one place they are not met
 
@@ -37,10 +43,25 @@ from std.math import exp as _exp, sqrt as _sqrt
 
 from layout.tile_layout import TensorLayout
 
+from layout import Coord
+from layout.tile_layout import row_major
+from max.algorithm.functional import elementwise
+
+from ..core._drive import (
+    _check_device,
+    _flat_out,
+    _flat_unchecked,
+    _notice,
+)
+from ..core.ops import (
+    multiply as _tmultiply,
+    subtract as _tsubtract,
+)
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.tensor import Static, Tensor
+from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
 from ..core.plain import Plain
 from .distributions import chi2, f, norm, t
+from .statistics import sum as _tsum
 
 comptime _P = Plain[DType.float64]
 
@@ -79,6 +100,60 @@ def _variance(values: List[Float64], ddof: Int) -> Float64:
     return total / Float64(len(values) - ddof)
 
 
+def _moments_device[
+    T: TensorLike
+](xs: T) raises -> Tuple[Int, Float64, Float64] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """`(n, mean, sum of squared deviations)` of a device sample, as
+    device sums: one for the mean, a centering launch, a square and one
+    more sum. Three scalars come back."""
+    var n = xs.size()
+    var mean = Float64(_tsum[gpu=True](xs)) / Float64(n)
+    var d = _tsubtract[gpu=True](xs, Scalar[T.dtype](mean))
+    var m2 = Float64(_tsum[gpu=True](_tmultiply[gpu=True](d, d)))
+    return (n, mean, m2)
+
+
+def _chi2_terms_device[
+    T: TensorLike
+](observed: T, expected: T) raises -> Dynamic[T.dtype, 1] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """`(o - e)^2 / e` per element, flat, in one launch on the device."""
+    var ctx = observed.context()
+    var n = observed.size()
+    var out = Dynamic[T.dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var ov = _flat_unchecked(observed)
+    var ev = _flat_unchecked(expected)
+    var tv = _flat_out(out)
+
+    @always_inline
+    def term[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var ov, var ev, var tv}:
+        var e = ev[coord][0]
+        var d = ov[coord][0] - e
+        tv.store[1](coord, rebind[Scalar[T.dtype]](d * d / e))
+
+    elementwise[simd_width=1, target="gpu"](term, Coord(n), ctx)
+    return out^
+
+
+def _dtype_epsilon[dtype: DType]() -> Float64:
+    """The spacing of `dtype` at one, `numpy.finfo(dtype).eps`."""
+    comptime if dtype == DType.float64:
+        return 2.220446049250313e-16
+    elif dtype == DType.float32:
+        return 1.1920928955078125e-07
+    elif dtype == DType.float16:
+        return 9.765625e-04
+    else:
+        return 7.8125e-03
+
+
 def _check_alternative(alternative: StaticString) raises:
     if not (
         alternative == "two-sided"
@@ -104,7 +179,7 @@ def _t_pvalue(
 
 
 def ttest_1samp[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](
     xs: T,
     popmean: Float64,
@@ -112,8 +187,19 @@ def ttest_1samp[
 ) raises -> TestResult where (is_row_major[T] and T.dtype.is_floating_point()):
     """The one-sample `t` test that the mean of `xs` is `popmean`.
     `scipy.stats.ttest_1samp(a, popmean, alternative)`: `t = (mean -
-    popmean) / (std_1 / sqrt(n))` on `n - 1` degrees of freedom."""
+    popmean) / (std_1 / sqrt(n))` on `n - 1` degrees of freedom. Device
+    sums at `gpu=True`; see the module docstring."""
     _check_alternative(alternative)
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var m = _moments_device(xs)
+            if m[0] < 2:
+                raise Error("ttest_1samp: at least two observations are needed")
+            var dfd = Float64(m[0] - 1)
+            var stat = (m[1] - popmean) / _sqrt(m[2] / dfd / Float64(m[0]))
+            return TestResult(stat, _t_pvalue(stat, dfd, alternative), dfd)
+    else:
+        _notice[gpu]("ttest_1samp")
     var values = _values(xs)
     var n = len(values)
     if n < 2:
@@ -128,6 +214,7 @@ def ttest_1samp[
 def ttest_ind[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](
     xs: A,
     ys: B,
@@ -135,6 +222,7 @@ def ttest_ind[
     alternative: StaticString = "two-sided",
 ) raises -> TestResult where (
     A.dtype.is_floating_point()
+    and B.dtype.is_floating_point()
     and B.dtype == A.dtype
     and is_row_major[A]
     and is_row_major[B]
@@ -142,16 +230,59 @@ def ttest_ind[
     """The two-sample `t` test that two independent samples share a mean.
     `scipy.stats.ttest_ind(a, b, equal_var, alternative)`: Student's
     pooled-variance test by default, Welch's unequal-variance test with
-    its Welch-Satterthwaite degrees of freedom when `equal_var=False`."""
+    its Welch-Satterthwaite degrees of freedom when `equal_var=False`.
+    Device sums at `gpu=True`; see the module docstring."""
     _check_alternative(alternative)
+    var n1: Float64
+    var n2: Float64
+    var v1: Float64
+    var v2: Float64
+    var m1: Float64
+    var m2: Float64
+    if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
+        comptime if gpu:
+            var ma = _moments_device(xs)
+            var mb = _moments_device(ys)
+            if ma[0] < 2 or mb[0] < 2:
+                raise Error(
+                    "ttest_ind: each sample needs at least two observations"
+                )
+            n1 = Float64(ma[0])
+            n2 = Float64(mb[0])
+            m1 = ma[1]
+            m2 = mb[1]
+            v1 = ma[2] / (n1 - 1.0)
+            v2 = mb[2] / (n2 - 1.0)
+            return _ttest_ind_finish(
+                n1, n2, m1, m2, v1, v2, equal_var, alternative
+            )
+    else:
+        _notice[gpu]("ttest_ind")
     var a = _values(xs)
     var b = _values(ys)
-    var n1 = Float64(len(a))
-    var n2 = Float64(len(b))
+    n1 = Float64(len(a))
+    n2 = Float64(len(b))
     if len(a) < 2 or len(b) < 2:
         raise Error("ttest_ind: each sample needs at least two observations")
-    var v1 = _variance(a, 1)
-    var v2 = _variance(b, 1)
+    v1 = _variance(a, 1)
+    v2 = _variance(b, 1)
+    m1 = _mean(a)
+    m2 = _mean(b)
+    return _ttest_ind_finish(n1, n2, m1, m2, v1, v2, equal_var, alternative)
+
+
+def _ttest_ind_finish(
+    n1: Float64,
+    n2: Float64,
+    m1: Float64,
+    m2: Float64,
+    v1: Float64,
+    v2: Float64,
+    equal_var: Bool,
+    alternative: StaticString,
+) -> TestResult:
+    """Student's or Welch's statistic, degrees of freedom and p-value from
+    the two samples' sizes, means and `ddof = 1` variances."""
     var df: Float64
     var denominator: Float64
     if equal_var:
@@ -167,20 +298,32 @@ def ttest_ind[
             / (vn1 * vn1 / (n1 - 1.0) + vn2 * vn2 / (n2 - 1.0))
         )
         denominator = _sqrt(vn1 + vn2)
-    var statistic = (_mean(a) - _mean(b)) / denominator
+    var statistic = (m1 - m2) / denominator
     return TestResult(statistic, _t_pvalue(statistic, df, alternative), df)
 
 
 def ttest_rel[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](
     xs: T,
     ys: T,
     alternative: StaticString = "two-sided",
 ) raises -> TestResult where (is_row_major[T] and T.dtype.is_floating_point()):
     """The paired `t` test: `ttest_1samp` of the differences against zero.
-    `scipy.stats.ttest_rel(a, b, alternative)`."""
+    `scipy.stats.ttest_rel(a, b, alternative)`. At `gpu=True` the
+    differences are one device `subtract` and their moments device
+    sums."""
     _check_alternative(alternative)
+    if _check_device[T, gpu](xs) and _check_device[T, gpu](ys):
+        comptime if gpu:
+            var m = _moments_device(_tsubtract[gpu=True](xs, ys))
+            if m[0] < 2:
+                raise Error("ttest_rel: at least two pairs are needed")
+            var dfd = Float64(m[0] - 1)
+            var stat = m[1] / _sqrt(m[2] / dfd / Float64(m[0]))
+            return TestResult(stat, _t_pvalue(stat, dfd, alternative), dfd)
+    else:
+        _notice[gpu]("ttest_rel")
     var a = _values(xs)
     var b = _values(ys)
     var n = len(a)
@@ -197,13 +340,25 @@ def ttest_rel[
 
 
 def chisquare[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](observed: T, ddof: Int = 0) raises -> TestResult where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """Pearson's chi-squared test that the observed counts are uniform:
     `sum((o - e)^2 / e)` against `chi2` on `k - 1 - ddof` degrees of
-    freedom, `e` the mean count. `scipy.stats.chisquare(f_obs, ddof)`."""
+    freedom, `e` the mean count. `scipy.stats.chisquare(f_obs, ddof)`.
+    At `gpu=True` the statistic is the device sum of squared deviations
+    over the mean count."""
+    if _check_device[T, gpu](observed):
+        comptime if gpu:
+            var m = _moments_device(observed)
+            var stat = m[2] / m[1]
+            var dfd = Float64(m[0] - 1 - ddof)
+            return TestResult(
+                stat, Float64(chi2.sf[_P](_P(stat), _P(dfd)).v), dfd
+            )
+    else:
+        _notice[gpu]("chisquare")
     var o = _values(observed)
     var k = len(o)
     var expected = _mean(o)
@@ -217,7 +372,7 @@ def chisquare[
 
 
 def chisquare[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](
     observed: T,
     expected: T,
@@ -227,7 +382,32 @@ def chisquare[
 ):
     """Pearson's chi-squared test against the given expected counts.
     `scipy.stats.chisquare(f_obs, f_exp, ddof)`. SciPy checks that the two
-    sum to the same total to a relative `1e-8`; so does this, raising."""
+    sum to the same total to a relative `1e-8`; so does this, raising.
+    At `gpu=True` both totals and the statistic are device sums at the
+    samples' dtype, so the totals check allows the reassociated sum's own
+    rounding, `n` units in the last place of that dtype, when that is
+    looser than `1e-8`."""
+    if _check_device[T, gpu](observed) and _check_device[T, gpu](expected):
+        comptime if gpu:
+            var so = Float64(_tsum[gpu=True](observed))
+            var se = Float64(_tsum[gpu=True](expected))
+            var rtol = max(
+                1e-8, Float64(observed.size()) * _dtype_epsilon[T.dtype]()
+            )
+            if abs(so - se) > rtol * max(abs(so), abs(se)):
+                raise Error(
+                    "chisquare: observed and expected counts must sum to the"
+                    " same total"
+                )
+            var stat = Float64(
+                _tsum[gpu=True](_chi2_terms_device(observed, expected))
+            )
+            var dfd = Float64(observed.size() - 1 - ddof)
+            return TestResult(
+                stat, Float64(chi2.sf[_P](_P(stat), _P(dfd)).v), dfd
+            )
+    else:
+        _notice[gpu]("chisquare")
     var o = _values(observed)
     var e = _values(expected)
     var k = len(o)
@@ -337,16 +517,39 @@ def ks_1samp[
 
 
 def f_oneway[
-    T: TensorLike
-](*groups: T) raises -> TestResult where T.dtype.is_floating_point():
+    T: TensorLike, gpu: Bool = False
+](*groups: T) raises -> TestResult where (
+    T.dtype.is_floating_point() and is_row_major[T]
+):
     """The one-way ANOVA `F` test that every group shares a mean:
     between-group over within-group mean square, against `f` on `k - 1`
     and `N - k` degrees of freedom. `scipy.stats.f_oneway(*samples)`, the
     groups passed as separate arguments of one shape. `df` in the result
-    is the numerator's; the denominator's is `N - k`."""
+    is the numerator's; the denominator's is `N - k`. At `gpu=True`, with
+    every group on a device, each group's size, mean and within sum of
+    squares are device sums (`_moments_device`)."""
     var k = len(groups)
     if k < 2:
         raise Error("f_oneway: at least two groups are needed")
+    comptime if gpu:
+        var on_device = True
+        for g in range(k):
+            on_device = on_device and _check_device[T, gpu](groups[g])
+        if on_device:
+            var means = List[Float64](capacity=k)
+            var sizes = List[Int](capacity=k)
+            var grand = 0.0
+            var total_n = 0
+            var within = 0.0
+            for g in range(k):
+                var m = _moments_device(groups[g])
+                sizes.append(m[0])
+                means.append(m[1])
+                grand += m[1] * Float64(m[0])
+                within += m[2]
+                total_n += m[0]
+            return _f_oneway_finish(means, sizes, grand, total_n, within)
+        _notice[gpu]("f_oneway")
     var means = List[Float64](capacity=k)
     var sizes = List[Int](capacity=k)
     var grand = 0.0
@@ -361,7 +564,20 @@ def f_oneway[
             grand += values[i]
             within += (values[i] - m) * (values[i] - m)
         total_n += len(values)
-    grand /= Float64(total_n)
+    return _f_oneway_finish(means, sizes, grand, total_n, within)
+
+
+def _f_oneway_finish(
+    means: List[Float64],
+    sizes: List[Int],
+    total: Float64,
+    total_n: Int,
+    within: Float64,
+) raises -> TestResult:
+    """The `F` statistic and tail from each group's size and mean, the
+    grand total and the pooled within-group sum of squares."""
+    var k = len(means)
+    var grand = total / Float64(total_n)
     var between = 0.0
     for g in range(k):
         between += Float64(sizes[g]) * (means[g] - grand) * (means[g] - grand)
