@@ -43,7 +43,7 @@ def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _x() -> List[Float64]:
@@ -125,7 +125,7 @@ def test_cov_of_a_variable_matrix_matches_numpy() raises:
         rows.append(Scalar[dtype](ys[i]))
     for i in range(16):
         rows.append(Scalar[dtype](xs[i] * ys[i]))
-    var m = Static[dtype, 3, 16](_cpu(), rows^)
+    var m = Static[dtype, 3, 16](rows^, _cpu())
     var c = cov(m).to_host()
     var expected: List[Float64] = [
         2.56640625,
@@ -156,7 +156,7 @@ def _matrix() raises -> Static[dtype, 3, 16]:
         rows.append(Scalar[dtype](ys[i]))
     for i in range(16):
         rows.append(Scalar[dtype](xs[i] * ys[i]))
-    return Static[dtype, 3, 16](_cpu(), rows^)
+    return Static[dtype, 3, 16](rows^, _cpu())
 
 
 def test_cov_honours_ddof_and_bias() raises:
@@ -210,7 +210,7 @@ def test_cov_at_one_variable_and_at_two_observations() raises:
     var single = List[Scalar[dtype]](capacity=16)
     for i in range(16):
         single.append(Scalar[dtype](xs[i]))
-    var one = Static[dtype, 1, 16](_cpu(), single^)
+    var one = Static[dtype, 1, 16](single^, _cpu())
     var c = cov(one).to_host()
     assert_almost_equal(Float64(c[0]), 2.56640625, atol=1e-13)
     var r = corrcoef(one).to_host()
@@ -222,7 +222,7 @@ def test_cov_at_one_variable_and_at_two_observations() raises:
         Scalar[dtype](2.0),
         Scalar[dtype](-2.0),
     ]
-    var narrow = Static[dtype, 2, 2](_cpu(), pair^)
+    var narrow = Static[dtype, 2, 2](pair^, _cpu())
     var nc = cov(narrow).to_host()
     _assert_pairs(nc, [2.0, -4.0, -4.0, 8.0], 1e-13)
     var nr = corrcoef(narrow).to_host()
@@ -252,7 +252,7 @@ def test_cov_at_float32_agrees_with_the_float64_answer() raises:
         rows.append(Scalar[f32](xs[i]))
     for i in range(16):
         rows.append(Scalar[f32](ys[i]))
-    var m = Static[f32, 2, 16](_cpu(), rows^)
+    var m = Static[f32, 2, 16](rows^, _cpu())
     var c = cov(m).to_host()
     assert_almost_equal(Float64(c[0]), 2.56640625, atol=1e-5)
     assert_almost_equal(Float64(c[1]), 2.091666666666667, atol=1e-5)

@@ -23,7 +23,7 @@ def _grid() raises -> Static[f32, 4, 5]:
     var values = List[Scalar[f32]](capacity=20)
     for i in range(20):
         values.append(Float32(i))
-    return Static[f32, 4, 5](DeviceContext(api="cpu"), values^)
+    return Static[f32, 4, 5](values^, DeviceContext(api="cpu"))
 
 
 def test_row_slices_are_views() raises:
@@ -85,9 +85,9 @@ def test_a_block_is_statically_shaped_for_factorizations() raises:
     """`cholesky` wants a compile-time shape; `block` gives one over the
     parent's storage, and the factor matches an owned copy's."""
     var big = Static[f32, 3, 3](
-        DeviceContext(api="cpu"), [4.0, 2.0, 9.0, 2.0, 3.0, 9.0, 9.0, 9.0, 9.0]
+        [4.0, 2.0, 9.0, 2.0, 3.0, 9.0, 9.0, 9.0, 9.0], DeviceContext(api="cpu")
     )
-    var own = Static[f32, 2, 2](DeviceContext(api="cpu"), [4.0, 2.0, 2.0, 3.0])
+    var own = Static[f32, 2, 2]([4.0, 2.0, 2.0, 3.0], DeviceContext(api="cpu"))
     var got = cholesky(big.block[2, 2](0, 0)).to_host()
     var want = cholesky(own).to_host()
     for i in range(4):
@@ -114,7 +114,7 @@ def test_rank_three_indexing() raises:
     var values = List[Scalar[f32]](capacity=24)
     for i in range(24):
         values.append(Float32(i))
-    var t = Static[f32, 2, 3, 4](DeviceContext(api="cpu"), values^)
+    var t = Static[f32, 2, 3, 4](values^, DeviceContext(api="cpu"))
     assert_equal(t[1, 2, 3], 23.0)
     assert_equal(t[0, 1, 2], 6.0)
     t[1, 0, 0] = -1.0
@@ -128,7 +128,7 @@ def test_a_wrong_length_initializer_raises() raises:
     rather than reading or writing past it."""
     with assert_raises(contains="5 values for 6 elements"):
         _ = Static[f32, 2, 3](
-            DeviceContext(api="cpu"), [1.0, 2.0, 3.0, 4.0, 5.0]
+            [1.0, 2.0, 3.0, 4.0, 5.0], DeviceContext(api="cpu")
         )
     var a = _grid()
     with assert_raises(contains="3 values for 20 elements"):

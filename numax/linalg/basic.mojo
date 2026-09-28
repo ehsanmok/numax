@@ -151,7 +151,7 @@ def pinv[
             inv = Scalar[T.dtype](1) / s[j]
         for i in range(n):
             v_scaled[i * n + j] = v_scaled[i * n + j] * inv
-    var scaled = Static[T.dtype, n, n](a.context(), v_scaled^)
+    var scaled = Static[T.dtype, n, n](v_scaled^, a.context())
     return inner[gpu=gpu](scaled, factored.u)
 
 
@@ -224,7 +224,7 @@ def orth[
     extents.append(m)
     extents.append(rank)
     return Dynamic[T.dtype, 2](
-        a.context(), row_major(_dyn_shape_from[2](extents)), values^
+        row_major(_dyn_shape_from[2](extents)), values^, a.context()
     )
 
 
@@ -272,7 +272,7 @@ def null_space[
     extents.append(n)
     extents.append(nullity)
     return Dynamic[T.dtype, 2](
-        a.context(), row_major(_dyn_shape_from[2](extents)), values^
+        row_major(_dyn_shape_from[2](extents)), values^, a.context()
     )
 
 
@@ -351,7 +351,7 @@ def polar[
     for j in range(n):
         for i in range(n):
             v_scaled[i * n + j] = v_scaled[i * n + j] * s[j]
-    var scaled = Static[T.dtype, n, n](a.context(), v_scaled^)
+    var scaled = Static[T.dtype, n, n](v_scaled^, a.context())
     var positive = inner[gpu=gpu](scaled, factored.v)
 
     # The products are typed through `dim[..]` of their operands, which the

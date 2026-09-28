@@ -19,7 +19,7 @@ def _grid(ctx: DeviceContext) raises -> Static[f32, 6, 33]:
     var values = List[Scalar[f32]](capacity=6 * 33)
     for i in range(6 * 33):
         values.append(Float32((i * 13) % 29) * 0.25 - 3.0)
-    return Static[f32, 6, 33](ctx, values^)
+    return Static[f32, 6, 33](values^, ctx)
 
 
 def test_softmax_on_the_device_matches_the_host() raises:

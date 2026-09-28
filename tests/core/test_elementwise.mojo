@@ -128,7 +128,7 @@ def _t[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, elements^)
+    return Static[dtype, n](elements^, ctx)
 
 
 def test_exponentials_match_hand_computed_values() raises:
@@ -302,7 +302,7 @@ def _m2[
     var elements = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](ctx, elements^)
+    return Static[dtype, rows, cols](elements^, ctx)
 
 
 def test_maximum_broadcasts_a_row_across_a_matrix() raises:
@@ -494,7 +494,7 @@ def test_a_dynamic_input_matches_the_static_result() raises:
     for i in range(6):
         values.append(Scalar[dtype](i) * 0.75 - 2.0)
 
-    var fixed = Static[dtype, 2, 3](ctx, values.copy())
+    var fixed = Static[dtype, 2, 3](values.copy(), ctx)
     var runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     runtime.copy_from_host(values)
 
@@ -520,7 +520,7 @@ def test_the_threaded_path_agrees_with_the_serial_one() raises:
     for i in range(n):
         values.append(Scalar[dtype](i % 977) * 0.01 - 4.0)
 
-    var big = Static[dtype, n](ctx, values.copy())
+    var big = Static[dtype, n](values.copy(), ctx)
     var got = exp(big).to_host()
     for i in range(n):
         _same(got[i], _std_exp(values[i]))

@@ -860,7 +860,7 @@ def clip[
         var walked = List[Scalar[dtype]](length=n, fill=0)
         for i in range(n):
             walked[i] = min(max(values[i], lo), hi)
-        return Tensor[dtype, LayoutType](a.context(), a.tile().layout, walked^)
+        return Tensor[dtype, LayoutType](a.tile().layout, walked^, a.context())
 
     var ctx = a.context()
     var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
@@ -907,7 +907,7 @@ def diff[
         var walked = List[Scalar[dtype]](length=n - 1, fill=0)
         for i in range(n - 1):
             walked[i] = values[i + 1] - values[i]
-        return Static[dtype, n - 1](a.context(), walked^)
+        return Static[dtype, n - 1](walked^, a.context())
 
     var ctx = a.context()
     var out = Static[dtype, n - 1]._uninitialized(ctx)
@@ -959,7 +959,7 @@ def gradient[
         walked[n - 1] = (values[n - 1] - values[n - 2]) / spacing
         for i in range(1, n - 1):
             walked[i] = (values[i + 1] - values[i - 1]) / (spacing + spacing)
-        return Static[dtype, n](a.context(), walked^)
+        return Static[dtype, n](walked^, a.context())
 
     var ctx = a.context()
     var out = Static[dtype, n]._uninitialized(ctx)

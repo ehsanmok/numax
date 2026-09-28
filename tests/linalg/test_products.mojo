@@ -29,18 +29,18 @@ comptime P = Plain[DType.float64, 1]
 
 
 def _a(ctx: DeviceContext) raises -> Static[dtype, 2, 3]:
-    return Static[dtype, 2, 3](ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    return Static[dtype, 2, 3]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], ctx)
 
 
 def _b(ctx: DeviceContext) raises -> Static[dtype, 4, 3]:
     return Static[dtype, 4, 3](
-        ctx, [1.0, 0.0, -1.0, 2.0, 1.0, 0.0, 0.0, 3.0, 1.0, -2.0, 1.0, 4.0]
+        [1.0, 0.0, -1.0, 2.0, 1.0, 0.0, 0.0, 3.0, 1.0, -2.0, 1.0, 4.0], ctx
     )
 
 
 def _square(ctx: DeviceContext) raises -> Static[dtype, 3, 3]:
     return Static[dtype, 3, 3](
-        ctx, [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0]
+        [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0], ctx
     )
 
 
@@ -83,7 +83,7 @@ def test_inner_is_the_gram_matrix_of_the_rows() raises:
 def test_array_inner_agrees_with_the_tensor_tier() raises:
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 3, 3](
-        ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0]
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0], ctx
     )
     var b = _square(ctx)
     var want = inner(a, b).to_host()
@@ -107,8 +107,8 @@ def test_array_inner_agrees_with_the_tensor_tier() raises:
 
 def test_kron_matches_a_hand_written_loop() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
-    var b = Static[dtype, 2, 3](ctx, [5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+    var a = Static[dtype, 2, 2]([1.0, 2.0, 3.0, 4.0], ctx)
+    var b = Static[dtype, 2, 3]([5.0, 6.0, 7.0, 8.0, 9.0, 10.0], ctx)
     var got = kron(a, b).to_host()
 
     var a_host = [1.0, 2.0, 3.0, 4.0]
@@ -130,8 +130,8 @@ def test_kron_with_the_identity_tiles_the_other_operand() raises:
     the property that makes the Kronecker product useful for block
     systems."""
     var ctx = DeviceContext(api="cpu")
-    var eye2 = Static[dtype, 2, 2](ctx, [1.0, 0.0, 0.0, 1.0])
-    var b = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
+    var eye2 = Static[dtype, 2, 2]([1.0, 0.0, 0.0, 1.0], ctx)
+    var b = Static[dtype, 2, 2]([1.0, 2.0, 3.0, 4.0], ctx)
     var got = kron(eye2, b).to_host()
 
     assert_almost_equal(Float64(got[0]), 1.0, atol=1e-12)
@@ -143,8 +143,8 @@ def test_kron_with_the_identity_tiles_the_other_operand() raises:
 
 def test_array_kron_agrees_with_the_tensor_tier() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
-    var b = Static[dtype, 2, 2](ctx, [5.0, 6.0, 7.0, 8.0])
+    var a = Static[dtype, 2, 2]([1.0, 2.0, 3.0, 4.0], ctx)
+    var b = Static[dtype, 2, 2]([5.0, 6.0, 7.0, 8.0], ctx)
     var want = kron(a, b).to_host()
 
     var aa = Array[P, 4](fill=P.constant(0.0))

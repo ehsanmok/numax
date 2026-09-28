@@ -21,7 +21,7 @@ def _cube(ctx: DeviceContext) raises -> Static[f32, 4, 5, 6]:
     var values = List[Scalar[f32]](capacity=120)
     for i in range(120):
         values.append(Float32((i * 37 + i // 7) % 9) - 3.0)
-    return Static[f32, 4, 5, 6](ctx, values^)
+    return Static[f32, 4, 5, 6](values^, ctx)
 
 
 def _same(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:

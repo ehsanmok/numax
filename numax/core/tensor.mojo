@@ -36,12 +36,27 @@ host view, `map[gpu=True]` launches on the device view through
 view as its device type, so the tensor itself can be the argument to
 `enqueue_function` and the kernel receives the tile.
 
+**One argument order for everything that creates a tensor.** Parameters
+first, then values, then the device, which is optional everywhere and
+means the host when absent:
+
+| Creates | Spelling |
+|---|---|
+| a shape of zeros | `zeros[f32, 2, 3](ctx)`, `Static[f32, 2, 3](ctx)` |
+| a shape from values | `Static[f32, 3]([1.0, 2.0, 3.0], ctx)`, `Tensor[f32, L](layout, values, ctx)` |
+| a 1-D sequence | `linspace[5, f32](0, 1, ctx)`, `arange(0.0, 1.0, 0.25, ctx)` |
+| a copy of host data | `asarray(values, ctx)` |
+
+Dtype comes before the extents in the shape factories because `*dims` has
+to be last; the count comes first for the 1-D generators. Leaving `ctx`
+out is always the host.
+
 **Owned or borrowed, one bound.** `Tensor` conforms to `TensorLike`
 (`numax.core.tensorlike`), as does `TensorView`, which wraps a `TileTensor` someone
 else owns. Every public routine in the `Tensor` tier takes its tensors
-through that trait, so `cholesky(a)` and `cholesky(TensorView(a.tile().tile[4,
-4](0, 0), a.context()))` are one `cholesky`: the second factors a quadrant
-in place, no copy, no second kernel.
+through that trait, so `cholesky(a)` and `cholesky(a.block[4, 4](0, 0))`
+are one `cholesky`: the second factors a quadrant in place, no copy, no
+second kernel.
 
 **Why a `Tensor` wrapper, not a bare `TileTensor`.** `TileTensor` is a
 *view*: a pointer plus a layout, not the memory itself, under every engine
@@ -336,32 +351,34 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             row_major(Coord[*Self.LayoutType._shape_types]())
         )
 
-    def __init__(out self, ctx: DeviceContext) raises:
-        """A zero-filled tensor on `ctx`'s device, at a compile-time shape.
-        See the layout-taking form below."""
-        self = Self(ctx, Self._static_layout())
+    def __init__(out self, ctx: Optional[DeviceContext] = None) raises:
+        """A zero-filled tensor at a compile-time shape, on `ctx`'s device or
+        the host. See the layout-taking form below."""
+        self = Self(Self._static_layout(), ctx)
 
     def __init__(
-        out self, ctx: DeviceContext, var values: List[Scalar[Self.dtype]]
+        out self,
+        var values: List[Scalar[Self.dtype]],
+        ctx: Optional[DeviceContext] = None,
     ) raises:
-        """A tensor on `ctx`'s device holding `values`, row-major, at a
-        compile-time shape."""
-        self = Self(ctx, Self._static_layout(), values^)
+        """A tensor holding `values`, row-major, at a compile-time shape, on
+        `ctx`'s device or the host: `Static[f32, 3]([1.0, 2.0, 3.0], gpu)`."""
+        self = Self(Self._static_layout(), values^, ctx)
 
-    def __init__(out self, ctx: DeviceContext, layout: Self.LayoutType) raises:
-        """A zero-filled tensor on `ctx`'s device with the given layout.
+    def __init__(
+        out self, layout: Self.LayoutType, ctx: Optional[DeviceContext] = None
+    ) raises:
+        """A zero-filled tensor with the given layout, on `ctx`'s device or
+        the host.
 
         Zeroing is `ctx.enqueue_memset`, which runs on the device rather
         than staging a host write, so this is the cheap constructor on both
         paths.
 
-        Note the `ctx` here comes **first and required**, while every factory
-        below takes it **last and optional** -- the constructor has no other
-        way to learn the device, the factories do. The two spellings sit
-        within a couple of lines of each other in ordinary code
-        (`var xs = linspace[n](0, 1, ctx=cpu)` beside `var ys = T(cpu)`), and
-        writing the factory the constructor's way is a compile error, not a
-        silent one.
+        `ctx` comes **last and optional**, as in every factory, and its
+        absence means the host -- one ordering for the whole creation
+        surface, so `Static[f32, 3](values, gpu)` and `zeros[f32, 3](gpu)`
+        read the same way.
 
         Not available at `DType.bool`: `enqueue_memset` on a `bool` buffer
         fails to compile under the pinned toolchain ("failed to run the
@@ -377,11 +394,12 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         a read immediately after construction can see unwritten memory
         (caught by `tests/core/test_tensor.mojo`'s zero-content check).
         """
+        var device = ctx.value() if ctx else DeviceContext(api="cpu")
         self.layout = layout
-        self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
-        self.host_addressable = ctx.api() == "cpu"
-        ctx.enqueue_memset(self.buffer, Scalar[Self.dtype](0))
-        ctx.synchronize()
+        self.buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
+        self.host_addressable = device.api() == "cpu"
+        device.enqueue_memset(self.buffer, Scalar[Self.dtype](0))
+        device.synchronize()
 
     @staticmethod
     def _uninitialized(
@@ -424,11 +442,12 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
 
     def __init__(
         out self,
-        ctx: DeviceContext,
         layout: Self.LayoutType,
         var values: List[Scalar[Self.dtype]],
+        ctx: Optional[DeviceContext] = None,
     ) raises:
-        """A tensor on `ctx`'s device holding `values`, row-major.
+        """A tensor holding `values`, row-major, on `ctx`'s device or the
+        host.
 
         `values` must have exactly `layout.size()` entries, and a list of
         any other length raises rather than reading past its end; this is
@@ -444,9 +463,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
                 layout.size(),
                 " elements",
             )
+        var device = ctx.value() if ctx else DeviceContext(api="cpu")
         self.layout = layout
-        self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
-        self.host_addressable = ctx.api() == "cpu"
+        self.buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
+        self.host_addressable = device.api() == "cpu"
         with self.buffer.map_to_host() as host:
             for i in range(layout.size()):
                 host[i] = values[i]
@@ -611,7 +631,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         var values = List[Scalar[Self.dtype]](capacity=n)
         for i in range(n):
             values.append(src[unsafe_offset=i])
-        return Self(device, v.layout, values^)
+        return Self(v.layout, values^, device)
 
     def as_dynamic(var self) raises -> Dynamic[Self.dtype, Self.rank]:
         """The same storage, with the shape moved out of the type and into
@@ -1665,9 +1685,9 @@ def _context(ctx: Optional[DeviceContext]) raises -> DeviceContext:
     """The device a factory should allocate on: the caller's, or the host.
 
     Every factory below takes `ctx` last and optional, so `zeros[f32, 2,
-    3]()` lands on the CPU and `zeros[f32, 2, 3](gpu)` lands on `gpu` --
-    unlike `Tensor`'s own constructor, which takes it first and required. It
-    cannot be an ordinary default argument because `DeviceContext(api="cpu")`
+    3]()` lands on the CPU and `zeros[f32, 2, 3](gpu)` lands on `gpu`, as
+    `Tensor`'s own constructors do. It cannot be an ordinary default
+    argument because `DeviceContext(api="cpu")`
     raises, and a raising expression is not admissible in that position.
     """
     return ctx.value() if ctx else DeviceContext(api="cpu")
@@ -1692,7 +1712,7 @@ def zeros_dyn[
     where `zeros[f32, 4, 3]()` would have compiled the shape in.
     """
     return Dynamic[dtype, rank](
-        _context(ctx), row_major(_dyn_shape[rank](*extents))
+        row_major(_dyn_shape[rank](*extents)), _context(ctx)
     )
 
 
@@ -1704,13 +1724,13 @@ def asarray[
     """A rank-1 tensor holding `values`, as long as `values` is.
 
     The constructor for data whose length is a run-time fact.
-    `Static[dtype, n](ctx, values)` needs `n` in the type, so anything
+    `Static[dtype, n](values, ctx)` needs `n` in the type, so anything
     producing a count instead of a constant -- a boolean mask, `unique`, a
     file read -- had no way to hand back a right-sized tensor. This does,
     and it is what those functions return.
     """
     var n = len(values)
-    var result = Dynamic[dtype, 1](_context(ctx), row_major(_dyn_shape[1](n)))
+    var result = Dynamic[dtype, 1](row_major(_dyn_shape[1](n)), _context(ctx))
     result.copy_from_host(values)
     return result^
 
@@ -1734,7 +1754,7 @@ def _same_order[
         raise Error("cannot lay out ", a.size(), " elements as ", layout.size())
     var ctx = a.context()
     if a.on_host():
-        return Tensor[T.dtype, L](ctx, layout, a.to_host())
+        return Tensor[T.dtype, L](layout, a.to_host(), ctx)
     var result = Tensor[T.dtype, L]._uninitialized(ctx, layout)
     comptime rank = T.LayoutType.rank
     var shape = IndexList[rank]()
@@ -2179,7 +2199,7 @@ def eye[
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = 1
-    return Static[dtype, n, n](_context(ctx), values^)
+    return Static[dtype, n, n](values^, _context(ctx))
 
 
 def zeros[T: FloatLike, n: Int]() -> Array[T, n]:
@@ -2258,7 +2278,7 @@ def linspace[
         var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(lo + Scalar[dtype](i) * step)
-    return Static[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](values^, _context(ctx))
 
 
 def logspace[
@@ -2291,7 +2311,7 @@ def logspace[
         var step = (Scalar[dtype](stop) - lo) / Scalar[dtype](num - 1)
         for i in range(num):
             values.append(b ** (lo + Scalar[dtype](i) * step))
-    return Static[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](values^, _context(ctx))
 
 
 def arange_n[
@@ -2321,7 +2341,7 @@ def arange_n[
     var values = List[Scalar[dtype]](capacity=num)
     for i in range(num):
         values.append(first + Scalar[dtype](i) * by)
-    return Static[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](values^, _context(ctx))
 
 
 def arange[
@@ -2375,7 +2395,7 @@ def zeros_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """A new zero-filled tensor with `a`'s dtype, shape and device."""
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
-    return Tensor[dtype, LayoutType](a.context(), a.tile().layout)
+    return Tensor[dtype, LayoutType](a.tile().layout, a.context())
 
 
 def ones_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
@@ -2573,7 +2593,7 @@ def _transpose_by[
 
     var ctx = a.context()
     var result = Dynamic[dtype, rank](
-        ctx, row_major(_dyn_shape_from[rank](out_extents))
+        row_major(_dyn_shape_from[rank](out_extents)), ctx
     )
     _max_transpose(result.tile(), a.tile(), order.unsafe_ptr(), ctx)
     ctx.synchronize()
@@ -2779,7 +2799,7 @@ def stack[
         values.append(a_values[i])
     for i in range(n):
         values.append(b_values[i])
-    return Static[dtype, 2, n](a.context(), values^)
+    return Static[dtype, 2, n](values^, a.context())
 
 
 def reshape[
@@ -2936,7 +2956,7 @@ def slice[
         out.append(values[src])
 
     var result = Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape_from[rank](extents))
+        row_major(_dyn_shape_from[rank](extents)), a.context()
     )
     result.copy_from_host(out)
     return result^
@@ -3044,7 +3064,7 @@ def stack_dyn[
     for i in range(len(b_values)):
         values.append(b_values[i])
     var result = Dynamic[dtype, 2](
-        a.context(), row_major(_dyn_shape[2](2, a.size()))
+        row_major(_dyn_shape[2](2, a.size())), a.context()
     )
     result.copy_from_host(values)
     return result^
@@ -3187,7 +3207,7 @@ def broadcast_to[
         out.append(values[src])
 
     var result = Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape[rank](*extents))
+        row_major(_dyn_shape[rank](*extents)), a.context()
     )
     result.copy_from_host(out)
     return result^
@@ -3301,7 +3321,7 @@ def concatenate[
         values.append(a_values[i])
     for i in range(m):
         values.append(b_values[i])
-    return Static[dtype, n + m](a.context(), values^)
+    return Static[dtype, n + m](values^, a.context())
 
 
 def split[
@@ -3347,8 +3367,8 @@ def split[
     for i in range(at, n):
         tail.append(values[i])
     return (
-        Static[dtype, at](ctx, head^),
-        Static[dtype, n - at](ctx, tail^),
+        Static[dtype, at](head^, ctx),
+        Static[dtype, n - at](tail^, ctx),
     )
 
 
@@ -3431,7 +3451,7 @@ def array_split[
             extents.append(take if d == axis else a.dim_at(d))
         parts.append(
             Dynamic[dtype, rank](
-                ctx, row_major(_dyn_shape_from[rank](extents)), chunk^
+                row_major(_dyn_shape_from[rank](extents)), chunk^, ctx
             )
         )
         start += take
@@ -3463,7 +3483,7 @@ def geomspace[
         for _ in range(num):
             values.append(current)
             current = current * Scalar[dtype](ratio)
-    return Static[dtype, num](_context(ctx), values^)
+    return Static[dtype, num](values^, _context(ctx))
 
 
 def identity[
@@ -3498,7 +3518,7 @@ def diag[
     var source = a.to_host()
     for i in range(n):
         values[i * n + i] = source[i]
-    return Static[dtype, n, n](a.context(), values^)
+    return Static[dtype, n, n](values^, a.context())
 
 
 def diagonal[
@@ -3523,7 +3543,7 @@ def diagonal[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(source[i * n + i])
-    return Static[dtype, n](a.context(), values^)
+    return Static[dtype, n](values^, a.context())
 
 
 def diagflat[
@@ -3549,7 +3569,7 @@ def diagflat[
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = source[i]
-    return Static[dtype, n, n](a.context(), values^)
+    return Static[dtype, n, n](values^, a.context())
 
 
 def diagflat[
@@ -3572,7 +3592,7 @@ def diagflat[
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = source[i]
-    var result = Dynamic[dtype, 2](a.context(), row_major(_dyn_shape[2](n, n)))
+    var result = Dynamic[dtype, 2](row_major(_dyn_shape[2](n, n)), a.context())
     result.copy_from_host(values)
     return result^
 
@@ -3591,7 +3611,7 @@ def tri[
     for r in range(n):
         for c in range(r + 1):
             values[r * n + c] = 1
-    return Static[dtype, n, n](_context(ctx), values^)
+    return Static[dtype, n, n](values^, _context(ctx))
 
 
 def _band_part[
@@ -3627,8 +3647,8 @@ def _band_part[
     var ctx = a.context()
     var result = Static[T.dtype, rows, cols](ctx)
     var counts = DeviceContext(api="cpu")
-    var num_lower = Static[DType.int64, 1](counts, [Scalar[DType.int64](lower)])
-    var num_upper = Static[DType.int64, 1](counts, [Scalar[DType.int64](upper)])
+    var num_lower = Static[DType.int64, 1]([Scalar[DType.int64](lower)], counts)
+    var num_upper = Static[DType.int64, 1]([Scalar[DType.int64](upper)], counts)
     var exclude = Static[DType.int64, 1](counts)
     var src = a.tile()
     var dst = result.tile()
@@ -3933,7 +3953,7 @@ def concatenate[
     for d in range(rank):
         extents.append(joined if d == axis else a.dim_at(d))
     return Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape_from[rank](extents)), out^
+        row_major(_dyn_shape_from[rank](extents)), out^, a.context()
     )
 
 
@@ -4009,7 +4029,7 @@ def stack[
             out[(o * 2 + 1) * inner + i] = b_values[o * inner + i]
 
     return Dynamic[dtype, rank + 1](
-        a.context(), row_major(_dyn_shape_from[rank + 1](extents)), out^
+        row_major(_dyn_shape_from[rank + 1](extents)), out^, a.context()
     )
 
 
@@ -4086,10 +4106,10 @@ def split[
     var ctx = a.context()
     return (
         Dynamic[dtype, rank](
-            ctx, row_major(_dyn_shape_from[rank](head_extents)), head^
+            row_major(_dyn_shape_from[rank](head_extents)), head^, ctx
         ),
         Dynamic[dtype, rank](
-            ctx, row_major(_dyn_shape_from[rank](tail_extents)), tail^
+            row_major(_dyn_shape_from[rank](tail_extents)), tail^, ctx
         ),
     )
 
@@ -4170,7 +4190,7 @@ def roll[
                 out[(o * length + to) * inner + i] = values[
                     (o * length + k) * inner + i
                 ]
-    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 def tile[
@@ -4239,7 +4259,7 @@ def tile[
         TileTensor(out, row_major(_dyn_shape_from[rank](extents))),
     )
     return Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape_from[rank](extents)), out^
+        row_major(_dyn_shape_from[rank](extents)), out^, a.context()
     )
 
 
@@ -4298,7 +4318,7 @@ def repeat[
         ctx,
     )
     return Dynamic[dtype, rank](
-        ctx, row_major(_dyn_shape_from[rank](extents)), out^
+        row_major(_dyn_shape_from[rank](extents)), out^, ctx
     )
 
 
@@ -4329,7 +4349,7 @@ def vander[
         for j in range(cols):
             values[r * cols + (cols - 1 - j)] = power
             power = power * source[r]
-    return Static[dtype, n, cols](a.context(), values^)
+    return Static[dtype, n, cols](values^, a.context())
 
 
 def meshgrid[
@@ -4376,8 +4396,8 @@ def meshgrid[
             yy[r * n + c] = ys[r]
     var ctx = x.context()
     return (
-        Static[dtype, m, n](ctx, xx^),
-        Static[dtype, m, n](ctx, yy^),
+        Static[dtype, m, n](xx^, ctx),
+        Static[dtype, m, n](yy^, ctx),
     )
 
 
@@ -4402,7 +4422,7 @@ def flip[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(source[n - 1 - i])
-    return Static[dtype, n](a.context(), values^)
+    return Static[dtype, n](values^, a.context())
 
 
 def copy[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
@@ -4463,7 +4483,7 @@ def vstack[
         values.append(a_values[i])
     for i in range(rows_b * cols):
         values.append(b_values[i])
-    return Static[dtype, rows_a + rows_b, cols](a.context(), values^)
+    return Static[dtype, rows_a + rows_b, cols](values^, a.context())
 
 
 def dstack[
@@ -4508,7 +4528,7 @@ def dstack[
     for i in range(rows * cols):
         values[2 * i] = a_values[i]
         values[2 * i + 1] = b_values[i]
-    return Static[dtype, rows, cols, 2](a.context(), values^)
+    return Static[dtype, rows, cols, 2](values^, a.context())
 
 
 def rot90[
@@ -4553,7 +4573,7 @@ def rot90[
                 values[(cols - 1 - c) * rows + r] = source[r * cols + c]
             else:
                 values[c * rows + (rows - 1 - r)] = source[r * cols + c]
-    return Static[dtype, cols, rows](a.context(), values^)
+    return Static[dtype, cols, rows](values^, a.context())
 
 
 def rot90[
@@ -4596,7 +4616,7 @@ def rot90[
                 values[(rows - 1 - r) * cols + (cols - 1 - c)] = source[
                     r * cols + c
                 ]
-    return Static[dtype, rows, cols](a.context(), values^)
+    return Static[dtype, rows, cols](values^, a.context())
 
 
 def hstack[
@@ -4643,7 +4663,7 @@ def hstack[
             values[r * (cols_a + cols_b) + cols_a + c] = b_values[
                 r * cols_b + c
             ]
-    return Static[dtype, rows, cols_a + cols_b](a.context(), values^)
+    return Static[dtype, rows, cols_a + cols_b](values^, a.context())
 
 
 def _format_axis[
@@ -4837,7 +4857,7 @@ def to_tensor[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(a[i].v)
-    return Static[dtype, *dims](_context(ctx), values^)
+    return Static[dtype, *dims](values^, _context(ctx))
 
 
 def to_tensor[
@@ -4871,8 +4891,8 @@ def to_tensor[
         derivs.append(a[i].deriv.v)
     var context = _context(ctx)
     return (
-        Static[dtype, *dims](context, values^),
-        Static[dtype, *dims](context, derivs^),
+        Static[dtype, *dims](values^, context),
+        Static[dtype, *dims](derivs^, context),
     )
 
 
@@ -4915,6 +4935,6 @@ def to_tensor[
 
     var context = _context(ctx)
     return (
-        Static[dtype, *dims](context, values^),
-        Static[dtype, n_vars * n](context, partials^),
+        Static[dtype, *dims](values^, context),
+        Static[dtype, n_vars * n](partials^, context),
     )

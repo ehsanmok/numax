@@ -765,8 +765,8 @@ def _to_transfer_function[
         a.append(Scalar[dtype](ba[1][j]))
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     return TransferFunction[dtype, order](
-        Static[dtype, order + 1](device, b^),
-        Static[dtype, order + 1](device, a^),
+        Static[dtype, order + 1](b^, device),
+        Static[dtype, order + 1](a^, device),
     )
 
 
@@ -1040,7 +1040,7 @@ def freqz[
     var w = List[Scalar[A.dtype]](capacity=worN)
     for k in range(worN):
         w.append(Scalar[A.dtype](_PI * Float64(k) / Float64(worN)))
-    var grid = Static[A.dtype, worN](ctx, w^)
+    var grid = Static[A.dtype, worN](w^, ctx)
     var real = Static[A.dtype, worN]._uninitialized(ctx)
     var imag = Static[A.dtype, worN]._uninitialized(ctx)
     var ws = grid.tile()

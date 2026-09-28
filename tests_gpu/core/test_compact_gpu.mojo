@@ -17,7 +17,7 @@ def _data(ctx: DeviceContext) raises -> Static[f32, 4, 250]:
     var values = List[Scalar[f32]](capacity=1000)
     for i in range(1000):
         values.append(Float32(0) if (i * 7) % 5 < 2 else Float32(i % 11) - 5.0)
-    return Static[f32, 4, 250](ctx, values^)
+    return Static[f32, 4, 250](values^, ctx)
 
 
 def test_nonzero_and_argwhere_on_the_device() raises:
@@ -54,11 +54,11 @@ def test_extract_and_compress_on_the_device() raises:
     for i in range(8):
         line_values.append(Float32(i) * 1.5)
     var dc = compress[gpu=True](
-        Static[DType.bool, 6](gpu, cond.copy()),
-        Static[f32, 8](gpu, line_values.copy()),
+        Static[DType.bool, 6](cond.copy(), gpu),
+        Static[f32, 8](line_values.copy(), gpu),
     ).to_host()
     var hc = compress(
-        Static[DType.bool, 6](cpu, cond^), Static[f32, 8](cpu, line_values^)
+        Static[DType.bool, 6](cond^, cpu), Static[f32, 8](line_values^, cpu)
     ).to_host()
     assert_equal(len(dc), 4)
     for i in range(4):

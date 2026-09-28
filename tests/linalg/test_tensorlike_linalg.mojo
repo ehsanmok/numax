@@ -34,7 +34,7 @@ def _big() raises -> Static[f64, 4, 4]:
 def test_cholesky_of_a_view_block_matches_the_owned_block() raises:
     var big = _big()
     var block = TensorView(big.tile().tile[2, 2](0, 0), big.context())
-    var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
+    var owned = Static[f64, 2, 2]([4.0, 2.0, 2.0, 3.0], big.context())
     var from_tile = cholesky(block).to_host()
     var from_owned = cholesky(owned).to_host()
     for i in range(4):
@@ -47,8 +47,8 @@ def test_cholesky_of_a_view_block_matches_the_owned_block() raises:
 def test_solve_and_det_accept_a_view() raises:
     var big = _big()
     var block = TensorView(big.tile().tile[2, 2](0, 0), big.context())
-    var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
-    var rhs = Static[f64, 2](big.context(), [1.0, 2.0])
+    var owned = Static[f64, 2, 2]([4.0, 2.0, 2.0, 3.0], big.context())
+    var rhs = Static[f64, 2]([1.0, 2.0], big.context())
     var x_view = solve(block, rhs).to_host()
     var x_owned = solve(owned, rhs).to_host()
     assert_almost_equal(x_view[0], x_owned[0])

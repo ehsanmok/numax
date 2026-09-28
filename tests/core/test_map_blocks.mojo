@@ -142,7 +142,7 @@ def test_an_identity_step_round_trips_every_block() raises:
     `batch` that is not a lane multiple, so the tail runs too."""
     var ctx = DeviceContext(api="cpu")
     var values = _ramp(3)
-    var xs = Static[dtype, 3, batch](ctx, values.copy())
+    var xs = Static[dtype, 3, batch](values.copy(), ctx)
     var ys = Static[dtype, 3, batch]._uninitialized(ctx)
 
     map_blocks[step=_identity_step](xs.tile(), ys.tile(), ctx)
@@ -159,7 +159,7 @@ def test_a_block_sum_equals_a_host_loop() raises:
     as a scalar loop over the same packing."""
     var ctx = DeviceContext(api="cpu")
     var values = _ramp(5)
-    var xs = Static[dtype, 5, batch](ctx, values.copy())
+    var xs = Static[dtype, 5, batch](values.copy(), ctx)
     var ys = Static[dtype, 1, batch]._uninitialized(ctx)
 
     map_blocks[step=_sum_step](xs.tile(), ys.tile(), ctx)
@@ -180,7 +180,7 @@ def test_one_array_tier_solve_per_lane_matches_the_host_solve() raises:
     problem on the host."""
     var ctx = DeviceContext(api="cpu")
     var values = _systems()
-    var xs = Static[dtype, k_in, batch](ctx, values.copy())
+    var xs = Static[dtype, k_in, batch](values.copy(), ctx)
     var ys = Static[dtype, n, batch]._uninitialized(ctx)
 
     map_blocks[step=_solve_step](xs.tile(), ys.tile(), ctx)
@@ -208,7 +208,7 @@ def test_a_dual_step_differentiates_the_solve_it_runs() raises:
     same `solve`, per lane."""
     var ctx = DeviceContext(api="cpu")
     var values = _systems()
-    var xs = Static[dtype, k_in, batch](ctx, values.copy())
+    var xs = Static[dtype, k_in, batch](values.copy(), ctx)
     var ys = Static[dtype, n, batch]._uninitialized(ctx)
 
     map_blocks[step=_sensitivity_step](xs.tile(), ys.tile(), ctx)

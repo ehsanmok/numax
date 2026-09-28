@@ -730,7 +730,6 @@ def test_eigh_at_n_one_and_two() raises:
 def _tall() raises -> Static[dtype, 5, 3]:
     var ctx = DeviceContext(api="cpu")
     return Static[dtype, 5, 3](
-        ctx,
         [
             1.0,
             2.0,
@@ -748,6 +747,7 @@ def _tall() raises -> Static[dtype, 5, 3]:
             1.0,
             1.0,
         ],
+        ctx,
     )
 
 
@@ -1259,12 +1259,12 @@ def test_svd_at_n_one_two_three() raises:
     # destination, and a cross-shape `elementwise` is exactly where small
     # extents have misbehaved before -- so the three smallest are pinned.
     var ctx = DeviceContext(api="cpu")
-    var one = Static[dtype, 3, 1](ctx, [2.0, 1.0, 2.0])
+    var one = Static[dtype, 3, 1]([2.0, 1.0, 2.0], ctx)
     _svd_round_trip[3, 1](one)
     var s1 = svdvals(one).to_host()
     assert_almost_equal(s1[0], Scalar[dtype](3.0), atol=1e-13)
 
-    var two = Static[dtype, 3, 2](ctx, [1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
+    var two = Static[dtype, 3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 7.0], ctx)
     _svd_round_trip[3, 2](two)
 
     var three = _rect[3, 3]()
@@ -1280,7 +1280,7 @@ def test_svdvals_finds_a_rank_deficient_matrix() raises:
     # [12.269416474076381, 1.2088918006435092, 7.4e-16].
     var ctx = DeviceContext(api="cpu")
     var a = Static[dtype, 4, 3](
-        ctx, [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0]
+        [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0], ctx
     )
     var s = svdvals(a).to_host()
     assert_almost_equal(s[0], Scalar[dtype](12.269416474076381), rtol=1e-10)
@@ -1291,7 +1291,7 @@ def test_svdvals_finds_a_rank_deficient_matrix() raises:
 def _rank_two() raises -> Static[dtype, 4, 3]:
     var ctx = DeviceContext(api="cpu")
     return Static[dtype, 4, 3](
-        ctx, [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0]
+        [1.0, 2.0, 1.0, 2.0, 4.0, 0.0, 3.0, 6.0, 1.0, 4.0, 8.0, 0.0], ctx
     )
 
 
@@ -1421,7 +1421,7 @@ def test_cond_of_a_singular_matrix_is_infinite_or_huge() raises:
     # singular value is zero to rounding, so the ratio is at the floor of
     # what float64 can express or past it.
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 2.0, 4.0])
+    var a = Static[dtype, 2, 2]([1.0, 2.0, 2.0, 4.0], ctx)
     assert_equal(Float64(cond(a)) > 1e15, True)
 
 
@@ -1447,8 +1447,8 @@ def test_lstsq_svd_agrees_with_qr_at_full_rank() raises:
     var a = _tall()
     var a2 = _copy_rect(a)
     var ctx = a.context()
-    var b = Static[dtype, 5](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
-    var b2 = Static[dtype, 5](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var b = Static[dtype, 5]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
+    var b2 = Static[dtype, 5]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var via_qr = lstsq(a, b).to_host()
     var via_svd = lstsq[method="svd"](a2, b2).to_host()
     var expected = [
@@ -1466,7 +1466,7 @@ def test_lstsq_svd_returns_the_minimum_norm_solution_when_rank_deficient() raise
     # the minimum-norm member of the solution family.
     var a = _rank_two()
     var ctx = a.context()
-    var b = Static[dtype, 4](ctx, [1.0, 2.0, 3.0, 5.0])
+    var b = Static[dtype, 4]([1.0, 2.0, 3.0, 5.0], ctx)
     var x = lstsq[method="svd"](a, b).to_host()
     var expected = [
         0.23636363636363628,

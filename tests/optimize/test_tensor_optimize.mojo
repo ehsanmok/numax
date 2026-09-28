@@ -39,7 +39,7 @@ def _rosenbrock_jac(
     var entries = List[Scalar[dtype]](capacity=2)
     entries.append(Scalar[dtype](-2.0 * (1.0 - x) - 400.0 * x * (y - x * x)))
     entries.append(Scalar[dtype](200.0 * (y - x * x)))
-    return Static[dtype, 2](ctx, entries^)
+    return Static[dtype, 2](entries^, ctx)
 
 
 def _bowl(p: Static[dtype, 3], ctx: DeviceContext) raises -> Scalar[dtype]:
@@ -59,7 +59,7 @@ def _bowl_jac(
     entries.append(Scalar[dtype](2.0 * (Float64(v[0]) - 1.0)))
     entries.append(Scalar[dtype](4.0 * (Float64(v[1]) + 2.0)))
     entries.append(Scalar[dtype](6.0 * (Float64(v[2]) - 3.0)))
-    return Static[dtype, 3](ctx, entries^)
+    return Static[dtype, 3](entries^, ctx)
 
 
 def _vec[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
@@ -67,7 +67,7 @@ def _vec[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var entries = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         entries.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, entries^)
+    return Static[dtype, n](entries^, ctx)
 
 
 def test_lbfgs_reaches_the_rosenbrock_minimum() raises:
@@ -165,7 +165,7 @@ def _system(p: Static[dtype, 2], ctx: DeviceContext) raises -> Static[dtype, 2]:
     var entries = List[Scalar[dtype]](capacity=2)
     entries.append(Scalar[dtype](x * x + y * y - 4.0))
     entries.append(Scalar[dtype](_exp(x) + y - 1.0))
-    return Static[dtype, 2](ctx, entries^)
+    return Static[dtype, 2](entries^, ctx)
 
 
 def _system_jac(
@@ -179,7 +179,7 @@ def _system_jac(
     entries.append(Scalar[dtype](2.0 * y))
     entries.append(Scalar[dtype](_exp(x)))
     entries.append(Scalar[dtype](1.0))
-    return Static[dtype, 2, 2](ctx, entries^)
+    return Static[dtype, 2, 2](entries^, ctx)
 
 
 def test_root_by_newton_and_lm_both_find_scipys_root() raises:
@@ -220,7 +220,7 @@ def _design() raises -> Static[dtype, 5, 3]:
     var entries = List[Scalar[dtype]](capacity=15)
     for i in range(15):
         entries.append(Scalar[dtype](values[i]))
-    return Static[dtype, 5, 3](ctx, entries^)
+    return Static[dtype, 5, 3](entries^, ctx)
 
 
 def test_nnls_matches_scipy() raises:

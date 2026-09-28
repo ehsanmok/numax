@@ -97,7 +97,7 @@ def _upload[
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, out^)
+    return Static[dtype, n](out^, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -321,9 +321,9 @@ def _iir_device[
     var al_d = asarray(al^, ctx)
     var zi_d = asarray(initial^, ctx)
     var finals = Dynamic[dtype, 1](
-        ctx, row_major(_dyn_shape[1](blocks * width))
+        row_major(_dyn_shape[1](blocks * width)), ctx
     )
-    var inits = Dynamic[dtype, 1](ctx, row_major(_dyn_shape[1](blocks * width)))
+    var inits = Dynamic[dtype, 1](row_major(_dyn_shape[1](blocks * width)), ctx)
     var cp = _device_ptr[dtype](coef_d)
     var gp = _device_ptr[dtype](g_d)
     var ap = _device_ptr[dtype](al_d)
@@ -570,7 +570,7 @@ def lfilter_zi[
     comptime na = dim[B, 0]
     var norm = _normalized(b.to_host(), a.to_host[A.dtype]())
     var zi = _zi_host(norm[0], norm[1])
-    return Static[A.dtype, (nb if nb > na else na) - 1](b.context(), zi^)
+    return Static[A.dtype, (nb if nb > na else na) - 1](zi^, b.context())
 
 
 def _device_ptr[
@@ -1331,7 +1331,7 @@ def resample[
             _upload[dtype=T.dtype, n=num](ctx, yim),
         )
     )
-    var out = Static[T.dtype, num](ctx, back[0].to_host())
+    var out = Static[T.dtype, num](back[0].to_host(), ctx)
     _ = back^
     return out^
 
@@ -1462,7 +1462,7 @@ def decimate[
     var taps = firwin[dtype=T.dtype, numtaps=numtaps](cutoff^, True, ctx=ctx)
     var unit = List[Scalar[T.dtype]](capacity=1)
     unit.append(Scalar[T.dtype](1))
-    var denominator = Static[T.dtype, 1](ctx, unit^)
+    var denominator = Static[T.dtype, 1](unit^, ctx)
 
     # SciPy's own padlen for this call, `3 * (len(b) // 2)`, rather than
     # `filtfilt`'s default `3 * max(len(a), len(b))`. The smaller pad is
@@ -1481,4 +1481,4 @@ def decimate[
     var values = List[Scalar[T.dtype]](capacity=out_n)
     for i in range(out_n):
         values.append(host[i * q])
-    return Static[T.dtype, out_n](ctx, values^)
+    return Static[T.dtype, out_n](values^, ctx)

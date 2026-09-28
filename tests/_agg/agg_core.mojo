@@ -217,6 +217,9 @@ from test_creation import (
 from test_creation import (
     test_arange_rejects_a_zero_step as test_creation__test_arange_rejects_a_zero_step,
 )
+from test_creation import (
+    test_the_constructors_take_ctx_last_and_default_to_the_host as test_creation__test_the_constructors_take_ctx_last_and_default_to_the_host,
+)
 from test_decimal import (
     test_one_is_scaled_by_factor as test_decimal__test_one_is_scaled_by_factor,
 )
@@ -1574,6 +1577,9 @@ def main() raises:
     suite.test[test_creation__test_arange_of_stop_agrees_with_arange_n]()
     suite.test[test_creation__test_arange_of_an_empty_range_is_empty]()
     suite.test[test_creation__test_arange_rejects_a_zero_step]()
+    suite.test[
+        test_creation__test_the_constructors_take_ctx_last_and_default_to_the_host
+    ]()
     # tests/core/test_decimal.mojo
     suite.test[test_decimal__test_one_is_scaled_by_factor]()
     suite.test[test_decimal__test_to_float64_descales_the_raw_integer]()

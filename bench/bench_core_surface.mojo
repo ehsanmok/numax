@@ -87,12 +87,12 @@ def _values[n: Int](salt: Int) -> List[Scalar[dtype]]:
 
 def _data[n: Int](ctx: DeviceContext, salt: Int) raises -> Static[dtype, n]:
     var values = _values[n](salt)
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _zeros[n: Int](ctx: DeviceContext) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](length=n, fill=Scalar[dtype](0))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _row(name: String, n: Int, ns: Float64, per_element: Int):

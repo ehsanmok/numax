@@ -36,7 +36,7 @@ def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _knots() -> List[Float64]:

@@ -125,7 +125,7 @@ def _cosine_window[
         values.append(
             Scalar[dtype](a0 - a1 * _cos(theta) + a2 * _cos(2.0 * theta))
         )
-    return Static[dtype, n](_context(ctx), values^)
+    return Static[dtype, n](values^, _context(ctx))
 
 
 def boxcar[
@@ -141,7 +141,7 @@ def boxcar[
         _device_window["ones"](result, 1.0)
         return result^
     return Static[dtype, n](
-        _context(ctx), List[Scalar[dtype]](length=n, fill=Scalar[dtype](1))
+        List[Scalar[dtype]](length=n, fill=Scalar[dtype](1)), _context(ctx)
     )
 
 
@@ -198,7 +198,7 @@ def bartlett[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](1.0 - abs(2.0 * Float64(i) / d - 1.0)))
-    return Static[dtype, n](_context(ctx), values^)
+    return Static[dtype, n](values^, _context(ctx))
 
 
 def _bessel_i0[
@@ -253,7 +253,7 @@ def kaiser[
         if inside < 0:
             inside = 0.0
         values.append(Scalar[dtype](_bessel_i0(beta * _sqrt(inside)) * scale))
-    return Static[dtype, n](_context(ctx), values^)
+    return Static[dtype, n](values^, _context(ctx))
 
 
 def get_window[

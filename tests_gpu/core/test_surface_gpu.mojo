@@ -26,7 +26,7 @@ def _wave(ctx: DeviceContext) raises -> Static[f32, n]:
     for i in range(n):
         var x = Float32(i % (n // 3)) / Float32(n) - Float32(0.1)
         values.append(x)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _assert_close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:

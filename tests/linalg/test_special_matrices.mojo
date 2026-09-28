@@ -54,8 +54,8 @@ comptime P = Plain[DType.float64, 1]
 
 def test_toeplitz_two_argument_form() raises:
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var r = Static[dtype, 4](ctx, [9.0, 4.0, 5.0, 6.0])
+    var c = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
+    var r = Static[dtype, 4]([9.0, 4.0, 5.0, 6.0], ctx)
     var got = toeplitz(c, r).to_host()
 
     # r[0] is ignored: the corner is c[0].
@@ -79,7 +79,7 @@ def test_toeplitz_two_argument_form() raises:
 
 def test_toeplitz_symmetric_form() raises:
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
+    var c = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
     var got = toeplitz(c).to_host()
     var want = [1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 2.0, 1.0]
     for i in range(9):
@@ -88,10 +88,10 @@ def test_toeplitz_symmetric_form() raises:
 
 def test_the_symmetric_form_equals_the_two_argument_one() raises:
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
+    var c = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
     var one_arg = toeplitz(c).to_host()
-    var c2 = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var r2 = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
+    var c2 = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
+    var r2 = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
     var two_arg = toeplitz(c2, r2).to_host()
     for i in range(9):
         assert_almost_equal(Float64(one_arg[i]), Float64(two_arg[i]), atol=0.0)
@@ -102,11 +102,11 @@ def test_the_symmetric_form_equals_the_two_argument_one() raises:
 
 def test_hankel_is_constant_along_antidiagonals() raises:
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var r = Static[dtype, 3](ctx, [3.0, 4.0, 5.0])
+    var c = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
+    var r = Static[dtype, 3]([3.0, 4.0, 5.0], ctx)
     var got = toeplitz(c, r).to_host()
-    var hc = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
-    var hr = Static[dtype, 3](ctx, [3.0, 4.0, 5.0])
+    var hc = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
+    var hr = Static[dtype, 3]([3.0, 4.0, 5.0], ctx)
     var h = hankel(hc, hr).to_host()
     var want = [1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]
     for i in range(9):
@@ -120,7 +120,7 @@ def test_hankel_is_constant_along_antidiagonals() raises:
 
 def test_circulant_rotates_each_column() raises:
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
+    var c = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
     var got = circulant(c).to_host()
     var want = [1.0, 3.0, 2.0, 2.0, 1.0, 3.0, 3.0, 2.0, 1.0]
     for i in range(9):
@@ -132,9 +132,9 @@ def test_a_symmetric_circulant_is_its_own_toeplitz() raises:
     entry, the circulant and the symmetric Toeplitz coincide -- an
     independent check on both index rules at once."""
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 4](ctx, [1.0, 5.0, 9.0, 5.0])
+    var c = Static[dtype, 4]([1.0, 5.0, 9.0, 5.0], ctx)
     var circ = circulant(c).to_host()
-    var c2 = Static[dtype, 4](ctx, [1.0, 5.0, 9.0, 5.0])
+    var c2 = Static[dtype, 4]([1.0, 5.0, 9.0, 5.0], ctx)
     var toep = toeplitz(c2).to_host()
     for i in range(16):
         assert_almost_equal(Float64(circ[i]), Float64(toep[i]), atol=0.0)
@@ -147,7 +147,7 @@ def test_companion_eigenvalues_are_the_polynomial_roots() raises:
     """The independent check that matters: `x^3 - 6x^2 + 11x - 6` has roots
     1, 2 and 3, so the companion matrix's eigenvalues must be those."""
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 4](ctx, [1.0, -6.0, 11.0, -6.0])
+    var a = Static[dtype, 4]([1.0, -6.0, 11.0, -6.0], ctx)
     var c = companion(a)
 
     var as_array = to_array[P](c)
@@ -170,7 +170,7 @@ def test_companion_eigenvalues_are_the_polynomial_roots() raises:
 
 def test_companion_has_the_documented_shape() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 4](ctx, [2.0, -4.0, 6.0, -8.0])
+    var a = Static[dtype, 4]([2.0, -4.0, 6.0, -8.0], ctx)
     var got = companion(a).to_host()
     # First row is -a[1:]/a[0]; ones on the first subdiagonal.
     var want = [2.0, -3.0, 4.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
@@ -205,8 +205,8 @@ def test_hilbert_is_symmetric() raises:
 
 def test_block_diag_places_the_blocks_and_zeros_the_rest() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 1, 2](ctx, [1.0, 2.0])
-    var b = Static[dtype, 2, 1](ctx, [3.0, 4.0])
+    var a = Static[dtype, 1, 2]([1.0, 2.0], ctx)
+    var b = Static[dtype, 2, 1]([3.0, 4.0], ctx)
     var got = block_diag(a, b).to_host()
     # 3x3: [[1,2,0],[0,0,3],[0,0,4]]
     var want = [1.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 4.0]
@@ -219,8 +219,8 @@ def test_block_diag_places_the_blocks_and_zeros_the_rest() raises:
 
 def test_khatri_rao_is_kron_column_by_column() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 2, 2](ctx, [1.0, 2.0, 3.0, 4.0])
-    var b = Static[dtype, 2, 2](ctx, [5.0, 6.0, 7.0, 8.0])
+    var a = Static[dtype, 2, 2]([1.0, 2.0, 3.0, 4.0], ctx)
+    var b = Static[dtype, 2, 2]([5.0, 6.0, 7.0, 8.0], ctx)
     var got = khatri_rao(a, b).to_host()
 
     var a_host = [1.0, 2.0, 3.0, 4.0]
@@ -241,9 +241,9 @@ def test_convolution_matrix_times_a_vector_is_a_convolution() raises:
     """The claim the name makes: `C @ v == convolve(a, v)`. Checked against
     `numax.signal.convolve`, which shares no code with this."""
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, 3](ctx, [1.0, -2.0, 3.0])
+    var a = Static[dtype, 3]([1.0, -2.0, 3.0], ctx)
     var c = convolution_matrix[n=4](a)
-    var v = Static[dtype, 4](ctx, [2.0, 0.0, -1.0, 5.0])
+    var v = Static[dtype, 4]([2.0, 0.0, -1.0, 5.0], ctx)
     var got = matvec(c, v).to_host()
 
     var a_arr = Array[P, 3](fill=P.constant(0.0))
@@ -272,7 +272,7 @@ def _vector[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var entries = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         entries.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, entries^)
+    return Static[dtype, n](entries^, ctx)
 
 
 def test_pascal_symmetric_lower_and_upper() raises:

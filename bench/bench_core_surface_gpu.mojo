@@ -71,12 +71,12 @@ def _data[n: Int](ctx: DeviceContext, salt: Int) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](_entry(i + salt)))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _zeros[n: Int](ctx: DeviceContext) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](length=n, fill=Scalar[dtype](0))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _row(

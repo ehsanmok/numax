@@ -768,7 +768,7 @@ def _reverse_rows[
     for i in range(n):
         for j in range(n):
             values[(n - 1 - i) * n + j] = source[i * n + j]
-    return Static[T.dtype, n, n](a.context(), values^)
+    return Static[T.dtype, n, n](values^, a.context())
 
 
 def _reverse_both[
@@ -800,7 +800,7 @@ def _reverse_both[
     for i in range(n):
         for j in range(n):
             values[(n - 1 - i) * n + (n - 1 - j)] = source[i * n + j]
-    return Static[T.dtype, n, n](a.context(), values^)
+    return Static[T.dtype, n, n](values^, a.context())
 
 
 def rq[

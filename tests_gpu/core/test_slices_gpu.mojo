@@ -15,7 +15,7 @@ def _grid(ctx: DeviceContext) raises -> Static[f32, 64, 32]:
     var values = List[Scalar[f32]](capacity=64 * 32)
     for i in range(64 * 32):
         values.append(Float32(i % 97))
-    return Static[f32, 64, 32](ctx, values^)
+    return Static[f32, 64, 32](values^, ctx)
 
 
 def test_device_slices_stay_on_the_device() raises:

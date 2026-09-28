@@ -36,7 +36,7 @@ comptime P2 = Plain[DType.float64, 2]
 
 def _v(ctx: DeviceContext) raises -> Static[dtype, 4]:
     """(3, -4, 12, -1): 2-norm 13, 1-norm 20, inf 12, -inf 1."""
-    return Static[dtype, 4](ctx, [3.0, -4.0, 12.0, -1.0])
+    return Static[dtype, 4]([3.0, -4.0, 12.0, -1.0], ctx)
 
 
 # --- the vector norm --------------------------------------------------------
@@ -85,7 +85,7 @@ def test_the_matrix_overload_still_resolves() raises:
     """Rank selects the overload, so a 2x2 must still reach the matrix
     `norm` and get its Frobenius default rather than the vector one."""
     var ctx = DeviceContext(api="cpu")
-    var m = Static[dtype, 2, 2](ctx, [3.0, 0.0, 0.0, 4.0])
+    var m = Static[dtype, 2, 2]([3.0, 0.0, 0.0, 4.0], ctx)
     assert_almost_equal(Float64(norm(m)), 5.0, atol=1e-12)
 
 

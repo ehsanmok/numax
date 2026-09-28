@@ -32,7 +32,7 @@ def _knots(ctx: DeviceContext) raises -> Static[f32, n]:
     for i in range(n):
         values.append(at)
         at += Float32(0.1) + Float32((i * 7) % 5) * 0.05
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _values(ctx: DeviceContext) raises -> Static[f32, n]:
@@ -46,14 +46,14 @@ def _values(ctx: DeviceContext) raises -> Static[f32, n]:
             values.append(Float32(2) + Float32(sin(Float64(i) * 0.7)))
         else:
             values.append(Float32(sin(Float64(i) * 0.4)))
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _points(ctx: DeviceContext) raises -> Static[f32, m]:
     var values = List[Scalar[f32]](capacity=m)
     for i in range(m):
         values.append(Float32(-0.2) + Float32(i) * 0.075)
-    return Static[f32, m](ctx, values^)
+    return Static[f32, m](values^, ctx)
 
 
 def _assert_close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:
@@ -95,19 +95,19 @@ def test_small_cubic_splines_build_from_device_knots() raises:
     var cpu = DeviceContext(api="cpu")
     var xs: List[Scalar[f32]] = [0.0, 0.5, 1.5, 2.0]
     var ys: List[Scalar[f32]] = [1.0, -1.0, 2.0, 0.5]
-    var xg = Static[f32, 4](gpu, xs.copy())
-    var yg = Static[f32, 4](gpu, ys.copy())
-    var xc = Static[f32, 4](cpu, xs.copy())
-    var yc = Static[f32, 4](cpu, ys.copy())
+    var xg = Static[f32, 4](xs.copy(), gpu)
+    var yg = Static[f32, 4](ys.copy(), gpu)
+    var xc = Static[f32, 4](xs.copy(), cpu)
+    var yc = Static[f32, 4](ys.copy(), cpu)
     var dev = CubicSpline[f32, 4](xg, yg)
     var host = CubicSpline[f32, 4](xc, yc)
     _assert_close(
         dev[gpu=True](_points(gpu)).to_host(), host(_points(cpu)).to_host()
     )
-    var x3g = Static[f32, 3](gpu, [0.0, 0.5, 1.5])
-    var y3g = Static[f32, 3](gpu, [1.0, -1.0, 2.0])
-    var x3c = Static[f32, 3](cpu, [0.0, 0.5, 1.5])
-    var y3c = Static[f32, 3](cpu, [1.0, -1.0, 2.0])
+    var x3g = Static[f32, 3]([0.0, 0.5, 1.5], gpu)
+    var y3g = Static[f32, 3]([1.0, -1.0, 2.0], gpu)
+    var x3c = Static[f32, 3]([0.0, 0.5, 1.5], cpu)
+    var y3c = Static[f32, 3]([1.0, -1.0, 2.0], cpu)
     var dev3 = CubicSpline[f32, 3](x3g, y3g)
     var host3 = CubicSpline[f32, 3](x3c, y3c)
     _assert_close(

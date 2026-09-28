@@ -25,7 +25,7 @@ def _signal(ctx: DeviceContext) raises -> Static[f32, n]:
     for i in range(0, n - 3, 211):
         values[i + 1] = 5.0
         values[i + 2] = 5.0
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _same(

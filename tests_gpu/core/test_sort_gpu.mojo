@@ -21,7 +21,7 @@ def _shuffled(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32((i * 7919) % n) * 0.5 - 100.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_argsort_and_sort_on_the_device_match_the_host() raises:
@@ -63,7 +63,7 @@ def test_take_on_the_device_refuses_an_out_of_range_index() raises:
     var bad: List[Scalar[DType.int64]] = [0, 5, Int64(n)]
     with assert_raises(contains="out of range"):
         _ = take[axis=0, gpu=True](
-            _shuffled(gpu), Static[DType.int64, 3](gpu, bad^)
+            _shuffled(gpu), Static[DType.int64, 3](bad^, gpu)
         )
 
 
@@ -76,8 +76,8 @@ def test_ties_and_nan_sort_exactly_as_on_the_host() raises:
     var values = List[Scalar[f32]](capacity=777)
     for i in range(777):
         values.append(nan if i % 101 == 50 else Float32(i % 9))
-    var d = argsort[gpu=True](Static[f32, 777](gpu, values.copy())).to_host()
-    var h = argsort(Static[f32, 777](cpu, values^)).to_host()
+    var d = argsort[gpu=True](Static[f32, 777](values.copy(), gpu)).to_host()
+    var h = argsort(Static[f32, 777](values^, cpu)).to_host()
     for i in range(777):
         assert_equal(d[i], h[i])
 

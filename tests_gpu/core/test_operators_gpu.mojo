@@ -25,7 +25,7 @@ def _ramp(ctx: DeviceContext, scale: Float32) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(i % 17) * scale + 0.5)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _assert_close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:
@@ -119,10 +119,10 @@ def test_matmul_operator_stays_on_the_device() raises:
     var right = List[Scalar[f32]](capacity=48 * 32)
     for i in range(48 * 32):
         right.append(values[i])
-    var a = Static[f32, 64, 48](gpu, values.copy())
-    var b = Static[f32, 48, 32](gpu, right.copy())
-    var ha = Static[f32, 64, 48](cpu, values.copy())
-    var hb = Static[f32, 48, 32](cpu, right.copy())
+    var a = Static[f32, 64, 48](values.copy(), gpu)
+    var b = Static[f32, 48, 32](right.copy(), gpu)
+    var ha = Static[f32, 64, 48](values.copy(), cpu)
+    var hb = Static[f32, 48, 32](right.copy(), cpu)
     var p = a @ b
     assert_false(p.on_host())
     _assert_close(p.to_host(), matmul(ha, hb).to_host())

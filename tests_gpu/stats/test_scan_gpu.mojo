@@ -22,14 +22,14 @@ def _cube(ctx: DeviceContext) raises -> Static[f32, 3, 5, 7]:
     var values = List[Scalar[f32]](capacity=105)
     for i in range(105):
         values.append(Float32((i * 13) % 17) * 0.125 - 1.0)
-    return Static[f32, 3, 5, 7](ctx, values^)
+    return Static[f32, 3, 5, 7](values^, ctx)
 
 
 def _near_one(ctx: DeviceContext) raises -> Static[f32, 300]:
     var values = List[Scalar[f32]](capacity=300)
     for i in range(300):
         values.append(1.0 + Float32(i % 5 - 2) * 0.001)
-    return Static[f32, 300](ctx, values^)
+    return Static[f32, 300](values^, ctx)
 
 
 def _assert_close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:

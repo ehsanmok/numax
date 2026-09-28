@@ -75,7 +75,7 @@ def test_potrf_diag_factors_the_whole_block() raises:
     comptime n = 6
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Static[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](original.copy(), ctx)
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.tile(), info.tile(), 0, n)
@@ -96,7 +96,7 @@ def test_potrf_diag_leaves_the_upper_triangle_alone() raises:
     comptime n = 5
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Static[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](original.copy(), ctx)
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.tile(), info.tile(), 0, n)
@@ -117,7 +117,7 @@ def test_potrf_diag_factors_an_offset_block() raises:
     comptime nb = 4
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Static[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](original.copy(), ctx)
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.tile(), info.tile(), k, nb)
@@ -150,7 +150,7 @@ def test_potrf_diag_flags_a_matrix_that_is_not_positive_definite() raises:
     var ctx = _cpu()
     # Diagonal entry (1, 1) is too small for the column below it.
     var a = Static[dtype, n, n](
-        ctx, [4.0, 2.0, 2.0, 2.0, 1.0, 0.0, 2.0, 0.0, 9.0]
+        [4.0, 2.0, 2.0, 2.0, 1.0, 0.0, 2.0, 0.0, 9.0], ctx
     )
     var info = zeros[DType.int32, 1](ctx)
 
@@ -167,7 +167,7 @@ def test_trsm_right_lower_t_solves_against_the_diagonal_block() raises:
     comptime nb = 3
     var ctx = _cpu()
     var original = _spd(n)
-    var a = Static[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](original.copy(), ctx)
     var info = zeros[DType.int32, 1](ctx)
 
     potrf_diag(a.tile(), info.tile(), 0, nb)
@@ -194,7 +194,7 @@ def test_trsm_left_lower_unit_solves_the_block_row() raises:
             original[i * n + j] = Scalar[dtype](
                 Float64((i * 5 + j * 2) % 7) + 1.0
             )
-    var a = Static[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](original.copy(), ctx)
 
     trsm_left_lower_unit(a.tile(), 0, nb, n, ctx)
     ctx.synchronize()
@@ -225,7 +225,7 @@ def test_getrf_panel_gives_lu_of_the_columns_it_factored() raises:
             original[i * n + j] = Scalar[dtype](
                 Float64((i * 3 + j * 7) % 11) - 5.0 + 0.5
             )
-    var a = Static[dtype, n, n](ctx, original.copy())
+    var a = Static[dtype, n, n](original.copy(), ctx)
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
 
@@ -262,7 +262,7 @@ def test_getrf_panel_picks_the_largest_pivot() raises:
     comptime n = 3
     var ctx = _cpu()
     var a = Static[dtype, n, n](
-        ctx, [0.0, 1.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0]
+        [0.0, 1.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0], ctx
     )
     var pivots = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var info = zeros[DType.int32, 1](ctx)
@@ -283,7 +283,7 @@ def test_pack_block_copies_a_strided_block_densely() raises:
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n * n):
         values[i] = Scalar[dtype](i)
-    var a = Static[dtype, n, n](ctx, values.copy())
+    var a = Static[dtype, n, n](values.copy(), ctx)
     var dst = zeros[dtype, rows, cols](ctx)
 
     pack_block(a.tile(), dst.tile(), 2, 3, rows, cols, ctx)
@@ -315,7 +315,7 @@ def test_pack_block_copies_a_width_the_simd_lanes_do_not_divide() raises:
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n * n):
         values[i] = Scalar[dtype](i)
-    var a = Static[dtype, n, n](ctx, values.copy())
+    var a = Static[dtype, n, n](values.copy(), ctx)
     var dst = zeros[dtype, rows, cols](ctx)
 
     pack_block(a.tile(), dst.tile(), 3, 2, rows, cols, ctx)
@@ -347,7 +347,7 @@ def test_pack_block_transposed_copies_a_ragged_width() raises:
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n * n):
         values[i] = Scalar[dtype](i)
-    var a = Static[dtype, n, n](ctx, values.copy())
+    var a = Static[dtype, n, n](values.copy(), ctx)
     var dst = zeros[dtype, rows, cols](ctx)
 
     pack_block[trans=True](a.tile(), dst.tile(), 3, 2, rows, cols, ctx)
@@ -382,7 +382,7 @@ def test_getrf2_agrees_with_the_single_block_panel_at_every_base() raises:
     comptime nb = 7
     var ctx = _cpu()
 
-    var want_a = Static[dtype, n, n](ctx, _pivot_matrix[n]())
+    var want_a = Static[dtype, n, n](_pivot_matrix[n](), ctx)
     var want_p = zeros[DType.int32, n + _PANEL_THREADS](ctx)
     var want_i = zeros[DType.int32, 1](ctx)
     var left0 = zeros_dyn[dtype, 2](n, nb, ctx=ctx)
@@ -418,7 +418,7 @@ def test_getrf2_agrees_with_the_single_block_panel_at_every_base() raises:
     _ = prod0^
 
     for base in [1, 2, 3, 4, 5]:
-        var got_a = Static[dtype, n, n](ctx, _pivot_matrix[n]())
+        var got_a = Static[dtype, n, n](_pivot_matrix[n](), ctx)
         var got_p = zeros[DType.int32, n + _PANEL_THREADS](ctx)
         var got_i = zeros[DType.int32, 1](ctx)
         var left = zeros_dyn[dtype, 2](n, nb, ctx=ctx)

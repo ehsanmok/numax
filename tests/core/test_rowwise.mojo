@@ -70,7 +70,7 @@ def test_sum_axis_matches_reduce_axis_along_rows() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](_ramp(rows * cols), ctx)
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=1](
@@ -94,7 +94,7 @@ def test_sum_axis_matches_reduce_axis_down_columns() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](_ramp(rows * cols), ctx)
 
     var want = zeros[dtype, cols](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=0](
@@ -114,7 +114,7 @@ def test_max_axis_agrees_exactly() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](_ramp(rows * cols), ctx)
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_larger[dtype], axis=1](
@@ -140,7 +140,7 @@ def test_sum_axis_reduces_the_middle_axis_of_a_rank_3_tensor() raises:
     comptime d1 = 3
     comptime d2 = 4
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, d0, d1, d2](ctx, _ramp(d0 * d1 * d2))
+    var a = Static[dtype, d0, d1, d2](_ramp(d0 * d1 * d2), ctx)
 
     var want = zeros[dtype, d0 * d2](ctx)
     reduce_axis[dtype, _, _, combine=_add[dtype], axis=1](
@@ -159,7 +159,7 @@ def test_sum_axis_folds_a_rank_1_tensor_to_one_value() raises:
     """The whole-tensor fold, which is the rank-1 case of the axis one."""
     comptime n = 16
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, n](ctx, _ramp(n))
+    var a = Static[dtype, n](_ramp(n), ctx)
 
     var got = zeros[dtype, 1](ctx)
     sum_axis[dtype, _, _, axis=0](a.tile(), got.tile())
@@ -181,7 +181,7 @@ def test_reduce_all_matches_reduce_for_every_monoid() raises:
     """
     comptime n = 40
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, n](ctx, _ramp(n))
+    var a = Static[dtype, n](_ramp(n), ctx)
     var out = zeros[dtype, 1](ctx)
 
     @always_inline
@@ -220,7 +220,7 @@ def test_reduce_all_applies_the_per_tile_transform() raises:
     materializing the squared vector."""
     comptime n = 33
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, n](ctx, _ramp(n))
+    var a = Static[dtype, n](_ramp(n), ctx)
     var out = zeros[dtype, 1](ctx)
 
     @always_inline
@@ -247,7 +247,7 @@ def test_reduce_all_agrees_between_a_static_and_a_dynamic_input() raises:
     var ctx = DeviceContext(api="cpu")
     var values = _ramp(rows * cols)
 
-    var stat = Static[dtype, rows, cols](ctx, values.copy())
+    var stat = Static[dtype, rows, cols](values.copy(), ctx)
     var dyn = zeros_dyn[dtype, 2](rows, cols, ctx=ctx)
     dyn.copy_from_host(values)
 
@@ -275,7 +275,7 @@ def test_prod_axis_matches_reduce_axis() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](_ramp(rows * cols), ctx)
 
     var want = zeros[dtype, rows](ctx)
     reduce_axis[dtype, _, _, combine=_mul[dtype], axis=1](
@@ -296,7 +296,7 @@ def test_min_axis_agrees_exactly() raises:
     comptime rows = 4
     comptime cols = 6
     var ctx = DeviceContext(api="cpu")
-    var a = Static[dtype, rows, cols](ctx, _ramp(rows * cols))
+    var a = Static[dtype, rows, cols](_ramp(rows * cols), ctx)
 
     var want = zeros[dtype, cols](ctx)
     reduce_axis[dtype, _, _, combine=_smaller[dtype], axis=0](
@@ -327,7 +327,7 @@ def test_argmax_all_and_argmin_all_take_the_first_of_a_tie() raises:
     comptime n = 37
     var ctx = DeviceContext(api="cpu")
     var values = _with_a_tie(n)
-    var a = Static[dtype, n](ctx, values.copy())
+    var a = Static[dtype, n](values.copy(), ctx)
 
     var best = values[0]
     var best_at = 0
@@ -355,7 +355,7 @@ def test_argmax_all_agrees_between_a_static_and_a_dynamic_input() raises:
     var ctx = DeviceContext(api="cpu")
     var values = _with_a_tie(rows * cols)
 
-    var stat = Static[dtype, rows, cols](ctx, values.copy())
+    var stat = Static[dtype, rows, cols](values.copy(), ctx)
     var dyn = zeros_dyn[dtype, 2](rows, cols, ctx=ctx)
     dyn.copy_from_host(values)
 

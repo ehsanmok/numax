@@ -24,7 +24,7 @@ def _sample(
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(shift + Float32(sin(Float64(i) * seed)) * 2.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _counts(ctx: DeviceContext, bump: Bool) raises -> Static[f32, 12]:
@@ -33,7 +33,7 @@ def _counts(ctx: DeviceContext, bump: Bool) raises -> Static[f32, 12]:
         values.append(
             Float32(40 + (i * 7) % 11 + (5 if bump and i == 3 else 0))
         )
-    return Static[f32, 12](ctx, values^)
+    return Static[f32, 12](values^, ctx)
 
 
 def _close(d: Float64, h: Float64) raises:

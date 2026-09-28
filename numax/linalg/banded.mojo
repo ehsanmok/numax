@@ -337,7 +337,7 @@ def solve_banded[
     var out = List[Scalar[A.dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[A.dtype](x[i]))
-    return Static[A.dtype, n](ctx, out^)
+    return Static[A.dtype, n](out^, ctx)
 
 
 def cholesky_banded[
@@ -419,7 +419,7 @@ def cholesky_banded[
                 out[d * n + j] = Scalar[T.dtype](band[d * n + j])
             elif j + d < n:
                 out[(u - d) * n + j + d] = Scalar[T.dtype](band[d * n + j])
-    return Static[T.dtype, u + 1, n](ctx, out^)
+    return Static[T.dtype, u + 1, n](out^, ctx)
 
 
 def cho_solve_banded[
@@ -486,7 +486,7 @@ def cho_solve_banded[
     var out = List[Scalar[A.dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[A.dtype](x[i]))
-    return Static[A.dtype, n](ctx, out^)
+    return Static[A.dtype, n](out^, ctx)
 
 
 def solveh_banded[
@@ -701,7 +701,7 @@ def solve_toeplitz[
     var out = List[Scalar[A.dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[A.dtype](x[i]))
-    return Static[A.dtype, n](ctx, out^)
+    return Static[A.dtype, n](out^, ctx)
 
 
 def _circulant_divide[
@@ -858,8 +858,8 @@ def solve_circulant[
 
     var solved = ifft[A.dtype, n, gpu](
         Spectrum[A.dtype, n](
-            Static[A.dtype, n](ctx, quotient_real^),
-            Static[A.dtype, n](ctx, quotient_imag^),
+            Static[A.dtype, n](quotient_real^, ctx),
+            Static[A.dtype, n](quotient_imag^, ctx),
         )
     )
     # The imaginary part is zero to rounding, `a` and `b` both being real,
@@ -867,4 +867,4 @@ def solve_circulant[
     # moved, since a `Tuple` element cannot be transferred out of a
     # temporary.
     var real_part = solved[0].to_host()
-    return Static[A.dtype, n](ctx, real_part^)
+    return Static[A.dtype, n](real_part^, ctx)

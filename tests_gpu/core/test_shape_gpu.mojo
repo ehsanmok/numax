@@ -29,7 +29,7 @@ def _grid(ctx: DeviceContext) raises -> Static[f32, 3, 4]:
     var values = List[Scalar[f32]](capacity=12)
     for i in range(12):
         values.append(Float32(i) * 0.5 - 1.0)
-    return Static[f32, 3, 4](ctx, values^)
+    return Static[f32, 3, 4](values^, ctx)
 
 
 def _assert_same(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:

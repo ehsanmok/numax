@@ -29,14 +29,14 @@ def _tied(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32((i * 53) % 11) * 0.5 - 2.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _other(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(i % 17) + Float32(sin(Float64(i))))
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _check(method: StaticString) raises:

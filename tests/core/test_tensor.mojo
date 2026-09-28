@@ -851,7 +851,7 @@ def _mat[
     var elements = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](ctx, elements^)
+    return Static[dtype, rows, cols](elements^, ctx)
 
 
 def test_flatten_agrees_with_ravel() raises:

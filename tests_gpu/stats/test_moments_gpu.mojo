@@ -22,7 +22,7 @@ def _data(ctx: DeviceContext, shift: Float32) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32((i * 37) % 53) * 0.1 + shift)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_ptp_average_and_moment_on_the_device() raises:

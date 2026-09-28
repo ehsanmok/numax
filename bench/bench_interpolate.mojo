@@ -43,7 +43,7 @@ def _knots[n: Int](ctx: DeviceContext) raises -> Static[dtype, n]:
         var jitter = 0.3 * (Float64(h) / 16777216.0 - 0.5)
         var t = Float64(i) if (i == 0 or i == n - 1) else Float64(i) + jitter
         values.append(Scalar[dtype](t * knot_span / Float64(n - 1)))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _samples[
@@ -53,7 +53,7 @@ def _samples[
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](f(Float64(host[i]))))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _queries[m: Int](ctx: DeviceContext) raises -> Static[dtype, m]:
@@ -65,7 +65,7 @@ def _queries[m: Int](ctx: DeviceContext) raises -> Static[dtype, m]:
         values.append(
             Scalar[dtype](0.01 + 0.98 * knot_span * Float64(h) / 16777216.0)
         )
-    return Static[dtype, m](ctx, values^)
+    return Static[dtype, m](values^, ctx)
 
 
 def _square(x: Float64) -> Float64:

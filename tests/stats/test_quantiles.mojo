@@ -52,7 +52,7 @@ def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _x() -> List[Float64]:
@@ -84,7 +84,7 @@ def _with_nans() raises -> Static[dtype, 16]:
         out.append(
             _nan[dtype]() if (i == 3 or i == 9) else Scalar[dtype](values[i])
         )
-    return Static[dtype, 16](_cpu(), out^)
+    return Static[dtype, 16](out^, _cpu())
 
 
 def _probabilities() raises -> Static[dtype, 7]:
@@ -312,7 +312,7 @@ def test_nan_policies_survive_the_selection_route() raises:
     assert_almost_equal(Float64(ignored[1]), 0.625, atol=1e-15)
     assert_almost_equal(Float64(ignored[2]), 1.0, atol=1e-15)
     var all_nan = List[Scalar[dtype]](length=4, fill=_nan[dtype]())
-    var empty = Static[dtype, 4](_cpu(), all_nan^)
+    var empty = Static[dtype, 4](all_nan^, _cpu())
     var raised = False
     try:
         _ = nanquantile(empty, 0.5)
@@ -368,7 +368,7 @@ def test_nan_reductions_agree_with_the_plain_ones_without_nans() raises:
 
 def test_all_nan_input_raises_where_numpy_returns_nan() raises:
     var values = List[Scalar[dtype]](length=4, fill=_nan[dtype]())
-    var x = Static[dtype, 4](_cpu(), values^)
+    var x = Static[dtype, 4](values^, _cpu())
     assert_almost_equal(Float64(nansum(x)), 0.0, atol=1e-15)
     assert_almost_equal(Float64(nanprod(x)), 1.0, atol=1e-15)
     var raised = False

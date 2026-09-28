@@ -293,8 +293,8 @@ def _radix2[
         var angle = -_TWO_PI * Float64(q) / Float64(n)
         twiddle_re.append(Scalar[dtype](_cos(angle)))
         twiddle_im.append(Scalar[dtype](_sin(angle)))
-    var wr_all = Static[dtype, table](ctx, twiddle_re^)
-    var wi_all = Static[dtype, table](ctx, twiddle_im^)
+    var wr_all = Static[dtype, table](twiddle_re^, ctx)
+    var wi_all = Static[dtype, table](twiddle_im^, ctx)
 
     var sre = src_re
     var sim = src_im
@@ -573,10 +573,10 @@ def _bluestein[
         if j > 0:
             hr[m - j] = c
             hi[m - j] = -d
-    var chirp_re = Static[dtype, n](ctx, wr^)
-    var chirp_im = Static[dtype, n](ctx, wi^)
-    var h_re = Static[dtype, m](ctx, hr^)
-    var h_im = Static[dtype, m](ctx, hi^)
+    var chirp_re = Static[dtype, n](wr^, ctx)
+    var chirp_im = Static[dtype, n](wi^, ctx)
+    var h_re = Static[dtype, m](hr^, ctx)
+    var h_im = Static[dtype, m](hi^, ctx)
 
     # `H = fft(h)`, once per call.
     var big_h_re = Static[dtype, m]._uninitialized(ctx)
@@ -1198,7 +1198,7 @@ def fftfreq[
         var index = i if i < (n + 1) // 2 else i - n
         values.append(Scalar[dtype](index) / denominator)
     return Static[dtype, n](
-        ctx.value() if ctx else DeviceContext(api="cpu"), values^
+        values^, ctx.value() if ctx else DeviceContext(api="cpu")
     )
 
 
@@ -1224,5 +1224,5 @@ def rfftfreq[
     for i in range(keep):
         values.append(Scalar[dtype](i) / denominator)
     return Static[dtype, keep](
-        ctx.value() if ctx else DeviceContext(api="cpu"), values^
+        values^, ctx.value() if ctx else DeviceContext(api="cpu")
     )

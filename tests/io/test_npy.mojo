@@ -150,7 +150,7 @@ def test_numpy_save_output_is_byte_identical_to_numpy_save() raises:
     var storage = List[Scalar[DType.float32]](capacity=4)
     for i in range(4):
         storage.append(Scalar[DType.float32](vals[i]))
-    var xs = Static[DType.float32, 4](ctx, storage^)
+    var xs = Static[DType.float32, 4](storage^, ctx)
 
     var ours = String(_TMP, "_write_f32.npy")
     numpy.save(xs, ours)
@@ -171,7 +171,7 @@ def test_numpy_save_writes_numpys_rank_2_header_shape() raises:
     var storage = List[Scalar[DType.float64]](capacity=6)
     for i in range(6):
         storage.append(Scalar[DType.float64](i))
-    var xs = Static[DType.float64, 2, 3](ctx, storage^)
+    var xs = Static[DType.float64, 2, 3](storage^, ctx)
 
     var path = String(_TMP, "_write_f64.npy")
     numpy.save(xs, path)
@@ -188,7 +188,7 @@ def test_npy_round_trips_through_numax() raises:
     var storage = List[Scalar[DType.float32]](capacity=6)
     for i in range(6):
         storage.append(Scalar[DType.float32](Float64(i) * 0.5 - 1.0))
-    var xs = Static[DType.float32, 2, 3](ctx, storage^)
+    var xs = Static[DType.float32, 2, 3](storage^, ctx)
 
     var path = String(_TMP, "_round_trip.npy")
     numpy.save(xs, path)
@@ -277,7 +277,7 @@ def test_load_dyn_takes_the_shape_from_the_file() raises:
     var storage = List[Scalar[DType.float32]](capacity=6)
     for i in range(6):
         storage.append(Scalar[DType.float32](Float64(i) * 0.25))
-    var xs = Static[DType.float32, 2, 3](ctx, storage^)
+    var xs = Static[DType.float32, 2, 3](storage^, ctx)
 
     var path = String(_TMP, "_infer.npy")
     numpy.save(xs, path)

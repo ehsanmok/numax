@@ -53,7 +53,7 @@ def _t[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, elements^)
+    return Static[dtype, n](elements^, ctx)
 
 
 def test_add_and_subtract() raises:
@@ -190,7 +190,7 @@ def _m[
     var elements = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](ctx, elements^)
+    return Static[dtype, rows, cols](elements^, ctx)
 
 
 def test_broadcasting_add_stretches_a_row_across_a_matrix() raises:
@@ -262,7 +262,7 @@ def test_same_shape_overload_still_keeps_its_layout_type() raises:
 def test_invert_flips_every_bit() raises:
     # numpy: ~np.array([0, 1, -1, 5], dtype=np.int32)
     var ctx = DeviceContext(api="cpu")
-    var a = Static[DType.int32, 4](ctx, [0, 1, -1, 5])
+    var a = Static[DType.int32, 4]([0, 1, -1, 5], ctx)
     var got = invert(a).to_host()
     assert_equal(Int(got[0]), -1)
     assert_equal(Int(got[1]), -2)
@@ -276,7 +276,7 @@ def test_astype_to_bool_is_nonzero() raises:
     # destination comes from `_uninitialized`, so an all-false answer being
     # all false is the garbage check as much as the value check.
     var ctx = DeviceContext(api="cpu")
-    var a = Static[DType.float32, 4](ctx, [0.0, -0.0, 1.5, -2.0])
+    var a = Static[DType.float32, 4]([0.0, -0.0, 1.5, -2.0], ctx)
     var got = astype[DType.bool](a).to_host()
     assert_equal(got[0], False)
     assert_equal(got[1], False)
@@ -300,8 +300,8 @@ def test_a_dynamic_operand_gives_the_static_answer() raises:
         left.append(Scalar[dtype](i) * 0.5 - 1.0)
         right.append(Scalar[dtype](i) * 0.25 + 2.0)
 
-    var a_fixed = Static[dtype, 2, 3](ctx, left.copy())
-    var b_fixed = Static[dtype, 2, 3](ctx, right.copy())
+    var a_fixed = Static[dtype, 2, 3](left.copy(), ctx)
+    var b_fixed = Static[dtype, 2, 3](right.copy(), ctx)
     var a_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     var b_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     a_runtime.copy_from_host(left)

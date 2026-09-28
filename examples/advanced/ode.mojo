@@ -75,7 +75,7 @@ def main() raises:
     for i in range(n):
         host_y0.append(Scalar[dtype](i) * (4.0 / Scalar[dtype](n)) - 2.0)
 
-    var y0 = Ensemble(ctx, host_y0.copy())
+    var y0 = Ensemble(host_y0.copy(), ctx)
     var yt = Ensemble(ctx)
     var dydy0 = Ensemble(ctx)
 
@@ -100,7 +100,7 @@ def main() raises:
 
     # The same kernel on CPU, at native SIMD width.
     var cpu = DeviceContext(api="cpu")
-    var cpu_in = Ensemble(cpu, host_y0.copy())
+    var cpu_in = Ensemble(host_y0.copy(), cpu)
     var cpu_out = Ensemble(cpu)
     map[step=trajectory_step](cpu_in.tile(), cpu_out.tile())
 

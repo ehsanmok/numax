@@ -28,7 +28,7 @@ def test_solve_ivp_on_the_device() raises:
     for i in range(n):
         starts.append(Float32(i % 17) * 0.25 + 0.5)
     var result = solve_ivp[f=_decay, gpu=True](
-        0.0, Static[f32, n](gpu, starts.copy()), 1.0, rtol=1e-5, atol=1e-7
+        0.0, Static[f32, n](starts.copy(), gpu), 1.0, rtol=1e-5, atol=1e-7
     )
     assert_true(result.converged)
     assert_true(not result.y.on_host())

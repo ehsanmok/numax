@@ -108,7 +108,7 @@ def root[
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     var ctx = x0.context()
-    var start = Static[dtype, n](ctx, x0.to_host())
+    var start = Static[dtype, n](x0.to_host(), ctx)
     var tolerance = tol.value() if tol else 1e-10
     var limit = max_iter.value() if max_iter else 100
 

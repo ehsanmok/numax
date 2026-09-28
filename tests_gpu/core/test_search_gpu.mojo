@@ -19,11 +19,11 @@ comptime f32 = DType.float32
 
 
 def _haystack(ctx: DeviceContext) raises -> Static[f32, 9]:
-    return Static[f32, 9](ctx, [-3.0, -1.0, 0.0, 0.0, 0.0, 2.5, 4.0, 4.0, 9.0])
+    return Static[f32, 9]([-3.0, -1.0, 0.0, 0.0, 0.0, 2.5, 4.0, 4.0, 9.0], ctx)
 
 
 def _needles(ctx: DeviceContext) raises -> Static[f32, 8]:
-    return Static[f32, 8](ctx, [-5.0, -3.0, 0.0, 1.0, 4.0, 8.9, 9.0, 10.0])
+    return Static[f32, 8]([-5.0, -3.0, 0.0, 1.0, 4.0, 8.9, 9.0, 10.0], ctx)
 
 
 def test_searchsorted_on_the_device_matches_the_host() raises:
@@ -50,7 +50,7 @@ def _sample(ctx: DeviceContext, with_nan: Bool) raises -> Static[f32, 300]:
             values.append(nan[f32]())
         else:
             values.append(Float32((i * 37) % 23) - 11.0)
-    return Static[f32, 300](ctx, values^)
+    return Static[f32, 300](values^, ctx)
 
 
 def test_unique_on_the_device_matches_the_host() raises:

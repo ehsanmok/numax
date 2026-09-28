@@ -55,7 +55,7 @@ def _tensor[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, elements^)
+    return Static[dtype, n](elements^, ctx)
 
 
 def _bools[n: Int](values: List[Bool]) raises -> Static[DType.bool, n]:
@@ -63,7 +63,7 @@ def _bools[n: Int](values: List[Bool]) raises -> Static[DType.bool, n]:
     var elements = List[Scalar[DType.bool]](capacity=n)
     for i in range(n):
         elements.append(values[i])
-    return Static[DType.bool, n](ctx, elements^)
+    return Static[DType.bool, n](elements^, ctx)
 
 
 def test_equal_and_not_equal_are_complements() raises:
@@ -189,7 +189,7 @@ def _matrix[
     var elements = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](ctx, elements^)
+    return Static[dtype, rows, cols](elements^, ctx)
 
 
 def test_greater_broadcasts_a_threshold_row_across_a_matrix() raises:
@@ -353,8 +353,8 @@ def test_a_dynamic_operand_gives_the_static_answer() raises:
         left.append(Scalar[dtype](i) - 2.0)
         right.append(Scalar[dtype](1.0))
 
-    var a_fixed = Static[dtype, 2, 3](ctx, left.copy())
-    var b_fixed = Static[dtype, 2, 3](ctx, right.copy())
+    var a_fixed = Static[dtype, 2, 3](left.copy(), ctx)
+    var b_fixed = Static[dtype, 2, 3](right.copy(), ctx)
     var a_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     var b_runtime = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     a_runtime.copy_from_host(left)
@@ -389,8 +389,8 @@ def test_above_the_threading_threshold_the_mask_is_the_same() raises:
         left.append(Scalar[dtype](i % 7))
         right.append(Scalar[dtype](3))
 
-    var a = Static[dtype, n](ctx, left.copy())
-    var b = Static[dtype, n](ctx, right.copy())
+    var a = Static[dtype, n](left.copy(), ctx)
+    var b = Static[dtype, n](right.copy(), ctx)
     var mask = greater(a, b).to_host()
     for i in range(n):
         assert_equal(mask[i], left[i] > right[i])

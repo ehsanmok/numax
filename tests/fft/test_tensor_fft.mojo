@@ -49,14 +49,14 @@ def _ramp[n: Int]() raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](i + 1))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _matrix[
@@ -65,7 +65,7 @@ def _matrix[
     var out = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](_cpu(), out^)
+    return Static[dtype, rows, cols](out^, _cpu())
 
 
 def _signal() -> List[Float64]:
@@ -126,7 +126,7 @@ def test_fft_of_a_constant_is_a_single_spike() raises:
     since every off-DC bin is a cancelling sum."""
     var ctx = _cpu()
     var values = List[Scalar[dtype]](length=32, fill=Scalar[dtype](2.5))
-    var real = Static[dtype, 32](ctx, values^)
+    var real = Static[dtype, 32](values^, ctx)
     var imag = zeros[dtype, 32](ctx)
     var out = fft((real^, imag^))
     var re = out[0].to_host()
@@ -853,7 +853,7 @@ def _check_lanes[batch: Int, n: Int]() raises where batch > 0 and n > 0:
     for b in range(batch):
         for i in range(n):
             values.append(Scalar[dtype](_wave(i + 7 * b)[0] + Float64(b)))
-    var src_re = Static[dtype, batch, n](ctx, values.copy())
+    var src_re = Static[dtype, batch, n](values.copy(), ctx)
     var src_im = zeros[dtype, batch, n](ctx)
     var out_re = Static[dtype, batch, n]._uninitialized(ctx)
     var out_im = Static[dtype, batch, n]._uninitialized(ctx)
@@ -877,7 +877,7 @@ def _check_lanes[batch: Int, n: Int]() raises where batch > 0 and n > 0:
             lane.append(values[b * n + i])
         var one = fft(
             (
-                Static[dtype, n](ctx, lane^),
+                Static[dtype, n](lane^, ctx),
                 zeros[dtype, n](ctx),
             )
         )

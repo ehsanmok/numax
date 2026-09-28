@@ -101,7 +101,7 @@ def _spd[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
     for i in range(n):
         for j in range(n):
             values.append(Scalar[dtype](_spd_entry(i, j, n)))
-    return Static[dtype, n, n](ctx, values^)
+    return Static[dtype, n, n](values^, ctx)
 
 
 def _general[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
@@ -109,7 +109,7 @@ def _general[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
     for i in range(n):
         for j in range(n):
             values.append(Scalar[dtype](_general_entry(i, j, n)))
-    return Static[dtype, n, n](ctx, values^)
+    return Static[dtype, n, n](values^, ctx)
 
 
 def _general_offset[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
@@ -117,7 +117,7 @@ def _general_offset[n: Int](ctx: DeviceContext) raises -> Static[dtype, n, n]:
     for i in range(n):
         for j in range(n):
             values.append(Scalar[dtype](_general_entry(i, j, n) + 1.0))
-    return Static[dtype, n, n](ctx, values^)
+    return Static[dtype, n, n](values^, ctx)
 
 
 def _general_rect[
@@ -127,14 +127,14 @@ def _general_rect[
     for i in range(m):
         for j in range(n):
             values.append(Scalar[dtype](_general_entry(i, j, m)))
-    return Static[dtype, m, n](ctx, values^)
+    return Static[dtype, m, n](values^, ctx)
 
 
 def _ramp[n: Int](ctx: DeviceContext, salt: Int) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](Float64((i * 37 + salt * 11) % 17) - 8.0))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _row(name: String, n: Int, ns: Float64, flops: Float64, resid: Float64):

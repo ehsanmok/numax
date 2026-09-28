@@ -185,7 +185,7 @@ def _axis_dst[
         if d != axis:
             extents.append(xs.dim_at(d))
     return Dynamic[dtype, rank - 1](
-        xs.context(), row_major(_dyn_shape_from[rank - 1](extents))
+        row_major(_dyn_shape_from[rank - 1](extents)), xs.context()
     )
 
 
@@ -927,11 +927,11 @@ def median[
                 slice_.append(values[(o * length + k) * inner + i])
             out.append(_median_of(slice_^))
     return Dynamic[dtype, LayoutType.rank - 1](
-        xs.context(),
         row_major(
             _dyn_shape_from[LayoutType.rank - 1](_axis_extents[axis=axis](xs))
         ),
         out^,
+        xs.context(),
     )
 
 
@@ -1005,11 +1005,11 @@ def mode[
                 slice_.append(values[(o * length + k) * inner + i])
             out.append(_mode_of(slice_^))
     return Dynamic[dtype, LayoutType.rank - 1](
-        xs.context(),
         row_major(
             _dyn_shape_from[LayoutType.rank - 1](_axis_extents[axis=axis](xs))
         ),
         out^,
+        xs.context(),
     )
 
 
@@ -1165,9 +1165,7 @@ def _argn_axis[
                 out[o * inner + i] = Scalar[DType.int64](best_k)
 
     return Dynamic[DType.int64, rank - 1](
-        xs.context(),
-        row_major(_dyn_shape_from[rank - 1](out_extents)),
-        out^,
+        row_major(_dyn_shape_from[rank - 1](out_extents)), out^, xs.context()
     )
 
 
@@ -1281,7 +1279,7 @@ def cumprod[
     for i in range(n):
         acc = acc * values[i]
         storage.append(acc)
-    return Static[dtype, n](xs.context(), storage^)
+    return Static[dtype, n](storage^, xs.context())
 
 
 def cumprod[
@@ -1305,9 +1303,9 @@ def cumprod[
     else:
         _notice[gpu]("cumprod")
     return Tensor[dtype, LayoutType](
-        xs.context(),
         xs.tile().layout,
         _scan_axis[axis=axis, multiply=True](xs)^,
+        xs.context(),
     )
 
 
@@ -1452,7 +1450,7 @@ def cumsum[
         TileTensor(storage, row_major(Coord(n))),
         TileTensor(values, row_major(Coord(n))),
     )
-    return Static[dtype, n](xs.context(), storage^)
+    return Static[dtype, n](storage^, xs.context())
 
 
 def cumsum[
@@ -1475,9 +1473,9 @@ def cumsum[
     else:
         _notice[gpu]("cumsum")
     return Tensor[dtype, LayoutType](
-        xs.context(),
         xs.tile().layout,
         _scan_axis[axis=axis, multiply=False](xs)^,
+        xs.context(),
     )
 
 

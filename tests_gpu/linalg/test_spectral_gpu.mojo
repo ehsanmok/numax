@@ -62,7 +62,7 @@ def _general[r: Int, c: Int](ctx: DeviceContext) raises -> Static[f32, r, c]:
     var values = List[Scalar[f32]](capacity=r * c)
     for i in range(r * c):
         values.append(_entry(i))
-    return Static[f32, r, c](ctx, values^)
+    return Static[f32, r, c](values^, ctx)
 
 
 def _symmetric(ctx: DeviceContext) raises -> Static[f32, n, n]:
@@ -72,7 +72,7 @@ def _symmetric(ctx: DeviceContext) raises -> Static[f32, n, n]:
         for c in range(n):
             var x = _entry(r * n + c) + _entry(c * n + r)
             values.append(x + (Float32(n) if r == c else Float32(0)))
-    return Static[f32, n, n](ctx, values^)
+    return Static[f32, n, n](values^, ctx)
 
 
 def _max_abs_diff(a: List[Scalar[f32]], b: List[Scalar[f32]]) -> Float32:
@@ -223,8 +223,8 @@ def test_the_svd_dependents_on_the_device_match_the_host() raises:
     var rhs_values = List[Scalar[f32]](capacity=m)
     for i in range(m):
         rhs_values.append(Float32(i % 5) - 2.0)
-    var rhs_d = Static[f32, m](gpu, rhs_values.copy())
-    var rhs_h = Static[f32, m](cpu, rhs_values^)
+    var rhs_d = Static[f32, m](rhs_values.copy(), gpu)
+    var rhs_h = Static[f32, m](rhs_values^, cpu)
     assert_true(
         _max_abs_diff(
             lstsq[gpu=True, method="svd"](_general[m, k](gpu), rhs_d).to_host(),
@@ -303,7 +303,7 @@ def test_roots_on_the_device_finds_the_host_roots() raises:
     `eigvals` of the companion matrix on either device."""
     var gpu = DeviceContext()
     var coeffs: List[Scalar[f32]] = [1.0, -5.5, 7.0, 0.5, -3.0]
-    var r = roots[gpu=True](Static[f32, 5](gpu, coeffs^))
+    var r = roots[gpu=True](Static[f32, 5](coeffs^, gpu))
     var re = r.re.to_host()
     var total = Float32(0)
     var product = Float32(1)
@@ -321,7 +321,7 @@ def _repeated(ctx: DeviceContext) raises -> Static[f32, m, k]:
     for r in range(m):
         for c in range(k):
             values.append(_entry(r * k + (c - 8 if c >= k - 8 else c)))
-    return Static[f32, m, k](ctx, values^)
+    return Static[f32, m, k](values^, ctx)
 
 
 def test_null_space_on_the_device_is_a_null_space() raises:

@@ -20,7 +20,7 @@ def _data(ctx: DeviceContext, zero_every: Int) raises -> Static[f32, n]:
         values.append(
             Float32(0) if (i + 1) % zero_every == 0 else Float32(i % 7) - 3.5
         )
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_count_nonzero_on_the_device_matches_the_host() raises:
@@ -44,7 +44,7 @@ def test_nan_counts_and_negative_zero_does_not() raises:
         Float32.MAX * 2 - Float32.MAX * 2,
         1.0,
     ]
-    assert_equal(count_nonzero[gpu=True](Static[f32, 4](gpu, values^)), 2)
+    assert_equal(count_nonzero[gpu=True](Static[f32, 4](values^, gpu)), 2)
 
 
 def test_all_and_any_of_a_device_mask() raises:

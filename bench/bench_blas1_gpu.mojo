@@ -48,7 +48,7 @@ def _ramp[n: Int](ctx: DeviceContext, salt: Int) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](Float64((i * 37 + salt * 11) % 17) - 8.0))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _band_row(name: String, n: Int, ns: Float64, bytes: Int, err: Float64):

@@ -132,7 +132,7 @@ def main() raises:
     # the ones the matching spelling gives. It is proven here rather than in
     # `tests/` because naming `gpu=True` compiles a device kernel, which a
     # GPU-less CI runner cannot do ----
-    var host_a = Static[dtype, 4](cpu, [0.0, 1.0, 2.0, 3.0])
+    var host_a = Static[dtype, 4]([0.0, 1.0, 2.0, 3.0], cpu)
     var matched = exp(host_a).to_host()
     var fell_back = exp[gpu=True](host_a).to_host()
     var fallback_agrees = True

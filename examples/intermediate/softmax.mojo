@@ -74,7 +74,7 @@ def main() raises:
     var cpu = DeviceContext(api="cpu")
     var xs_storage = List[Scalar[dtype]](length=rows * cols, fill=0)
     fill_inputs(xs_storage)
-    var xs = Rows(cpu, xs_storage.copy())
+    var xs = Rows(xs_storage.copy(), cpu)
 
     var ys = Rows(cpu)
 
@@ -86,7 +86,7 @@ def main() raises:
     var ctx = DeviceContext()
     print("GPU API:", ctx.api())
 
-    var xs_gpu = Rows(ctx, xs_storage.copy())
+    var xs_gpu = Rows(xs_storage.copy(), ctx)
     var tmp_gpu = Rows(ctx)
     var ys_gpu = Rows(ctx)
     var row_max_gpu = PerRow(ctx)

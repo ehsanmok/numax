@@ -33,4 +33,4 @@ def _as_tensor[
     var scalars = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         scalars.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, scalars^)
+    return Static[dtype, n](scalars^, ctx)

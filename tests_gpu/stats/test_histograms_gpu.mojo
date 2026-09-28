@@ -18,7 +18,7 @@ def _samples(ctx: DeviceContext, salt: Int) raises -> Static[f32, n]:
     for i in range(n):
         var u = Float32(((i + salt) * 7919) % 1009) / 1009.0
         values.append(u * u * 6.0 - 1.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:
@@ -49,10 +49,10 @@ def test_the_one_dimensional_histograms_on_the_device() raises:
     var edges: List[Scalar[f32]] = [-1.0, 0.0, 0.5, 2.0, 5.0]
     _close(
         histogram[gpu=True](
-            _samples(gpu, 0), Static[f32, 5](gpu, edges.copy())
+            _samples(gpu, 0), Static[f32, 5](edges.copy(), gpu)
         ).counts.to_host(),
         histogram(
-            _samples(cpu, 0), Static[f32, 5](cpu, edges^)
+            _samples(cpu, 0), Static[f32, 5](edges^, cpu)
         ).counts.to_host(),
     )
 
@@ -69,9 +69,9 @@ def test_the_multi_dimensional_histograms_on_the_device() raises:
     for i in range(3000):
         pts.append(Float32((i * 37) % 101) * 0.1)
     var dd = histogramdd[4, 3, 5, gpu=True](
-        Static[f32, 1000, 3](gpu, pts.copy())
+        Static[f32, 1000, 3](pts.copy(), gpu)
     )
-    var hd = histogramdd[4, 3, 5](Static[f32, 1000, 3](cpu, pts^))
+    var hd = histogramdd[4, 3, 5](Static[f32, 1000, 3](pts^, cpu))
     _close(dd.counts.to_host(), hd.counts.to_host())
 
 
@@ -82,27 +82,27 @@ def test_bincount_and_digitize_on_the_device() raises:
     for i in range(n):
         ints.append(Int32((i * 13) % 37))
     var d = bincount[gpu=True](
-        Static[DType.int32, n](gpu, ints.copy()), 40
+        Static[DType.int32, n](ints.copy(), gpu), 40
     ).to_host()
-    var h = bincount(Static[DType.int32, n](cpu, ints.copy()), 40).to_host()
+    var h = bincount(Static[DType.int32, n](ints.copy(), cpu), 40).to_host()
     assert_equal(len(d), len(h))
     for i in range(len(h)):
         assert_equal(d[i], h[i])
     _close(
         bincount[gpu=True](
-            Static[DType.int32, n](gpu, ints.copy()), _samples(gpu, 0)
+            Static[DType.int32, n](ints.copy(), gpu), _samples(gpu, 0)
         ).to_host(),
         bincount(
-            Static[DType.int32, n](cpu, ints^), _samples(cpu, 0)
+            Static[DType.int32, n](ints^, cpu), _samples(cpu, 0)
         ).to_host(),
     )
     var bins: List[Scalar[f32]] = [-1.0, 0.0, 1.0, 2.5, 4.0]
     for right in [False, True]:
         var dg = digitize[gpu=True](
-            _samples(gpu, 0), Static[f32, 5](gpu, bins.copy()), right
+            _samples(gpu, 0), Static[f32, 5](bins.copy(), gpu), right
         ).to_host()
         var hg = digitize(
-            _samples(cpu, 0), Static[f32, 5](cpu, bins.copy()), right
+            _samples(cpu, 0), Static[f32, 5](bins.copy(), cpu), right
         ).to_host()
         for i in range(n):
             assert_equal(dg[i], hg[i])

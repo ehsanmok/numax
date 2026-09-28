@@ -32,14 +32,14 @@ def _line[n: Int](ctx: DeviceContext, base: Int) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(base + i) * 0.5)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _grid[r: Int, c: Int](ctx: DeviceContext) raises -> Static[f32, r, c]:
     var values = List[Scalar[f32]](capacity=r * c)
     for i in range(r * c):
         values.append(Float32(i) - 3.0)
-    return Static[f32, r, c](ctx, values^)
+    return Static[f32, r, c](values^, ctx)
 
 
 def _assert_same(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:

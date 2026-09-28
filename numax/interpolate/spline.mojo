@@ -167,8 +167,8 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
                 (ds[i] + ds[i + 1] - 2.0 * secant) / (h * h)
             )
         return Self(
-            Static[Self.dtype, Self.n](ctx, knots^),
-            Static[Self.dtype, 4, pieces](ctx, coefficients^),
+            Static[Self.dtype, Self.n](knots^, ctx),
+            Static[Self.dtype, 4, pieces](coefficients^, ctx),
             extrapolate,
         )
 
@@ -529,8 +529,8 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
                     put(ab, 0, 0, 1.0)
                     put(ab, last, last, 1.0)
 
-            var band = Static[Self.dtype, 3, Self.n](ctx, ab^)
-            var right = Static[Self.dtype, Self.n](ctx, rhs^)
+            var band = Static[Self.dtype, 3, Self.n](ab^, ctx)
+            var right = Static[Self.dtype, Self.n](rhs^, ctx)
             var solved = solve_banded[l=1, u=1](band, right).to_host()
             for i in range(Self.n):
                 d[i] = Float64(solved[i])

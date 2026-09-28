@@ -26,7 +26,7 @@ def _grid(ctx: DeviceContext) raises -> Static[f32, 3, 5]:
     var values = List[Scalar[f32]](capacity=15)
     for i in range(15):
         values.append(Float32((i * 7) % 15) - 4.0)
-    return Static[f32, 3, 5](ctx, values^)
+    return Static[f32, 3, 5](values^, ctx)
 
 
 def _picks(
@@ -39,7 +39,7 @@ def _picks(
     shape.append(rows)
     shape.append(cols)
     return Dynamic[DType.int64, 2](
-        ctx, row_major(_dyn_shape_from[2](shape)), values^
+        row_major(_dyn_shape_from[2](shape)), values^, ctx
     )
 
 
@@ -91,8 +91,8 @@ def test_put_on_the_device_matches_the_host() raises:
     var want = hc.to_host()
     for i in range(15):
         assert_equal(got[i], want[i])
-    var tg = Dynamic[DType.int64, 1](gpu, row_major(_dyn_shape[1](2)), [2, 6])
-    var tc = Dynamic[DType.int64, 1](cpu, row_major(_dyn_shape[1](2)), [2, 6])
+    var tg = Dynamic[DType.int64, 1](row_major(_dyn_shape[1](2)), [2, 6], gpu)
+    var tc = Dynamic[DType.int64, 1](row_major(_dyn_shape[1](2)), [2, 6], cpu)
     var one: List[Scalar[f32]] = [9.0]
     put[gpu=True](dg, tg, one)
     put(hc, tc, one)

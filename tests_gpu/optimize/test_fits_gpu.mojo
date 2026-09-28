@@ -35,7 +35,7 @@ def _jacobian(
 
 def _truth(ctx: DeviceContext) raises -> Static[f32, 2]:
     var values: List[Scalar[f32]] = [2.0, 0.5]
-    return Static[f32, 2](ctx, values^)
+    return Static[f32, 2](values^, ctx)
 
 
 def _residuals(p: Static[f32, 2], ctx: DeviceContext) raises -> Static[f32, n]:
@@ -51,7 +51,7 @@ def _residual_jacobian(
 
 def _start(ctx: DeviceContext) raises -> Static[f32, 2]:
     var values: List[Scalar[f32]] = [1.0, 0.2]
-    return Static[f32, 2](ctx, values^)
+    return Static[f32, 2](values^, ctx)
 
 
 def test_least_squares_on_the_device() raises:

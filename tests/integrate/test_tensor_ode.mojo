@@ -36,7 +36,7 @@ def oscillator(
 ) raises -> Static[dtype, 2]:
     """`y'' = -y` as a first-order system: `y(t) = cos(t)` from (1, 0)."""
     var h = y.to_host()
-    return Static[dtype, 2](ctx, [h[1], -h[0]])
+    return Static[dtype, 2]([h[1], -h[0]], ctx)
 
 
 def decay(
@@ -44,14 +44,14 @@ def decay(
 ) raises -> Static[dtype, 1]:
     """`dy/dt = -2y`, so `y(t) = y0 exp(-2t)`."""
     var h = y.to_host()
-    return Static[dtype, 1](ctx, [Scalar[dtype](-2.0) * h[0]])
+    return Static[dtype, 1]([Scalar[dtype](-2.0) * h[0]], ctx)
 
 
 def linear_in_t(
     t: Scalar[dtype], y: Static[dtype, 1], ctx: DeviceContext
 ) raises -> Static[dtype, 1]:
     """`dy/dt = t`, so `y(t) = y0 + t^2/2`; exact for both integrators."""
-    return Static[dtype, 1](ctx, [t])
+    return Static[dtype, 1]([t], ctx)
 
 
 def array_oscillator[U: FloatLike](t: U, y: Array[U, 2]) -> Array[U, 2]:
@@ -67,7 +67,7 @@ def scalar_decay[U: FloatLike](t: U, y: U) -> U:
 
 def test_rk4_system_solves_the_harmonic_oscillator() raises:
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 2](ctx, [1.0, 0.0])
+    var y0 = Static[dtype, 2]([1.0, 0.0], ctx)
     var y = rk4_system[f=oscillator, num_steps=200](0.0, y0, 2.0).to_host()
     assert_almost_equal(y[0], Scalar[dtype](cos_f64(2.0)), atol=1e-7)
     assert_almost_equal(y[1], Scalar[dtype](-sin_f64(2.0)), atol=1e-7)
@@ -77,7 +77,7 @@ def test_rk4_system_agrees_with_the_array_tier_component_by_component() raises:
     # Same tableau, same stages, same problem: the two tiers must agree to
     # rounding, which is the check that neither has a wrong stage weight.
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 2](ctx, [1.0, 0.0])
+    var y0 = Static[dtype, 2]([1.0, 0.0], ctx)
     var here = rk4_system[f=oscillator, num_steps=50](0.0, y0, 1.5).to_host()
 
     var start = Array[P, 2](fill=P.constant(0.0))
@@ -96,7 +96,7 @@ def test_rk4_system_is_fourth_order() raises:
     # oscillator the ratio approaches 16 from above -- 20.8 at 20-vs-40
     # steps, 18.9 at 40-vs-80 -- so the window is set for the finer pair.
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 2](ctx, [1.0, 0.0])
+    var y0 = Static[dtype, 2]([1.0, 0.0], ctx)
     var coarse = rk4_system[f=oscillator, num_steps=40](0.0, y0, 3.0).to_host()
     var fine = rk4_system[f=oscillator, num_steps=80](0.0, y0, 3.0).to_host()
     var err_coarse = abs(Float64(coarse[0]) - cos_f64(3.0))
@@ -107,7 +107,7 @@ def test_rk4_system_is_fourth_order() raises:
 
 def test_dopri5_is_fifth_order_and_beats_rk4() raises:
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 2](ctx, [1.0, 0.0])
+    var y0 = Static[dtype, 2]([1.0, 0.0], ctx)
     var coarse = dopri5[f=oscillator, num_steps=20](0.0, y0, 3.0).to_host()
     var fine = dopri5[f=oscillator, num_steps=40](0.0, y0, 3.0).to_host()
     var err_coarse = abs(Float64(coarse[0]) - cos_f64(3.0))
@@ -121,7 +121,7 @@ def test_dopri5_is_fifth_order_and_beats_rk4() raises:
 
 def test_both_integrators_are_exact_on_a_polynomial() raises:
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 1](ctx, [1.0])
+    var y0 = Static[dtype, 1]([1.0], ctx)
     var a = rk4_system[f=linear_in_t, num_steps=7](0.0, y0, 3.0).to_host()
     var b = dopri5[f=linear_in_t, num_steps=7](0.0, y0, 3.0).to_host()
     assert_almost_equal(a[0], Scalar[dtype](5.5), atol=1e-13)
@@ -130,7 +130,7 @@ def test_both_integrators_are_exact_on_a_polynomial() raises:
 
 def test_backwards_integration_inverts_forwards() raises:
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 2](ctx, [1.0, 0.0])
+    var y0 = Static[dtype, 2]([1.0, 0.0], ctx)
     var forward = rk4_system[f=oscillator, num_steps=100](0.0, y0, 2.0)
     var back = rk4_system[f=oscillator, num_steps=100](
         2.0, forward, 0.0
@@ -141,7 +141,7 @@ def test_backwards_integration_inverts_forwards() raises:
 
 def test_solve_ivp_reaches_the_exponential_within_tolerance() raises:
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 1](ctx, [3.0])
+    var y0 = Static[dtype, 1]([3.0], ctx)
     var result = solve_ivp[f=decay](0.0, y0, 2.0, rtol=1e-8, atol=1e-10)
     assert_true(result.converged)
     assert_almost_equal(result.t, 2.0)
@@ -157,7 +157,7 @@ def test_solve_ivp_takes_the_same_steps_as_the_scalar_controller() raises:
     from numax.integrate import solve_ivp as scalar_solve_ivp
 
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 1](ctx, [3.0])
+    var y0 = Static[dtype, 1]([3.0], ctx)
     var tensor_result = solve_ivp[f=decay](0.0, y0, 2.0)
     var scalar_result = scalar_solve_ivp[scalar_decay](0.0, 3.0, 2.0)
     assert_equal(tensor_result.accepted, scalar_result.accepted)
@@ -169,7 +169,7 @@ def test_solve_ivp_takes_the_same_steps_as_the_scalar_controller() raises:
 
 def test_solve_ivp_reports_non_convergence_when_steps_run_out() raises:
     var ctx = DeviceContext(api="cpu")
-    var y0 = Static[dtype, 1](ctx, [3.0])
+    var y0 = Static[dtype, 1]([3.0], ctx)
     var result = solve_ivp[f=decay](0.0, y0, 2.0, max_steps=3)
     assert_true(not result.converged)
     assert_true(result.t < 2.0)

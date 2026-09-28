@@ -11,6 +11,7 @@ from std.testing import (
     assert_almost_equal,
     assert_equal,
     assert_raises,
+    assert_true,
 )
 
 from max.gpu.host import DeviceContext
@@ -48,7 +49,7 @@ def _t[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, elements^)
+    return Static[dtype, n](elements^, ctx)
 
 
 def _m[
@@ -58,7 +59,7 @@ def _m[
     var elements = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](ctx, elements^)
+    return Static[dtype, rows, cols](elements^, ctx)
 
 
 def test_geomspace_is_a_geometric_progression() raises:
@@ -209,7 +210,7 @@ def _row[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, elements^)
+    return Static[dtype, n](elements^, ctx)
 
 
 def test_pad_constant_matches_numpy() raises:
@@ -321,6 +322,20 @@ def test_arange_of_an_empty_range_is_empty() raises:
 def test_arange_rejects_a_zero_step() raises:
     with assert_raises(contains="step must be nonzero"):
         _ = arange(0.0, 1.0, 0.0)
+
+
+def test_the_constructors_take_ctx_last_and_default_to_the_host() raises:
+    """Values first, device last and optional, as in every factory; no
+    device means the host."""
+    var a = Static[DType.float32, 3]([1.0, 2.0, 3.0])
+    assert_true(a.on_host())
+    assert_equal(a[2], 3.0)
+    var z = Static[DType.float32, 2, 2]()
+    assert_true(z.on_host())
+    assert_equal(z[1, 1], 0.0)
+    var cpu = DeviceContext(api="cpu")
+    var b = Static[DType.float32, 3]([4.0, 5.0, 6.0], cpu)
+    assert_equal(b[0], 4.0)
 
 
 def main() raises:

@@ -51,7 +51,7 @@ def _fixed_array() raises -> Static[dtype, 6]:
     var values = List[Scalar[dtype]](capacity=6)
     for i in range(6):
         values.append(Scalar[dtype](vals[i]))
-    return Static[dtype, 6](ctx, values^)
+    return Static[dtype, 6](values^, ctx)
 
 
 def test_sum_matches_hand_computed_total() raises:
@@ -94,7 +94,7 @@ def test_the_reductions_agree_with_a_host_walk_on_a_longer_vector() raises:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](sin(Float64(i) * 0.37)) + Scalar[dtype](3))
-    var xs = Static[dtype, n](ctx, values.copy())
+    var xs = Static[dtype, n](values.copy(), ctx)
 
     var host_total = Scalar[dtype](0)
     var host_min = values[0]

@@ -20,7 +20,7 @@ comptime f64 = DType.float64
 
 def _a() raises -> Static[f64, 2, 3]:
     return Static[f64, 2, 3](
-        DeviceContext(api="cpu"), [1.0, -2.0, 3.5, 0.5, 4.0, -0.5]
+        [1.0, -2.0, 3.5, 0.5, 4.0, -0.5], DeviceContext(api="cpu")
     )
 
 
@@ -64,7 +64,7 @@ def test_mixed_operands_broadcast_like_the_free_functions() raises:
     var a = _a()
     var v = TensorView(a.tile(), a.context())
     _same((_a() + v).to_host(), add(_a(), v).to_host())
-    var row = Static[f64, 3](DeviceContext(api="cpu"), [10.0, 20.0, 30.0])
+    var row = Static[f64, 3]([10.0, 20.0, 30.0], DeviceContext(api="cpu"))
     var summed = _a() + row
     assert_equal(summed.dim[0](), 2)
     assert_equal(summed.dim[1](), 3)

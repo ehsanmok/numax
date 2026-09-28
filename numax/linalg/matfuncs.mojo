@@ -696,7 +696,7 @@ def _similar[
     """`Z F Z^T` on the device, the step every Schur-based function ends
     with."""
     comptime n = dim[T, 0]
-    var f = Static[T.dtype, n, n](ctx, f_host.copy())
+    var f = Static[T.dtype, n, n](f_host.copy(), ctx)
     var zt = transpose[gpu=gpu](z)
     var half = matmul[gpu=gpu](z, f)
     return matmul[gpu=gpu](half, zt)

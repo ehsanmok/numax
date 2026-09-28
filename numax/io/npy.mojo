@@ -367,7 +367,7 @@ struct numpy:
         comptime for i in range(rank):
             if file_dims[i] != dims[i]:
                 raise Error("numax.io.numpy.load: shape mismatch")
-        return Static[dtype, *dims](_context(ctx), values^)
+        return Static[dtype, *dims](values^, _context(ctx))
 
     @staticmethod
     def load_dyn[
@@ -403,7 +403,7 @@ struct numpy:
                 )
             )
         var result = Dynamic[dtype, rank](
-            _context(ctx), row_major(_dyn_shape_from[rank](file_dims))
+            row_major(_dyn_shape_from[rank](file_dims)), _context(ctx)
         )
         result.copy_from_host(values)
         return result^

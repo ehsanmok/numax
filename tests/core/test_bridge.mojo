@@ -51,7 +51,7 @@ def _matrix() raises -> Static[dtype, 2, 2]:
     var values = List[Scalar[dtype]](capacity=4)
     for v in [4.0, 2.0, 2.0, 3.0]:
         values.append(Scalar[dtype](v))
-    return Static[dtype, 2, 2](ctx, values^)
+    return Static[dtype, 2, 2](values^, ctx)
 
 
 def test_rank_1_round_trips() raises:
@@ -59,7 +59,7 @@ def test_rank_1_round_trips() raises:
     var values = List[Scalar[dtype]](capacity=3)
     for v in [1.5, -2.0, 0.25]:
         values.append(Scalar[dtype](v))
-    var xs = Static[dtype, 3](ctx, values^)
+    var xs = Static[dtype, 3](values^, ctx)
 
     var lifted = to_array[P](xs)
     var back = to_tensor[dtype, 3](lifted, ctx)

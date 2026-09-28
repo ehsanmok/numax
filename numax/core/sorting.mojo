@@ -140,7 +140,7 @@ def sort[
         _std_sort(values, _nan_last_less[dtype])
     else:
         _std_sort(values)
-    return Static[dtype, n](a.context(), values^)
+    return Static[dtype, n](values^, a.context())
 
 
 def sort[
@@ -187,7 +187,7 @@ def argsort[
     """
     var n = a.size()
     var ctx = a.context()
-    var indices = Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](n)))
+    var indices = Dynamic[DType.int64, 1](row_major(_dyn_shape[1](n)), ctx)
     if _check_device[T, gpu](a):
         comptime if gpu:
             return _argsort_device(a)
@@ -251,7 +251,7 @@ def _argsort_device[T: TensorLike](a: T) raises -> Dynamic[DType.int64, 1]:
     var ctx = a.context()
     var n = a.size()
     if n == 0:
-        return Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](0)))
+        return Dynamic[DType.int64, 1](row_major(_dyn_shape[1](0)), ctx)
     var m = 1
     while m < n:
         m *= 2
@@ -470,7 +470,7 @@ def searchsorted[
                     hi = mid
         out[q] = Scalar[DType.int64](lo)
     return Dynamic[DType.int64, 1](
-        sorted_values.context(), row_major(_dyn_shape[1](len(needles))), out^
+        row_major(_dyn_shape[1](len(needles))), out^, sorted_values.context()
     )
 
 
@@ -618,7 +618,7 @@ def take[
         context=ctx,
     )
     return Dynamic[dtype, rank](
-        ctx, row_major(_dyn_shape_from[rank](out_extents)), out^
+        row_major(_dyn_shape_from[rank](out_extents)), out^, ctx
     )
 
 
@@ -762,7 +762,7 @@ def take_along_axis[
         ctx,
     )
     return Dynamic[dtype, rank](
-        ctx, row_major(_dyn_shape_from[rank](out_extents)), out^
+        row_major(_dyn_shape_from[rank](out_extents)), out^, ctx
     )
 
 
@@ -923,7 +923,7 @@ def _pack_device[
     comptime out_dtype = DType.int64 if indices else V.dtype
     var ctx = selector.context()
     if m == 0:
-        return Dynamic[out_dtype, 1](ctx, row_major(_dyn_shape[1](0)))
+        return Dynamic[out_dtype, 1](row_major(_dyn_shape[1](0)), ctx)
     var offsets = _selected_offsets(selector, m)
     var count = Int(offsets[m - 1])
     var result = Dynamic[out_dtype, 1]._uninitialized(
@@ -1071,7 +1071,7 @@ def argwhere[
     shape.append(count)
     shape.append(rank)
     return Dynamic[DType.int64, 2](
-        a.context(), row_major(_dyn_shape_from[2](shape)), coords^
+        row_major(_dyn_shape_from[2](shape)), coords^, a.context()
     )
 
 
@@ -1099,7 +1099,7 @@ def _put_device[
     _check_index_bounds_device("put", indices, n)
     var ctx = a.context()
     var upload = Dynamic[T.dtype, 1](
-        ctx, row_major(_dyn_shape[1](len(values))), values.copy()
+        row_major(_dyn_shape[1](len(values))), values.copy(), ctx
     )
     var iv = _flat_unchecked(indices)
     var vv = _flat_unchecked(upload)
@@ -1196,7 +1196,7 @@ def put[
             for i in range(len(indices)):
                 picks.append(Int64(indices[i]))
             var index_tensor = Dynamic[DType.int64, 1](
-                a.context(), row_major(_dyn_shape[1](len(indices))), picks^
+                row_major(_dyn_shape[1](len(indices))), picks^, a.context()
             )
             _put_device(a, index_tensor, values)
             return
@@ -1407,7 +1407,7 @@ def take[
             for i in range(len(indices)):
                 picks.append(Int64(indices[i]))
             var index_tensor = Dynamic[DType.int64, 1](
-                a.context(), row_major(_dyn_shape[1](len(indices))), picks^
+                row_major(_dyn_shape[1](len(indices))), picks^, a.context()
             )
             var flat = _same_order(a, row_major(_dyn_shape[1](n)))
             return take[axis=0, gpu=True](flat, index_tensor)
@@ -1569,7 +1569,7 @@ def select[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = x_values[i] if mask[i] else y_values[i]
-    return Tensor[dtype, LayoutType](x.context(), x.tile().layout, out^)
+    return Tensor[dtype, LayoutType](x.tile().layout, out^, x.context())
 
 
 def select[
@@ -1653,7 +1653,7 @@ def select[
         out[flat] = x_values[xi] if mask[ci] else y_values[yi]
 
     return Dynamic[dtype, rank](
-        x.context(), row_major(_dyn_shape_from[rank](extents)), out^
+        row_major(_dyn_shape_from[rank](extents)), out^, x.context()
     )
 
 

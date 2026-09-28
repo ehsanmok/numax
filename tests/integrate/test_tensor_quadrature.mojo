@@ -23,7 +23,7 @@ def _t[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, out^)
+    return Static[dtype, n](out^, ctx)
 
 
 def test_trapezoid_with_dx_matches_scipy() raises:

@@ -227,11 +227,11 @@ def _trig[
                 pr.append(Scalar[dtype](-uniform * _sin(angle)))
                 pi.append(Scalar[dtype](uniform * _cos(angle)))
 
-    var index = Static[DType.int32, m](ctx, source^)
-    var weight_re = Static[dtype, m](ctx, wr^)
-    var weight_im = Static[dtype, m](ctx, wi^)
-    var post_re = Static[dtype, n](ctx, pr^)
-    var post_im = Static[dtype, n](ctx, pi^)
+    var index = Static[DType.int32, m](source^, ctx)
+    var weight_re = Static[dtype, m](wr^, ctx)
+    var weight_im = Static[dtype, m](wi^, ctx)
+    var post_re = Static[dtype, n](pr^, ctx)
+    var post_im = Static[dtype, n](pi^, ctx)
 
     # `u[j] = w[j] * x[source[j]]`, or zero where `source[j] < 0`.
     var u_re = Static[dtype, m]._uninitialized(ctx)

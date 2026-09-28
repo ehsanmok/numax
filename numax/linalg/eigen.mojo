@@ -1033,7 +1033,7 @@ def eigvalsh[
     var acc = _RotationBatch[T.dtype, n, gpu, False](1, ctx)
     _tql[N=n, gpu=gpu, vectors=False](d, e, acc, ctx)
     _std_sort(d)
-    return Static[T.dtype, n](ctx, d^)
+    return Static[T.dtype, n](d^, ctx)
 
 
 struct Eigh[dtype: DType, n: Int](
@@ -1140,8 +1140,8 @@ def eigh[
     for j in range(n):
         sorted_values.append(d[order[j]])
         perm_host.append(Scalar[DType.int64](order[j]))
-    var values = Static[T.dtype, n](ctx, sorted_values^)
-    var perm = Static[DType.int64, n](ctx, perm_host^)
+    var values = Static[T.dtype, n](sorted_values^, ctx)
+    var perm = Static[DType.int64, n](perm_host^, ctx)
 
     # Row `j` of `zt` is eigenvector `j`, so the sort is a row gather --
     # source and destination are the same shape, which is what keeps a
@@ -1967,8 +1967,8 @@ def eigvals[
     # allocates nothing for vectors it never forms.
     var acc = _RotationBatch[T.dtype, n, gpu, False, 2, True](1, ctx)
     var values = _hqr[wantt=False, wantz=False, N=n, gpu=gpu](h, acc, n, ctx)
-    var re = Static[T.dtype, n](ctx, values[0].copy())
-    var im = Static[T.dtype, n](ctx, values[1].copy())
+    var re = Static[T.dtype, n](values[0].copy(), ctx)
+    var im = Static[T.dtype, n](values[1].copy(), ctx)
     return Eigenvalues[T.dtype, n](re^, im^)
 
 
@@ -2105,7 +2105,7 @@ def schur[
     var acc = _RotationBatch[T.dtype, n, gpu, True, 2, True](block, ctx)
     _ = _hqr[wantt=True, wantz=True, N=n, gpu=gpu](h, acc, n, ctx)
     acc.finish(ctx)
-    var t = Static[T.dtype, n, n](ctx, h^)
+    var t = Static[T.dtype, n, n](h^, ctx)
     var q = reduced.q()
     var vectors = _q_times_zt[gpu=gpu](q, acc.zt)
     _ = acc^
@@ -3026,7 +3026,7 @@ def svdvals[
     var out = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         out.append(mags[order[i]])
-    return Static[T.dtype, n](ctx, out^)
+    return Static[T.dtype, n](out^, ctx)
 
 
 struct SVD[dtype: DType, m: Int, n: Int](
@@ -3148,8 +3148,8 @@ def svd[
         sign_host.append(
             Scalar[T.dtype](-1) if d[at] < 0 else Scalar[T.dtype](1)
         )
-    var rows = Static[DType.int64, n](ctx, row_host^)
-    var signs = Static[T.dtype, n](ctx, sign_host^)
+    var rows = Static[DType.int64, n](row_host^, ctx)
+    var signs = Static[T.dtype, n](sign_host^, ctx)
 
     # The gather is `eigh`'s: source and destination are both `(n, n)` and
     # only the index tensors are rank 1, which is the cross-shape case
@@ -3192,7 +3192,7 @@ def svd[
     var p = reduced.p()
     var u = inner[gpu=gpu](q, ub_t)
     var v = inner[gpu=gpu](p, vb_t)
-    return SVD[T.dtype, m, n](u^, Static[T.dtype, n](ctx, s_host^), v^)
+    return SVD[T.dtype, m, n](u^, Static[T.dtype, n](s_host^, ctx), v^)
 
 
 def matrix_rank[

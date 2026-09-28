@@ -33,7 +33,7 @@ def _fixed_1d() raises -> Static[dtype, 4]:
     var values = List[Scalar[dtype]](capacity=4)
     for i in range(4):
         values.append(Scalar[dtype](vals[i]))
-    return Static[dtype, 4](ctx, values^)
+    return Static[dtype, 4](values^, ctx)
 
 
 def test_save_load_round_trips_a_rank_1_tensor() raises:

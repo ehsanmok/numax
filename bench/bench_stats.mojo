@@ -48,7 +48,7 @@ def _data[n: Int](ctx: DeviceContext) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](_entry(i)))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _matrix[
@@ -60,7 +60,7 @@ def _matrix[
             values.append(
                 Scalar[dtype](_entry(i) + 0.5 * Float64(r) * _entry(i + r))
             )
-    return Static[dtype, rows, n](ctx, values^)
+    return Static[dtype, rows, n](values^, ctx)
 
 
 def _row(name: String, n: Int, ns: Float64, err: Float64):

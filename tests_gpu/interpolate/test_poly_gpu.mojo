@@ -16,7 +16,7 @@ comptime f32 = DType.float32
 
 
 def _p(ctx: DeviceContext) raises -> Static[f32, 6]:
-    return Static[f32, 6](ctx, [3.0, -2.0, 0.5, 4.0, -1.0, 7.0])
+    return Static[f32, 6]([3.0, -2.0, 0.5, 4.0, -1.0, 7.0], ctx)
 
 
 def test_polyder_on_the_device_matches_the_host() raises:

@@ -165,4 +165,4 @@ struct nmx:
         var dst_ptr = out_storage.unsafe_ptr().unsafe_bitcast[UInt8]()
         for i in range(nbytes):
             dst_ptr[unsafe_offset=i] = data[offset + i]
-        return Static[dtype, *dims](_context(ctx), out_storage^)
+        return Static[dtype, *dims](out_storage^, _context(ctx))

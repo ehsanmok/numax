@@ -749,7 +749,7 @@ def minimize[
     comptime dtype = T.dtype
     comptime n_vars = dim[T, 0]
     var empty = List[Float64]()
-    var start = Static[dtype, n_vars](x0.context(), x0.to_host())
+    var start = Static[dtype, n_vars](x0.to_host(), x0.context())
     comptime if method == "bfgs" or method == "cg" or method == "l-bfgs":
         return _descend[dtype, n_vars, f, jac, method, gpu, memory](
             start,
@@ -822,7 +822,7 @@ def minimize[
     comptime n_vars = dim[A, 0]
     var lo = _to_list(lower)
     var hi = _to_list(upper)
-    var start = Static[dtype, n_vars](x0.context(), x0.to_host())
+    var start = Static[dtype, n_vars](x0.to_host(), x0.context())
     comptime if method == "bfgs" or method == "cg" or method == "l-bfgs":
         return _descend[dtype, n_vars, f, jac, method, gpu, memory](
             start,

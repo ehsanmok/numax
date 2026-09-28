@@ -48,7 +48,7 @@ def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _matrix[
@@ -57,7 +57,7 @@ def _matrix[
     var out = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](_cpu(), out^)
+    return Static[dtype, rows, cols](out^, _cpu())
 
 
 def _x() -> List[Float64]:
@@ -330,12 +330,11 @@ def test_the_recurrence_runs_at_the_input_dtype() raises:
     var xs = List[Scalar[f32]](capacity=16)
     for i in range(16):
         xs.append(Scalar[f32](raw[i]))
-    var x = Static[f32, 16](_cpu(), xs^)
+    var x = Static[f32, 16](xs^, _cpu())
     var b = Static[f32, 3](
-        _cpu(),
-        [Scalar[f32](0.25), Scalar[f32](0.5), Scalar[f32](0.25)],
+        [Scalar[f32](0.25), Scalar[f32](0.5), Scalar[f32](0.25)], _cpu()
     )
-    var a = Static[f32, 2](_cpu(), [Scalar[f32](1.0), Scalar[f32](-0.3)])
+    var a = Static[f32, 2]([Scalar[f32](1.0), Scalar[f32](-0.3)], _cpu())
     var y = lfilter(b, a, x).to_host()
     var want: List[Float64] = [
         0.25,

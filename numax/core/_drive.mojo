@@ -357,7 +357,7 @@ def _host_walk_unary[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i])
-    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 def _host_walk_unary_to[
@@ -371,7 +371,7 @@ def _host_walk_unary_to[
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i])
-    return Tensor[out_dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[out_dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 def _host_walk_binary[
@@ -388,7 +388,7 @@ def _host_walk_binary[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](a_values[i], b_values[i])
-    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 def _host_walk_binary_to[
@@ -405,7 +405,7 @@ def _host_walk_binary_to[
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](a_values[i], b_values[i])
-    return Tensor[out_dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[out_dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 def _host_walk_binary_scalar[
@@ -421,7 +421,7 @@ def _host_walk_binary_scalar[
     var out = List[Scalar[dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i], s)
-    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 def _host_walk_binary_scalar_to[
@@ -437,7 +437,7 @@ def _host_walk_binary_scalar_to[
     var out = List[Scalar[out_dtype]](length=n, fill=0)
     for i in range(n):
         out[i] = op[1](values[i], s)
-    return Tensor[out_dtype, LayoutType](a.context(), a.tile().layout, out^)
+    return Tensor[out_dtype, LayoutType](a.tile().layout, out^, a.context())
 
 
 comptime _BroadcastRank[

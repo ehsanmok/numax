@@ -17,7 +17,7 @@ def _y[m: Int](ctx: DeviceContext) raises -> Static[f32, m]:
     for i in range(m):
         var t = Float32(i) / Float32(m - 1)
         values.append(t * t * (3.0 - t))
-    return Static[f32, m](ctx, values^)
+    return Static[f32, m](values^, ctx)
 
 
 def _x[m: Int](ctx: DeviceContext) raises -> Static[f32, m]:
@@ -25,7 +25,7 @@ def _x[m: Int](ctx: DeviceContext) raises -> Static[f32, m]:
     for i in range(m):
         var t = Float32(i) / Float32(m - 1)
         values.append(t + 0.1 * t * t)
-    return Static[f32, m](ctx, values^)
+    return Static[f32, m](values^, ctx)
 
 
 def _check[m: Int]() raises:

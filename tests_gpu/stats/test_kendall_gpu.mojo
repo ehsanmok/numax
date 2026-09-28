@@ -24,7 +24,7 @@ def _x(ctx: DeviceContext, tied: Bool) raises -> Static[f32, n]:
             values.append(Float32((i * 53) % 13))
         else:
             values.append(Float32(sin(Float64(i) * 3.1)) + Float32(i) * 0.01)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _y(ctx: DeviceContext, tied: Bool) raises -> Static[f32, n]:
@@ -34,7 +34,7 @@ def _y(ctx: DeviceContext, tied: Bool) raises -> Static[f32, n]:
             values.append(Float32((i * 29) % 7) + Float32(i % 3))
         else:
             values.append(Float32(sin(Float64(i) * 0.7)) + Float32(i) * 0.02)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_kendalltau_on_the_device_matches_the_host() raises:

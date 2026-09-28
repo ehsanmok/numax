@@ -576,7 +576,7 @@ def isclose[
             var diff = abs(a_values[i] - b_values[i])
             walked[i] = diff <= atol + rtol * abs(b_values[i])
         return Tensor[DType.bool, LayoutType](
-            a.context(), a.tile().layout, walked^
+            a.tile().layout, walked^, a.context()
         )
 
     var ctx = a.context()

@@ -21,7 +21,7 @@ def _ramp(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(i % 13) * 0.5 - 2.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_view_operators_stay_on_the_device() raises:

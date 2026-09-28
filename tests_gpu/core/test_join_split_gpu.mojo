@@ -31,7 +31,7 @@ def _grid[
     var values = List[Scalar[f32]](capacity=r * c)
     for i in range(r * c):
         values.append(Float32(base + i))
-    return Static[f32, r, c](ctx, values^)
+    return Static[f32, r, c](values^, ctx)
 
 
 def _assert_same(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:
@@ -121,7 +121,7 @@ def _line[n: Int](ctx: DeviceContext, base: Int) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(base + i))
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_the_fixed_shape_joins_on_the_device_match_the_host() raises:

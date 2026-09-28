@@ -46,7 +46,7 @@ def mk[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var elements = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         elements.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](ctx, elements^)
+    return Static[dtype, n](elements^, ctx)
 
 
 def mk_mask[n: Int](values: List[Bool]) raises -> Static[DType.bool, n]:
@@ -54,7 +54,7 @@ def mk_mask[n: Int](values: List[Bool]) raises -> Static[DType.bool, n]:
     var elements = List[Scalar[DType.bool]](capacity=n)
     for i in range(n):
         elements.append(Scalar[DType.bool](values[i]))
-    return Static[DType.bool, n](ctx, elements^)
+    return Static[DType.bool, n](elements^, ctx)
 
 
 # ------------------------------------------------------------------
@@ -312,7 +312,7 @@ def test_select_preserves_the_input_shape() raises:
     var mask_values = List[Scalar[DType.bool]](capacity=4)
     for i in range(4):
         mask_values.append(Scalar[DType.bool](i % 2 == 1))
-    var mask = Static[DType.bool, 2, 2](ctx, mask_values^)
+    var mask = Static[DType.bool, 2, 2](mask_values^, ctx)
     var x = zeros[dtype, 2, 2](ctx)
     var y = zeros[dtype, 2, 2](ctx)
     for i in range(4):
@@ -497,7 +497,7 @@ def test_top_k_is_row_wise_at_rank_two() raises:
     var elements = List[Scalar[dtype]](capacity=8)
     for i in range(8):
         elements.append(Scalar[dtype](source[i]))
-    var m = Static[dtype, 2, 4](ctx, elements^)
+    var m = Static[dtype, 2, 4](elements^, ctx)
     var got = top_k[k=2](m)
     var values = got[0].to_host()
     var indices = got[1].to_host()
@@ -564,7 +564,7 @@ def test_take_along_an_axis_selects_whole_slices() raises:
     # numpy.take(a, [2, 0], axis=0) on a (3, 2) gives rows 2 and 0.
     var ctx = DeviceContext(api="cpu")
     var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    var which = Static[DType.int64, 2](ctx, [2, 0])
+    var which = Static[DType.int64, 2]([2, 0], ctx)
 
     var rows = take[axis=0](a, which)
     assert_equal(rows.dim_at(0), 2)
@@ -581,7 +581,7 @@ def test_take_along_an_axis_may_duplicate_a_slice() raises:
     # a permutation.
     var ctx = DeviceContext(api="cpu")
     var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    var which = Static[DType.int64, 3](ctx, [1, 1, 0])
+    var which = Static[DType.int64, 3]([1, 1, 0], ctx)
 
     var rows = take[axis=0](a, which).to_host()
     assert_equal(rows[0], 3.0)
@@ -592,7 +592,7 @@ def test_take_along_an_axis_may_duplicate_a_slice() raises:
 def test_take_along_an_axis_rejects_an_out_of_range_index() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    var which = Static[DType.int64, 1](ctx, [3])
+    var which = Static[DType.int64, 1]([3], ctx)
     var raised = False
     try:
         _ = take[axis=0](a, which)
@@ -605,7 +605,7 @@ def test_take_along_axis_picks_one_element_per_position() raises:
     # numpy.take_along_axis(a, idx, axis=1) with idx shaped like a.
     var ctx = DeviceContext(api="cpu")
     var a = _grid3[3, 2]([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    var idx = Static[DType.int64, 3, 2](ctx, [1, 0, 0, 1, 1, 1])
+    var idx = Static[DType.int64, 3, 2]([1, 0, 0, 1, 1, 1], ctx)
 
     var picked = take_along_axis[axis=1](a, idx).to_host()
     var expected = [2.0, 1.0, 3.0, 4.0, 6.0, 6.0]
@@ -618,7 +618,7 @@ def test_take_along_axis_sorts_each_row_with_argsort() raises:
     # no consumer at rank > 1.
     var ctx = DeviceContext(api="cpu")
     var a = _grid3[2, 3]([3.0, 1.0, 2.0, 9.0, 7.0, 8.0])
-    var order = Static[DType.int64, 2, 3](ctx, [1, 2, 0, 1, 2, 0])
+    var order = Static[DType.int64, 2, 3]([1, 2, 0, 1, 2, 0], ctx)
 
     var sorted_rows = take_along_axis[axis=1](a, order).to_host()
     assert_equal(sorted_rows[0], 1.0)

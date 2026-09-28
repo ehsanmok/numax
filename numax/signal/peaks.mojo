@@ -68,7 +68,7 @@ def _find_peaks_device[
     comptime dtype = T.dtype
     var ctx = x.context()
     var n = x.size()
-    var flags = Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](n)))
+    var flags = Dynamic[DType.int64, 1](row_major(_dyn_shape[1](n)), ctx)
     var xv = _flat_unchecked(x)
     var fv = _flat_out(flags)
     var use_height = Bool(height)

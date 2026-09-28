@@ -202,7 +202,7 @@ def _frequencies[
     var values = List[Scalar[dtype]](capacity=nperseg // 2 + 1)
     for k in range(nperseg // 2 + 1):
         values.append(Scalar[dtype](Float64(k) * fs / Float64(nperseg)))
-    return Static[dtype, nperseg // 2 + 1](ctx, values^)
+    return Static[dtype, nperseg // 2 + 1](values^, ctx)
 
 
 def _times[
@@ -214,7 +214,7 @@ def _times[
     var values = List[Scalar[dtype]](capacity=frames)
     for f in range(frames):
         values.append(Scalar[dtype]((first + Float64(f * step)) / fs))
-    return Static[dtype, frames](ctx, values^)
+    return Static[dtype, frames](values^, ctx)
 
 
 struct Periodogram[dtype: DType, keep: Int](Movable):
@@ -1027,8 +1027,8 @@ def istft[
             col_re.append(re[k * frames + f] * Scalar[dtype](gain))
             col_im.append(im[k * frames + f] * Scalar[dtype](gain))
         var column: Spectrum[dtype, keep] = (
-            Static[dtype, keep](ctx, col_re^),
-            Static[dtype, keep](ctx, col_im^),
+            Static[dtype, keep](col_re^, ctx),
+            Static[dtype, keep](col_im^, ctx),
         )
         var frame = irfft[gpu=gpu, n=nperseg](column^).to_host()
 
@@ -1045,7 +1045,7 @@ def istft[
         # A sample no window covered cannot be reconstructed; zero rather
         # than a division by zero, which is what SciPy's masked divide does.
         values.append(Scalar[dtype](acc[at] / w if w > 0.0 else 0.0))
-    return Static[dtype, out_n](ctx, values^)
+    return Static[dtype, out_n](values^, ctx)
 
 
 def hilbert[

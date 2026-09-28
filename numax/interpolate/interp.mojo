@@ -348,7 +348,7 @@ def polyder[
         # Descending: p[i] multiplies x ** (k - 1 - i), whose derivative
         # is (k - 1 - i) * x ** (k - 2 - i).
         values.append(source[i] * Scalar[T.dtype](k - 1 - i))
-    return Static[T.dtype, k - 1](p.context(), values^)
+    return Static[T.dtype, k - 1](values^, p.context())
 
 
 def polyint[
@@ -380,7 +380,7 @@ def polyint[
     for i in range(k):
         values.append(source[i] / Scalar[T.dtype](k - i))
     values.append(constant)
-    return Static[T.dtype, k + 1](p.context(), values^)
+    return Static[T.dtype, k + 1](values^, p.context())
 
 
 def roots[

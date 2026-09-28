@@ -55,7 +55,7 @@ def _sample[
             values.append(2.0)
         else:
             values.append(Float32(sin(Float64(i) * 12.9898)) * 10.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _check_all[n: Int]() raises:
@@ -112,14 +112,14 @@ def test_vector_quantiles_match_the_host() raises:
     var gpu = DeviceContext()
     var cpu = DeviceContext(api="cpu")
     comptime n = 777
-    var qg = Static[f32, 4](gpu, [0.05, 0.5, 0.9, 0.99])
-    var qc = Static[f32, 4](cpu, [0.05, 0.5, 0.9, 0.99])
+    var qg = Static[f32, 4]([0.05, 0.5, 0.9, 0.99], gpu)
+    var qc = Static[f32, 4]([0.05, 0.5, 0.9, 0.99], cpu)
     var d = quantile[gpu=True](_sample[n](gpu, False), qg).to_host()
     var h = quantile(_sample[n](cpu, False), qc).to_host()
     for i in range(4):
         assert_equal(d[i], h[i])
-    var pg = Static[f32, 2](gpu, [25.0, 75.0])
-    var pc = Static[f32, 2](cpu, [25.0, 75.0])
+    var pg = Static[f32, 2]([25.0, 75.0], gpu)
+    var pc = Static[f32, 2]([25.0, 75.0], cpu)
     var dp = percentile[gpu=True](_sample[n](gpu, False), pg).to_host()
     var hp = percentile(_sample[n](cpu, False), pc).to_host()
     for i in range(2):

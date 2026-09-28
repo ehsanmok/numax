@@ -74,7 +74,7 @@ def two_tones(ctx: DeviceContext) raises -> Static[dtype, n]:
                 + jitter
             )
         )
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def main() raises:
@@ -125,7 +125,7 @@ def main() raises:
     # lfilter is the recurrence form of the same FIR, `a = [1]`.
     var signal_c = two_tones(ctx)
     var kernel_c = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
-    var unity = Static[dtype, 1](ctx, [Scalar[dtype](1)])
+    var unity = Static[dtype, 1]([Scalar[dtype](1)], ctx)
     var filtered = lfilter(kernel_c, unity, signal_c)
     var f = filtered.to_host()
     print("  lfilter(b, [1], x)[512] =", f[512])
@@ -142,8 +142,8 @@ def main() raises:
     print("    b0 =", b_host[0], " a1 =", a_host[1])
 
     # freqz reports the response those coefficients actually have.
-    var b_for_response = Static[dtype, 5](ctx, design.b.to_host())
-    var a_for_response = Static[dtype, 5](ctx, design.a.to_host())
+    var b_for_response = Static[dtype, 5](design.b.to_host(), ctx)
+    var a_for_response = Static[dtype, 5](design.a.to_host(), ctx)
     var response = freqz[worN=8](b_for_response, a_for_response)
     # `FrequencyResponse` carries the complex `H` as two real tensors, the
     # answer a `dtype`-monomorphic tensor forces and the one `eigvals` and
@@ -158,8 +158,8 @@ def main() raises:
     # magnitude response and cancels the phase entirely -- the reason to
     # reach for it over lfilter when the data is not causal.
     var signal_d = two_tones(ctx)
-    var b_again = Static[dtype, 5](ctx, design.b.to_host())
-    var a_again = Static[dtype, 5](ctx, design.a.to_host())
+    var b_again = Static[dtype, 5](design.b.to_host(), ctx)
+    var a_again = Static[dtype, 5](design.a.to_host(), ctx)
     var zero_phase = filtfilt(b_again, a_again, signal_d)
     var z = zero_phase.to_host()
     print("  filtfilt(b, a, x)[512] =", z[512])
@@ -198,7 +198,7 @@ def main() raises:
     # Both tones should show up as peaks in that spectrum. `find_peaks`
     # returns the bin indices, and `welch` hands back the frequency axis
     # they index into.
-    var power_copy = Static[dtype, 129](ctx, estimate.power.to_host())
+    var power_copy = Static[dtype, 129](estimate.power.to_host(), ctx)
     var located = find_peaks(power_copy, height=0.001)
     print("  find_peaks(power, height=0.001) at:")
     for i in range(located.size()):

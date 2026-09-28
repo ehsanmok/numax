@@ -35,14 +35,14 @@ def _spd(ctx: DeviceContext) raises -> Static[f32, n, n]:
             for k in range(n):
                 acc += m[r * n + k] * m[c * n + k]
             values.append(acc)
-    return Static[f32, n, n](ctx, values^)
+    return Static[f32, n, n](values^, ctx)
 
 
 def _rhs(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(i % 5) - 2.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _assert_close(

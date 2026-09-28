@@ -59,7 +59,6 @@ def symmetric(ctx: DeviceContext) raises -> Static[dtype, n, n]:
     every entry point below takes its argument `mut` and factors in place.
     """
     return Static[dtype, n, n](
-        ctx,
         [
             7.0,
             1.0,
@@ -78,6 +77,7 @@ def symmetric(ctx: DeviceContext) raises -> Static[dtype, n, n]:
             -2.0,
             2.0,
         ],
+        ctx,
     )
 
 
@@ -86,7 +86,6 @@ def general(ctx: DeviceContext) raises -> Static[dtype, n, n]:
     and `2 +- 2i` -- the case a real Schur form keeps in `2 x 2` blocks
     rather than splitting."""
     return Static[dtype, n, n](
-        ctx,
         [
             1.0,
             -3.0,
@@ -105,6 +104,7 @@ def general(ctx: DeviceContext) raises -> Static[dtype, n, n]:
             1.0,
             2.0,
         ],
+        ctx,
     )
 
 
@@ -186,7 +186,7 @@ def main() raises:
     for i in range(n):
         for j in range(n):
             scaled_entries.append(u_host[i * n + j] * s_host[j])
-    var scaled = Static[dtype, n, n](ctx, scaled_entries^)
+    var scaled = Static[dtype, n, n](scaled_entries^, ctx)
     var v_transposed = transpose(factored.v)
     var reconstructed = matmul(scaled, v_transposed)
     var original = general(ctx)

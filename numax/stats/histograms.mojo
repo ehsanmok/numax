@@ -235,7 +235,7 @@ def _count_device[
     var edge_values = List[Scalar[dtype]](capacity=bins + 1)
     for b in range(bins + 1):
         edge_values.append(Scalar[dtype](edges[b]))
-    var edge_d = Static[dtype, bins + 1](ctx, edge_values.copy())
+    var edge_d = Static[dtype, bins + 1](edge_values.copy(), ctx)
     var counts = Static[dtype, bins](ctx)
     var n = xs.size()
     if n > 0:
@@ -279,7 +279,7 @@ def _count_device[
                     Float64(raw[b]) / (total * width) if total > 0 else 0.0
                 )
             )
-        counts = Static[dtype, bins](ctx, scaled^)
+        counts = Static[dtype, bins](scaled^, ctx)
     return Histogram[dtype, bins](counts^, edge_d^)
 
 
@@ -310,7 +310,7 @@ def _cells_device[
         for e in edges[k]:
             flat_edges.append(Scalar[dtype](e))
     var edge_d = asarray(flat_edges^, ctx)
-    var counts = Dynamic[dtype, 1](ctx, row_major(_dyn_shape[1](cells)))
+    var counts = Dynamic[dtype, 1](row_major(_dyn_shape[1](cells)), ctx)
     var ep = edge_d.tile().ptr.as_imm().unsafe_origin_cast[ImmutAnyOrigin]()
     var cp = counts.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
     var paired = second != base
@@ -383,8 +383,8 @@ def _count[
     for b in range(bins + 1):
         edge_values.append(Scalar[dtype](edges[b]))
     return Histogram[dtype, bins](
-        Static[dtype, bins](ctx, count_values^),
-        Static[dtype, bins + 1](ctx, edge_values^),
+        Static[dtype, bins](count_values^, ctx),
+        Static[dtype, bins + 1](edge_values^, ctx),
     )
 
 
@@ -672,9 +672,9 @@ def histogram2d[
     for k in range(ybins + 1):
         yedge_values.append(Scalar[dtype](ye[k]))
     return Histogram2D[dtype, xbins, ybins](
-        Static[dtype, xbins, ybins](ctx, count_values^),
-        Static[dtype, xbins + 1](ctx, xedge_values^),
-        Static[dtype, ybins + 1](ctx, yedge_values^),
+        Static[dtype, xbins, ybins](count_values^, ctx),
+        Static[dtype, xbins + 1](xedge_values^, ctx),
+        Static[dtype, ybins + 1](yedge_values^, ctx),
     )
 
 
@@ -814,7 +814,7 @@ def _histogramdd_finish[
     for c in range(total_cells):
         count_values.append(Scalar[dtype](counts[c]))
     return HistogramDD[dtype, *bins](
-        Static[dtype, *bins](ctx, count_values^), edges^
+        Static[dtype, *bins](count_values^, ctx), edges^
     )
 
 
@@ -855,7 +855,7 @@ def _bincount_device[
             raise Error("bincount: values must be non-negative")
         largest = span[1]
     var length = max(largest + 1, minlength)
-    var totals = Dynamic[wdtype, 1](ctx, row_major(_dyn_shape[1](length)))
+    var totals = Dynamic[wdtype, 1](row_major(_dyn_shape[1](length)), ctx)
     if n == 0:
         return totals^
     var xp = xs.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()

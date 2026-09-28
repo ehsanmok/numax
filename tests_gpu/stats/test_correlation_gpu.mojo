@@ -21,7 +21,7 @@ def _x(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(i) * 0.01 + 3.0)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _y(ctx: DeviceContext) raises -> Static[f32, n]:
@@ -32,7 +32,7 @@ def _y(ctx: DeviceContext) raises -> Static[f32, n]:
         values.append(
             Float32(0.02) * Float32(i) - 1.0 + Float32(sin(Float64(i) * 1.7))
         )
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_pearsonr_on_the_device_matches_the_host() raises:

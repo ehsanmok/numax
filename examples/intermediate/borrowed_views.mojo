@@ -69,12 +69,12 @@ def main() raises:
     var block = big.block[2, 2](0, 0)
     print("--- cholesky of the leading 2x2 block, no copy ---")
     print(cholesky(block))  # [[2, 0], [1, sqrt(2)]]
-    var rhs = Static[f64, 2](big.context(), [1.0, 2.0])
+    var rhs = Static[f64, 2]([1.0, 2.0], big.context())
     print("solve(block, [1, 2]):", solve(block, rhs))  # [-0.125, 0.75]
     print("det(block):", det(block))  # 8.0
 
     # 2. The same routines on an owned copy of the block agree exactly.
-    var owned = Static[f64, 2, 2](big.context(), [4.0, 2.0, 2.0, 3.0])
+    var owned = Static[f64, 2, 2]([4.0, 2.0, 2.0, 3.0], big.context())
     print("det(owned):", det(owned))
 
     # 3. Reductions and elementwise math take a TensorView too.

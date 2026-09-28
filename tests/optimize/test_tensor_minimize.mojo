@@ -52,7 +52,7 @@ def _rosenbrock_jac(
     var entries = List[Scalar[dtype]](capacity=2)
     entries.append(Scalar[dtype](-2.0 * (1.0 - x) - 400.0 * x * (y - x * x)))
     entries.append(Scalar[dtype](200.0 * (y - x * x)))
-    return Static[dtype, 2](ctx, entries^)
+    return Static[dtype, 2](entries^, ctx)
 
 
 def _rosenbrock_array[U: FloatLike](v: Array[U, 2]) -> U:
@@ -80,15 +80,15 @@ def _bowl_jac(
     entries.append(Scalar[dtype](2.0 * (Float64(v[0]) - 1.0)))
     entries.append(Scalar[dtype](4.0 * (Float64(v[1]) + 2.0)))
     entries.append(Scalar[dtype](6.0 * (Float64(v[2]) - 3.0)))
-    return Static[dtype, 3](ctx, entries^)
+    return Static[dtype, 3](entries^, ctx)
 
 
 def _rosenbrock_start(ctx: DeviceContext) raises -> Static[dtype, 2]:
-    return Static[dtype, 2](ctx, [-1.2, 1.0])
+    return Static[dtype, 2]([-1.2, 1.0], ctx)
 
 
 def _bowl_start(ctx: DeviceContext) raises -> Static[dtype, 3]:
-    return Static[dtype, 3](ctx, [-3.0, 4.0, -1.0])
+    return Static[dtype, 3]([-3.0, 4.0, -1.0], ctx)
 
 
 def test_bfgs_minimizes_rosenbrock() raises:
@@ -141,7 +141,7 @@ def test_cg_minimizes_a_quadratic_bowl() raises:
 
 def test_starting_at_the_minimum_converges_immediately() raises:
     var ctx = DeviceContext(api="cpu")
-    var start = Static[dtype, 3](ctx, [1.0, -2.0, 3.0])
+    var start = Static[dtype, 3]([1.0, -2.0, 3.0], ctx)
     var result = minimize[f=_bowl, jac=_bowl_jac](start)
 
     assert_true(result.converged)
@@ -217,7 +217,7 @@ def test_an_unknown_method_raises() raises:
 def test_minimize_starts_from_a_view() raises:
     """`x0` through the `TensorLike` bound: the callbacks still see an
     owned `Static`, and the answer is the one the tensor start gives."""
-    var start = Static[dtype, 2](DeviceContext(api="cpu"), [-1.2, 1.0])
+    var start = Static[dtype, 2]([-1.2, 1.0], DeviceContext(api="cpu"))
     var result = minimize[f=_rosenbrock, jac=_rosenbrock_jac](
         TensorView(start.tile())
     )

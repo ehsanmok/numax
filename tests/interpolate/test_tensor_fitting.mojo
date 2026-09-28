@@ -21,7 +21,7 @@ def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _matrix[
@@ -30,7 +30,7 @@ def _matrix[
     var out = List[Scalar[dtype]](capacity=rows * cols)
     for i in range(rows * cols):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, rows, cols](_cpu(), out^)
+    return Static[dtype, rows, cols](out^, _cpu())
 
 
 def _assert_close[

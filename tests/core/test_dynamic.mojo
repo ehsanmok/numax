@@ -91,7 +91,7 @@ def test_a_transform_gives_the_same_answer_at_either_shape() raises:
     for i in range(6):
         values.append(Scalar[dtype](i + 1))
 
-    var static_a = Static[dtype, 2, 3](ctx, values.copy())
+    var static_a = Static[dtype, 2, 3](values.copy(), ctx)
     var dynamic_a = zeros_dyn[dtype, 2](2, 3, ctx=ctx)
     dynamic_a.copy_from_host(values)
 

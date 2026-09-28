@@ -84,7 +84,7 @@ def test_invert_is_bitwise_not() raises:
     values.append(0)
     values.append(1)
     values.append(-1)
-    var a = Static[DType.int32, 3](ctx, values^)
+    var a = Static[DType.int32, 3](values^, ctx)
     var inverted = invert(a).to_host()
     assert_equal(Int(inverted[0]), -1)
     assert_equal(Int(inverted[1]), -2)

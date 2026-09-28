@@ -388,7 +388,7 @@ def _cov_host[
             var c = Scalar[dtype](_covariance(series[a], series[b], dof))
             values[a * rows + b] = c
             values[b * rows + a] = c
-    return Static[dtype, rows, rows](m.context(), values^)
+    return Static[dtype, rows, rows](values^, m.context())
 
 
 def _corrcoef_host[
@@ -418,7 +418,7 @@ def _corrcoef_host[
             )
             values[a * rows + b] = Scalar[dtype](r)
             values[b * rows + a] = Scalar[dtype](r)
-    return Static[dtype, rows, rows](m.context(), values^)
+    return Static[dtype, rows, rows](values^, m.context())
 
 
 def cov[
@@ -848,7 +848,7 @@ def rankdata[
     var values = List[Scalar[dtype]](capacity=len(ranks))
     for i in range(len(ranks)):
         values.append(Scalar[dtype](ranks[i]))
-    return Tensor[dtype, LayoutType](xs.context(), xs.tile().layout, values^)
+    return Tensor[dtype, LayoutType](xs.tile().layout, values^, xs.context())
 
 
 def spearmanr[
@@ -1231,4 +1231,4 @@ def zscore[
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype]((values[i] - centre) / scale))
-    return Tensor[dtype, LayoutType](xs.context(), xs.tile().layout, out^)
+    return Tensor[dtype, LayoutType](xs.tile().layout, out^, xs.context())

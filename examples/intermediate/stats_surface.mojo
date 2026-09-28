@@ -61,7 +61,7 @@ def sample(ctx: DeviceContext, shift: Float64) raises -> Static[dtype, n]:
         values.append(
             Scalar[dtype](6.0 * (Float64(h) / 16777216.0 - 0.5) + shift)
         )
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def main() raises:
@@ -70,7 +70,7 @@ def main() raises:
     print("A distribution over a whole tensor")
     print("----------------------------------")
 
-    var grid = Static[dtype, 5](ctx, [-2.0, -1.0, 0.0, 1.0, 2.0])
+    var grid = Static[dtype, 5]([-2.0, -1.0, 0.0, 1.0, 2.0], ctx)
     var probabilities = norm.cdf(grid, Scalar[dtype](0), Scalar[dtype](1))
     var p = probabilities.to_host()
     print("  norm.cdf([-2, -1, 0, 1, 2], 0, 1)")
@@ -121,19 +121,19 @@ def main() raises:
                 2.5 * Float64(host[i]) + 1.0 + 0.3 * sin(Float64(i) * 0.7)
             )
         )
-    var response = Static[dtype, n](ctx, response_values^)
+    var response = Static[dtype, n](response_values^, ctx)
 
     var predictor = sample(ctx, 0.0)
     var paired = corrcoef(predictor, response).to_host()
     print("  corrcoef(x, y)[0, 1] =", paired[1])
 
     var predictor2 = sample(ctx, 0.0)
-    var response2 = Static[dtype, n](ctx, response.to_host())
+    var response2 = Static[dtype, n](response.to_host(), ctx)
     var covariance = cov(predictor2, response2).to_host()
     print("  cov(x, y)[0, 1]      =", covariance[1])
 
     var predictor3 = sample(ctx, 0.0)
-    var response3 = Static[dtype, n](ctx, response.to_host())
+    var response3 = Static[dtype, n](response.to_host(), ctx)
     var correlation = pearsonr(predictor3, response3)
     print(
         "  pearsonr(x, y)       r =",
@@ -143,7 +143,7 @@ def main() raises:
     )
 
     var predictor4 = sample(ctx, 0.0)
-    var response4 = Static[dtype, n](ctx, response.to_host())
+    var response4 = Static[dtype, n](response.to_host(), ctx)
     var fit = linregress(predictor4, response4)
     print(
         "  linregress(x, y)     slope =",

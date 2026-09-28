@@ -30,14 +30,14 @@ def _band[n: Int](ctx: DeviceContext) raises -> Static[f32, 3, n]:
         values.append(
             Float32(0) if j == n - 1 else Float32((j * 29) % 13) / 13.0 - 0.5
         )
-    return Static[f32, 3, n](ctx, values^)
+    return Static[f32, 3, n](values^, ctx)
 
 
 def _rhs[n: Int](ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for j in range(n):
         values.append(Float32((j * 17) % 23) / 23.0 - 0.4)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _check[n: Int]() raises where n >= 1:
@@ -78,7 +78,7 @@ def _spd[n: Int](ctx: DeviceContext, lower: Bool) raises -> Static[f32, 2, n]:
             values.append(off[j - 1] * 0.5 if j > 0 else Float32(0))
         for j in range(n):
             values.append(2.0 + Float32(j % 3) * 0.1)
-    return Static[f32, 2, n](ctx, values^)
+    return Static[f32, 2, n](values^, ctx)
 
 
 def _check_spd[n: Int, lower: Bool]() raises where n >= 1:

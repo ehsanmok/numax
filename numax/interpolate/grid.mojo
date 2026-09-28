@@ -92,10 +92,10 @@ struct RegularGridInterpolator[dtype: DType, rows: Int, cols: Int](Movable):
                 "'; expected 'linear' or 'nearest'",
             )
         var ctx = x.context()
-        self.x = Static[Self.dtype, Self.rows](ctx, x.to_host())
-        self.y = Static[Self.dtype, Self.cols](ctx, y.to_host())
+        self.x = Static[Self.dtype, Self.rows](x.to_host(), ctx)
+        self.y = Static[Self.dtype, Self.cols](y.to_host(), ctx)
         self.values = Static[Self.dtype, Self.rows, Self.cols](
-            ctx, values.to_host()
+            values.to_host(), ctx
         )
         self.nearest = method == "nearest"
         self.bounds_error = bounds_error

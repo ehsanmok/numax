@@ -146,10 +146,10 @@ def test_logsumexp_over_a_tensor_matches_scipy_and_the_array_tier() raises:
         var v = Float64(i) * 0.37 - 3.0
         values.append(Scalar[dtype](v))
         packed[i] = pv(v)
-    var x = Static[dtype, 16](ctx, values^)
+    var x = Static[dtype, 16](values^, ctx)
     assert_almost_equal(Float64(logsumexp(x)), 3.720865788282288, atol=1e-13)
     assert_almost_equal(Float64(logsumexp(x)), s(logsumexp(packed)), atol=1e-13)
-    var deep = Static[dtype, 2](ctx, [-1000.0, -1000.5])
+    var deep = Static[dtype, 2]([-1000.0, -1000.5], ctx)
     assert_almost_equal(
         Float64(logsumexp(deep)), -999.5259230158199, atol=1e-12
     )

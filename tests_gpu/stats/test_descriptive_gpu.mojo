@@ -21,7 +21,7 @@ def _positive(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32((i * 7919) % 101) * 0.05 + 0.25)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _skewed(ctx: DeviceContext) raises -> Static[f32, n]:
@@ -29,7 +29,7 @@ def _skewed(ctx: DeviceContext) raises -> Static[f32, n]:
     for i in range(n):
         var u = Float32((i * 7919) % 101) / 101.0
         values.append(u * u * u * 4.0 - 0.3)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_the_moment_statistics_on_the_device_match_the_host() raises:

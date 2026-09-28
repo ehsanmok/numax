@@ -46,7 +46,7 @@ def _exp_residuals(
     var out = List[Scalar[dtype]](capacity=4)
     for i in range(4):
         out.append(Scalar[dtype](a * _exp(b * _sample_x(i)) - _sample_y(i)))
-    return Static[dtype, 4](ctx, out^)
+    return Static[dtype, 4](out^, ctx)
 
 
 def _exp_jacobian(
@@ -60,7 +60,7 @@ def _exp_jacobian(
     for i in range(4):
         out.append(Scalar[dtype](_exp(b * _sample_x(i))))
         out.append(Scalar[dtype](a * _sample_x(i) * _exp(b * _sample_x(i))))
-    return Static[dtype, 4, 2](ctx, out^)
+    return Static[dtype, 4, 2](out^, ctx)
 
 
 def _linear_residuals(
@@ -76,7 +76,7 @@ def _linear_residuals(
         out.append(
             Scalar[dtype](c + m * _sample_x(i) - (1.0 + 2.0 * _sample_x(i)))
         )
-    return Static[dtype, 4](ctx, out^)
+    return Static[dtype, 4](out^, ctx)
 
 
 def _linear_jacobian(
@@ -86,14 +86,14 @@ def _linear_jacobian(
     for i in range(4):
         out.append(Scalar[dtype](1.0))
         out.append(Scalar[dtype](_sample_x(i)))
-    return Static[dtype, 4, 2](ctx, out^)
+    return Static[dtype, 4, 2](out^, ctx)
 
 
 def test_least_squares_recovers_an_exact_exponential_fit() raises:
     """Noise-free data from `a = 2, b = 0.5`, started well away at
     `(1, 1)`, so the damping loop has to do real work."""
     var ctx = _cpu()
-    var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
+    var p0 = Static[dtype, 2]([1.0, 1.0], ctx)
     var fit = least_squares[
         n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
     ](p0)
@@ -110,7 +110,7 @@ def test_least_squares_solves_a_linear_fit() raises:
     the augmented system carries the right sign: a wrong one would step
     away from the solution and the damping loop would stall."""
     var ctx = _cpu()
-    var p0 = Static[dtype, 2](ctx, [0.0, 0.0])
+    var p0 = Static[dtype, 2]([0.0, 0.0], ctx)
     var fit = least_squares[
         n_resid=4, residuals=_linear_residuals, jacobian=_linear_jacobian
     ](p0)
@@ -125,7 +125,7 @@ def test_least_squares_starting_at_the_solution_converges_immediately() raises:
     """The gradient test runs before the first step, so a fit started at
     the answer must report zero iterations rather than taking one."""
     var ctx = _cpu()
-    var p0 = Static[dtype, 2](ctx, [2.0, 0.5])
+    var p0 = Static[dtype, 2]([2.0, 0.5], ctx)
     var fit = least_squares[
         n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
     ](p0)
@@ -139,7 +139,7 @@ def test_least_squares_reports_failure_rather_than_raising() raises:
     carrying the best parameters it reached -- not raise, and not report
     success."""
     var ctx = _cpu()
-    var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
+    var p0 = Static[dtype, 2]([1.0, 1.0], ctx)
     var fit = least_squares[
         n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
     ](p0, 1e-10, 1)
@@ -157,7 +157,7 @@ def _model(
     var out = List[Scalar[dtype]](capacity=4)
     for i in range(4):
         out.append(Scalar[dtype](a * _exp(b * Float64(xs[i]))))
-    return Static[dtype, 4](ctx, out^)
+    return Static[dtype, 4](out^, ctx)
 
 
 def _model_jacobian(
@@ -172,7 +172,7 @@ def _model_jacobian(
         var xi = Float64(xs[i])
         out.append(Scalar[dtype](_exp(b * xi)))
         out.append(Scalar[dtype](a * xi * _exp(b * xi)))
-    return Static[dtype, 4, 2](ctx, out^)
+    return Static[dtype, 4, 2](out^, ctx)
 
 
 def test_curve_fit_matches_least_squares_on_the_same_problem() raises:
@@ -181,17 +181,17 @@ def test_curve_fit_matches_least_squares_on_the_same_problem() raises:
     Two copies of an algorithm are worth pinning to each other."""
     var ctx = _cpu()
     var xdata = Static[dtype, 4](
-        ctx, [_sample_x(0), _sample_x(1), _sample_x(2), _sample_x(3)]
+        [_sample_x(0), _sample_x(1), _sample_x(2), _sample_x(3)], ctx
     )
     var ydata = Static[dtype, 4](
-        ctx, [_sample_y(0), _sample_y(1), _sample_y(2), _sample_y(3)]
+        [_sample_y(0), _sample_y(1), _sample_y(2), _sample_y(3)], ctx
     )
-    var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
+    var p0 = Static[dtype, 2]([1.0, 1.0], ctx)
     var fitted = curve_fit[model=_model, model_jacobian=_model_jacobian](
         xdata, ydata, p0
     )
 
-    var q0 = Static[dtype, 2](ctx, [1.0, 1.0])
+    var q0 = Static[dtype, 2]([1.0, 1.0], ctx)
     var direct = least_squares[
         n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
     ](q0)
@@ -220,7 +220,7 @@ def test_the_two_tiers_agree() raises:
     different routes to `J` -- so landing on the same parameters is a real
     cross-check on the Jacobian this tier has to be given."""
     var ctx = _cpu()
-    var p0 = Static[dtype, 2](ctx, [1.0, 1.0])
+    var p0 = Static[dtype, 2]([1.0, 1.0], ctx)
     var tensor_fit = least_squares[
         n_resid=4, residuals=_exp_residuals, jacobian=_exp_jacobian
     ](p0)

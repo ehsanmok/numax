@@ -146,8 +146,8 @@ def _damped_step[
     for _ in range(n_params):
         rhs.append(Scalar[dtype](0))
 
-    var a = Static[dtype, rows, n_params](ctx, entries^)
-    var b = Static[dtype, rows](ctx, rhs^)
+    var a = Static[dtype, rows, n_params](entries^, ctx)
+    var b = Static[dtype, rows](rhs^, ctx)
     var solved = lstsq[gpu=gpu, block=block](a, b).to_host()
 
     var step = List[Float64](capacity=n_params)
@@ -540,7 +540,7 @@ def curve_fit[
                 ctx,
             )
     var observed = ydata.to_host[dtype]()
-    var xdata_c = Static[dtype, n_points](ctx, xdata.to_host[dtype]())
+    var xdata_c = Static[dtype, n_points](xdata.to_host[dtype](), ctx)
     var current = List[Float64](capacity=n_params)
     for j in range(n_params):
         current.append(Float64(start[j]))

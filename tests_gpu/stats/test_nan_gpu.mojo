@@ -28,7 +28,7 @@ def _with_nans(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(nan if i % 7 == 3 else Float32(i % 13) * 0.125 - 0.5)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _small(ctx: DeviceContext) raises -> Static[f32, 20]:
@@ -36,7 +36,7 @@ def _small(ctx: DeviceContext) raises -> Static[f32, 20]:
     var values = List[Scalar[f32]](capacity=20)
     for i in range(20):
         values.append(nan if i % 5 == 0 else 1.0 + Float32(i % 3) * 0.01)
-    return Static[f32, 20](ctx, values^)
+    return Static[f32, 20](values^, ctx)
 
 
 def test_select_on_the_device_matches_the_host() raises:
@@ -58,7 +58,7 @@ def _small_fill(ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(-i))
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def test_the_nan_reductions_on_the_device_match_the_host() raises:
@@ -96,15 +96,15 @@ def test_the_broadcasting_select_on_the_device() raises:
         x_values.append(Float32(i))
     var y_values: List[Scalar[f32]] = [-1.0, -2.0, -3.0, -4.0]
     var d = select[gpu=True](
-        Static[DType.bool, 3, 1](gpu, mask_values.copy()),
-        Static[f32, 3, 4](gpu, x_values.copy()),
-        Static[f32, 1, 4](gpu, y_values.copy()),
+        Static[DType.bool, 3, 1](mask_values.copy(), gpu),
+        Static[f32, 3, 4](x_values.copy(), gpu),
+        Static[f32, 1, 4](y_values.copy(), gpu),
     )
     assert_false(d.on_host())
     var h = select(
-        Static[DType.bool, 3, 1](cpu, mask_values^),
-        Static[f32, 3, 4](cpu, x_values^),
-        Static[f32, 1, 4](cpu, y_values^),
+        Static[DType.bool, 3, 1](mask_values^, cpu),
+        Static[f32, 3, 4](x_values^, cpu),
+        Static[f32, 1, 4](y_values^, cpu),
     )
     var got = d.to_host()
     var want = h.to_host()

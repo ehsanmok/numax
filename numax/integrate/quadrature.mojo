@@ -341,7 +341,7 @@ def cumulative_trapezoid[
     for i in range(n - 1):
         running += dx * (ys[i] + ys[i + 1]) / 2
         out.append(running)
-    return Static[T.dtype, m](y.context(), out^)
+    return Static[T.dtype, m](out^, y.context())
 
 
 def cumulative_trapezoid[
@@ -379,4 +379,4 @@ def cumulative_trapezoid[
     for i in range(n - 1):
         running += h[i].cast[A.dtype]() * (ys[i] + ys[i + 1]) / 2
         out.append(running)
-    return Static[A.dtype, m](y.context(), out^)
+    return Static[A.dtype, m](out^, y.context())

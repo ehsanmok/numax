@@ -81,7 +81,7 @@ def problems(ctx: DeviceContext) raises -> Problems:
             values[(n * n + r) * batch + p] = Scalar[dtype](
                 1.0 + 0.25 * Float64(r)
             )
-    return Problems(ctx, values^)
+    return Problems(values^, ctx)
 
 
 def solve_step[

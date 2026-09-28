@@ -62,7 +62,7 @@ def _signal[n: Int](ctx: DeviceContext) raises -> Static[dtype, n]:
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](_signal_entry(i)))
-    return Static[dtype, n](ctx, values^)
+    return Static[dtype, n](values^, ctx)
 
 
 def _kernel[k: Int](ctx: DeviceContext) raises -> Static[dtype, k]:
@@ -75,7 +75,7 @@ def _kernel[k: Int](ctx: DeviceContext) raises -> Static[dtype, k]:
     for i in range(k):
         var t = 1.0 - abs(2.0 * Float64(i) / Float64(max(k - 1, 1)) - 1.0)
         values.append(Scalar[dtype]((t + 0.05) / total))
-    return Static[dtype, k](ctx, values^)
+    return Static[dtype, k](values^, ctx)
 
 
 def _row(name: String, n: Int, k: Int, ns: Float64, err: Float64):
@@ -128,7 +128,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
     # `lfilter` with a 32-tap lowpass FIR: `a = [1]`.
     comptime taps = 32
     var fir = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
-    var one = Static[dtype, 1](ctx, [Scalar[dtype](1)])
+    var one = Static[dtype, 1]([Scalar[dtype](1)], ctx)
 
     def fir_work() raises {mut fir, mut one, mut x}:
         var y = lfilter(fir, one, x)

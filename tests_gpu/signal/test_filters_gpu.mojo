@@ -27,7 +27,7 @@ def _signal(ctx: DeviceContext) raises -> Static[f32, n]:
         values.append(
             sin(t * 0.05) + 0.3 * sin(t * 1.3) + Float32(i % 7) * 0.01
         )
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _b4(ctx: DeviceContext) raises -> Static[f32, 5]:
@@ -38,12 +38,12 @@ def _b4(ctx: DeviceContext) raises -> Static[f32, 5]:
         0.019297,
         0.004824,
     ]
-    return Static[f32, 5](ctx, v^)
+    return Static[f32, 5](v^, ctx)
 
 
 def _a4(ctx: DeviceContext) raises -> Static[f32, 5]:
     var v: List[Scalar[f32]] = [1.0, -2.369513, 2.313988, -1.054665, 0.187379]
-    return Static[f32, 5](ctx, v^)
+    return Static[f32, 5](v^, ctx)
 
 
 def _close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:
@@ -86,12 +86,12 @@ def test_sosfilt_and_decimate_on_the_device_match_the_host() raises:
         0.412802,
     ]
     var d = sosfilt[gpu=True](
-        Static[f32, 2, 6](gpu, sections.copy()), _signal(gpu)
+        Static[f32, 2, 6](sections.copy(), gpu), _signal(gpu)
     )
     assert_false(d.on_host())
     _close(
         d.to_host(),
-        sosfilt(Static[f32, 2, 6](cpu, sections^), _signal(cpu)).to_host(),
+        sosfilt(Static[f32, 2, 6](sections^, cpu), _signal(cpu)).to_host(),
     )
     var q = decimate[q=3, gpu=True](_signal(gpu))
     assert_false(q.on_host())

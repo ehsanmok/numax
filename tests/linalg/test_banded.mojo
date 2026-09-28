@@ -51,7 +51,7 @@ def _dense_from_band(
             var offset = u + i - j
             if offset >= 0 and offset < l + u + 1:
                 entries[i * n + j] = Scalar[dtype](band[offset * n + j])
-    return Static[dtype, 5, 5](ctx, entries^)
+    return Static[dtype, 5, 5](entries^, ctx)
 
 
 # --- solve_banded -----------------------------------------------------------
@@ -94,12 +94,12 @@ def test_solve_banded_matches_the_dense_solve() raises:
     var entries = List[Scalar[dtype]](capacity=(l + u + 1) * n)
     for i in range((l + u + 1) * n):
         entries.append(Scalar[dtype](band[i]))
-    var ab = Static[dtype, l + u + 1, n](ctx, entries^)
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var ab = Static[dtype, l + u + 1, n](entries^, ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var got = solve_banded[l=l, u=u](ab, b).to_host()
 
     var dense = _dense_from_band(band, l, u, n, ctx)
-    var b2 = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var b2 = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var want = solve(dense, b2).to_host()
 
     for i in range(n):
@@ -127,8 +127,8 @@ def test_solve_banded_at_bandwidth_one_agrees_with_tridiagonal_solve() raises:
     for j in range(n - 1):
         entries[2 * n + j] = Scalar[dtype](sub[j + 1])
 
-    var ab = Static[dtype, 3, n](ctx, entries^)
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var ab = Static[dtype, 3, n](entries^, ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var got = solve_banded[l=1, u=1](ab, b).to_host()
 
     var sub_a = Array[P, n](fill=P.constant(0.0))
@@ -161,8 +161,8 @@ def test_solve_banded_pivots() raises:
     entries[2 * n + 0] = 2.0
     entries[2 * n + 1] = 1.0
 
-    var ab = Static[dtype, 3, n](ctx, entries^)
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0])
+    var ab = Static[dtype, 3, n](entries^, ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0], ctx)
     var got = solve_banded[l=1, u=1](ab, b).to_host()
 
     # Verify by substitution rather than against another solver.
@@ -177,8 +177,8 @@ def test_solve_banded_pivots() raises:
 def test_a_singular_band_raises() raises:
     var ctx = DeviceContext(api="cpu")
     var entries = List[Scalar[dtype]](length=9, fill=0)
-    var ab = Static[dtype, 3, 3](ctx, entries^)
-    var b = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
+    var ab = Static[dtype, 3, 3](entries^, ctx)
+    var b = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
     var raised = False
     try:
         _ = solve_banded[l=1, u=1](ab, b)
@@ -202,8 +202,8 @@ def test_solveh_banded_matches_solve_banded() raises:
         upper[0 * n + j] = -1.0
     for j in range(n):
         upper[1 * n + j] = 4.0
-    var ab = Static[dtype, u + 1, n](ctx, upper^)
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var ab = Static[dtype, u + 1, n](upper^, ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var got = solveh_banded[u=u](ab, b).to_host()
 
     var general = List[Scalar[dtype]](length=3 * n, fill=0)
@@ -213,8 +213,8 @@ def test_solveh_banded_matches_solve_banded() raises:
         general[1 * n + j] = 4.0
     for j in range(n - 1):
         general[2 * n + j] = -1.0
-    var ab2 = Static[dtype, 3, n](ctx, general^)
-    var b2 = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var ab2 = Static[dtype, 3, n](general^, ctx)
+    var b2 = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var want = solve_banded[l=1, u=1](ab2, b2).to_host()
 
     for i in range(n):
@@ -232,8 +232,8 @@ def test_the_lower_and_upper_forms_agree() raises:
         upper[0 * n + j] = -1.0
     for j in range(n):
         upper[1 * n + j] = 4.0
-    var ab_u = Static[dtype, u + 1, n](ctx, upper^)
-    var b_u = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var ab_u = Static[dtype, u + 1, n](upper^, ctx)
+    var b_u = Static[dtype, n]([1.0, 2.0, 3.0, 4.0], ctx)
     var from_upper = solveh_banded[u=u, lower=False](ab_u, b_u).to_host()
 
     var lower = List[Scalar[dtype]](length=(u + 1) * n, fill=0)
@@ -241,8 +241,8 @@ def test_the_lower_and_upper_forms_agree() raises:
         lower[0 * n + j] = 4.0
     for j in range(n - 1):
         lower[1 * n + j] = -1.0
-    var ab_l = Static[dtype, u + 1, n](ctx, lower^)
-    var b_l = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var ab_l = Static[dtype, u + 1, n](lower^, ctx)
+    var b_l = Static[dtype, n]([1.0, 2.0, 3.0, 4.0], ctx)
     var from_lower = solveh_banded[u=u, lower=True](ab_l, b_l).to_host()
 
     for i in range(n):
@@ -260,9 +260,9 @@ def test_cholesky_banded_then_cho_solve_banded_is_solveh_banded() raises:
         upper[0 * n + j] = -1.0
     for j in range(n):
         upper[1 * n + j] = 4.0
-    var ab = Static[dtype, u + 1, n](ctx, upper^)
+    var ab = Static[dtype, u + 1, n](upper^, ctx)
     var factor = cholesky_banded[u=u](ab)
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, 4.0], ctx)
     var two_step = cho_solve_banded[u=u](factor, b).to_host()
 
     var upper2 = List[Scalar[dtype]](length=(u + 1) * n, fill=0)
@@ -270,8 +270,8 @@ def test_cholesky_banded_then_cho_solve_banded_is_solveh_banded() raises:
         upper2[0 * n + j] = -1.0
     for j in range(n):
         upper2[1 * n + j] = 4.0
-    var ab2 = Static[dtype, u + 1, n](ctx, upper2^)
-    var b2 = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var ab2 = Static[dtype, u + 1, n](upper2^, ctx)
+    var b2 = Static[dtype, n]([1.0, 2.0, 3.0, 4.0], ctx)
     var one_step = solveh_banded[u=u](ab2, b2).to_host()
 
     for i in range(n):
@@ -285,7 +285,7 @@ def test_an_indefinite_matrix_raises() raises:
     var entries = List[Scalar[dtype]](length=2 * 3, fill=0)
     for j in range(3):
         entries[1 * 3 + j] = -1.0
-    var ab = Static[dtype, 2, 3](ctx, entries^)
+    var ab = Static[dtype, 2, 3](entries^, ctx)
     var raised = False
     try:
         _ = cholesky_banded[u=1](ab)
@@ -302,15 +302,15 @@ def test_solve_toeplitz_matches_the_dense_solve() raises:
     """Levinson against the materialized matrix through the dense solve."""
     var ctx = DeviceContext(api="cpu")
     comptime n = 5
-    var c = Static[dtype, n](ctx, [4.0, 1.0, 0.5, 0.25, 0.125])
-    var r = Static[dtype, n](ctx, [4.0, 2.0, 1.0, 0.5, 0.25])
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var c = Static[dtype, n]([4.0, 1.0, 0.5, 0.25, 0.125], ctx)
+    var r = Static[dtype, n]([4.0, 2.0, 1.0, 0.5, 0.25], ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var got = solve_toeplitz(c, r, b).to_host()
 
-    var c2 = Static[dtype, n](ctx, [4.0, 1.0, 0.5, 0.25, 0.125])
-    var r2 = Static[dtype, n](ctx, [4.0, 2.0, 1.0, 0.5, 0.25])
+    var c2 = Static[dtype, n]([4.0, 1.0, 0.5, 0.25, 0.125], ctx)
+    var r2 = Static[dtype, n]([4.0, 2.0, 1.0, 0.5, 0.25], ctx)
     var dense = toeplitz(c2, r2)
-    var b2 = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var b2 = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var want = solve(dense, b2).to_host()
 
     for i in range(n):
@@ -322,13 +322,13 @@ def test_solve_toeplitz_on_a_symmetric_system() raises:
     minor is nonsingular and Levinson is unconditionally safe."""
     var ctx = DeviceContext(api="cpu")
     comptime n = 4
-    var c = Static[dtype, n](ctx, [2.0, 0.5, 0.25, 0.1])
-    var r = Static[dtype, n](ctx, [2.0, 0.5, 0.25, 0.1])
-    var b = Static[dtype, n](ctx, [1.0, 0.0, -1.0, 2.0])
+    var c = Static[dtype, n]([2.0, 0.5, 0.25, 0.1], ctx)
+    var r = Static[dtype, n]([2.0, 0.5, 0.25, 0.1], ctx)
+    var b = Static[dtype, n]([1.0, 0.0, -1.0, 2.0], ctx)
     var got = solve_toeplitz(c, r, b)
 
     # Verify by multiplying back through the materialized matrix.
-    var c2 = Static[dtype, n](ctx, [2.0, 0.5, 0.25, 0.1])
+    var c2 = Static[dtype, n]([2.0, 0.5, 0.25, 0.1], ctx)
     var dense = toeplitz(c2)
     var residual = matvec(dense, got).to_host()
     var want = [1.0, 0.0, -1.0, 2.0]
@@ -338,9 +338,9 @@ def test_solve_toeplitz_on_a_symmetric_system() raises:
 
 def test_a_zero_leading_entry_raises() raises:
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 3](ctx, [0.0, 1.0, 2.0])
-    var r = Static[dtype, 3](ctx, [0.0, 1.0, 2.0])
-    var b = Static[dtype, 3](ctx, [1.0, 2.0, 3.0])
+    var c = Static[dtype, 3]([0.0, 1.0, 2.0], ctx)
+    var r = Static[dtype, 3]([0.0, 1.0, 2.0], ctx)
+    var b = Static[dtype, 3]([1.0, 2.0, 3.0], ctx)
     var raised = False
     try:
         _ = solve_toeplitz(c, r, b)
@@ -358,13 +358,13 @@ def test_solve_circulant_matches_the_dense_solve() raises:
     materialized circulant. The two share no code at all."""
     var ctx = DeviceContext(api="cpu")
     comptime n = 4
-    var c = Static[dtype, n](ctx, [4.0, 1.0, 2.0, 0.5])
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var c = Static[dtype, n]([4.0, 1.0, 2.0, 0.5], ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, 4.0], ctx)
     var got = solve_circulant(c, b).to_host()
 
-    var c2 = Static[dtype, n](ctx, [4.0, 1.0, 2.0, 0.5])
+    var c2 = Static[dtype, n]([4.0, 1.0, 2.0, 0.5], ctx)
     var dense = circulant(c2)
-    var b2 = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0])
+    var b2 = Static[dtype, n]([1.0, 2.0, 3.0, 4.0], ctx)
     var want = solve(dense, b2).to_host()
 
     for i in range(n):
@@ -377,8 +377,8 @@ def test_solve_circulant_at_a_non_power_of_two_matches_scipy() raises:
     length this routine could not accept before."""
     var ctx = DeviceContext(api="cpu")
     comptime n = 6
-    var c = Static[dtype, n](ctx, [4.0, 1.0, 0.5, -0.25, 0.75, 2.0])
-    var b = Static[dtype, n](ctx, [1.0, 2.0, 3.0, -1.0, 0.5, 4.0])
+    var c = Static[dtype, n]([4.0, 1.0, 0.5, -0.25, 0.75, 2.0], ctx)
+    var b = Static[dtype, n]([1.0, 2.0, 3.0, -1.0, 0.5, 4.0], ctx)
     var got = solve_circulant(c, b).to_host()
     var want = [
         -0.20338344335456288,
@@ -400,14 +400,14 @@ def test_solve_circulant_residual_is_zero() raises:
     var c_entries = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         c_entries.append(Scalar[dtype](values[i]))
-    var c = Static[dtype, n](ctx, c_entries^)
-    var b = Static[dtype, n](ctx, [1.0, 0.0, -1.0, 2.0, 3.0, 1.0, 0.0, -2.0])
+    var c = Static[dtype, n](c_entries^, ctx)
+    var b = Static[dtype, n]([1.0, 0.0, -1.0, 2.0, 3.0, 1.0, 0.0, -2.0], ctx)
     var x = solve_circulant(c, b)
 
     var c_entries2 = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         c_entries2.append(Scalar[dtype](values[i]))
-    var c2 = Static[dtype, n](ctx, c_entries2^)
+    var c2 = Static[dtype, n](c_entries2^, ctx)
     var dense = circulant(c2)
     var residual = matvec(dense, x).to_host()
 
@@ -420,8 +420,8 @@ def test_a_singular_circulant_raises() raises:
     """A constant first column makes every eigenvalue but the first zero,
     so `fft(c)` has zeros and the matrix is singular."""
     var ctx = DeviceContext(api="cpu")
-    var c = Static[dtype, 4](ctx, [1.0, 1.0, 1.0, 1.0])
-    var b = Static[dtype, 4](ctx, [1.0, 2.0, 3.0, 4.0])
+    var c = Static[dtype, 4]([1.0, 1.0, 1.0, 1.0], ctx)
+    var b = Static[dtype, 4]([1.0, 2.0, 3.0, 4.0], ctx)
     var raised = False
     try:
         _ = solve_circulant(c, b)

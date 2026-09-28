@@ -25,7 +25,7 @@ def _wave[m: Int](ctx: DeviceContext) raises -> Static[f32, m]:
     var values = List[Scalar[f32]](capacity=m)
     for i in range(m):
         values.append(sin(Float32(i) * 0.3) + 0.25 * sin(Float32(i) * 0.07))
-    return Static[f32, m](ctx, values^)
+    return Static[f32, m](values^, ctx)
 
 
 def _close(got: List[Scalar[f32]], want: List[Scalar[f32]]) raises:
@@ -60,19 +60,19 @@ def test_solve_circulant_on_the_device() raises:
     var cpu = DeviceContext(api="cpu")
     var cvals: List[Scalar[f32]] = [4.0, 1.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0]
     var d = solve_circulant[gpu=True](
-        Static[f32, 8](gpu, cvals.copy()), _wave[8](gpu)
+        Static[f32, 8](cvals.copy(), gpu), _wave[8](gpu)
     )
     assert_false(d.on_host())
     _close(
         d.to_host(),
         solve_circulant(
-            Static[f32, 8](cpu, cvals.copy()), _wave[8](cpu)
+            Static[f32, 8](cvals.copy(), cpu), _wave[8](cpu)
         ).to_host(),
     )
     var ones = List[Scalar[f32]](length=8, fill=1.0)
     with assert_raises(contains="singular"):
         _ = solve_circulant[gpu=True](
-            Static[f32, 8](gpu, ones^), Static[f32, 8](gpu, cvals^)
+            Static[f32, 8](ones^, gpu), Static[f32, 8](cvals^, gpu)
         )
 
 

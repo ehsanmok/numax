@@ -199,8 +199,8 @@ def main() raises:
         ab_entries[0 * n + j] = -1.0
     for j in range(n - 1):
         ab_entries[2 * n + j] = -1.0
-    var ab = Static[dtype, 3, n](ctx, ab_entries^)
-    var rhs = Static[dtype, n](ctx, [1.0, 2.0, 3.0, 4.0, 5.0])
+    var ab = Static[dtype, 3, n](ab_entries^, ctx)
+    var rhs = Static[dtype, n]([1.0, 2.0, 3.0, 4.0, 5.0], ctx)
     var banded = solve_banded[l=1, u=1](ab, rhs).to_host()
     print("  solve_banded((1,1), ab, b)")
     print(
@@ -213,7 +213,7 @@ def main() raises:
     )
 
     # toeplitz(c) -- the structured constructor SciPy has and NumPy does not.
-    var column = Static[dtype, 3](ctx, [2.0, 1.0, 0.5])
+    var column = Static[dtype, 3]([2.0, 1.0, 0.5], ctx)
     var structured = toeplitz(column).to_host()
     print("\n  toeplitz([2, 1, 0.5])")
     for i in range(3):
@@ -225,7 +225,7 @@ def main() raises:
         )
 
     # expm(A) -- a rotation generator, whose exponential is the rotation.
-    var generator = Static[dtype, 2, 2](ctx, [0.0, -0.7, 0.7, 0.0])
+    var generator = Static[dtype, 2, 2]([0.0, -0.7, 0.7, 0.0], ctx)
     var rotated = expm(generator).to_host()
     print("\n  expm([[0, -0.7], [0.7, 0]])  -- the rotation by 0.7 rad")
     print("    ", rotated[0], rotated[1])
@@ -236,14 +236,14 @@ def main() raises:
     # names, and `numax.linalg.array` has the same three for the conformer
     # tier one import away.
     var symmetric = Static[dtype, 3, 3](
-        ctx, [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
+        [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0], ctx
     )
     var spectrum = eigvalsh(symmetric).to_host()
     print("\n  eigvalsh(A)   w =", spectrum[0], spectrum[1], spectrum[2])
     print("    ascending, and they sum to the trace, 11")
 
     var for_svd = Static[dtype, 3, 3](
-        ctx, [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0]
+        [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0], ctx
     )
     var singular = svdvals(for_svd).to_host()
     print("  svdvals(A)    s =", singular[0], singular[1], singular[2])
@@ -252,13 +252,13 @@ def main() raises:
     # sqrtm over `Tensor` is the general Bjorck-Hammarling recurrence on
     # the real Schur form, not the SPD-only Array version -- so a matrix
     # with complex eigenvalues has a real square root here.
-    var for_root = Static[dtype, 2, 2](ctx, [1.0, -3.0, 2.0, 1.0])
+    var for_root = Static[dtype, 2, 2]([1.0, -3.0, 2.0, 1.0], ctx)
     var half = sqrtm(for_root).to_host()
     print("\n  sqrtm([[1, -3], [2, 1]])  -- eigenvalues 1 +- 2.449i")
     print("    ", half[0], half[1])
     print("    ", half[2], half[3])
 
-    var for_log = Static[dtype, 2, 2](ctx, [1.0, -3.0, 2.0, 1.0])
+    var for_log = Static[dtype, 2, 2]([1.0, -3.0, 2.0, 1.0], ctx)
     var logarithm = logm(for_log).to_host()
     print("  logm(same)")
     print("    ", logarithm[0], logarithm[1])
@@ -267,7 +267,6 @@ def main() raises:
     # nnls(A, b) -- least squares with the answer held at or above zero,
     # which is the constraint a physical quantity usually carries.
     var design = Static[dtype, 5, 3](
-        ctx,
         [
             1.0,
             2.0,
@@ -285,8 +284,9 @@ def main() raises:
             1.0,
             0.0,
         ],
+        ctx,
     )
-    var observations = Static[dtype, 5](ctx, [1.0, 2.0, -1.0, 0.5, 3.0])
+    var observations = Static[dtype, 5]([1.0, 2.0, -1.0, 0.5, 3.0], ctx)
     var constrained = nnls(design, observations)
     var coefficients = constrained.x.to_host()
     print(

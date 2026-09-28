@@ -457,7 +457,7 @@ def _quantiles_device[
         indices.append(Int64(at[1]))
         weights.append(at[2])
     var picks = Dynamic[DType.int64, 1](
-        sorted.context(), row_major(_dyn_shape[1](2 * m)), indices^
+        row_major(_dyn_shape[1](2 * m)), indices^, sorted.context()
     )
     var values = take[axis=0, gpu=True](sorted, picks).to_host()
     for i in range(m):
@@ -519,14 +519,14 @@ def quantile[
     if _check_device[T, gpu](xs):
         comptime if gpu:
             return Static[dtype, m](
-                q.context(),
                 _quantiles_device(xs, _q_list(q, 1.0), method, False, True),
+                q.context(),
             )
     else:
         _notice[gpu]("quantile")
     var values = _host_values(xs, False)
     var out = _read_many[dtype, m](values, q.to_host(), 1.0, method, True)
-    return Static[dtype, m](q.context(), out^)
+    return Static[dtype, m](out^, q.context())
 
 
 def percentile[
@@ -550,14 +550,14 @@ def percentile[
     if _check_device[T, gpu](xs):
         comptime if gpu:
             return Static[dtype, m](
-                q.context(),
                 _quantiles_device(xs, _q_list(q, 100.0), method, False, True),
+                q.context(),
             )
     else:
         _notice[gpu]("percentile")
     var values = _host_values(xs, False)
     var out = _read_many[dtype, m](values, q.to_host(), 100.0, method, True)
-    return Static[dtype, m](q.context(), out^)
+    return Static[dtype, m](out^, q.context())
 
 
 def nanquantile[
@@ -588,14 +588,14 @@ def nanquantile[
     if _check_device[T, gpu](xs):
         comptime if gpu:
             return Static[dtype, m](
-                q.context(),
                 _quantiles_device(xs, _q_list(q, 1.0), method, True, False),
+                q.context(),
             )
     else:
         _notice[gpu]("nanquantile")
     var values = _host_values(xs, True)
     var out = _read_many[dtype, m](values, q.to_host(), 1.0, method, False)
-    return Static[dtype, m](q.context(), out^)
+    return Static[dtype, m](out^, q.context())
 
 
 def nanpercentile[

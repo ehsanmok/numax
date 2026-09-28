@@ -35,14 +35,14 @@ comptime P = Plain[DType.float64, 1]
 def _m(ctx: DeviceContext) raises -> Static[dtype, 3, 3]:
     """Determinant is -30: a well-conditioned, sign-negative example."""
     return Static[dtype, 3, 3](
-        ctx, [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0]
+        [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0], ctx
     )
 
 
 def _singular(ctx: DeviceContext) raises -> Static[dtype, 3, 3]:
     """Row 2 is row 0 doubled, so the determinant is exactly zero."""
     return Static[dtype, 3, 3](
-        ctx, [1.0, 2.0, 3.0, 2.0, 4.0, 6.0, 7.0, 8.0, 10.0]
+        [1.0, 2.0, 3.0, 2.0, 4.0, 6.0, 7.0, 8.0, 10.0], ctx
     )
 
 
@@ -98,7 +98,7 @@ def test_slogdet_survives_where_det_overflows() raises:
     var entries = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         entries[i * n + i] = 40.0
-    var a = Static[dtype, n, n](ctx, entries^)
+    var a = Static[dtype, n, n](entries^, ctx)
 
     var pair = slogdet(a)
     var want = Float64(n) * log_f64(40.0)
@@ -108,7 +108,7 @@ def test_slogdet_survives_where_det_overflows() raises:
     var entries_again = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         entries_again[i * n + i] = 40.0
-    var b = Static[dtype, n, n](ctx, entries_again^)
+    var b = Static[dtype, n, n](entries_again^, ctx)
     var overflowed = Float64(det(b))
     assert_true(
         overflowed > 1e308 or overflowed != overflowed,

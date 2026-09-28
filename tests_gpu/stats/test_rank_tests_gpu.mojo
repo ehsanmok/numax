@@ -23,7 +23,7 @@ def _a[n: Int](ctx: DeviceContext) raises -> Static[f32, n]:
     var values = List[Scalar[f32]](capacity=n)
     for i in range(n):
         values.append(Float32(Int(sin(Float64(i) * 1.7) * 12.0)) * 0.25)
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _b[n: Int](ctx: DeviceContext) raises -> Static[f32, n]:
@@ -32,7 +32,7 @@ def _b[n: Int](ctx: DeviceContext) raises -> Static[f32, n]:
         values.append(
             Float32(Int(sin(Float64(i) * 0.9 + 0.3) * 12.0)) * 0.25 + 0.25
         )
-    return Static[f32, n](ctx, values^)
+    return Static[f32, n](values^, ctx)
 
 
 def _close(d: Float64, h: Float64) raises:

@@ -28,13 +28,13 @@ comptime f64 = DType.float64
 
 def _a() raises -> Static[f64, 2, 3]:
     return Static[f64, 2, 3](
-        DeviceContext(api="cpu"), [1.0, -2.0, 3.5, 0.0, 4.0, -0.5]
+        [1.0, -2.0, 3.5, 0.0, 4.0, -0.5], DeviceContext(api="cpu")
     )
 
 
 def _b() raises -> Static[f64, 2, 3]:
     return Static[f64, 2, 3](
-        DeviceContext(api="cpu"), [2.0, -2.0, 1.0, 0.5, 4.0, 3.0]
+        [2.0, -2.0, 1.0, 0.5, 4.0, 3.0], DeviceContext(api="cpu")
     )
 
 
@@ -66,10 +66,10 @@ def test_reflected_operators_put_the_scalar_on_the_left() raises:
 
 def test_power_operators() raises:
     var p = Static[f64, 2, 3](
-        DeviceContext(api="cpu"), [1.0, 2.0, 0.5, 3.0, 1.5, 0.25]
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.25], DeviceContext(api="cpu")
     )
     var q = Static[f64, 2, 3](
-        DeviceContext(api="cpu"), [1.0, 2.0, 0.5, 3.0, 1.5, 0.25]
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.25], DeviceContext(api="cpu")
     )
     _same((p**q).to_host(), power(p, q).to_host())
     _same((p**2.0).to_host(), power(p, 2.0).to_host())
@@ -114,8 +114,8 @@ def test_comparisons_return_bool_masks() raises:
 def test_matmul_operator_is_matmul() raises:
     var a = _a()
     var b = Static[f64, 3, 4](
-        DeviceContext(api="cpu"),
         [1.0, 0.5, -1.0, 2.0, 0.0, 3.0, 1.5, -2.0, 4.0, 1.0, 0.25, 0.5],
+        DeviceContext(api="cpu"),
     )
     var product = a @ b
     assert_equal(product.dim[0](), 2)

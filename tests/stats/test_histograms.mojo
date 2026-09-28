@@ -28,7 +28,7 @@ def _from[n: Int](values: List[Float64]) raises -> Static[dtype, n]:
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         out.append(Scalar[dtype](values[i]))
-    return Static[dtype, n](_cpu(), out^)
+    return Static[dtype, n](out^, _cpu())
 
 
 def _x() -> List[Float64]:
@@ -160,7 +160,7 @@ def test_histogram2d_and_histogramdd_agree_with_numpy() raises:
     for i in range(16):
         pairs.append(Scalar[dtype](xs[i]))
         pairs.append(Scalar[dtype](ys[i]))
-    var points = Static[dtype, 16, 2](_cpu(), pairs^)
+    var points = Static[dtype, 16, 2](pairs^, _cpu())
     var grid = histogramdd[3, 4](points)
     var dd = grid.counts.to_host()
     for i in range(12):
@@ -173,7 +173,7 @@ def test_bincount_matches_numpy() raises:
     var values = List[Scalar[DType.int64]]()
     for v in [0, 1, 1, 3, 2, 1, 7]:
         values.append(Int64(v))
-    var xs = Static[DType.int64, 7](_cpu(), values^)
+    var xs = Static[DType.int64, 7](values^, _cpu())
     var counts = bincount(xs).to_host()
     var expected: List[Int] = [1, 3, 1, 1, 0, 0, 0, 1]
     assert_equal(len(counts), 8)
@@ -183,7 +183,7 @@ def test_bincount_matches_numpy() raises:
     var short = List[Scalar[DType.int64]]()
     for v in [0, 1, 1, 3]:
         short.append(Int64(v))
-    var small = Static[DType.int64, 4](_cpu(), short^)
+    var small = Static[DType.int64, 4](short^, _cpu())
     var padded = bincount(small, minlength=6).to_host()
     assert_equal(len(padded), 6)
     assert_equal(Int(padded[1]), 2)

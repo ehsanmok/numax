@@ -124,7 +124,7 @@ def test_the_tensor_softmax_agrees_with_the_tile_one() raises:
     Another axis raises, since MAX's kernel handles only the last."""
     comptime dtype = DType.float64
     var values: List[Scalar[dtype]] = [1.0, 2.0, 3.0, 4.0, -1.0, 0.0, 1.0, 9.0]
-    var t = Static[dtype, 2, 4](DeviceContext(api="cpu"), values.copy())
+    var t = Static[dtype, 2, 4](values.copy(), DeviceContext(api="cpu"))
     var got = softmax(t).to_host()
     var ys_storage = List[Scalar[dtype]](length=8, fill=0)
     softmax(

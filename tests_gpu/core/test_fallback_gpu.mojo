@@ -18,7 +18,7 @@ def _pair(ctx: DeviceContext) raises -> Static[f32, 64]:
     var values = List[Scalar[f32]](capacity=64)
     for i in range(64):
         values.append(Float32(i))
-    return Static[f32, 64](ctx, values^)
+    return Static[f32, 64](values^, ctx)
 
 
 def test_raise_policy_rejects_a_mismatch() raises:
