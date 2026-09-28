@@ -55,7 +55,7 @@ from numax.linalg.array import outer as array_outer
 from numax.linalg.array import qr as array_qr
 from numax.linalg.array import solve as array_solve
 from numax.linalg.array import trace as array_trace
-from numax.linalg.misc import fro, inf
+from numax.linalg.misc import NORM_FRO, NORM_INF
 
 comptime P = Plain[DType.float64, 1]
 
@@ -1225,18 +1225,18 @@ def test_tensor_frobenius_norm_agrees_with_the_array_norm() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var got = Float64(norm[ord=fro](a))
+    var got = Float64(norm[ord=NORM_FRO](a))
 
     var lifted = array_zeros[P, 16]()
     for i in range(16):
         lifted[i] = P(entries[i])
     assert_almost_equal(
-        got, Float64(array_norm[P, 4, fro](lifted).v), atol=1e-10
+        got, Float64(array_norm[P, 4, NORM_FRO](lifted).v), atol=1e-10
     )
 
 
 def test_tensor_induced_norms_agree_with_the_array_norms() raises:
-    """The `1`-norm collapses the rows and the `inf`-norm the columns, so
+    """The `1`-norm collapses the rows and the infinity-norm the columns, so
     getting the two axes the wrong way round would pass one and fail the
     other -- which is why both are checked on a matrix whose row and
     column sums differ."""
@@ -1256,8 +1256,8 @@ def test_tensor_induced_norms_agree_with_the_array_norms() raises:
 
     var a2 = Static[DType.float64, 4, 4](ctx, entries.copy())
     assert_almost_equal(
-        Float64(norm[ord=inf](a2)),
-        Float64(array_norm[P, 4, inf](lifted).v),
+        Float64(norm[ord=NORM_INF](a2)),
+        Float64(array_norm[P, 4, NORM_INF](lifted).v),
         atol=1e-12,
     )
 
@@ -1268,7 +1268,7 @@ def test_tensor_frobenius_norm_is_nrm2_of_the_flattened_matrix() raises:
     var ctx = _cpu()
     var entries = _nonsymmetric_4x4()
     var a = Static[DType.float64, 4, 4](ctx, entries.copy())
-    var got = Float64(norm[ord=fro](a))
+    var got = Float64(norm[ord=NORM_FRO](a))
 
     var flattened = List[Scalar[DType.float64]](length=16, fill=0)
     for i in range(16):

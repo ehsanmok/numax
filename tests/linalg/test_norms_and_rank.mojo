@@ -26,7 +26,7 @@ from max.gpu.host import DeviceContext
 
 from numax import Plain
 from numax.core.tensor import Static
-from numax.linalg import inf, neg_inf, norm, nrm2
+from numax.linalg import NORM_INF, NORM_NEG_INF, norm, nrm2
 from numax.linalg.array import eigh, eigvalsh, matrix_rank, svd, svdvals
 
 comptime dtype = DType.float64
@@ -76,9 +76,9 @@ def test_vector_one_norm() raises:
 def test_vector_infinity_norms() raises:
     var ctx = DeviceContext(api="cpu")
     var a = _v(ctx)
-    assert_almost_equal(Float64(norm[ord=inf](a)), 12.0, atol=1e-12)
+    assert_almost_equal(Float64(norm[ord=NORM_INF](a)), 12.0, atol=1e-12)
     var b = _v(ctx)
-    assert_almost_equal(Float64(norm[ord=neg_inf](b)), 1.0, atol=1e-12)
+    assert_almost_equal(Float64(norm[ord=NORM_NEG_INF](b)), 1.0, atol=1e-12)
 
 
 def test_the_matrix_overload_still_resolves() raises:

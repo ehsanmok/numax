@@ -65,10 +65,18 @@ def test_linalg_and_the_bridge_are_reachable() raises:
     var i3 = eye[3]()
     assert_almost_equal(det(i3), Scalar[dtype](1.0))
     # Frobenius norm of I3 is sqrt(3).
-    assert_almost_equal(norm[ord=fro](i3), Scalar[dtype](1.7320508075688772))
+    assert_almost_equal(
+        norm[ord=NORM_FRO](i3), Scalar[dtype](1.7320508075688772)
+    )
 
     var lifted = to_array[P](i3)
     assert_almost_equal(array_det[P, 3](lifted).v, Scalar[dtype](1.0))
+
+
+def test_the_norm_selectors_are_reachable() raises:
+    """The infinity-norm selector reaches a star-importer as `NORM_INF`;
+    the row sums of I3 are all 1."""
+    assert_almost_equal(norm[ord=NORM_INF](eye[3]()), Scalar[dtype](1.0))
 
 
 def test_stats_and_io_are_reachable() raises:

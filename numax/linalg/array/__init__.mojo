@@ -51,9 +51,9 @@ from numax.linalg.array import cholesky as chol_a  # Array
 That is the price of a flat surface that means exactly one thing. Files
 wanting only one tier -- which is nearly all of them -- pay nothing.
 
-`fro` and `inf`, the `norm` selectors, are **not** re-exported here: they
+`NORM_FRO` and `NORM_INF`, the `norm` selectors, are **not** re-exported here: they
 are plain integer aliases shared by both tiers and live in
-`numax.linalg.misc`, so `from numax.linalg import fro` is right whichever
+`numax.linalg.misc`, so `from numax.linalg import NORM_FRO` is right whichever
 tier's `norm` is being called.
 """
 

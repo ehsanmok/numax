@@ -6,9 +6,9 @@ convergence checks inside a differentiated loop. `cond` is tier 1 too but
 carries `svd`'s fixed sweep count, so it is an estimate at a declared
 sweep budget rather than an exact answer.
 
-`fro` and `inf` are the `ord` selectors, and they are imported from the
+`NORM_FRO` and `NORM_INF` are the `ord` selectors, and they are imported from the
 `Tensor` tier's `numax.linalg.misc` rather than redefined, so the two
-tiers spell `norm[..., fro]` the same way.
+tiers spell `norm[..., NORM_FRO]` the same way.
 """
 
 from std.collections import Array
@@ -16,7 +16,7 @@ from std.collections import Array
 from ...core.numeric import FloatLike, guard_nonzero, max_of, min_of
 
 from ..common import _PIVOT_FLOOR
-from ..misc import fro, inf
+from ..misc import NORM_FRO, NORM_INF
 from .eigen import svd
 
 
@@ -34,8 +34,8 @@ def trace[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
 
 
 def norm[
-    T: FloatLike, n: Int, ord: Int = fro
-](a: Array[T, n * n]) -> T where ord == fro or ord == 1 or ord == inf:
+    T: FloatLike, n: Int, ord: Int = NORM_FRO
+](a: Array[T, n * n]) -> T where ord == NORM_FRO or ord == 1 or ord == NORM_INF:
     """A matrix norm of `A`. `numpy.linalg.norm(A, ord=...)`.
 
     `ord` picks which one, as a compile-time parameter so the loop is
@@ -43,9 +43,9 @@ def norm[
 
     | `ord` | Norm |
     |---|---|
-    | `fro` (default) | Frobenius: `sqrt(sum(A[i,j]**2))` |
+    | `NORM_FRO` (default) | Frobenius: `sqrt(sum(A[i,j]**2))` |
     | `1` | Induced 1-norm: the largest absolute column sum |
-    | `inf` | Induced infinity-norm: the largest absolute row sum |
+    | `NORM_INF` | Induced infinity-norm: the largest absolute row sum |
 
     The Frobenius sum is taken directly rather than in a scaled/squared
     form, which means a matrix whose entries are near the square root of
@@ -62,7 +62,7 @@ def norm[
 
     No MAX equivalent at any size: MAX ships no norm of any kind.
     """
-    comptime if ord == fro:
+    comptime if ord == NORM_FRO:
         var total = T.constant(0.0)
         for i in range(n * n):
             total = total + a[i] * a[i]
@@ -75,7 +75,7 @@ def norm[
                 column = column + a[i * n + j].abs()
             best = max_of(best, column)
         return best^
-    comptime if ord == inf:
+    comptime if ord == NORM_INF:
         var best = T.constant(0.0)
         for i in range(n):
             var row = T.constant(0.0)

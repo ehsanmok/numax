@@ -11,12 +11,12 @@ on CPU and tier on GPU, and only the scalar comes back.
 MAX ships no norm of any kind and no `trace`, so what is delegated is the
 reduction underneath, not the operation.
 
-`norm` takes `ord` as a compile-time parameter at both tiers -- `fro`
-(default), `1` or `inf`, matching `numpy.linalg.norm` -- because each is a
+`norm` takes `ord` as a compile-time parameter at both tiers -- `NORM_FRO`
+(default), `1` or `NORM_INF`, matching `numpy.linalg.norm` -- because each is a
 different reduction. Over `Array` that is forced (a tier-1 kernel cannot
 branch on which one at run time); here it keeps the three launch sequences
-from being chosen at run time. `fro` and `inf` are defined in this module
-and shared by both tiers, so `norm[..., fro]` reads the same either way.
+from being chosen at run time. `NORM_FRO` and `NORM_INF` are defined in this module
+and shared by both tiers, so `norm[..., NORM_FRO]` reads the same either way.
 """
 
 from algorithm.rowwise_types import RowCoord
@@ -36,16 +36,16 @@ from .blas import _target, asum as _asum, nrm2 as _nrm2
 from .eigen import svdvals
 
 
-comptime fro = 0
+comptime NORM_FRO = 0
 """`ord` for `norm`: the Frobenius (entrywise 2-) norm. The default."""
 
 
-comptime inf = -1
+comptime NORM_INF = -1
 """`ord` for `norm`: the induced infinity-norm over a matrix, the largest
 magnitude over a vector."""
 
 
-comptime neg_inf = -2
+comptime NORM_NEG_INF = -2
 """`ord` for the vector `norm`: the *smallest* magnitude. `numpy`'s
 `-inf`. Meaningless for a matrix, and the matrix overload's `where` clause
 rejects it."""
@@ -121,12 +121,12 @@ def trace[
 
 def norm[
     T: TensorLike,
-    ord: Int = fro,
+    ord: Int = NORM_FRO,
     gpu: Bool = False,
 ](a: T) raises -> Scalar[T.dtype] where (
     is_row_major[T]
     and T.dtype.is_floating_point()
-    and (ord == fro or ord == 1 or ord == inf)
+    and (ord == NORM_FRO or ord == 1 or ord == NORM_INF)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
     and dim[T, 1] == dim[T, 0]
@@ -139,9 +139,9 @@ def norm[
 
     | `ord` | Reduction |
     |---|---|
-    | `fro` (default) | one `ReduceSum` of squares over the flat matrix |
+    | `NORM_FRO` (default) | one `ReduceSum` of squares over the flat matrix |
     | `1` | `sum_axis` down the columns of `abs(A)`, then a maximum |
-    | `inf` | `sum_axis` across the rows of `abs(A)`, then a maximum |
+    | `NORM_INF` | `sum_axis` across the rows of `abs(A)`, then a maximum |
 
     So the Frobenius norm is a single fused launch -- the square goes in
     `rowwise`'s per-tile transform, exactly as in `nrm2` -- and the two
@@ -153,7 +153,7 @@ def norm[
     whose entries approach the square root of `T.dtype`'s overflow threshold
     overflows. The reason differs: there a running maximum would break the
     fixed-iteration invariant, here it would cost a second pass. Scale `A`
-    yourself, or take the `1`- or `inf`-norm, which cannot overflow this
+    yourself, or take the `1`- or infinity-norm, which cannot overflow this
     way.
 
     MAX ships no norm of any kind, so the arrangement is numax's.
@@ -163,12 +163,12 @@ def norm[
 
 def _matrix_norm[
     T: TensorLike,
-    ord: Int = fro,
+    ord: Int = NORM_FRO,
     gpu: Bool = False,
 ](a: T) raises -> Scalar[T.dtype] where (
     is_row_major[T]
     and T.dtype.is_floating_point()
-    and (ord == fro or ord == 1 or ord == inf)
+    and (ord == NORM_FRO or ord == 1 or ord == NORM_INF)
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
     and dim[T, 1] == dim[T, 0]
@@ -179,7 +179,7 @@ def _matrix_norm[
     var ctx = a.context()
     var av = _mut_view(a)
 
-    comptime if ord == fro:
+    comptime if ord == NORM_FRO:
         var flat: _Flat[T.dtype] = TileTensor(av.ptr, row_major(Coord(n * n)))
         var out = Static[T.dtype, 1](ctx)
 
@@ -231,7 +231,7 @@ def norm[
     gpu: Bool = False,
 ](a: T) raises -> Scalar[T.dtype] where (
     T.dtype.is_floating_point()
-    and (ord == 2 or ord == 1 or ord == inf or ord == neg_inf)
+    and (ord == 2 or ord == 1 or ord == NORM_INF or ord == NORM_NEG_INF)
     and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
 ):
@@ -247,8 +247,8 @@ def norm[
     |---|---|
     | `2` (default) | `sqrt(sum(a**2))`, the Euclidean length |
     | `1` | `sum(abs(a))` |
-    | `inf` | `max(abs(a))` |
-    | `neg_inf` | `min(abs(a))` |
+    | `NORM_INF` | `max(abs(a))` |
+    | `NORM_NEG_INF` | `min(abs(a))` |
 
     Each is a single fused reduction: the square, the magnitude or the
     extremum goes into `rowwise`'s per-tile transform, so nothing makes a
@@ -259,14 +259,14 @@ def norm[
 
     **`numpy`'s `ord=0` is not here**, and would be ambiguous if it were:
     it counts nonzeros rather than measuring anything, and `0` is already
-    `fro` in this module's vocabulary. `numax.core.sorting.count_nonzero`
+    `NORM_FRO` in this module's vocabulary. `numax.core.sorting.count_nonzero`
     is that operation under a name that says so. The fractional and
     negative-`p` vector norms are out too; they have no use here that
     `ord` in this table does not cover.
 
     Unrescaled, like the matrix overload: `ord == 2` on a vector whose
     entries approach the square root of `T.dtype`'s overflow threshold
-    overflows. Take the `1`- or `inf`-norm, which cannot.
+    overflows. Take the `1`- or infinity-norm, which cannot.
     """
     return _vector_norm[ord=ord, gpu=gpu](a)
 
@@ -277,7 +277,7 @@ def _vector_norm[
     gpu: Bool = False,
 ](a: T) raises -> Scalar[T.dtype] where (
     T.dtype.is_floating_point()
-    and (ord == 2 or ord == 1 or ord == inf or ord == neg_inf)
+    and (ord == 2 or ord == 1 or ord == NORM_INF or ord == NORM_NEG_INF)
     and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
 ):
@@ -311,7 +311,7 @@ def _vector_norm[
         var host = magnitudes.to_host()
         var best = host[0]
         for i in range(1, n):
-            comptime if ord == inf:
+            comptime if ord == NORM_INF:
                 best = max(best, host[i])
             else:
                 best = min(best, host[i])

@@ -36,7 +36,7 @@ modules matter when reading or extending.
 | `lu` | `lu_factor`, `LU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `QR`, `lstsq`, `rq`, `RQ` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
-| `misc` | `norm` (matrix and vector), `trace`, `cond`, `fro`, `inf`, `neg_inf` | `_misc` |
+| `misc` | `norm` (matrix and vector), `trace`, `cond`, `NORM_FRO`, `NORM_INF`, `NORM_NEG_INF` | `_misc` |
 | `eigen` | `sytrd`, `Tridiagonal`, `eigvalsh`, `eigh`, `Eigh`, `gebrd`, `Bidiagonal`, `svdvals`, `svd`, `SVD`, `matrix_rank`, `hessenberg`, `Hessenberg`, `eigvals`, `Eigenvalues`, `schur`, `Schur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
 | `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `tanm`, `fractional_matrix_power` | `_matfuncs` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie` | `_special_matrices` |
@@ -56,7 +56,7 @@ the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`, `outer`), blocked
 `Tridiagonal`) and `solve`, the solves those unlock --
 `solve_triangular`, `cholesky_solve`, `inverse`, `det`, `slogdet`, and the
 least-squares `QR.solve` -- and the scalar summaries `norm`
-(`fro`/`1`/`inf` over a matrix, `2`/`1`/`inf`/`neg_inf` over a vector) and
+(`NORM_FRO`/`1`/`NORM_INF` over a matrix, `2`/`1`/`NORM_INF`/`NORM_NEG_INF` over a vector) and
 `trace`. Each takes a `gpu: Bool` parameter that
 chooses MAX's target, and everything blocked a `block` size that tunes the
 panel.
@@ -252,7 +252,7 @@ from .matfuncs import (
     sqrtm,
     tanm,
 )
-from .misc import cond, fro, inf, neg_inf, norm, trace
+from .misc import cond, NORM_FRO, NORM_INF, NORM_NEG_INF, norm, trace
 from .qr import QR, RQ, lstsq, qr_factor, rq
 from .special_matrices import (
     block_diag,

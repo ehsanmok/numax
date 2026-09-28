@@ -16,7 +16,7 @@ from std.testing import (
 )
 
 from numax import Compensated, Dual, FloatLike, Plain
-from numax.linalg import fro, inf
+from numax.linalg import NORM_FRO, NORM_INF
 from numax.linalg.array import (
     asum,
     axpy,
@@ -424,12 +424,12 @@ def test_norm_1_is_the_largest_absolute_column_sum() raises:
 def test_norm_inf_is_the_largest_absolute_row_sum() raises:
     # Rows of general3: 4, 6, 5. The largest is 6.
     var a = general3()
-    assert_almost_equal(s(norm[P, 3, inf](a)), 6.0)
+    assert_almost_equal(s(norm[P, 3, NORM_INF](a)), 6.0)
 
 
 def test_norm_inf_of_a_symmetric_matrix_equals_its_norm_1() raises:
     var a = spd3()
-    assert_almost_equal(s(norm[P, 3, inf](a)), s(norm[P, 3, 1](a)))
+    assert_almost_equal(s(norm[P, 3, NORM_INF](a)), s(norm[P, 3, 1](a)))
 
 
 def test_qr_reconstructs_the_original_matrix() raises:
