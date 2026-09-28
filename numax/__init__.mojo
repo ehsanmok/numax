@@ -618,7 +618,14 @@ from .signal.spectral import (
     stft,
     welch,
 )
-from .signal.peaks import find_peaks
+from .signal.peaks import (
+    PeakWidths,
+    argrelextrema,
+    argrelmax,
+    argrelmin,
+    find_peaks,
+    peak_widths,
+)
 from .signal.design import (
     OUTPUT_BA,
     OUTPUT_SOS,
