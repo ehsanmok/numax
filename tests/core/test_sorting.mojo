@@ -242,16 +242,16 @@ def test_nonzero_returns_ascending_flat_indices() raises:
     var ctx = DeviceContext(api="cpu")
     var a = mk[5]([0.0, 1.0, 0.0, 1.0, 1.0])
     var indices = nonzero(a)
-    assert_equal(len(indices), 3)
-    assert_equal(indices[0], 1)
-    assert_equal(indices[1], 3)
-    assert_equal(indices[2], 4)
+    assert_equal(indices.size(), 3)
+    assert_equal(Int(indices[0]), 1)
+    assert_equal(Int(indices[1]), 3)
+    assert_equal(Int(indices[2]), 4)
 
 
 def test_nonzero_length_matches_count_nonzero() raises:
     var ctx = DeviceContext(api="cpu")
     var a = mk[6]([1.0, 0.0, -3.0, 0.0, 0.0, 2.5])
-    assert_equal(len(nonzero(a)), count_nonzero(a))
+    assert_equal(nonzero(a).size(), count_nonzero(a))
 
 
 # ------------------------------------------------------------------
@@ -332,9 +332,9 @@ def test_select_and_extract_agree_on_the_selected_values() raises:
     var a = mk[6]([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
     var extracted = extract(mask, a)
     var indices = nonzero(mask)
-    assert_equal(extracted.size(), len(indices))
-    for i in range(len(indices)):
-        assert_almost_equal(extracted[i], a[indices[i]])
+    assert_equal(extracted.size(), indices.size())
+    for i in range(indices.size()):
+        assert_almost_equal(extracted[i], a[Int(indices[i])])
 
 
 def test_the_masking_family_returns_its_own_length() raises:
@@ -347,7 +347,7 @@ def test_the_masking_family_returns_its_own_length() raises:
     assert_equal(
         extract(mk_mask[6]([True, True, True, True, True, True]), a).size(), 6
     )
-    assert_equal(take(a, nonzero(a)).size(), count_nonzero(a))
+    assert_equal(take[axis=0](a, nonzero(a)).size(), count_nonzero(a))
 
 
 def test_take_reads_the_index_lists_the_module_already_returns() raises:
@@ -362,7 +362,7 @@ def test_take_reads_the_index_lists_the_module_already_returns() raises:
 
     # take + nonzero is the nonzero values, which is also extract's answer.
     var b = mk[5]([0.0, 2.0, 0.0, 4.0, 6.0])
-    var by_index = take(b, nonzero(b))
+    var by_index = take[axis=0](b, nonzero(b))
     var by_mask = extract(mk_mask[5]([False, True, False, True, True]), b)
     assert_equal(by_index.size(), by_mask.size())
     for i in range(by_index.size()):
@@ -682,9 +682,9 @@ def test_argwhere_returns_coordinates_where_nonzero_returns_flat() raises:
         assert_equal(Int(out[i]), expected[i])
 
     var flat = nonzero(a)
-    assert_equal(len(flat), 3)
-    assert_equal(flat[0], 1)
-    assert_equal(flat[2], 5)
+    assert_equal(flat.size(), 3)
+    assert_equal(Int(flat[0]), 1)
+    assert_equal(Int(flat[2]), 5)
 
 
 def test_argwhere_on_an_all_zero_tensor_is_empty() raises:

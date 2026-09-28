@@ -98,6 +98,7 @@ from .tensor import (
     broadcast_shapes,
     _same_order,
     _axis_gather,
+    _scan_device,
 )
 
 
@@ -707,7 +708,82 @@ def all_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Bool:
     return True
 
 
-def nonzero[T: TensorLike](a: T) raises -> List[Int]:
+def _selected_offsets[
+    S: TensorLike
+](selector: S, m: Int) raises -> Dynamic[DType.int64, 1]:
+    """For the first `m` elements of a GPU-context `selector`: an inclusive
+    scan of their nonzero flags, so element `i`'s slot in a packed result
+    is `offsets[i] - 1` and the result holds `offsets[m - 1]` elements. One
+    flag launch and the device scan; the device half of every routine here
+    whose output length the data decides."""
+    var ctx = selector.context()
+    var flags = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](m))
+    )
+    var sv = _flat_unchecked(selector)
+    var fv = _flat_out(flags)
+
+    @always_inline
+    def flag[width: Int, alignment: Int = 1](coord: Coord) {var sv, var fv}:
+        var x = sv[coord][0]
+        comptime if S.dtype == DType.bool:
+            fv.store[1](coord, Int64(1) if x else Int64(0))
+        else:
+            fv.store[1](coord, Int64(0) if x == 0 else Int64(1))
+
+    elementwise[simd_width=1, target="gpu"](flag, Coord(m), ctx)
+    return _scan_device["sum"](flags, row_major(_dyn_shape[1](m)), m, 1)
+
+
+def _pack_device[
+    S: TensorLike, V: TensorLike, indices: Bool
+](selector: S, source: V, m: Int) raises -> Dynamic[
+    DType.int64 if indices else V.dtype, 1
+]:
+    """The selected elements of `source` -- or, with `indices`, their flat
+    positions -- packed in order, on the device: the offsets scan, one
+    scalar read for the length, and one scatter launch."""
+    comptime out_dtype = DType.int64 if indices else V.dtype
+    var ctx = selector.context()
+    if m == 0:
+        return Dynamic[out_dtype, 1](ctx, row_major(_dyn_shape[1](0)))
+    var offsets = _selected_offsets(selector, m)
+    var count = Int(offsets[m - 1])
+    var result = Dynamic[out_dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](count))
+    )
+    if count == 0:
+        return result^
+    var ov = _flat_unchecked(offsets)
+    var src = source.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var rv = _flat_out(result)
+
+    @always_inline
+    def scatter[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var ov, var src, var rv}:
+        var i = coord_to_index_list(coord)[0]
+        var here = ov[coord][0]
+        var before = ov[Coord(i - 1)][0] if i > 0 else Int64(0)
+        if here != before:
+            comptime if indices:
+                rv.store[1](
+                    Coord(Int(here) - 1), rebind[Scalar[out_dtype]](Int64(i))
+                )
+            else:
+                rv.store[1](
+                    Coord(Int(here) - 1),
+                    rebind[Scalar[out_dtype]](src[unsafe_offset=i]),
+                )
+
+    elementwise[simd_width=1, target="gpu"](scatter, Coord(m), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def nonzero[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Dynamic[DType.int64, 1]:
     """The flat indices of the nonzero elements, ascending.
     `numpy.flatnonzero`.
 
@@ -717,15 +793,64 @@ def nonzero[T: TensorLike](a: T) raises -> List[Int]:
     have.
     """
     var n = a.size()
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            _require_contiguous(a)
+            return _pack_device[indices=True](a, a, n)
+    else:
+        _notice[gpu]("nonzero")
     var values = a.to_host()
-    var indices = List[Int](capacity=n)
+    var indices = List[Scalar[DType.int64]](capacity=n)
     for i in range(n):
         if values[i] != 0:
-            indices.append(i)
-    return indices^
+            indices.append(Int64(i))
+    return asarray(indices^, a.context())
 
 
-def argwhere[T: TensorLike](a: T) raises -> Dynamic[DType.int64, 2]:
+def _argwhere_device[
+    T: TensorLike
+](a: T, extents: List[Int]) raises -> Dynamic[DType.int64, 2]:
+    """`argwhere` on the device: the packed flat positions, then one launch
+    turning each into its row of coordinates."""
+    comptime rank = T.LayoutType.rank
+    _require_contiguous(a)
+    var ctx = a.context()
+    var flat = _pack_device[indices=True](a, a, a.size())
+    var count = flat.size()
+    var result = Dynamic[DType.int64, 2]._uninitialized(
+        ctx, row_major(_dyn_shape[2](count, rank))
+    )
+    if count == 0:
+        return result^
+    var ext = IndexList[rank]()
+    for d in range(rank):
+        ext[d] = extents[d]
+    var fv = _flat_unchecked(flat)
+    var rv = _flat_out(result)
+
+    @always_inline
+    def digits[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var fv, var rv, var ext}:
+        var q = coord_to_index_list(coord)[0]
+        var axis = q % rank
+        var rem = Int(fv[Coord(q // rank)][0])
+        var digit = 0
+        comptime for k in range(rank):
+            comptime d = rank - 1 - k
+            if d == axis:
+                digit = rem % ext[d]
+            rem //= ext[d]
+        rv.store[1](coord, Int64(digit))
+
+    elementwise[simd_width=1, target="gpu"](digits, Coord(count * rank), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def argwhere[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Dynamic[DType.int64, 2]:
     """The coordinates of the nonzero elements, one row each.
     `numpy.argwhere`.
 
@@ -744,6 +869,11 @@ def argwhere[T: TensorLike](a: T) raises -> Dynamic[DType.int64, 2]:
     for d in range(rank):
         extents.append(a.dim_at(d))
 
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _argwhere_device(a, extents)
+    else:
+        _notice[gpu]("argwhere")
     var values = a.to_host()
     var n = len(values)
     var coords = List[Scalar[DType.int64]](capacity=n * rank)
@@ -766,6 +896,21 @@ def argwhere[T: TensorLike](a: T) raises -> Dynamic[DType.int64, 2]:
     return Dynamic[DType.int64, 2](
         a.context(), row_major(_dyn_shape_from[2](shape)), coords^
     )
+
+
+def put[
+    T: TensorLike, I: TensorLike
+](mut a: T, indices: I, values: List[Scalar[T.dtype]]) raises where (
+    I.dtype == DType.int64
+):
+    """`put` with the indices as a tensor, the form `nonzero` and
+    `argsort` return. The indices are read on the host, as the list form
+    reads them."""
+    var raw = indices.to_host()
+    var flat = List[Int](capacity=len(raw))
+    for i in range(len(raw)):
+        flat.append(Int(raw[i]))
+    put(a, flat, values)
 
 
 def put[
@@ -811,7 +956,7 @@ def put[
 
 
 def extract[
-    C: TensorLike, T: TensorLike
+    C: TensorLike, T: TensorLike, gpu: Bool = False
 ](condition: C, a: T) raises -> Dynamic[T.dtype, 1] where (
     C.dtype == DType.bool and C.LayoutType == T.LayoutType
 ):
@@ -829,6 +974,13 @@ def extract[
     """
     comptime dtype = T.dtype
     var n = a.size()
+    if _check_device[C, gpu](condition) and _check_device[T, gpu](a):
+        comptime if gpu:
+            _require_contiguous(condition)
+            _require_contiguous(a)
+            return _pack_device[indices=False](condition, a, n)
+    else:
+        _notice[gpu]("extract")
     var mask = condition.to_host()
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=n)
@@ -841,6 +993,7 @@ def extract[
 def compress[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](condition: A, a: B) raises -> Dynamic[B.dtype, 1] where (
     A.LayoutType.rank == 1 and A.dtype == DType.bool
 ):
@@ -865,6 +1018,13 @@ def compress[
             n,
             " elements it selects from",
         )
+    if _check_device[A, gpu](condition) and _check_device[B, gpu](a):
+        comptime if gpu:
+            _require_contiguous(condition)
+            _require_contiguous(a)
+            return _pack_device[indices=False](condition, a, m)
+    else:
+        _notice[gpu]("compress")
     var mask = condition.to_host()
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=m)
