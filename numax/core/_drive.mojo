@@ -133,7 +133,7 @@ def _require_contiguous[T: TensorLike](a: T) raises:
         comptime d = T.rank - 1 - k
         if a.dim_at(d) > 1 and a.stride_at(d) != expected:
             raise Error(
-                "a strided view cannot be flattened: axis ",
+                "numax: a strided view cannot be flattened: axis ",
                 d,
                 " has stride ",
                 a.stride_at(d),

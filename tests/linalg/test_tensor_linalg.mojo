@@ -141,7 +141,7 @@ def test_matmul_dynamic_rejects_mismatched_shapes() raises:
     var ctx = _cpu()
     var a = zeros_dyn[DType.float64, 2](2, 3, ctx=ctx)
     var b = zeros_dyn[DType.float64, 2](4, 2, ctx=ctx)
-    with assert_raises(contains="matmul shape mismatch"):
+    with assert_raises(contains="matmul: shape mismatch"):
         _ = matmul(a, b)
 
 

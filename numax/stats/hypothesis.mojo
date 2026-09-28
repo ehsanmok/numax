@@ -161,14 +161,15 @@ def _dtype_epsilon[dtype: DType]() -> Float64:
         return 7.8125e-03
 
 
-def _check_alternative(alternative: StaticString) raises:
+def _check_alternative(name: StaticString, alternative: StaticString) raises:
     if not (
         alternative == "two-sided"
         or alternative == "less"
         or alternative == "greater"
     ):
         raise Error(
-            "alternative must be 'two-sided', 'less' or 'greater', not '",
+            name,
+            ": alternative must be 'two-sided', 'less' or 'greater', not '",
             alternative,
             "'",
         )
@@ -196,7 +197,7 @@ def ttest_1samp[
     `scipy.stats.ttest_1samp(a, popmean, alternative)`: `t = (mean -
     popmean) / (std_1 / sqrt(n))` on `n - 1` degrees of freedom. Device
     sums at `gpu=True`; see the module docstring."""
-    _check_alternative(alternative)
+    _check_alternative("ttest_1samp", alternative)
     if _check_device[T, gpu](xs):
         comptime if gpu:
             var m = _moments_device(xs)
@@ -239,7 +240,7 @@ def ttest_ind[
     pooled-variance test by default, Welch's unequal-variance test with
     its Welch-Satterthwaite degrees of freedom when `equal_var=False`.
     Device sums at `gpu=True`; see the module docstring."""
-    _check_alternative(alternative)
+    _check_alternative("ttest_ind", alternative)
     var n1: Float64
     var n2: Float64
     var v1: Float64
@@ -320,7 +321,7 @@ def ttest_rel[
     `scipy.stats.ttest_rel(a, b, alternative)`. At `gpu=True` the
     differences are one device `subtract` and their moments device
     sums."""
-    _check_alternative(alternative)
+    _check_alternative("ttest_rel", alternative)
     if _check_device[T, gpu](xs) and _check_device[T, gpu](ys):
         comptime if gpu:
             var m = _moments_device(_tsubtract[gpu=True](xs, ys))
@@ -503,7 +504,7 @@ def ks_1samp[
     function parameter, so a `numax.stats` distribution's `cdf` is passed
     through a one-line wrapper that fixes its parameters.
     """
-    _check_alternative(alternative)
+    _check_alternative("ks_1samp", alternative)
     var values = _values(xs)
     var n = len(values)
     if n < 1:
@@ -771,7 +772,7 @@ def mannwhitneyu[
     ranked there (`_rank_sum_device`) and only the first sample's rank sum
     and the tie term come back.
     """
-    _check_alternative(alternative)
+    _check_alternative("mannwhitneyu", alternative)
     if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
         comptime if gpu:
             var joined = _pooled_device(xs, ys)
@@ -964,7 +965,7 @@ def ks_2samp[
     gaps are exact integer numerators (`_ks_gaps_device`); two integers
     come back.
     """
-    _check_alternative(alternative)
+    _check_alternative("ks_2samp", alternative)
     if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
         comptime if gpu:
             var m1 = xs.size()
@@ -1157,7 +1158,7 @@ def wilcoxon[
     zero-dropping (a compaction) and the ranking all run there, and only
     the positive rank sum, the tie term and the count come back.
     """
-    _check_alternative(alternative)
+    _check_alternative("wilcoxon", alternative)
     if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
         comptime if gpu:
             if xs.size() != ys.size():

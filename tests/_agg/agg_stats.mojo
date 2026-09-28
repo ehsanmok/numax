@@ -252,6 +252,9 @@ from test_hypothesis import (
 from test_hypothesis import (
     test_wilcoxon_rejects_an_all_tied_sample as test_hypothesis__test_wilcoxon_rejects_an_all_tied_sample,
 )
+from test_hypothesis import (
+    test_a_bad_alternative_names_the_routine as test_hypothesis__test_a_bad_alternative_names_the_routine,
+)
 from test_quantiles import (
     test_quantile_matches_numpy_under_every_method as test_quantiles__test_quantile_matches_numpy_under_every_method,
 )
@@ -638,6 +641,7 @@ def main() raises:
     suite.test[test_hypothesis__test_wilcoxon_drops_zero_differences]()
     suite.test[test_hypothesis__test_wilcoxon_rejects_unpaired_lengths]()
     suite.test[test_hypothesis__test_wilcoxon_rejects_an_all_tied_sample]()
+    suite.test[test_hypothesis__test_a_bad_alternative_names_the_routine]()
     # tests/stats/test_quantiles.mojo
     suite.test[test_quantiles__test_quantile_matches_numpy_under_every_method]()
     suite.test[test_quantiles__test_quantile_at_one_and_two_samples]()

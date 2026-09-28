@@ -345,7 +345,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         if not Self.LayoutType.all_dims_known:
             raise Error(
-                "shape is not compile-time; build this tensor from a layout"
+                "Tensor: the shape is not compile-time; build this tensor from"
+                " a layout"
             )
         return rebind[Self.LayoutType](
             row_major(Coord[*Self.LayoutType._shape_types]())
@@ -1751,7 +1752,9 @@ def _same_order[
     `to_host`, which reads a strided view in its own row-major order.
     """
     if layout.size() != a.size():
-        raise Error("cannot lay out ", a.size(), " elements as ", layout.size())
+        raise Error(
+            "Tensor: cannot lay out ", a.size(), " elements as ", layout.size()
+        )
     var ctx = a.context()
     if a.on_host():
         return Tensor[T.dtype, L](layout, a.to_host(), ctx)
@@ -3869,7 +3872,7 @@ def _matching_extents[
     comptime for d in range(ALayout.rank):
         if d != axis and a.dim_at(d) != b.dim_at(d):
             raise Error(
-                "axis ",
+                "concatenate/stack: axis ",
                 axis,
                 " join: extents ",
                 a.dim_at(d),

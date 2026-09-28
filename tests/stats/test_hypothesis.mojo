@@ -9,6 +9,7 @@ from std.testing import (
     TestSuite,
     assert_almost_equal,
     assert_equal,
+    assert_raises,
     assert_true,
 )
 
@@ -358,6 +359,17 @@ def test_wilcoxon_rejects_an_all_tied_sample() raises:
     except:
         raised = True
     assert_true(raised)
+
+
+def test_a_bad_alternative_names_the_routine() raises:
+    """Every raise starts with the routine that raised it, including the
+    check the tests share."""
+    var x = _from[16](_x())
+    var y = _from[16](_y())
+    with assert_raises(contains="ttest_1samp: alternative must be"):
+        _ = ttest_1samp(x, 0.0, "both")
+    with assert_raises(contains="mannwhitneyu: alternative must be"):
+        _ = mannwhitneyu(x, y, "both")
 
 
 def main() raises:

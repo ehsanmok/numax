@@ -664,7 +664,7 @@ def matmul[
     """
     if a.dim[1]() != b.dim[0]():
         raise Error(
-            "matmul shape mismatch: a is ",
+            "matmul: shape mismatch: a is ",
             a.dim[0](),
             "x",
             a.dim[1](),
