@@ -1,6 +1,6 @@
 """The information-theoretic elementwise functions: `xlogy`, `xlog1py`,
-`entr`, `rel_entr`, `kl_div` and `logit`, with `scipy.special`'s
-conventions at the edges.
+`entr`, `rel_entr`, `kl_div`, `logit` and its inverses `expit` and
+`log_expit`, with `scipy.special`'s conventions at the edges.
 
 **This module is tier 1.** Each of these has a removable singularity or a
 convention at zero -- `0 log 0 = 0` is the whole reason `xlogy` exists --
@@ -20,7 +20,8 @@ docstrings say so. The functions are defined for the non-negative
 arguments they are used at.
 """
 
-from ..core.numeric import FloatLike, blend, ge_indicator, max_of
+from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
+from .activations import sigmoid
 
 comptime _TINY = 1e-300
 
@@ -160,3 +161,54 @@ def logit[T: FloatLike](p: T) -> T:
         `log(p / (1 - p))`.
     """
     return (p / (T.one() - p)).ln()
+
+
+def _log1p[T: FloatLike](u: T) -> T:
+    """`ln(1 + u)` to a few ulp for `u > -1`, Goldberg's form: with
+    `w = 1 + u` rounded, `ln(w) * u / (w - 1)` cancels the rounding of `w`
+    exactly, and `w == 1` (where `u` is below half an ulp of 1) returns `u`
+    itself. `-inf` at `u = -1`, NaN below it."""
+    var w = T.one() + u
+    var d = w - T.one()
+    var exact = _is_zero(d)
+    var ratio = u / blend(exact, T.one(), d)
+    return blend(exact, u, w.ln() * ratio)
+
+
+def expit[T: FloatLike](x: T) -> T:
+    """The logistic function `1 / (1 + exp(-x))`, the inverse of `logit`.
+    `scipy.special.expit(x)`; `numax.special.sigmoid` under SciPy's name,
+    and the same function -- this forwards to it.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The log-odds.
+
+    Returns:
+        `1 / (1 + exp(-x))`, in `[0, 1]`.
+    """
+    return sigmoid(x)
+
+
+def log_expit[T: FloatLike](x: T) -> T:
+    """`log(expit(x))`, without the underflow of taking the logarithm of
+    `expit`. `scipy.special.log_expit(x)`.
+
+    `min(x, 0) - log1p(exp(-|x|))`: the exponential is at most 1, so
+    nothing overflows, and for large `x` the result is `-exp(-x)` to full
+    relative precision rather than the `0` that `log(expit(x))` rounds to;
+    for very negative `x` it is `x` itself. Accurate to a few ulp
+    everywhere.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        x: The log-odds.
+
+    Returns:
+        `log(1 / (1 + exp(-x)))`, at most `0`.
+    """
+    return min_of(x, T.constant(0.0)) - _log1p((-(x.abs())).exp())

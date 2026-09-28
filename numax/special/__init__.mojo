@@ -14,11 +14,12 @@ from numax.special import gamma, j0, erf, gaussian
 | Module | Contents |
 |---|---|
 | `erf` | `erf`, `erfc`, `erfinv`, `erfcinv` |
+| `normal` | `ndtr`, `log_ndtr`, `ndtri` -- `erfc`, a three-region `log_ndtr`, and Wichura's AS 241 inverse, full precision in the tails |
 | `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc`, `gammasgn`, `factorial`, `comb`, `perm`, `poch` |
 | `expint` | `exp1`, `expi`, `expn`, `sici`, `fresnel` -- series against continued fractions, the complex ones over `Complex[T]` |
 | `zeta` | `zeta(s)`, `zeta(s, q)` -- one Euler-Maclaurin sum on both sides of the pole |
 | `hyper` | `hyp1f1`, `hyp2f1` -- the series, with Kummer's and Pfaff's transformations for the negative side |
-| `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit` -- the `0 log 0` conventions as blends |
+| `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit`, `expit`, `log_expit` -- the `0 log 0` conventions as blends |
 | `logsumexp` | `logsumexp` over an `Array` (tier 1) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid (tier 2, the one delegation here) |
 | `beta` | `beta`, `betainc`, `betaincc` |
 | `bessel` | `j0`, `j1`, `y0`, `y1` by A&S polynomials; `jv`, `yv`, `iv`, `kv`, `ive`, `kve`, `spherical_jn`, `spherical_yn` of any real order by Temme's method, fixed-depth continued fractions and held-or-taken recurrences |
@@ -76,7 +77,17 @@ from .gamma import (
 )
 from .expint import exp1, expi, expn, fresnel, sici
 from .hyper import hyp1f1, hyp2f1
-from .information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
+from .information import (
+    entr,
+    expit,
+    kl_div,
+    log_expit,
+    logit,
+    rel_entr,
+    xlog1py,
+    xlogy,
+)
+from .normal import log_ndtr, ndtr, ndtri
 from .logsumexp import logsumexp
 from .zeta import zeta
 from .lambertw import lambertw, lambertw_m1

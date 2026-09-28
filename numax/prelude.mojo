@@ -301,7 +301,17 @@ from .special.hyper import hyp1f1, hyp2f1
 from .special.zeta import zeta
 from .special.airy import airy
 from .special.bessel import iv, jv, kv, yv
-from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
+from .special.information import (
+    entr,
+    expit,
+    kl_div,
+    log_expit,
+    logit,
+    rel_entr,
+    xlog1py,
+    xlogy,
+)
+from .special.normal import log_ndtr, ndtr, ndtri
 from .special.logsumexp import logsumexp
 from .special.beta import beta, betaln
 

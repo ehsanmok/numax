@@ -111,6 +111,48 @@ def build() -> list[Case]:
         )
     )
 
+    # --- the normal distribution function and the logistic pair --------
+    cases.append(
+        Case("ndtr_mid", "ndtr, [-30, 8]", clustered(-30.0, 8.0), mp.ncdf)
+    )
+    cases.append(
+        Case(
+            "log_ndtr_wide", "log_ndtr, [-60, 12]", clustered(-60.0, 12.0),
+            lambda x: mp.log(mp.ncdf(x)),
+        )
+    )
+    cases.append(
+        Case(
+            "ndtri_low", "ndtri, [1e-300, 0.5]", logarithmic(1e-300, 0.5),
+            # A root of `log(ncdf(x)) = log(p)`: in logarithms, because
+            # `erfinv(1 - 2p)` loses a `p` below the working precision and
+            # `ncdf(x) - p` is too small for `findroot`'s absolute tolerance.
+            lambda p: mp.findroot(
+                lambda x: mp.log(mp.ncdf(x)) - mp.log(p),
+                -mp.sqrt(-2 * mp.log(p)) if p < 0.3 else mp.mpf(0),
+            ),
+        )
+    )
+    cases.append(
+        Case(
+            "ndtri_high", "ndtri, 1 - [1e-12, 0.5]",
+            [1.0 - t for t in logarithmic(1e-12, 0.5)],
+            lambda p: mp.sqrt(2) * mp.erfinv(2 * p - 1),
+        )
+    )
+    cases.append(
+        Case(
+            "log_expit", "log_expit, [-40, 40]", clustered(-40.0, 40.0),
+            lambda x: -mp.log(1 + mp.exp(-x)),
+        )
+    )
+    cases.append(
+        Case(
+            "expit", "expit, [-40, 40]", clustered(-40.0, 40.0),
+            lambda x: 1 / (1 + mp.exp(-x)),
+        )
+    )
+
     cases.append(
         Case("gamma_pos", "gamma, [0.5, 8]", clustered(0.5, 8.0), mp.gamma)
     )

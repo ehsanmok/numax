@@ -403,7 +403,17 @@ from .special.gamma import (
 from .special.expint import exp1, expi, expn, fresnel, sici
 from .special.hyper import hyp1f1, hyp2f1
 from .special.zeta import zeta
-from .special.information import entr, kl_div, logit, rel_entr, xlog1py, xlogy
+from .special.information import (
+    entr,
+    expit,
+    kl_div,
+    log_expit,
+    logit,
+    rel_entr,
+    xlog1py,
+    xlogy,
+)
+from .special.normal import log_ndtr, ndtr, ndtri
 from .special.logsumexp import logsumexp
 from .special.lambertw import lambertw, lambertw_m1
 from .special.legendre import legendre_p

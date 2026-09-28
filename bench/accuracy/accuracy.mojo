@@ -63,6 +63,11 @@ from numax import (
     erfc,
     erfinv,
     exp1,
+    expit,
+    log_expit,
+    log_ndtr,
+    ndtr,
+    ndtri,
     expi,
     factorial,
     gamma,
@@ -276,6 +281,49 @@ def main():
     for i in range(ERFINV_TAIL_N):
         s.observe(xs[i], erfinv(p(xs[i])).v[0], refs[i])
     s.report("erfinv (guess + 3 Newton), 1-[1e-12,1e-1]")
+
+    section("Normal distribution function and logistic")
+    s = Stats()
+    xs = materialize[NDTR_MID_X]()
+    refs = materialize[NDTR_MID_REF]()
+    for i in range(NDTR_MID_N):
+        s.observe(xs[i], ndtr(p(xs[i])).v[0], refs[i])
+    s.report("ndtr (erfc), [-30,8]")
+
+    s = Stats()
+    xs = materialize[LOG_NDTR_WIDE_X]()
+    refs = materialize[LOG_NDTR_WIDE_REF]()
+    for i in range(LOG_NDTR_WIDE_N):
+        s.observe(xs[i], log_ndtr(p(xs[i])).v[0], refs[i])
+    s.report("log_ndtr (log1p | log | series at -20), [-60,12]")
+
+    s = Stats()
+    xs = materialize[NDTRI_LOW_X]()
+    refs = materialize[NDTRI_LOW_REF]()
+    for i in range(NDTRI_LOW_N):
+        s.observe(xs[i], ndtri(p(xs[i])).v[0], refs[i])
+    s.report("ndtri (AS 241), [1e-300,0.5]")
+
+    s = Stats()
+    xs = materialize[NDTRI_HIGH_X]()
+    refs = materialize[NDTRI_HIGH_REF]()
+    for i in range(NDTRI_HIGH_N):
+        s.observe(xs[i], ndtri(p(xs[i])).v[0], refs[i])
+    s.report("ndtri (AS 241), 1-[1e-12,0.5]")
+
+    s = Stats()
+    xs = materialize[EXPIT_X]()
+    refs = materialize[EXPIT_REF]()
+    for i in range(EXPIT_N):
+        s.observe(xs[i], expit(p(xs[i])).v[0], refs[i])
+    s.report("expit, [-40,40]")
+
+    s = Stats()
+    xs = materialize[LOG_EXPIT_X]()
+    refs = materialize[LOG_EXPIT_REF]()
+    for i in range(LOG_EXPIT_N):
+        s.observe(xs[i], log_expit(p(xs[i])).v[0], refs[i])
+    s.report("log_expit (min - log1p(exp)), [-40,40]")
 
     # --- combinatorics ------------------------------------------------
     # `factorial`, `comb` and `poch` are `exp` of `lgamma` differences, so
