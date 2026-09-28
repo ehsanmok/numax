@@ -17,6 +17,14 @@ var p = norm.cdf(x, mu, sigma)
 var q = chi2.ppf(P(0.95), P(3.0))
 ```
 
+Each namespace also carries SciPy's `rvs`, `mean`, `var`, `std`,
+`interval` and `entropy`. The moments take `Float64` parameters and
+return `Float64`, SciPy's `inf`/NaN included where a moment does not
+exist; `rvs[dtype, *dims]` draws from a `Generator` -- through its exact
+samplers for the normal, exponential, gamma, chi-squared, beta, Poisson
+and binomial, and by inverting `ppf` for `t` and `f` -- on the device at
+`gpu=True`.
+
 Every `pdf`/`pmf`, `cdf` and `ppf` also has a `Tensor` overload beside the
 `FloatLike` one, taking the distribution's parameters as `Scalar`s:
 
@@ -133,8 +141,13 @@ from ..core._drive import (
 from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.tensor import Tensor
 from ..core.plain import Plain
-from ..special.beta import betainc, betaincc
-from ..special.gamma import gammainc, gammaincc, lgamma
+from max.gpu.host import DeviceContext
+
+from ..special.beta import betainc, betaincc, betaln
+from ..special.gamma import digamma, gammainc, gammaincc, lgamma
+from ..core.tensor import Static, _LayoutOf, _product
+from layout.tile_layout import row_major
+from .random import Generator
 from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
 
 comptime _SQRT_2 = 1.4142135623730951
@@ -554,6 +567,64 @@ def _poisson_ppf_step[
     ).v
 
 
+comptime _P64 = Plain[DType.float64, 1]
+
+
+def _p(x: Float64) -> _P64:
+    return _P64(x)
+
+
+def _v(x: _P64) -> Float64:
+    return Float64(x.v[0])
+
+
+def _log64(x: Float64) -> Float64:
+    return _v(_p(x).ln())
+
+
+def _sqrt64(x: Float64) -> Float64:
+    return _v(_p(x).sqrt())
+
+
+def _psi(x: Float64) -> Float64:
+    return _v(digamma(_p(x)))
+
+
+def _inf64() -> Float64:
+    return Float64.MAX * 2.0
+
+
+def _nan64() -> Float64:
+    return _inf64() - _inf64()
+
+
+def _gamma_entropy(shape: Float64) -> Float64:
+    """The unit-scale gamma's entropy, `k + lgamma(k) + (1 - k) psi(k)`."""
+    return shape + _v(lgamma(_p(shape))) + (1.0 - shape) * _psi(shape)
+
+
+def _poisson_entropy(rate: Float64) -> Float64:
+    """`-sum pmf ln pmf` over `k` out to `rate + 20 sqrt(rate) + 50`, past
+    which the terms are below `1e-80` of the total."""
+    var total = 0.0
+    var bound = Int(rate + 20.0 * _sqrt64(rate) + 50.0)
+    for k in range(bound + 1):
+        var logp = _v(poisson.logpmf(_p(Float64(k)), _p(rate)))
+        if logp > -700.0:
+            total -= _v(_p(logp).exp()) * logp
+    return total
+
+
+def _binom_entropy(n: Float64, p: Float64) -> Float64:
+    """`-sum pmf ln pmf` over `k` in `0 .. n`."""
+    var total = 0.0
+    for k in range(Int(n) + 1):
+        var logp = _v(binom.logpmf(_p(Float64(k)), _p(n), _p(p)))
+        if logp > -700.0:
+            total -= _v(_p(logp).exp()) * logp
+    return total
+
+
 # ---------------------------------------------------------------- normal
 
 
@@ -667,6 +738,110 @@ struct norm:
         return _over2[step=_norm_ppf_step[dtype, _], gpu=gpu, name="norm.ppf"](
             p, mu, sigma
         )
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mu: Scalar[dtype],
+        sigma: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.norm.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.normal`, Box-Muller; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            mu: The distribution's `mu`.
+            sigma: The distribution's `sigma`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.normal[dtype, *dims, gpu=gpu](mu, sigma, ctx)
+
+    @staticmethod
+    def mean(mu: Float64, sigma: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.norm.mean`.
+
+        Args:
+            mu: The distribution's `mu`.
+            sigma: The distribution's `sigma`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return mu
+
+    @staticmethod
+    def var(mu: Float64, sigma: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.norm.var`.
+
+        Args:
+            mu: The distribution's `mu`.
+            sigma: The distribution's `sigma`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return sigma * sigma
+
+    @staticmethod
+    def std(mu: Float64, sigma: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            mu: As `var` takes it.
+            sigma: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(norm.var(mu, sigma))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, mu: Float64, sigma: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.norm.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            mu: As `ppf` takes it.
+            sigma: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = norm.ppf(_p((1.0 - confidence) / 2.0), _p(mu), _p(sigma))
+        var hi = norm.ppf(_p((1.0 + confidence) / 2.0), _p(mu), _p(sigma))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(mu: Float64, sigma: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.norm.entropy`.
+
+        Args:
+            mu: The distribution's `mu`.
+            sigma: The distribution's `sigma`.
+
+        Returns:
+            The entropy.
+        """
+        return 0.5 * (_LN_2PI + 1.0) + _log64(sigma)
 
 
 def _standard_normal_quantile[T: FloatLike, num_iters: Int = 3](p: T) -> T:
@@ -801,6 +976,101 @@ struct expon:
         return _over1[
             step=_expon_ppf_step[dtype, _], gpu=gpu, name="expon.ppf"
         ](p, rate)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        rate: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.expon.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.exponential` at scale `1 / rate`; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            rate: The distribution's `rate`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.exponential[dtype, *dims, gpu=gpu](1 / rate, ctx)
+
+    @staticmethod
+    def mean(rate: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.expon.mean`.
+
+        Args:
+            rate: The distribution's `rate`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return 1.0 / rate
+
+    @staticmethod
+    def var(rate: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.expon.var`.
+
+        Args:
+            rate: The distribution's `rate`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return 1.0 / (rate * rate)
+
+    @staticmethod
+    def std(rate: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            rate: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(expon.var(rate))
+
+    @staticmethod
+    def interval(confidence: Float64, rate: Float64) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.expon.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            rate: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = expon.ppf(_p((1.0 - confidence) / 2.0), _p(rate))
+        var hi = expon.ppf(_p((1.0 + confidence) / 2.0), _p(rate))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(rate: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.expon.entropy`.
+
+        Args:
+            rate: The distribution's `rate`.
+
+        Returns:
+            The entropy.
+        """
+        return 1.0 - _log64(rate)
 
 
 struct gamma:
@@ -938,6 +1208,110 @@ struct gamma:
             step=_gamma_ppf_step[dtype, _], gpu=gpu, name="gamma.ppf"
         ](p, shape, scale)
 
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        shape: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.gamma.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.gamma`, Marsaglia-Tsang; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            shape: The distribution's `shape`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.gamma[dtype, *dims, gpu=gpu](shape, scale, ctx)
+
+    @staticmethod
+    def mean(shape: Float64, scale: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.gamma.mean`.
+
+        Args:
+            shape: The distribution's `shape`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return shape * scale
+
+    @staticmethod
+    def var(shape: Float64, scale: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.gamma.var`.
+
+        Args:
+            shape: The distribution's `shape`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return shape * scale * scale
+
+    @staticmethod
+    def std(shape: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            shape: As `var` takes it.
+            scale: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(gamma.var(shape, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, shape: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.gamma.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            shape: As `ppf` takes it.
+            scale: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = gamma.ppf(_p((1.0 - confidence) / 2.0), _p(shape), _p(scale))
+        var hi = gamma.ppf(_p((1.0 + confidence) / 2.0), _p(shape), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(shape: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.gamma.entropy`.
+
+        Args:
+            shape: The distribution's `shape`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return _gamma_entropy(shape) + _log64(scale)
+
 
 struct chi2:
     """The chi-squared distribution. `scipy.stats.chi2`."""
@@ -1014,6 +1388,101 @@ struct chi2:
         return _over1[step=_chi2_ppf_step[dtype, _], gpu=gpu, name="chi2.ppf"](
             p, df
         )
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        df: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.chi2.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.gamma` at shape `df / 2` and scale `2`; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            df: The distribution's `df`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.gamma[dtype, *dims, gpu=gpu](df / 2, 2, ctx)
+
+    @staticmethod
+    def mean(df: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.chi2.mean`.
+
+        Args:
+            df: The distribution's `df`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return df
+
+    @staticmethod
+    def var(df: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.chi2.var`.
+
+        Args:
+            df: The distribution's `df`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return 2.0 * df
+
+    @staticmethod
+    def std(df: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            df: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(chi2.var(df))
+
+    @staticmethod
+    def interval(confidence: Float64, df: Float64) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.chi2.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            df: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = chi2.ppf(_p((1.0 - confidence) / 2.0), _p(df))
+        var hi = chi2.ppf(_p((1.0 + confidence) / 2.0), _p(df))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(df: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.chi2.entropy`.
+
+        Args:
+            df: The distribution's `df`.
+
+        Returns:
+            The entropy.
+        """
+        return _gamma_entropy(df / 2.0) + _log64(2.0)
 
 
 struct beta:
@@ -1127,6 +1596,115 @@ struct beta:
             p, a, b
         )
 
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        a: Scalar[dtype],
+        b: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.beta.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.beta`, the ratio of two gammas; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            a: The distribution's `a`.
+            b: The distribution's `b`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.beta[dtype, *dims, gpu=gpu](a, b, ctx)
+
+    @staticmethod
+    def mean(a: Float64, b: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.beta.mean`.
+
+        Args:
+            a: The distribution's `a`.
+            b: The distribution's `b`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return a / (a + b)
+
+    @staticmethod
+    def var(a: Float64, b: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.beta.var`.
+
+        Args:
+            a: The distribution's `a`.
+            b: The distribution's `b`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return a * b / ((a + b) * (a + b) * (a + b + 1.0))
+
+    @staticmethod
+    def std(a: Float64, b: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            a: As `var` takes it.
+            b: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(beta.var(a, b))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, a: Float64, b: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.beta.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            a: As `ppf` takes it.
+            b: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = beta.ppf(_p((1.0 - confidence) / 2.0), _p(a), _p(b))
+        var hi = beta.ppf(_p((1.0 + confidence) / 2.0), _p(a), _p(b))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(a: Float64, b: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.beta.entropy`.
+
+        Args:
+            a: The distribution's `a`.
+            b: The distribution's `b`.
+
+        Returns:
+            The entropy.
+        """
+        return (
+            _v(betaln(_p(a), _p(b)))
+            - (a - 1.0) * _psi(a)
+            - (b - 1.0) * _psi(b)
+            + (a + b - 2.0) * _psi(a + b)
+        )
+
 
 struct t:
     """Student's t distribution. `scipy.stats.t`."""
@@ -1230,6 +1808,116 @@ struct t:
         docstring for the two paths `gpu` picks between."""
         comptime dtype = T.dtype
         return _over1[step=_t_ppf_step[dtype, _], gpu=gpu, name="t.ppf"](p, df)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        df: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.t.rvs(..., size=dims, random_state=rng)`.
+
+        By inversion: `t.ppf` of uniforms in `(0, 1)`; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            df: The distribution's `df`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = t.ppf[gpu=gpu](u, df)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(df: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.t.mean`.
+
+        Args:
+            df: The distribution's `df`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return 0.0 if df > 1.0 else _nan64()
+
+    @staticmethod
+    def var(df: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.t.var`.
+
+        Args:
+            df: The distribution's `df`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return df / (df - 2.0) if df > 2.0 else (
+            _inf64() if df > 1.0 else _nan64()
+        )
+
+    @staticmethod
+    def std(df: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            df: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(t.var(df))
+
+    @staticmethod
+    def interval(confidence: Float64, df: Float64) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.t.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            df: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = t.ppf(_p((1.0 - confidence) / 2.0), _p(df))
+        var hi = t.ppf(_p((1.0 + confidence) / 2.0), _p(df))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(df: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.t.entropy`.
+
+        Args:
+            df: The distribution's `df`.
+
+        Returns:
+            The entropy.
+        """
+        return (
+            (df + 1.0) / 2.0 * (_psi((df + 1.0) / 2.0) - _psi(df / 2.0))
+            + 0.5 * _log64(df)
+            + _v(betaln(_p(df / 2.0), _p(0.5)))
+        )
 
 
 struct f:
@@ -1344,6 +2032,128 @@ struct f:
         comptime dtype = T.dtype
         return _over2[step=_f_ppf_step[dtype, _], gpu=gpu, name="f.ppf"](
             p, df1, df2
+        )
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        df1: Scalar[dtype],
+        df2: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.f.rvs(..., size=dims, random_state=rng)`.
+
+        By inversion: `f.ppf` of uniforms in `(0, 1)`; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            df1: The distribution's `df1`.
+            df2: The distribution's `df2`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = f.ppf[gpu=gpu](u, df1, df2)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(df1: Float64, df2: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.f.mean`.
+
+        Args:
+            df1: The distribution's `df1`.
+            df2: The distribution's `df2`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return df2 / (df2 - 2.0) if df2 > 2.0 else _inf64()
+
+    @staticmethod
+    def var(df1: Float64, df2: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.f.var`.
+
+        Args:
+            df1: The distribution's `df1`.
+            df2: The distribution's `df2`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return 2.0 * df2 * df2 * (df1 + df2 - 2.0) / (
+            df1 * (df2 - 2.0) * (df2 - 2.0) * (df2 - 4.0)
+        ) if df2 > 4.0 else (_inf64() if df2 > 2.0 else _nan64())
+
+    @staticmethod
+    def std(df1: Float64, df2: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            df1: As `var` takes it.
+            df2: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(f.var(df1, df2))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, df1: Float64, df2: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.f.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            df1: As `ppf` takes it.
+            df2: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = f.ppf(_p((1.0 - confidence) / 2.0), _p(df1), _p(df2))
+        var hi = f.ppf(_p((1.0 + confidence) / 2.0), _p(df1), _p(df2))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(df1: Float64, df2: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.f.entropy`.
+
+        Args:
+            df1: The distribution's `df1`.
+            df2: The distribution's `df2`.
+
+        Returns:
+            The entropy.
+        """
+        return (
+            _log64(df2)
+            - _log64(df1)
+            + _v(betaln(_p(df1 / 2.0), _p(df2 / 2.0)))
+            + (1.0 - df1 / 2.0) * _psi(df1 / 2.0)
+            - (1.0 + df2 / 2.0) * _psi(df2 / 2.0)
+            + (df1 + df2) / 2.0 * _psi((df1 + df2) / 2.0)
         )
 
 
@@ -1461,6 +2271,101 @@ struct poisson:
         return _over1[
             step=_poisson_ppf_step[dtype, _], gpu=gpu, name="poisson.ppf"
         ](p, rate)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        rate: Float64,
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims]:
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.poisson.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.poisson`, NumPy's inversion and PTRS; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            rate: The distribution's `rate`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.poisson[dtype, *dims, gpu=gpu](rate, ctx)
+
+    @staticmethod
+    def mean(rate: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.poisson.mean`.
+
+        Args:
+            rate: The distribution's `rate`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return rate
+
+    @staticmethod
+    def var(rate: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.poisson.var`.
+
+        Args:
+            rate: The distribution's `rate`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return rate
+
+    @staticmethod
+    def std(rate: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            rate: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(poisson.var(rate))
+
+    @staticmethod
+    def interval(confidence: Float64, rate: Float64) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.poisson.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            rate: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = poisson.ppf(_p((1.0 - confidence) / 2.0), _p(rate))
+        var hi = poisson.ppf(_p((1.0 + confidence) / 2.0), _p(rate))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(rate: Float64) -> Float64:
+        """The Shannon entropy in nats. `scipy.stats.poisson.entropy`.
+
+        Args:
+            rate: The distribution's `rate`.
+
+        Returns:
+            The entropy.
+        """
+        return _poisson_entropy(rate)
 
 
 struct binom:
@@ -1584,3 +2489,107 @@ struct binom:
         return _over2[
             step=_binom_ppf_step[dtype, _], gpu=gpu, name="binom.ppf"
         ](p, n, prob)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        n: Float64,
+        p: Float64,
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims]:
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream.
+        `scipy.stats.binom.rvs(..., size=dims, random_state=rng)`.
+
+        By `Generator.binomial`, inversion and BTRS; on `ctx`'s device at `gpu=True`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.binomial[dtype, *dims, gpu=gpu](Int(n), p, ctx)
+
+    @staticmethod
+    def mean(n: Float64, p: Float64) -> Float64:
+        """The distribution's mean. `scipy.stats.binom.mean`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The mean; `inf` or NaN where SciPy gives them.
+        """
+        return n * p
+
+    @staticmethod
+    def var(n: Float64, p: Float64) -> Float64:
+        """The distribution's variance. `scipy.stats.binom.var`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The variance; `inf` or NaN where SciPy gives them.
+        """
+        return n * p * (1.0 - p)
+
+    @staticmethod
+    def std(n: Float64, p: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            n: As `var` takes it.
+            p: As `var` takes it.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(binom.var(n, p))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, n: Float64, p: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability,
+        `(ppf((1 - c) / 2), ppf((1 + c) / 2))`. `scipy.stats.binom.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            n: As `ppf` takes it.
+            p: As `ppf` takes it.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = binom.ppf(_p((1.0 - confidence) / 2.0), _p(n), _p(p))
+        var hi = binom.ppf(_p((1.0 + confidence) / 2.0), _p(n), _p(p))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(n: Float64, p: Float64) -> Float64:
+        """The Shannon entropy in nats. `scipy.stats.binom.entropy`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The entropy.
+        """
+        return _binom_entropy(n, p)
