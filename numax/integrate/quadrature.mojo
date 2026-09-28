@@ -27,10 +27,15 @@ Rank 1 only. A higher-rank `axis=` form is the `outer`/`length`/`inner`
 split `numax.stats` uses and is a follow-up rather than a decision.
 """
 
-from layout.tile_layout import TensorLayout
+from algorithm.rowwise_types import RowCoord
+from layout import Coord, coord_to_index_list
+from layout.tile_layout import TensorLayout, row_major
+from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Static, Tensor
+from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
+from ..core._drive import _check_device, _notice, _require_contiguous
+from ..core.rowwise import reduce_all
 
 
 def _spacings[
@@ -49,12 +54,17 @@ def _spacings[
 
 
 def trapezoid[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](y: T, dx: Scalar[T.dtype] = 1) raises -> Scalar[T.dtype] where (
     T.dtype.is_floating_point() and T.LayoutType.rank == 1
 ):
     """The trapezoid rule over samples `y` spaced `dx` apart.
     `scipy.integrate.trapezoid(y, dx=dx)`."""
+    if y.size() >= 3 and _check_device[T, gpu](y):
+        comptime if gpu:
+            return _sampled_device["trapezoid", False](y, y, dx)
+    elif y.size() >= 3:
+        _notice[gpu]("trapezoid")
     var ys = y.to_host()
     var n = len(ys)
     if n < 2:
@@ -66,12 +76,17 @@ def trapezoid[
 
 
 def trapezoid[
-    T: TensorLike, XLayout: TensorLayout
+    T: TensorLike, XLayout: TensorLayout, gpu: Bool = False
 ](y: T, x: Tensor[T.dtype, XLayout]) raises -> Scalar[T.dtype] where (
     T.dtype.is_floating_point() and T.LayoutType.rank == 1 and XLayout.rank == 1
 ):
     """The trapezoid rule over samples `y` at the points `x`, which need
     not be evenly spaced. `scipy.integrate.trapezoid(y, x)`."""
+    if y.size() >= 3 and _check_device[T, gpu](y):
+        comptime if gpu:
+            return _sampled_device["trapezoid", True](y, x, 0)
+    elif y.size() >= 3:
+        _notice[gpu]("trapezoid")
     var ys = y.to_host()
     var n = len(ys)
     if n < 2:
@@ -81,6 +96,100 @@ def trapezoid[
     for i in range(n - 1):
         total += h[i] * (ys[i] + ys[i + 1]) / 2
     return total
+
+
+def _sampled_device[
+    kind: StaticString, has_x: Bool, T: TensorLike, X: TensorLike
+](y: T, x: X, dx: Scalar[T.dtype]) raises -> Scalar[T.dtype] where (
+    X.dtype == T.dtype
+):
+    """`trapezoid` or `simpson` over samples on the device, `n >= 3`.
+
+    One launch writes each term -- an interval's trapezoid, or a pair of
+    intervals' three-point Simpson rule plus, for an even sample count,
+    Cartwright's correction on the last interval, exactly the host rule --
+    and MAX's `ReduceSum` adds them, so one scalar crosses back. The widths
+    are `x[i + 1] - x[i]` when `has_x`, else `dx`.
+    """
+    comptime dtype = T.dtype
+    var ctx = y.context()
+    var n = y.size()
+    _require_contiguous(y)
+    comptime if has_x:
+        _require_contiguous(x)
+        if x.size() != n:
+            raise Error(
+                "integrate: x has ", x.size(), " points for ", n, " samples"
+            )
+    var pairs = (n - 1 if n % 2 == 1 else n - 2) // 2
+    var count = n - 1
+    comptime if kind == "simpson":
+        count = pairs + (1 if n % 2 == 0 else 0)
+    var terms = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](count))
+    )
+    var yp = y.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var xp = (
+        x.tile()
+        .ptr.unsafe_bitcast[Scalar[dtype]]()
+        .unsafe_origin_cast[ImmutAnyOrigin]()
+    )
+    var tp = terms.tile()
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var yp, var xp, var tp, var dx, var n, var pairs}:
+        var q = coord_to_index_list(coord)[0]
+
+        @always_inline
+        def h(i: Int) {var xp, var dx} -> Scalar[dtype]:
+            comptime if has_x:
+                return xp[unsafe_offset=i + 1] - xp[unsafe_offset=i]
+            else:
+                return dx
+
+        var term: Scalar[dtype]
+        comptime if kind == "trapezoid":
+            term = h(q) * (yp[unsafe_offset=q] + yp[unsafe_offset=q + 1]) / 2
+        else:
+            if q < pairs:
+                var i = 2 * q
+                var h0 = h(i)
+                var h1 = h(i + 1)
+                var hsum = h0 + h1
+                var ratio = h0 / h1
+                term = (hsum / 6) * (
+                    yp[unsafe_offset=i] * (2 - 1 / ratio)
+                    + yp[unsafe_offset=i + 1] * (hsum * hsum / (h0 * h1))
+                    + yp[unsafe_offset=i + 2] * (2 - ratio)
+                )
+            else:
+                var h0 = h(n - 3)
+                var h1 = h(n - 2)
+                var alpha = (2 * h1 * h1 + 3 * h0 * h1) / (6 * (h0 + h1))
+                var beta = (h1 * h1 + 3 * h0 * h1) / (6 * h0)
+                var eta = h1 * h1 * h1 / (6 * h0 * (h0 + h1))
+                term = (
+                    alpha * yp[unsafe_offset=n - 1]
+                    + beta * yp[unsafe_offset=n - 2]
+                    - eta * yp[unsafe_offset=n - 3]
+                )
+        tp.store[1](coord, term)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(count), ctx)
+    var total = Static[dtype, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+        return tile
+
+    reduce_all[monoid="sum", target="gpu"](
+        terms.tile(), total.tile(), identity, count, Optional(ctx)
+    )
+    return total.to_host()[0]
 
 
 def _simpson_general[
@@ -123,24 +232,34 @@ def _simpson_general[
 
 
 def simpson[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](y: T, dx: Scalar[T.dtype] = 1) raises -> Scalar[T.dtype] where (
     T.dtype.is_floating_point() and T.LayoutType.rank == 1
 ):
     """Composite Simpson's rule over samples `y` spaced `dx` apart.
     `scipy.integrate.simpson(y, dx=dx)`, even sample counts included."""
+    if y.size() >= 3 and _check_device[T, gpu](y):
+        comptime if gpu:
+            return _sampled_device["simpson", False](y, y, dx)
+    elif y.size() >= 3:
+        _notice[gpu]("simpson")
     var ys = y.to_host()
     var h = List[Scalar[T.dtype]](length=max(len(ys) - 1, 0), fill=dx)
     return _simpson_general(ys, h)
 
 
 def simpson[
-    T: TensorLike, XLayout: TensorLayout
+    T: TensorLike, XLayout: TensorLayout, gpu: Bool = False
 ](y: T, x: Tensor[T.dtype, XLayout]) raises -> Scalar[T.dtype] where (
     T.dtype.is_floating_point() and T.LayoutType.rank == 1 and XLayout.rank == 1
 ):
     """Composite Simpson's rule over samples `y` at the points `x`.
     `scipy.integrate.simpson(y, x)`."""
+    if y.size() >= 3 and _check_device[T, gpu](y):
+        comptime if gpu:
+            return _sampled_device["simpson", True](y, x, 0)
+    elif y.size() >= 3:
+        _notice[gpu]("simpson")
     var ys = y.to_host()
     if len(ys) < 2:
         return Scalar[T.dtype](0)

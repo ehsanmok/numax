@@ -308,14 +308,21 @@ def _vector_norm[
         )
         ctx.synchronize()
 
-        var host = magnitudes.to_host()
-        var best = host[0]
-        for i in range(1, n):
-            comptime if ord == NORM_INF:
-                best = max(best, host[i])
-            else:
-                best = min(best, host[i])
-        return best
+        # The fold is MAX's `ReduceMax`/`ReduceMin`, where the magnitudes
+        # are, so one scalar comes back rather than the vector.
+        comptime monoid = "max" if ord == NORM_INF else "min"
+        var best = Static[T.dtype, 1](ctx)
+
+        @always_inline
+        def identity[
+            w: Int
+        ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
+            return tile
+
+        reduce_all[monoid=monoid, target=_target[gpu]()](
+            magnitudes.tile(), best.tile(), identity, n, Optional(ctx)
+        )
+        return best.to_host()[0]
 
 
 def cond[

@@ -1103,28 +1103,28 @@ def stddev[
 
 
 def ptp[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> SIMD[T.dtype, 1] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The range of `xs`, `max - min` -- "peak to peak". `numpy.ptp`. The
     two whole-tensor reductions, so host-side as they are."""
-    return max(xs) - min(xs)
+    return max[gpu=gpu](xs) - min[gpu=gpu](xs)
 
 
 def average[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> SIMD[T.dtype, 1] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The plain mean: `numpy.average(a)` without weights is `numpy.mean`.
     Here so that the weighted overload below has its unweighted twin under
     the same name."""
-    return mean(xs)
+    return mean[gpu=gpu](xs)
 
 
 def average[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, weights: T) raises -> SIMD[T.dtype, 1] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
@@ -1137,14 +1137,14 @@ def average[
     `Optional[Tensor]`, since a `Tensor` is not implicitly copyable into
     one.
     """
-    var total = sum(weights)
+    var total = sum[gpu=gpu](weights)
     if total == 0:
         raise Error("average: the weights sum to zero")
-    return sum(_multiply(xs, weights)) / total
+    return sum[gpu=gpu](_multiply[gpu=gpu](xs, weights)) / total
 
 
 def moment[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](
     xs: T,
     order: Int,
@@ -1171,10 +1171,10 @@ def moment[
     else:
         if order == 1:
             return SIMD[dtype, 1](0)
-        c = mean(xs)
-    var deviation = _subtract(xs, c)
-    var powered = _power(deviation, SIMD[dtype, 1](order))
-    return mean(powered)
+        c = mean[gpu=gpu](xs)
+    var deviation = _subtract[gpu=gpu](xs, c)
+    var powered = _power[gpu=gpu](deviation, SIMD[dtype, 1](order))
+    return mean[gpu=gpu](powered)
 
 
 def cumsum[

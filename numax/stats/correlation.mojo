@@ -93,7 +93,12 @@ from ..core._drive import (
 )
 from ..core.plain import Plain
 from .distributions import norm, t
-from .statistics import mean as _mean_axis
+from .statistics import mean as _mean_axis, sum as _tsum
+from ..core.ops import (
+    divide as _tdivide,
+    multiply as _tmultiply,
+    subtract as _tsubtract,
+)
 
 comptime _P = Plain[DType.float64]
 
@@ -823,7 +828,7 @@ def linregress[
 
 
 def zscore[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, ddof: Int = 0) raises -> Tensor[T.dtype, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
@@ -833,6 +838,22 @@ def zscore[
     back. A constant tensor raises rather than dividing by zero."""
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var count = xs.size()
+            if count - ddof <= 0:
+                raise Error("zscore: not enough elements for ddof ", ddof)
+            var mid = Float64(_tsum[gpu=True](xs)) / Float64(count)
+            var d = _tsubtract[gpu=True](xs, Scalar[dtype](mid))
+            var spread = _sqrt(
+                Float64(_tsum[gpu=True](_tmultiply[gpu=True](d, d)))
+                / Float64(count - ddof)
+            )
+            if spread == 0:
+                raise Error("zscore: the tensor is constant")
+            return _tdivide[gpu=True](d, Scalar[dtype](spread))
+    else:
+        _notice[gpu]("zscore")
     var values = _as_float64(xs.to_host())
     var n = len(values)
     if n - ddof <= 0:

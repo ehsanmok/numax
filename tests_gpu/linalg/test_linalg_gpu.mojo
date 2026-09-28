@@ -8,7 +8,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Static
-from numax.linalg import cholesky, matmul, solve
+from numax.linalg import NORM_INF, NORM_NEG_INF, cholesky, matmul, norm, solve
 
 comptime f32 = DType.float32
 comptime n = 96
@@ -72,6 +72,19 @@ def test_solve_on_the_device_matches_the_host() raises:
         solve[gpu=True](_spd(gpu), _rhs(gpu)).to_host(),
         solve(_spd(cpu), _rhs(cpu)).to_host(),
         atol=1e-5,
+    )
+
+
+def test_the_extremal_norms_on_the_device_match_the_host() raises:
+    """The vector infinity norms fold on the device now, not on the host."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    assert_equal(
+        norm[ord=NORM_INF, gpu=True](_rhs(gpu)), norm[ord=NORM_INF](_rhs(cpu))
+    )
+    assert_equal(
+        norm[ord=NORM_NEG_INF, gpu=True](_rhs(gpu)),
+        norm[ord=NORM_NEG_INF](_rhs(cpu)),
     )
 
 
