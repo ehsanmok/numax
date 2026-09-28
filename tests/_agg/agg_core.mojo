@@ -684,6 +684,9 @@ from test_indexing import (
     test_row_slices_are_views as test_indexing__test_row_slices_are_views,
 )
 from test_indexing import (
+    test_slicing_agrees_with_the_slice_function as test_indexing__test_slicing_agrees_with_the_slice_function,
+)
+from test_indexing import (
     test_writes_through_a_view_land_in_the_tensor as test_indexing__test_writes_through_a_view_land_in_the_tensor,
 )
 from test_indexing import (
@@ -1885,6 +1888,7 @@ def main() raises:
     ]()
     # tests/core/test_indexing.mojo
     suite.test[test_indexing__test_row_slices_are_views]()
+    suite.test[test_indexing__test_slicing_agrees_with_the_slice_function]()
     suite.test[test_indexing__test_writes_through_a_view_land_in_the_tensor]()
     suite.test[test_indexing__test_boxes_are_strided_views]()
     suite.test[test_indexing__test_block_is_an_element_offset_view]()

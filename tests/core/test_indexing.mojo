@@ -14,7 +14,7 @@ from max.gpu.host import DeviceContext
 
 from numax.core.ops import add
 from numax.linalg import cholesky
-from numax.core.tensor import Static, copy
+from numax.core.tensor import Static, copy, slice
 
 comptime f32 = DType.float32
 
@@ -41,6 +41,22 @@ def test_row_slices_are_views() raises:
     assert_equal(whole.dim_at(0), 4)
     var summed = add(v, v).to_host()
     assert_equal(summed[0], 10.0)
+
+
+def test_slicing_agrees_with_the_slice_function() raises:
+    """`a[1:3]` and `a[1:3, 2:4]` are views of what the copying `slice`
+    returns."""
+    var a = _grid()
+    var rows = a[1:3]
+    var got = rows.to_host()
+    var want = slice(a, [1, 0], [3, 5]).to_host()
+    for i in range(len(want)):
+        assert_equal(got[i], want[i])
+    var box = a[1:3, 2:4]
+    var bg = box.to_host()
+    var bw = slice(a, [1, 2], [3, 4]).to_host()
+    for i in range(len(bw)):
+        assert_equal(bg[i], bw[i])
 
 
 def test_writes_through_a_view_land_in_the_tensor() raises:
