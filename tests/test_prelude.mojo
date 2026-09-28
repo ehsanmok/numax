@@ -79,6 +79,20 @@ def test_the_norm_selectors_are_reachable() raises:
     assert_almost_equal(norm[ord=NORM_INF](eye[3]()), Scalar[dtype](1.0))
 
 
+def test_the_convolution_modes_sit_beside_the_full_factory() raises:
+    """`MODE_SAME` and the `full` factory both reach a star-importer: the
+    modes used to be `full`/`same`/`valid` and could not share the flat
+    surface with the factory. `numpy.convolve([1, 2, 3], [1, 1], "same")`
+    is `[1, 3, 5]`."""
+    var a = full[dtype, 3](1.0)
+    a[1] = 2.0
+    a[2] = 3.0
+    var got = convolve[mode=MODE_SAME](a, full[dtype, 2](1.0)).to_host()
+    assert_almost_equal(got[0], Scalar[dtype](1.0))
+    assert_almost_equal(got[1], Scalar[dtype](3.0))
+    assert_almost_equal(got[2], Scalar[dtype](5.0))
+
+
 def test_stats_and_io_are_reachable() raises:
     var xs = arange[4]()
     assert_almost_equal(mean(xs), Scalar[dtype](1.5))

@@ -15,7 +15,7 @@ split `numax.linalg.array`, `numax.fft.array`, `numax.optimize.array`,
 
 | Module | Holds |
 | --- | --- |
-| `signal` | `convolve` (`full`/`same`), `correlate`, `hann`/`hamming`/`blackman`/`apply_window`, `lfilter`, the lowpass `firwin` |
+| `signal` | `convolve` (`MODE_FULL`/`MODE_SAME`), `correlate`, `hann`/`hamming`/`blackman`/`apply_window`, `lfilter`, the lowpass `firwin` |
 
 ## Why this tier exists at all
 
@@ -54,9 +54,9 @@ from .signal import (
     convolve,
     correlate,
     firwin,
-    full,
+    MODE_FULL,
     hamming,
     hann,
     lfilter,
-    same,
+    MODE_SAME,
 )

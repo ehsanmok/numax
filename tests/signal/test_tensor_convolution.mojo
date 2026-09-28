@@ -20,13 +20,13 @@ from numax.signal import (
     convolve,
     correlate,
     fftconvolve,
-    full,
+    MODE_FULL,
     get_window,
     hamming,
     hann,
     kaiser,
-    same,
-    valid,
+    MODE_SAME,
+    MODE_VALID,
 )
 
 comptime dtype = DType.float64
@@ -66,9 +66,11 @@ def test_convolve_matches_numpy_in_every_mode() raises:
         convolve(a, b), [0.5, 0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5, -4.0]
     )
     _assert_close(
-        convolve[mode=same](a, b), [0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5]
+        convolve[mode=MODE_SAME](a, b), [0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5]
     )
-    _assert_close(convolve[mode=valid](a, b), [0.25, 3.0, 3.5, -4.875, 4.75])
+    _assert_close(
+        convolve[mode=MODE_VALID](a, b), [0.25, 3.0, 3.5, -4.875, 4.75]
+    )
 
 
 def test_convolve_is_symmetric_in_its_arguments() raises:
@@ -81,7 +83,7 @@ def test_convolve_is_symmetric_in_its_arguments() raises:
     for i in range(9):
         assert_almost_equal(Float64(ab[i]), Float64(ba[i]), atol=1e-15)
     _assert_close(
-        convolve[mode=same](b, a), [0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5]
+        convolve[mode=MODE_SAME](b, a), [0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5]
     )
 
 
@@ -94,9 +96,12 @@ def test_correlate_matches_numpy_in_every_mode() raises:
         correlate(a, b), [2.0, 3.0, -0.5, -1.5, 7.25, -3.0, -2.75, 2.125, -1.0]
     )
     _assert_close(
-        correlate[mode=same](a, b), [3.0, -0.5, -1.5, 7.25, -3.0, -2.75, 2.125]
+        correlate[mode=MODE_SAME](a, b),
+        [3.0, -0.5, -1.5, 7.25, -3.0, -2.75, 2.125],
     )
-    _assert_close(correlate[mode=valid](a, b), [-0.5, -1.5, 7.25, -3.0, -2.75])
+    _assert_close(
+        correlate[mode=MODE_VALID](a, b), [-0.5, -1.5, 7.25, -3.0, -2.75]
+    )
 
 
 def test_correlate_is_convolve_with_the_taps_reversed() raises:
@@ -120,9 +125,12 @@ def test_fftconvolve_agrees_with_convolve_in_every_mode() raises:
         fftconvolve(a, b), [0.5, 0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5, -4.0]
     )
     _assert_close(
-        fftconvolve[mode=same](a, b), [0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5]
+        fftconvolve[mode=MODE_SAME](a, b),
+        [0.0, 0.25, 3.0, 3.5, -4.875, 4.75, 2.5],
     )
-    _assert_close(fftconvolve[mode=valid](a, b), [0.25, 3.0, 3.5, -4.875, 4.75])
+    _assert_close(
+        fftconvolve[mode=MODE_VALID](a, b), [0.25, 3.0, 3.5, -4.875, 4.75]
+    )
 
 
 def test_fftconvolve_of_long_inputs_agrees_with_the_direct_sum() raises:

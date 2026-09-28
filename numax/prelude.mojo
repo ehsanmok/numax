@@ -460,7 +460,14 @@ from .fft.trig import dct, dst, idct, idst
 
 # Signal processing. `hilbert` the transform is not here -- see the
 # docstring.
-from .signal.convolution import convolve, correlate, fftconvolve
+from .signal.convolution import (
+    MODE_FULL,
+    MODE_SAME,
+    MODE_VALID,
+    convolve,
+    correlate,
+    fftconvolve,
+)
 from .signal.windows import (
     bartlett,
     blackman,

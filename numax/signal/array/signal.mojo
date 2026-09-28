@@ -41,23 +41,23 @@ from std.math import cos as _cos_f64, pi as _PI
 from ...core.numeric import FloatLike, guard_nonzero
 
 
-comptime full = 0
+comptime MODE_FULL = 0
 """`mode` for `convolve`: the full `m + k - 1` convolution. The default."""
-comptime same = 1
+comptime MODE_SAME = 1
 """`mode` for `convolve`: the central `m` points, output as long as `a`."""
 
 
 def _convolve_len[m: Int, k: Int, mode: Int]() -> Int:
     """`convolve`'s output length for `mode`, evaluated at compile time so
     it can appear in the return type."""
-    return m + k - 1 if mode == full else m
+    return m + k - 1 if mode == MODE_FULL else m
 
 
 def convolve[
-    T: FloatLike, m: Int, k: Int, mode: Int = full
+    T: FloatLike, m: Int, k: Int, mode: Int = MODE_FULL
 ](a: Array[T, m], b: Array[T, k]) -> Array[
     T, _convolve_len[m, k, mode]()
-] where (mode == full or mode == same):
+] where (mode == MODE_FULL or mode == MODE_SAME):
     """Linear convolution of `a` and `b`. `numpy.convolve(a, b, mode)`.
 
     `out[i] = sum_j a[j] * b[i - j]`, over the `j` where both indices are
@@ -65,8 +65,8 @@ def convolve[
 
     | `mode` | Output |
     |---|---|
-    | `full` (default) | Length `m + k - 1`, every overlap |
-    | `same` | The central `m` points, so the output is as long as `a` |
+    | `MODE_FULL` (default) | Length `m + k - 1`, every overlap |
+    | `MODE_SAME` | The central `m` points, so the output is as long as `a` |
 
     Both lengths are compile-time functions of the input lengths, which is
     why `mode` is a parameter rather than an argument -- the return type
@@ -85,7 +85,7 @@ def convolve[
     """
     comptime n = m + k - 1
     comptime out_n = _convolve_len[m, k, mode]()
-    comptime offset = 0 if mode == full else (k - 1) // 2
+    comptime offset = 0 if mode == MODE_FULL else (k - 1) // 2
     var out = Array[T, out_n](fill=T.constant(0.0))
     for o in range(out_n):
         var i = o + offset

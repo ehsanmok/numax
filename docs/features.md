@@ -501,7 +501,7 @@ routed.
 
 | Surface — over `Tensor`, from `numax.signal` | Where |
 |---|---|
-| `convolve`, `correlate` — `numpy.convolve`/`numpy.correlate` in `full` (default), `same` and `valid`, one `elementwise` launch of dot products over the overlap | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
+| `convolve`, `correlate` — `numpy.convolve`/`numpy.correlate` in `MODE_FULL` (default), `MODE_SAME` and `MODE_VALID`, one `elementwise` launch of dot products over the overlap | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `fftconvolve` — the same answer through `numax.fft`: pad to `next_fast_len(m + k - 1)`, multiply the `rfft`s, `irfft`, slice; the route for a long kernel | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `boxcar`, `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `get_window` — `scipy.signal.windows` as `Tensor` factories, symmetric (`sym=True`, the factories' default) or periodic (`get_window`'s default `fftbins=True`) | [`signal/windows.mojo`](../numax/signal/windows.mojo) |
 | `lfilter`, `lfilter_zi`, `filtfilt`, `sosfilt` — the recursive filters, SciPy's transposed direct form II, odd-padded forward-backward pass, second-order cascade. **Host-side by nature**: a recurrence has no lanes to launch. It reads and writes through the tensor's own host mapping rather than a `List` copy, computes at `dtype` (where SciPy computes), and runs its passes in place — `filtfilt` filters one extension buffer forwards then backwards over itself, `sosfilt` chains sections through one | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
@@ -518,7 +518,7 @@ one.
 
 | Surface — over `Array[T, n]`, from `numax.signal.array` | Where |
 |---|---|
-| `convolve` (`mode=full`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
+| `convolve` (`mode=MODE_FULL`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
 | `hann`, `hamming`, `blackman`, `apply_window` — compile-time tables, so they work inside a GPU kernel body | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
 | `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
 

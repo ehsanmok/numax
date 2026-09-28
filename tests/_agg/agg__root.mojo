@@ -28,6 +28,9 @@ from test_prelude import (
     test_the_norm_selectors_are_reachable as test_prelude__test_the_norm_selectors_are_reachable,
 )
 from test_prelude import (
+    test_the_convolution_modes_sit_beside_the_full_factory as test_prelude__test_the_convolution_modes_sit_beside_the_full_factory,
+)
+from test_prelude import (
     test_stats_and_io_are_reachable as test_prelude__test_stats_and_io_are_reachable,
 )
 from test_prelude import (
@@ -44,6 +47,9 @@ def main() raises:
     suite.test[test_prelude__test_the_conformers_are_reachable]()
     suite.test[test_prelude__test_linalg_and_the_bridge_are_reachable]()
     suite.test[test_prelude__test_the_norm_selectors_are_reachable]()
+    suite.test[
+        test_prelude__test_the_convolution_modes_sit_beside_the_full_factory
+    ]()
     suite.test[test_prelude__test_stats_and_io_are_reachable]()
     suite.test[test_prelude__test_the_rank_and_broadcast_surface_is_reachable]()
     suite^.run()

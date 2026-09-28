@@ -48,7 +48,7 @@ from numax.signal import (
     lfilter,
     medfilt,
     savgol_filter,
-    valid,
+    MODE_VALID,
     welch,
 )
 
@@ -103,14 +103,14 @@ def main() raises:
     # Route one: the direct convolution, one launch of dot products.
     var signal_a = two_tones(ctx)
     var kernel_a = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
-    var direct = convolve[mode=valid](signal_a, kernel_a)
+    var direct = convolve[mode=MODE_VALID](signal_a, kernel_a)
 
     # Route two: the same answer through three transforms. Which one is
     # faster is a measurement, not a rule -- `bench_signal.mojo` runs the
     # sweep and `docs/performance.md` reports where they cross.
     var signal_b = two_tones(ctx)
     var kernel_b = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
-    var transformed = fftconvolve[mode=valid](signal_b, kernel_b)
+    var transformed = fftconvolve[mode=MODE_VALID](signal_b, kernel_b)
 
     var d = direct.to_host()
     var t = transformed.to_host()

@@ -28,7 +28,7 @@ the operator MAX has and why this module is not it. **Extend.**
 
 ## Modes
 
-`full` (the default), `same` and `valid`, as `numpy.convolve` defines them
+`MODE_FULL` (the default), `MODE_SAME` and `MODE_VALID`, as `numpy.convolve` defines them
 and with its lengths: `m + k - 1`, `max(m, k)` centred, and `max(m, k) -
 min(m, k) + 1`. `mode` is a compile-time parameter because the length is
 part of the return type. `correlate` is `convolve` with the second
@@ -59,11 +59,11 @@ from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import Static
 from ..fft.fft import Spectrum, _rfft, irfft, next_fast_len
 
-comptime full = 0
+comptime MODE_FULL = 0
 """`mode`: every overlap, `m + k - 1` outputs. The default."""
-comptime same = 1
+comptime MODE_SAME = 1
 """`mode`: the central `max(m, k)` outputs, as long as the longer input."""
-comptime valid = 2
+comptime MODE_VALID = 2
 """`mode`: only the outputs where the two inputs overlap completely,
 `max(m, k) - min(m, k) + 1` of them."""
 
@@ -71,9 +71,9 @@ comptime valid = 2
 def _out_len(m: Int, k: Int, mode: Int) -> Int:
     """The output length of a `mode` convolution of lengths `m` and `k`,
     evaluated at compile time so it can appear in a return type."""
-    if mode == full:
+    if mode == MODE_FULL:
         return m + k - 1
-    if mode == same:
+    if mode == MODE_SAME:
         return max(m, k)
     return max(m, k) - min(m, k) + 1
 
@@ -82,9 +82,9 @@ def _offset(m: Int, k: Int, mode: Int) -> Int:
     """The index into the `full` result at which `mode`'s output starts:
     NumPy centres `same` on the longer input and `valid` where the shorter
     one first fits entirely."""
-    if mode == full:
+    if mode == MODE_FULL:
         return 0
-    if mode == same:
+    if mode == MODE_SAME:
         return (min(m, k) - 1) // 2
     return min(m, k) - 1
 
@@ -145,7 +145,7 @@ def _direct[
 def convolve[
     A: TensorLike,
     B: TensorLike,
-    mode: Int = full,
+    mode: Int = MODE_FULL,
     gpu: Bool = False,
 ](a: A, b: B) raises -> Static[
     A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
@@ -154,7 +154,7 @@ def convolve[
         A.dtype.is_floating_point()
         and dim[A, 0] > 0
         and dim[B, 0] > 0
-        and (mode == full or mode == same or mode == valid)
+        and (mode == MODE_FULL or mode == MODE_SAME or mode == MODE_VALID)
     )
     and A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
@@ -165,7 +165,7 @@ def convolve[
     """The linear convolution of `a` and `b`. `numpy.convolve(a, b, mode)`.
 
     `out[i] = sum_j a[j] * b[i - j]` over the `j` where both indices are
-    in range, in `mode` `full` (default), `same` or `valid`; the module
+    in range, in `mode` `MODE_FULL` (default), `MODE_SAME` or `MODE_VALID`; the module
     docstring has the lengths and offsets. Linear, not circular: nothing
     wraps, which is what `numax.fft.array.circular_convolve` does instead.
 
@@ -181,7 +181,7 @@ def convolve[
 def correlate[
     A: TensorLike,
     B: TensorLike,
-    mode: Int = full,
+    mode: Int = MODE_FULL,
     gpu: Bool = False,
 ](a: A, b: B) raises -> Static[
     A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
@@ -190,7 +190,7 @@ def correlate[
         A.dtype.is_floating_point()
         and dim[A, 0] > 0
         and dim[B, 0] > 0
-        and (mode == full or mode == same or mode == valid)
+        and (mode == MODE_FULL or mode == MODE_SAME or mode == MODE_VALID)
     )
     and A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
@@ -214,7 +214,7 @@ def correlate[
 def fftconvolve[
     A: TensorLike,
     B: TensorLike,
-    mode: Int = full,
+    mode: Int = MODE_FULL,
     gpu: Bool = False,
 ](a: A, b: B) raises -> Static[
     A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
@@ -223,7 +223,7 @@ def fftconvolve[
         A.dtype.is_floating_point()
         and dim[A, 0] > 0
         and dim[B, 0] > 0
-        and (mode == full or mode == same or mode == valid)
+        and (mode == MODE_FULL or mode == MODE_SAME or mode == MODE_VALID)
     )
     and A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
@@ -328,7 +328,7 @@ def fftconvolve[
 def oaconvolve[
     A: TensorLike,
     B: TensorLike,
-    mode: Int = full,
+    mode: Int = MODE_FULL,
     gpu: Bool = False,
 ](a: A, b: B) raises -> Static[
     A.dtype, _out_len(dim[A, 0], dim[B, 0], mode)
@@ -337,7 +337,7 @@ def oaconvolve[
         A.dtype.is_floating_point()
         and dim[A, 0] > 0
         and dim[B, 0] > 0
-        and (mode == full or mode == same or mode == valid)
+        and (mode == MODE_FULL or mode == MODE_SAME or mode == MODE_VALID)
     )
     and A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known

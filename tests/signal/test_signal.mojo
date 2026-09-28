@@ -19,7 +19,7 @@ from numax.signal.array import (
     apply_window,
     blackman,
     convolve,
-    same,
+    MODE_SAME,
     correlate,
     hamming,
     hann,
@@ -106,7 +106,7 @@ def test_convolve_mode_same_takes_the_central_window() raises:
     # numpy.convolve([1, 2, 3], [4, 5], "same") == [4, 13, 22]
     var a = filled[3]([1.0, 2.0, 3.0])
     var b = filled[2]([4.0, 5.0])
-    var out = convolve[P, 3, 2, same](a, b)
+    var out = convolve[P, 3, 2, MODE_SAME](a, b)
     var expected = [4.0, 13.0, 22.0]
     for i in range(3):
         assert_almost_equal(s(out[i]), expected[i])
@@ -116,7 +116,7 @@ def test_convolve_mode_same_centres_an_odd_kernel() raises:
     # numpy.convolve([1, 2, 3, 4], [1, 1, 1], "same") == [3, 6, 9, 7]
     var a = filled[4]([1.0, 2.0, 3.0, 4.0])
     var kernel = filled[3]([1.0, 1.0, 1.0])
-    var out = convolve[P, 4, 3, same](a, kernel)
+    var out = convolve[P, 4, 3, MODE_SAME](a, kernel)
     var expected = [3.0, 6.0, 9.0, 7.0]
     for i in range(4):
         assert_almost_equal(s(out[i]), expected[i])
