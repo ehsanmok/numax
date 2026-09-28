@@ -879,10 +879,10 @@ def nonzero[
     """The flat indices of the nonzero elements, ascending.
     `numpy.flatnonzero`.
 
-    A `List[Int]` for the same reason `argsort` returns one: these are
-    indices, not numbers to compute with. Right-sized, since a `List` can
-    be -- which is exactly the freedom `unique`'s `Tensor` return does not
-    have.
+    An `int64` tensor, right-sized to the count, on `a`'s device -- the
+    shape `argsort` returns and `take` consumes. At `gpu=True` the mask,
+    the offsets scan and the scatter all run on the device and only the
+    count is read back (`_pack_device`).
     """
     var n = a.size()
     if _check_device[T, gpu](a):
