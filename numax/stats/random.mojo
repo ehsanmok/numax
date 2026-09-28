@@ -442,6 +442,48 @@ def _binomial_step[
     return _binomial_count[W](seed, index * _REJECT_WORDS, n, p).cast[dtype]()
 
 
+def _nbinom_step[
+    dtype: DType, W: DType
+](seed: UInt64, index: Int, n: Scalar[W], p: Scalar[W]) -> Scalar[
+    dtype
+] where W.is_floating_point():
+    """A negative binomial draw as NumPy makes it, a gamma-Poisson mixture:
+    `lambda ~ Gamma(n, (1-p)/p)` from the element's gamma block, then a
+    Poisson at `lambda` from the rejection block after it."""
+    var base = index * (_GAMMA_WORDS + _REJECT_WORDS)
+    var lam = _standard_gamma[W](seed, base, n) * (1 - p) / p
+    return _poisson_count[W](seed, base + _GAMMA_WORDS, lam).cast[dtype]()
+
+
+comptime _HYPERGEOM_MAX_DRAWS = 4096
+"""The most draws `hypergeometric` takes per sample: it simulates the urn,
+one uniform per draw, so its words per element are fixed at this."""
+
+
+def _hypergeom_step[
+    dtype: DType, W: DType
+](seed: UInt64, index: Int, good: Scalar[W], packed: Scalar[W]) -> Scalar[
+    dtype
+] where W.is_floating_point():
+    """`nsample` draws without replacement from an urn of `ngood` good and
+    `nbad` bad balls, one uniform per draw, counting the good ones. The
+    two counts beyond `ngood` arrive packed as `nbad * 8192 + nsample`,
+    both below 8192."""
+    var nbad = floor(packed / 8192)
+    var nsample = Int(packed - nbad * 8192)
+    var g = good
+    var total = good + nbad
+    var count = Scalar[W](0)
+    var base = index * _HYPERGEOM_MAX_DRAWS
+    for d in range(nsample):
+        var u = _word_uniform[W](seed, base + d)
+        if u * total < g:
+            count += 1
+            g -= 1
+        total -= 1
+    return count.cast[dtype]()
+
+
 @always_inline
 def _width[dtype: DType, gpu: Bool]() -> Int:
     comptime if gpu:
@@ -1366,3 +1408,98 @@ struct Generator(Copyable):
         )
         ctx.synchronize()
         return out^
+
+    def negative_binomial[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self, n: Float64, p: Float64, ctx: Optional[DeviceContext] = None
+    ) raises -> Static[dtype, *dims]:
+        """Negative binomial draws: failures before the `n`-th success at
+        probability `p`. `numpy.random.Generator.negative_binomial`.
+
+        NumPy's gamma-Poisson mixture, `Poisson(Gamma(n, (1-p)/p))`, each
+        element from its own gamma and rejection blocks.
+
+        Parameters:
+            dtype: The element type of the result; an integer dtype gives
+                exact counts.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            n: The number of successes, positive (need not be an integer).
+            p: The success probability, in `(0, 1]`.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of counts; this generator's seed advances by
+            one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
+        comptime if gpu:
+            comptime W = DType.float32
+            return _fill[dtype, W, _nbinom_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](n), Scalar[W](p), ctx
+            )
+        else:
+            comptime W = DType.float64
+            return _fill[dtype, W, _nbinom_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](n), Scalar[W](p), ctx
+            )
+
+    def hypergeometric[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self,
+        ngood: Int,
+        nbad: Int,
+        nsample: Int,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims]:
+        """Hypergeometric draws: good balls among `nsample` drawn without
+        replacement from `ngood` good and `nbad` bad.
+        `numpy.random.Generator.hypergeometric`.
+
+        The urn simulated, one uniform per ball drawn, so a draw costs
+        `nsample` words; `nsample` is capped at 4096 and `ngood`, `nbad` at
+        8191, where NumPy switches to HRUA ratio-of-uniforms rejection.
+
+        Parameters:
+            dtype: The element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            ngood: Good balls in the urn, at most 8191.
+            nbad: Bad balls in the urn, at most 8191.
+            nsample: Balls drawn, at most `min(ngood + nbad, 4096)`.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of counts; this generator's seed advances by
+            one.
+
+        Raises:
+            If a count is negative or past its cap, or the fill fails.
+        """
+        if ngood < 0 or nbad < 0 or nsample < 0 or nsample > ngood + nbad:
+            raise Error("hypergeometric: need 0 <= nsample <= ngood + nbad")
+        if ngood > 8191 or nbad > 8191 or nsample > _HYPERGEOM_MAX_DRAWS:
+            raise Error(
+                "hypergeometric: ngood and nbad at most 8191 and nsample at"
+                " most 4096 (the urn is simulated draw by draw)"
+            )
+        var packed = Float64(nbad * 8192 + nsample)
+        comptime if gpu:
+            comptime W = DType.float32
+            return _fill[dtype, W, _hypergeom_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](ngood), Scalar[W](packed), ctx
+            )
+        else:
+            comptime W = DType.float64
+            return _fill[dtype, W, _hypergeom_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](ngood), Scalar[W](packed), ctx
+            )

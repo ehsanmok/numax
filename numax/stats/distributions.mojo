@@ -9,7 +9,8 @@ Seventeen namespaces, spelled the way `scipy.stats` spells them --
 `norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom`,
 and since 0.3 `lognorm`, `weibull_min`, `cauchy`, `laplace`, `rayleigh`,
 `logistic`, `pareto` and `uniform_dist` (SciPy's `uniform`, renamed
-because `numax.stats.uniform` is NumPy's sampler) -- each
+because `numax.stats.uniform` is NumPy's sampler), and the discrete
+`bernoulli`, `geom`, `nbinom` and `hypergeom` -- each
 carrying the eight methods a `scipy.stats` distribution carries: `.pdf`
 (or `.pmf`) and `.logpdf` (`.logpmf`), `.cdf` and `.logcdf`, `.sf` and
 `.logsf`, `.ppf` and `.isf`:
@@ -703,6 +704,84 @@ def _log64_scalar[
     dtype: DType
 ](x: Scalar[dtype]) -> Scalar[dtype] where dtype.is_floating_point():
     return Scalar[dtype](_log64(Float64(x)))
+
+
+def _over3[
+    T: TensorLike,
+    step: def[w: Int](
+        SIMD[T.dtype, w], SIMD[T.dtype, 1], SIMD[T.dtype, 1], SIMD[T.dtype, 1]
+    ) thin -> SIMD[T.dtype, w],
+    gpu: Bool,
+    name: StaticString,
+](
+    x: T, p0: Scalar[T.dtype], p1: Scalar[T.dtype], p2: Scalar[T.dtype]
+) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """`_over1` for a three-parameter distribution."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    if not _check_device[gpu=gpu](x):
+        _notice[gpu](name)
+        var values = x.to_host()
+        var walked = List[Scalar[dtype]](length=len(values), fill=0)
+        for i in range(len(values)):
+            walked[i] = step[1](values[i], p0, p1, p2)[0]
+        return Tensor[dtype, LayoutType](x.tile().layout, walked^, x.context())
+
+    var ctx = x.context()
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, x.tile().layout)
+    var xs = _flat(x)
+    var ys = _flat_out(out)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xs, var ys, var p0, var p1, var p2}:
+        ys.store[width](coord, step[width](xs.load[width](coord), p0, p1, p2))
+
+    _launch[gpu=gpu, lanes=_width[dtype, gpu]()](body, x.size(), ctx)
+    return out^
+
+
+def _lbinom[T: FloatLike](a: T, b: T) -> T:
+    """`ln C(a, b)` through `lgamma`, arguments assumed in range."""
+    return (
+        lgamma(a.copy() + T.one())
+        - lgamma(b.copy() + T.one())
+        - lgamma(a - b + T.one())
+    )
+
+
+def _bernoulli_entropy(p: Float64) -> Float64:
+    var h = 0.0
+    if p > 0.0:
+        h -= p * _log64(p)
+    if p < 1.0:
+        h -= (1.0 - p) * _log64(1.0 - p)
+    return h
+
+
+def _nbinom_entropy(n: Float64, p: Float64) -> Float64:
+    """`-sum pmf ln pmf` out to `mean + 30 sd + 50`."""
+    var mean = n * (1.0 - p) / p
+    var sd = _sqrt64(n * (1.0 - p) / (p * p))
+    var total = 0.0
+    for k in range(Int(mean + 30.0 * sd + 50.0) + 1):
+        var logp = _v(nbinom.logpmf(_p(Float64(k)), _p(n), _p(p)))
+        if logp > -700.0:
+            total -= _exp64(logp) * logp
+    return total
+
+
+def _hypergeom_entropy(M: Float64, n: Float64, N: Float64) -> Float64:
+    """`-sum pmf ln pmf` over the support."""
+    var total = 0.0
+    for k in range(Int(min(n, N)) + 1):
+        var logp = _v(hypergeom.logpmf(_p(Float64(k)), _p(M), _p(n), _p(N)))
+        if logp > -700.0:
+            total -= _exp64(logp) * logp
+    return total
 
 
 # ---------------------------------------------------------------- normal
@@ -4629,4 +4708,981 @@ def _pareto_ppf_step[
         Plain[dtype, w](x),
         Plain[dtype, w](SIMD[dtype, w](b[0])),
         Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct bernoulli:
+    """The Bernoulli distribution: `1` with probability `p`, else `0`.
+    `scipy.stats.bernoulli`."""
+
+    @staticmethod
+    def pmf[T: FloatLike](k: T, p: T) -> T:
+        """`p` at `k = 1`, `1 - p` at `k = 0`, and `0` elsewhere."""
+        return bernoulli.logpmf(k, p).exp()
+
+    @staticmethod
+    def logpmf[T: FloatLike](k: T, p: T) -> T:
+        """`k ln p + (1 - k) ln(1 - p)` on `{0, 1}`; `_LOG_ZERO` elsewhere."""
+        # `0 - k`, not `-k`: at `k = 0` the negation is `-0.0`, which the
+        # sign-reading indicator counts as below zero.
+        var at_zero = ge_indicator(k.copy(), T.constant(0.0)) * ge_indicator(
+            T.constant(0.0) - k.copy(), T.constant(0.0)
+        )
+        var at_one = ge_indicator(k.copy(), T.one()) * ge_indicator(
+            T.one() - k, T.constant(0.0)
+        )
+        var inside = blend(
+            at_one.copy(), _safe_ln(p.copy()), _safe_ln(T.one() - p)
+        )
+        return blend(at_zero + at_one, inside, T.constant(_LOG_ZERO))
+
+    @staticmethod
+    def cdf[T: FloatLike](k: T, p: T) -> T:
+        """`0` below 0, `1 - p` on `[0, 1)`, `1` from 1."""
+        return ge_indicator(k.copy(), T.constant(0.0)) * (
+            T.one() - p * (T.one() - ge_indicator(k, T.one()))
+        )
+
+    @staticmethod
+    def sf[T: FloatLike](k: T, p: T) -> T:
+        """`1` below 0, `p` on `[0, 1)`, `0` from 1."""
+        return blend(
+            ge_indicator(k.copy(), T.constant(0.0)),
+            p * (T.one() - ge_indicator(k, T.one())),
+            T.one(),
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](k: T, p: T) -> T:
+        return _safe_ln(bernoulli.cdf(k, p))
+
+    @staticmethod
+    def logsf[T: FloatLike](k: T, p: T) -> T:
+        return _safe_ln(bernoulli.sf(k, p))
+
+    @staticmethod
+    def ppf[T: FloatLike](q: T, p: T) -> T:
+        """The smallest `k` with `cdf(k) >= q`: `0` while `q <= 1 - p`, else
+        `1`."""
+        return T.one() - ge_indicator(T.one() - p, q)
+
+    @staticmethod
+    def isf[T: FloatLike](q: T, p: T) -> T:
+        """`ppf(1 - q)`."""
+        return bernoulli.ppf(T.one() - q, p)
+
+    @staticmethod
+    def pmf[
+        T: TensorLike, gpu: Bool = False
+    ](k: T, p: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The PMF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[
+            step=_bernoulli_pmf_step[dtype, _], gpu=gpu, name="bernoulli.pmf"
+        ](k, p)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](k: T, p: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[
+            step=_bernoulli_cdf_step[dtype, _], gpu=gpu, name="bernoulli.cdf"
+        ](k, p)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](q: T, p: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[
+            step=_bernoulli_ppf_step[dtype, _], gpu=gpu, name="bernoulli.ppf"
+        ](q, p)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        p: Float64,
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims]:
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by `Generator.binomial` with one trial. `scipy.stats.bernoulli.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            p: The success probability.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.binomial[dtype, *dims, gpu=gpu](1, p, ctx)
+
+    @staticmethod
+    def mean(p: Float64) -> Float64:
+        """The mean. `scipy.stats.bernoulli.mean`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The mean.
+        """
+        return p
+
+    @staticmethod
+    def var(p: Float64) -> Float64:
+        """The variance. `scipy.stats.bernoulli.var`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The variance.
+        """
+        return p * (1.0 - p)
+
+    @staticmethod
+    def std(p: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(bernoulli.var(p))
+
+    @staticmethod
+    def interval(confidence: Float64, p: Float64) -> Tuple[Float64, Float64]:
+        """The central interval holding at least `confidence` of the
+        probability, `(ppf((1 - c) / 2), ppf((1 + c) / 2))`.
+        `scipy.stats.bernoulli.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            p: The distribution's `p`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = bernoulli.ppf(_p((1.0 - confidence) / 2.0), _p(p))
+        var hi = bernoulli.ppf(_p((1.0 + confidence) / 2.0), _p(p))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(p: Float64) -> Float64:
+        """The Shannon entropy in nats. `scipy.stats.bernoulli.entropy`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The entropy.
+        """
+        return _bernoulli_entropy(p)
+
+
+def _bernoulli_pmf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return bernoulli.pmf(
+        Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](p[0]))
+    ).v
+
+
+def _bernoulli_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return bernoulli.cdf(
+        Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](p[0]))
+    ).v
+
+
+def _bernoulli_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return bernoulli.ppf(
+        Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](p[0]))
+    ).v
+
+
+struct geom:
+    """The geometric distribution: trials up to and including the first
+    success, on `k = 1, 2, ...`. `scipy.stats.geom`."""
+
+    @staticmethod
+    def pmf[T: FloatLike](k: T, p: T) -> T:
+        """`(1 - p)^(k-1) p` for `k >= 1`."""
+        return geom.logpmf(k, p).exp()
+
+    @staticmethod
+    def logpmf[T: FloatLike](k: T, p: T) -> T:
+        var kc = max_of(k.copy(), T.one())
+        var inside = (kc - T.one()) * _log1p(-p.copy()) + _safe_ln(p)
+        return blend(ge_indicator(k, T.one()), inside, T.constant(_LOG_ZERO))
+
+    @staticmethod
+    def cdf[T: FloatLike](k: T, p: T) -> T:
+        """`1 - (1 - p)^floor(k)` for `k >= 1`, read through `expm1` so a
+        small `p` keeps its digits."""
+        var kc = max_of(k.copy(), T.one()).floor()
+        return -_expm1(kc * _log1p(-p)) * ge_indicator(k, T.one())
+
+    @staticmethod
+    def sf[T: FloatLike](k: T, p: T) -> T:
+        """`(1 - p)^floor(k)` for `k >= 1`, and `1` below."""
+        var kc = max_of(k.copy(), T.one()).floor()
+        return blend(ge_indicator(k, T.one()), (kc * _log1p(-p)).exp(), T.one())
+
+    @staticmethod
+    def logcdf[T: FloatLike](k: T, p: T) -> T:
+        return _safe_ln(geom.cdf(k, p))
+
+    @staticmethod
+    def logsf[T: FloatLike](k: T, p: T) -> T:
+        return _safe_ln(geom.sf(k, p))
+
+    @staticmethod
+    def ppf[T: FloatLike](q: T, p: T) -> T:
+        """SciPy's: `ceil(log1p(-q) / log1p(-p))`, stepped back by one where
+        the CDF one below already reaches `q`."""
+        var vals = (_log1p(-q.copy()) / _log1p(-p.copy())).ceil()
+        var below = geom.cdf(vals.copy() - T.one(), p.copy())
+        var step_back = ge_indicator(below, q) * ge_indicator(
+            vals.copy(), T.constant(1.0)
+        )
+        return max_of(vals - step_back, T.one())
+
+    @staticmethod
+    def isf[T: FloatLike](q: T, p: T) -> T:
+        """`ppf(1 - q)`."""
+        return geom.ppf(T.one() - q, p)
+
+    @staticmethod
+    def pmf[
+        T: TensorLike, gpu: Bool = False
+    ](k: T, p: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The PMF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[step=_geom_pmf_step[dtype, _], gpu=gpu, name="geom.pmf"](
+            k, p
+        )
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](k: T, p: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[step=_geom_cdf_step[dtype, _], gpu=gpu, name="geom.cdf"](
+            k, p
+        )
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](q: T, p: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[step=_geom_ppf_step[dtype, _], gpu=gpu, name="geom.ppf"](
+            q, p
+        )
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        p: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.geom.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            p: The success probability.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = geom.ppf[gpu=gpu](u, p)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(p: Float64) -> Float64:
+        """The mean. `scipy.stats.geom.mean`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The mean.
+        """
+        return 1.0 / p
+
+    @staticmethod
+    def var(p: Float64) -> Float64:
+        """The variance. `scipy.stats.geom.var`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The variance.
+        """
+        return (1.0 - p) / (p * p)
+
+    @staticmethod
+    def std(p: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(geom.var(p))
+
+    @staticmethod
+    def interval(confidence: Float64, p: Float64) -> Tuple[Float64, Float64]:
+        """The central interval holding at least `confidence` of the
+        probability, `(ppf((1 - c) / 2), ppf((1 + c) / 2))`.
+        `scipy.stats.geom.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            p: The distribution's `p`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = geom.ppf(_p((1.0 - confidence) / 2.0), _p(p))
+        var hi = geom.ppf(_p((1.0 + confidence) / 2.0), _p(p))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(p: Float64) -> Float64:
+        """The Shannon entropy in nats. `scipy.stats.geom.entropy`.
+
+        Args:
+            p: The distribution's `p`.
+
+        Returns:
+            The entropy.
+        """
+        return (-(1.0 - p) * _log64(1.0 - p) - p * _log64(p)) / p
+
+
+def _geom_pmf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return geom.pmf(Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](p[0]))).v
+
+
+def _geom_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return geom.cdf(Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](p[0]))).v
+
+
+def _geom_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return geom.ppf(Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](p[0]))).v
+
+
+struct nbinom:
+    """The negative binomial distribution: failures before the `n`-th
+    success, on `k = 0, 1, ...`; `n` need not be an integer.
+    `scipy.stats.nbinom`."""
+
+    @staticmethod
+    def pmf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """`C(k + n - 1, k) p^n (1 - p)^k`, through `lgamma`."""
+        return nbinom.logpmf(k, n, p).exp()
+
+    @staticmethod
+    def logpmf[T: FloatLike](k: T, n: T, p: T) -> T:
+        var kc = max_of(k.copy(), T.constant(0.0))
+        var inside = (
+            lgamma(kc.copy() + n.copy())
+            - lgamma(kc.copy() + T.one())
+            - lgamma(n.copy())
+            + n * _safe_ln(p.copy())
+            + kc * _log1p(-p)
+        )
+        return blend(
+            ge_indicator(k, T.constant(0.0)), inside, T.constant(_LOG_ZERO)
+        )
+
+    @staticmethod
+    def cdf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """`I_p(n, floor(k) + 1)`, the regularized incomplete beta, which is
+        the partial sum exactly."""
+        var kc = max_of(k.copy(), T.constant(0.0)).floor()
+        return betainc(p.copy(), n.copy(), kc + T.one()) * ge_indicator(
+            k, T.constant(0.0)
+        )
+
+    @staticmethod
+    def sf[T: FloatLike](k: T, n: T, p: T) -> T:
+        """`1 - I_p(n, floor(k) + 1)`, read off `betaincc`."""
+        var kc = max_of(k.copy(), T.constant(0.0)).floor()
+        return blend(
+            ge_indicator(k, T.constant(0.0)),
+            betaincc(p.copy(), n.copy(), kc + T.one()),
+            T.one(),
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](k: T, n: T, p: T) -> T:
+        return _safe_ln(nbinom.cdf(k, n, p))
+
+    @staticmethod
+    def logsf[T: FloatLike](k: T, n: T, p: T) -> T:
+        return _safe_ln(nbinom.sf(k, n, p))
+
+    @staticmethod
+    def ppf[T: FloatLike, max_k: Int = 64](q: T, n: T, p: T) -> T:
+        """The smallest integer `k` with `cdf(k) >= q`, by the fixed-count
+        branchless scan `poisson.ppf` uses, capped at `max_k`."""
+        var k = T.constant(0.0)
+        for _ in range(max_k):
+            var caught_up = ge_indicator(
+                nbinom.cdf(k.copy(), n.copy(), p.copy()), q.copy()
+            )
+            k = k + (T.one() - caught_up)
+        return k^
+
+    @staticmethod
+    def isf[T: FloatLike, max_k: Int = 64](q: T, n: T, p: T) -> T:
+        """`ppf(1 - q)`."""
+        return nbinom.ppf[T, max_k](T.one() - q, n, p)
+
+    @staticmethod
+    def pmf[
+        T: TensorLike, gpu: Bool = False
+    ](k: T, n: Scalar[T.dtype], p: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The PMF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_nbinom_pmf_step[dtype, _], gpu=gpu, name="nbinom.pmf"
+        ](k, n, p)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](k: T, n: Scalar[T.dtype], p: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_nbinom_cdf_step[dtype, _], gpu=gpu, name="nbinom.cdf"
+        ](k, n, p)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](q: T, n: Scalar[T.dtype], p: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_nbinom_ppf_step[dtype, _], gpu=gpu, name="nbinom.ppf"
+        ](q, n, p)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        n: Float64,
+        p: Float64,
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims]:
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by `Generator.negative_binomial`, the gamma-Poisson mixture. `scipy.stats.nbinom.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            n: The number of successes.
+            p: The success probability.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.negative_binomial[dtype, *dims, gpu=gpu](n, p, ctx)
+
+    @staticmethod
+    def mean(n: Float64, p: Float64) -> Float64:
+        """The mean. `scipy.stats.nbinom.mean`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The mean.
+        """
+        return n * (1.0 - p) / p
+
+    @staticmethod
+    def var(n: Float64, p: Float64) -> Float64:
+        """The variance. `scipy.stats.nbinom.var`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The variance.
+        """
+        return n * (1.0 - p) / (p * p)
+
+    @staticmethod
+    def std(n: Float64, p: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(nbinom.var(n, p))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, n: Float64, p: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding at least `confidence` of the
+        probability, `(ppf((1 - c) / 2), ppf((1 + c) / 2))`.
+        `scipy.stats.nbinom.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = nbinom.ppf(_p((1.0 - confidence) / 2.0), _p(n), _p(p))
+        var hi = nbinom.ppf(_p((1.0 + confidence) / 2.0), _p(n), _p(p))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(n: Float64, p: Float64) -> Float64:
+        """The Shannon entropy in nats. `scipy.stats.nbinom.entropy`.
+
+        Args:
+            n: The distribution's `n`.
+            p: The distribution's `p`.
+
+        Returns:
+            The entropy.
+        """
+        return _nbinom_entropy(n, p)
+
+
+def _nbinom_pmf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], n: SIMD[dtype, 1], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return nbinom.pmf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](n[0])),
+        Plain[dtype, w](SIMD[dtype, w](p[0])),
+    ).v
+
+
+def _nbinom_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], n: SIMD[dtype, 1], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return nbinom.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](n[0])),
+        Plain[dtype, w](SIMD[dtype, w](p[0])),
+    ).v
+
+
+def _nbinom_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], n: SIMD[dtype, 1], p: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return nbinom.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](n[0])),
+        Plain[dtype, w](SIMD[dtype, w](p[0])),
+    ).v
+
+
+struct hypergeom:
+    """The hypergeometric distribution: good balls among `N` drawn without
+    replacement from `M` balls of which `n` are good. `scipy.stats.hypergeom`,
+    in SciPy's `(M, n, N)` order."""
+
+    @staticmethod
+    def pmf[T: FloatLike](k: T, M: T, n: T, N: T) -> T:
+        """`C(n, k) C(M - n, N - k) / C(M, N)`, through `lgamma`."""
+        return hypergeom.logpmf(k, M, n, N).exp()
+
+    @staticmethod
+    def logpmf[T: FloatLike](k: T, M: T, n: T, N: T) -> T:
+        """`_LOG_ZERO` outside `max(0, N - (M - n)) <= k <= min(n, N)`; the
+        interior's `lgamma` arguments are clamped so the discarded side stays
+        finite."""
+        var zero = T.constant(0.0)
+        var inside = (
+            ge_indicator(k.copy(), zero.copy())
+            * ge_indicator(n.copy() - k.copy(), zero.copy())
+            * ge_indicator(N.copy() - k.copy(), zero.copy())
+            * ge_indicator(
+                M.copy() - n.copy() - N.copy() + k.copy(), zero.copy()
+            )
+        )
+        var kc = max_of(
+            min_of(k.copy(), min_of(n.copy(), N.copy())), zero.copy()
+        )
+        var good = _lbinom(n.copy(), kc.copy())
+        var bad = _lbinom(
+            M.copy() - n.copy(), max_of(N.copy() - kc, zero.copy())
+        )
+        var total = _lbinom(M, N)
+        return blend(inside, good + bad - total, T.constant(_LOG_ZERO))
+
+    @staticmethod
+    def cdf[T: FloatLike, max_k: Int = 64](k: T, M: T, n: T, N: T) -> T:
+        """`sum_{j <= k} pmf(j)` over `j = 0 .. max_k - 1`: a fixed-count sum,
+        so the support must lie below `max_k` (raise it for larger draws)."""
+        var total = T.constant(0.0)
+        var jf = T.constant(0.0)
+        for _ in range(max_k):
+            var term = hypergeom.pmf(jf.copy(), M.copy(), n.copy(), N.copy())
+            total = total + term * ge_indicator(k.copy(), jf.copy())
+            jf = jf + T.one()
+        return min_of(total, T.one())
+
+    @staticmethod
+    def sf[T: FloatLike, max_k: Int = 64](k: T, M: T, n: T, N: T) -> T:
+        """`sum_{j > k} pmf(j)`, the upper tail summed directly."""
+        var total = T.constant(0.0)
+        var jf = T.constant(0.0)
+        for _ in range(max_k):
+            var term = hypergeom.pmf(jf.copy(), M.copy(), n.copy(), N.copy())
+            total = total + term * (T.one() - ge_indicator(k.copy(), jf.copy()))
+            jf = jf + T.one()
+        return min_of(total, T.one())
+
+    @staticmethod
+    def logcdf[T: FloatLike](k: T, M: T, n: T, N: T) -> T:
+        return _safe_ln(hypergeom.cdf(k, M, n, N))
+
+    @staticmethod
+    def logsf[T: FloatLike](k: T, M: T, n: T, N: T) -> T:
+        return _safe_ln(hypergeom.sf(k, M, n, N))
+
+    @staticmethod
+    def ppf[T: FloatLike, max_k: Int = 64](q: T, M: T, n: T, N: T) -> T:
+        """The smallest integer `k` with `cdf(k) >= q`, by the running sum of
+        the PMF, a fixed `max_k` terms."""
+        var total = T.constant(0.0)
+        var k = T.constant(0.0)
+        var jf = T.constant(0.0)
+        for _ in range(max_k):
+            total = total + hypergeom.pmf(
+                jf.copy(), M.copy(), n.copy(), N.copy()
+            )
+            k = k + (
+                T.one()
+                - ge_indicator(total.copy(), q.copy() - T.constant(1e-12))
+            )
+            jf = jf + T.one()
+        return k^
+
+    @staticmethod
+    def isf[T: FloatLike, max_k: Int = 64](q: T, M: T, n: T, N: T) -> T:
+        """`ppf(1 - q)`."""
+        return hypergeom.ppf[T, max_k](T.one() - q, M, n, N)
+
+    @staticmethod
+    def pmf[
+        T: TensorLike, gpu: Bool = False
+    ](
+        k: T, M: Scalar[T.dtype], n: Scalar[T.dtype], N: Scalar[T.dtype]
+    ) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The PMF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over3[
+            step=_hypergeom_pmf_step[dtype, _], gpu=gpu, name="hypergeom.pmf"
+        ](k, M, n, N)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](
+        k: T, M: Scalar[T.dtype], n: Scalar[T.dtype], N: Scalar[T.dtype]
+    ) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over3[
+            step=_hypergeom_cdf_step[dtype, _], gpu=gpu, name="hypergeom.cdf"
+        ](k, M, n, N)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](
+        q: T, M: Scalar[T.dtype], n: Scalar[T.dtype], N: Scalar[T.dtype]
+    ) raises -> Tensor[T.dtype, T.LayoutType] where (
+        is_row_major[T] and T.dtype.is_floating_point()
+    ):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over3[
+            step=_hypergeom_ppf_step[dtype, _], gpu=gpu, name="hypergeom.ppf"
+        ](q, M, n, N)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        M: Int,
+        n: Int,
+        N: Int,
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims]:
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by `Generator.hypergeometric`, the urn simulated. `scipy.stats.hypergeom.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            M: The population size.
+            n: The good balls in it.
+            N: The balls drawn.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.hypergeometric[dtype, *dims, gpu=gpu](n, M - n, N, ctx)
+
+    @staticmethod
+    def mean(M: Float64, n: Float64, N: Float64) -> Float64:
+        """The mean. `scipy.stats.hypergeom.mean`.
+
+        Args:
+            M: The distribution's `M`.
+            n: The distribution's `n`.
+            N: The distribution's `N`.
+
+        Returns:
+            The mean.
+        """
+        return N * n / M
+
+    @staticmethod
+    def var(M: Float64, n: Float64, N: Float64) -> Float64:
+        """The variance. `scipy.stats.hypergeom.var`.
+
+        Args:
+            M: The distribution's `M`.
+            n: The distribution's `n`.
+            N: The distribution's `N`.
+
+        Returns:
+            The variance.
+        """
+        return N * n * (M - n) * (M - N) / (M * M * (M - 1.0))
+
+    @staticmethod
+    def std(M: Float64, n: Float64, N: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            M: The distribution's `M`.
+            n: The distribution's `n`.
+            N: The distribution's `N`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(hypergeom.var(M, n, N))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, M: Float64, n: Float64, N: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding at least `confidence` of the
+        probability, `(ppf((1 - c) / 2), ppf((1 + c) / 2))`.
+        `scipy.stats.hypergeom.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            M: The distribution's `M`.
+            n: The distribution's `n`.
+            N: The distribution's `N`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = hypergeom.ppf(
+            _p((1.0 - confidence) / 2.0), _p(M), _p(n), _p(N)
+        )
+        var hi = hypergeom.ppf(
+            _p((1.0 + confidence) / 2.0), _p(M), _p(n), _p(N)
+        )
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(M: Float64, n: Float64, N: Float64) -> Float64:
+        """The Shannon entropy in nats. `scipy.stats.hypergeom.entropy`.
+
+        Args:
+            M: The distribution's `M`.
+            n: The distribution's `n`.
+            N: The distribution's `N`.
+
+        Returns:
+            The entropy.
+        """
+        return _hypergeom_entropy(M, n, N)
+
+
+def _hypergeom_pmf_step[
+    dtype: DType, w: Int
+](
+    x: SIMD[dtype, w], M: SIMD[dtype, 1], n: SIMD[dtype, 1], N: SIMD[dtype, 1]
+) -> SIMD[dtype, w] where dtype.is_floating_point():
+    return hypergeom.pmf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](M[0])),
+        Plain[dtype, w](SIMD[dtype, w](n[0])),
+        Plain[dtype, w](SIMD[dtype, w](N[0])),
+    ).v
+
+
+def _hypergeom_cdf_step[
+    dtype: DType, w: Int
+](
+    x: SIMD[dtype, w], M: SIMD[dtype, 1], n: SIMD[dtype, 1], N: SIMD[dtype, 1]
+) -> SIMD[dtype, w] where dtype.is_floating_point():
+    return hypergeom.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](M[0])),
+        Plain[dtype, w](SIMD[dtype, w](n[0])),
+        Plain[dtype, w](SIMD[dtype, w](N[0])),
+    ).v
+
+
+def _hypergeom_ppf_step[
+    dtype: DType, w: Int
+](
+    x: SIMD[dtype, w], M: SIMD[dtype, 1], n: SIMD[dtype, 1], N: SIMD[dtype, 1]
+) -> SIMD[dtype, w] where dtype.is_floating_point():
+    return hypergeom.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](M[0])),
+        Plain[dtype, w](SIMD[dtype, w](n[0])),
+        Plain[dtype, w](SIMD[dtype, w](N[0])),
     ).v
