@@ -1,7 +1,9 @@
 """Hypothesis tests over `numax.core.tensor.Tensor`: the three `t` tests,
 `chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, the `k`-group
 `kruskal`, `levene` and `bartlett`, and the normality tests `skewtest`,
-`kurtosistest`, `normaltest` and `jarque_bera`, each returning SciPy's statistic and
+`kurtosistest`, `normaltest` and `jarque_bera`, and the exact and
+contingency tests `fisher_exact`, `binomtest` and `chi2_contingency`,
+each returning SciPy's statistic and
 p-value.
 
 **Tier 2**: a test statistic is a few sums (or, for the rank tests, a
@@ -45,7 +47,14 @@ Nothing: MAX has no statistical tests. **Extend.**
 """
 
 from std.builtin.sort import sort as _sort
-from std.math import exp as _exp, log as _log, sqrt as _sqrt
+from std.math import (
+    ceil as _ceil,
+    exp as _exp,
+    floor as _floor,
+    lgamma as _lgamma,
+    log as _log,
+    sqrt as _sqrt,
+)
 
 from max.gpu.host import DeviceContext
 
@@ -71,7 +80,7 @@ from ..core.sorting import _pack_device, _sort_device, argsort, take
 from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
 from ..core.plain import Plain
-from .distributions import chi2, f, norm, t
+from .distributions import binom, chi2, f, norm, t
 from .statistics import median as _tmedian, sum as _tsum
 from ..core.elementwise import abs as _tabs
 from .descriptive import kurtosis as _kurtosis, skew as _skew
@@ -1948,3 +1957,425 @@ def jarque_bera[
     var k = _kurtosis[gpu=gpu](x, False)
     var statistic = n / 6.0 * (s * s + (k - 3.0) * (k - 3.0) / 4.0)
     return TestResult(statistic, _chi2_tail(statistic, 2.0), 2.0)
+
+
+def _lchoose(n: Float64, k: Float64) -> Float64:
+    return _lgamma(n + 1.0) - _lgamma(k + 1.0) - _lgamma(n - k + 1.0)
+
+
+@fieldwise_init
+struct _Hypergeom(Copyable):
+    """A hypergeometric law with `M` balls, `n` good, `N` drawn, evaluated
+    on the host in `Float64` by direct sums of its PMF."""
+
+    var M: Float64
+    var n: Float64
+    var N: Float64
+
+    def lo(self) -> Int:
+        return max(0, Int(self.N - (self.M - self.n)))
+
+    def hi(self) -> Int:
+        return Int(min(self.n, self.N))
+
+    def pmf(self, x: Int) -> Float64:
+        if x < self.lo() or x > self.hi():
+            return 0.0
+        var xf = Float64(x)
+        return _exp(
+            _lchoose(self.n, xf)
+            + _lchoose(self.M - self.n, self.N - xf)
+            - _lchoose(self.M, self.N)
+        )
+
+    def cdf(self, x: Int) -> Float64:
+        var total = 0.0
+        for j in range(self.lo(), min(x, self.hi()) + 1):
+            total += self.pmf(j)
+        return min(total, 1.0)
+
+    def sf(self, x: Int) -> Float64:
+        var total = 0.0
+        for j in range(max(x + 1, self.lo()), self.hi() + 1):
+            total += self.pmf(j)
+        return min(total, 1.0)
+
+
+def _search_up[
+    F: def(Int) raises capturing -> Float64
+](d: Float64, lo_in: Int, hi_in: Int) raises -> Int:
+    """SciPy's `_binary_search_for_binom_tst` for an ascending `F` on
+    `[lo, hi]`: the `i` with `F(i) <= d < F(i + 1)`."""
+    var lo = lo_in
+    var hi = hi_in
+    while lo < hi:
+        var mid = lo + (hi - lo) // 2
+        var midval = F(mid)
+        if midval < d:
+            lo = mid + 1
+        elif midval > d:
+            hi = mid - 1
+        else:
+            lo = mid
+            hi = mid
+    return lo if F(lo) <= d else lo - 1
+
+
+def fisher_exact[
+    T: TensorLike
+](
+    table: T, alternative: StaticString = "two-sided"
+) raises -> TestResult where (
+    T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 0] == 2
+    and dim[T, 1] == 2
+):
+    """Fisher's exact test of independence on a 2x2 contingency table.
+    `scipy.stats.fisher_exact(table, alternative)`.
+
+    The sample odds ratio `(a d) / (b c)` and the exact hypergeometric
+    p-value, SciPy's construction step for step: the one-sided tails are
+    the CDF and survival function at the observed count, and the
+    two-sided p-value adds the far tail from the other side of the mode,
+    found by SciPy's binary search at a relative tolerance of `1e-14`. A
+    table with a zero margin gives NaN and 1, as SciPy's does. Host-side:
+    four counts in, sums over at most `min(row, column)` terms.
+
+    Parameters:
+        T: The tensor type of `table`, `(2, 2)`, counts in any dtype.
+
+    Args:
+        table: The contingency table.
+        alternative: `"two-sided"`, `"less"` or `"greater"`.
+
+    Returns:
+        A `TestResult` with the odds ratio, the p-value and `df = 0`.
+
+    Raises:
+        If a count is negative or `alternative` is not a known name.
+    """
+    _check_alternative("fisher_exact", alternative)
+    var c = table.to_host()
+    var a = Int(c[0])
+    var b = Int(c[1])
+    var cc = Int(c[2])
+    var d = Int(c[3])
+    if a < 0 or b < 0 or cc < 0 or d < 0:
+        raise Error("fisher_exact: every count must be nonnegative")
+    if a + b == 0 or cc + d == 0 or a + cc == 0 or b + d == 0:
+        return TestResult(_nan_f64(), 1.0, 0.0)
+    var odds = (
+        Float64(a * d) / Float64(cc * b) if cc > 0 and b > 0 else _inf_f64()
+    )
+    var n1 = a + b
+    var n2 = cc + d
+    var n = a + cc
+    var law = _Hypergeom(Float64(n1 + n2), Float64(n1), Float64(n))
+    var pvalue: Float64
+    if alternative == "less":
+        pvalue = law.cdf(a)
+    elif alternative == "greater":
+        var other = _Hypergeom(Float64(n1 + n2), Float64(n1), Float64(b + d))
+        pvalue = other.cdf(b)
+    else:
+        var mode = Int(Float64((n + 1) * (n1 + 1)) / Float64(n1 + n2 + 2))
+        var pexact = law.pmf(a)
+        var pmode = law.pmf(mode)
+        var gamma = 1.0 + 1e-14
+        if abs(pexact - pmode) / max(pexact, pmode) <= 1e-14:
+            return TestResult(odds, 1.0, 0.0)
+        if a < mode:
+            var plower = law.cdf(a)
+            if law.pmf(n) > pexact * gamma:
+                return TestResult(odds, min(plower, 1.0), 0.0)
+
+            @__parameter
+            def neg(x: Int) raises -> Float64:
+                return -law.pmf(x)
+
+            var guess = _search_up[neg](-pexact * gamma, mode, n)
+            pvalue = plower + law.sf(guess)
+        else:
+            var pupper = law.sf(a - 1)
+            if law.pmf(0) > pexact * gamma:
+                return TestResult(odds, min(pupper, 1.0), 0.0)
+
+            @__parameter
+            def pos(x: Int) raises -> Float64:
+                return law.pmf(x)
+
+            var guess = _search_up[pos](pexact * gamma, 0, mode)
+            pvalue = pupper + law.cdf(guess)
+    return TestResult(odds, min(pvalue, 1.0), 0.0)
+
+
+def _binom_pmf(x: Int, n: Int, p: Float64) -> Float64:
+    if x < 0 or x > n:
+        return 0.0
+    var xf = Float64(x)
+    var nf = Float64(n)
+    if p == 0.0:
+        return 1.0 if x == 0 else 0.0
+    if p == 1.0:
+        return 1.0 if x == n else 0.0
+    return _exp(_lchoose(nf, xf) + xf * _log(p) + (nf - xf) * _log(1.0 - p))
+
+
+def _binom_cdf(x: Int, n: Int, p: Float64) -> Float64:
+    if x < 0:
+        return 0.0
+    if x >= n:
+        return 1.0
+    return Float64(binom.cdf[_P](_P(Float64(x)), _P(Float64(n)), _P(p)).v)
+
+
+def _binom_sf(x: Int, n: Int, p: Float64) -> Float64:
+    if x < 0:
+        return 1.0
+    if x >= n:
+        return 0.0
+    return Float64(binom.sf[_P](_P(Float64(x)), _P(Float64(n)), _P(p)).v)
+
+
+def binomtest(
+    k: Int, n: Int, p: Float64 = 0.5, alternative: StaticString = "two-sided"
+) raises -> TestResult:
+    """The exact binomial test that `k` successes in `n` trials came from
+    success probability `p`. `scipy.stats.binomtest(k, n, p, alternative)`.
+
+    SciPy's p-value: the lower or upper tail for a one-sided test, and for
+    the two-sided test every outcome at most as likely as `k` (to a
+    relative `1e-7`), the far side found by SciPy's binary search from the
+    mean. The statistic is the sample proportion `k / n`.
+
+    Args:
+        k: The number of successes, in `[0, n]`.
+        n: The number of trials, at least 1.
+        p: The hypothesized success probability, in `[0, 1]`.
+        alternative: `"two-sided"`, `"less"` or `"greater"`.
+
+    Returns:
+        A `TestResult` with `k / n`, the p-value and `df = 0`.
+
+    Raises:
+        If `k`, `n` or `p` is out of range, or `alternative` is not a known
+        name.
+    """
+    _check_alternative("binomtest", alternative)
+    if n < 1 or k < 0 or k > n or p < 0.0 or p > 1.0:
+        raise Error("binomtest: need n >= 1, 0 <= k <= n and 0 <= p <= 1")
+    var statistic = Float64(k) / Float64(n)
+    var pvalue: Float64
+    if alternative == "less":
+        pvalue = _binom_cdf(k, n, p)
+    elif alternative == "greater":
+        pvalue = _binom_sf(k - 1, n, p)
+    else:
+        var d = _binom_pmf(k, n, p)
+        var rerr = 1.0 + 1e-7
+        var pn = p * Float64(n)
+        if Float64(k) < pn:
+
+            @__parameter
+            def neg(x: Int) raises -> Float64:
+                return -_binom_pmf(x, n, p)
+
+            var ix = _search_up[neg](-d * rerr, Int(_ceil(pn)), n)
+            var y = n - ix + (1 if d * rerr == _binom_pmf(ix, n, p) else 0)
+            pvalue = _binom_cdf(k, n, p) + _binom_sf(n - y, n, p)
+        else:
+
+            @__parameter
+            def pos(x: Int) raises -> Float64:
+                return _binom_pmf(x, n, p)
+
+            var ix = _search_up[pos](d * rerr, 0, Int(_floor(pn)))
+            var y = ix + 1
+            pvalue = _binom_cdf(y - 1, n, p) + _binom_sf(k - 1, n, p)
+        pvalue = min(1.0, pvalue)
+    return TestResult(statistic, pvalue, 0.0)
+
+
+struct Chi2ContingencyResult[dtype: DType, rows: Int, cols: Int](Movable):
+    """What `chi2_contingency` returns, SciPy's four fields."""
+
+    var statistic: Float64
+    """Pearson's chi-squared statistic, Yates-corrected where it applies."""
+    var pvalue: Float64
+    """Its upper-tail p-value."""
+    var dof: Int
+    """The degrees of freedom, `(rows - 1) (cols - 1)`."""
+    var expected_freq: Static[Self.dtype, Self.rows, Self.cols]
+    """The expected counts under independence."""
+
+    def __init__(
+        out self,
+        statistic: Float64,
+        pvalue: Float64,
+        dof: Int,
+        var expected_freq: Static[Self.dtype, Self.rows, Self.cols],
+    ):
+        """Build from the four fields.
+
+        Args:
+            statistic: The statistic.
+            pvalue: The p-value.
+            dof: The degrees of freedom.
+            expected_freq: The expected counts.
+        """
+        self.statistic = statistic
+        self.pvalue = pvalue
+        self.dof = dof
+        self.expected_freq = expected_freq^
+
+
+def chi2_contingency[
+    T: TensorLike, gpu: Bool = False
+](observed: T, correction: Bool = True) raises -> Chi2ContingencyResult[
+    T.dtype, dim[T, 0], dim[T, 1]
+] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and is_row_major[T]
+):
+    """Pearson's chi-squared test of independence on an `r x c`
+    contingency table. `scipy.stats.chi2_contingency(observed, correction)`.
+
+    The expected counts are the outer product of the margins over the
+    total; with one degree of freedom and `correction`, each observed
+    count moves toward its expectation by `min(0.5, |e - o|)` first,
+    Yates's correction as SciPy applies it. At `gpu=True` the margins are
+    device axis sums and the expected table and the terms one launch; the
+    statistic comes back as one sum.
+
+    Parameters:
+        T: The tensor type of `observed`, rank 2, floating-point counts.
+        gpu: Whether to compute on `observed`'s device.
+
+    Args:
+        observed: The table of observed counts.
+        correction: Apply Yates's correction when there is one degree of
+            freedom.
+
+    Returns:
+        A `Chi2ContingencyResult` with the statistic, p-value, degrees of
+        freedom and expected counts.
+
+    Raises:
+        If an expected count is zero, or a device operation fails.
+    """
+    comptime dtype = T.dtype
+    comptime r = dim[T, 0]
+    comptime c = dim[T, 1]
+    var dof = (r - 1) * (c - 1)
+    var ctx = observed.context()
+    var yates = correction and dof == 1
+    if _check_device[T, gpu](observed):
+        comptime if gpu:
+            # The margins, one lane per row and one per column.
+            var row = Static[dtype, r]._uninitialized(ctx)
+            var col = Static[dtype, c]._uninitialized(ctx)
+            var src = observed.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+            var rs = row.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+            var cs = col.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+            @always_inline
+            def margins[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var src, var rs, var cs}:
+                var f = coord_to_index_list(coord)[0]
+                var acc = Scalar[dtype](0)
+                if f < r:
+                    for j in range(c):
+                        acc += rebind[Scalar[dtype]](
+                            src[unsafe_offset=f * c + j]
+                        )
+                    rs[unsafe_offset=f] = acc
+                else:
+                    var j = f - r
+                    for i in range(r):
+                        acc += rebind[Scalar[dtype]](
+                            src[unsafe_offset=i * c + j]
+                        )
+                    cs[unsafe_offset=j] = acc
+
+            elementwise[simd_width=1, target="gpu"](margins, Coord(r + c), ctx)
+            ctx.synchronize()
+            var total = _tsum[gpu=True](row)
+            var expected = Static[dtype, r, c]._uninitialized(ctx)
+            var terms = Static[dtype, r, c]._uninitialized(ctx)
+            var op = observed.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+            var rp = row.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+            var cp = col.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+            var ep = expected.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+            var tp = terms.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+            @always_inline
+            def cell[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {
+                var op, var rp, var cp, var ep, var tp, var total, var yates
+            }:
+                var f = coord_to_index_list(coord)[0]
+                var e = (
+                    rebind[Scalar[dtype]](rp[unsafe_offset=f // c])
+                    * rebind[Scalar[dtype]](cp[unsafe_offset=f % c])
+                    / rebind[Scalar[dtype]](total)
+                )
+                var o = rebind[Scalar[dtype]](op[unsafe_offset=f])
+                if yates:
+                    var diff = e - o
+                    var mag = min(Scalar[dtype](0.5), abs(diff))
+                    o = o + (mag if diff > 0 else -mag)
+                ep[unsafe_offset=f] = e
+                tp[unsafe_offset=f] = (o - e) * (o - e) / e
+
+            elementwise[simd_width=1, target="gpu"](cell, Coord(r * c), ctx)
+            ctx.synchronize()
+            var statistic = Float64(_tsum[gpu=True](terms))
+            _ = row^
+            _ = col^
+            return Chi2ContingencyResult(
+                statistic, _chi2_tail(statistic, Float64(dof)), dof, expected^
+            )
+    else:
+        _notice[gpu]("chi2_contingency")
+    var values = _values(observed)
+    var rows = List[Float64](length=r, fill=0.0)
+    var cols = List[Float64](length=c, fill=0.0)
+    var total = 0.0
+    for i in range(r):
+        for j in range(c):
+            rows[i] += values[i * c + j]
+            cols[j] += values[i * c + j]
+            total += values[i * c + j]
+    var expected = List[Scalar[dtype]](capacity=r * c)
+    var statistic = 0.0
+    for i in range(r):
+        for j in range(c):
+            var e = rows[i] * cols[j] / total
+            if e == 0.0:
+                raise Error("chi2_contingency: an expected count is zero")
+            var o = values[i * c + j]
+            if yates:
+                var diff = e - o
+                var mag = min(0.5, abs(diff))
+                o = o + (mag if diff > 0 else -mag)
+            statistic += (o - e) * (o - e) / e
+            expected.append(Scalar[dtype](e))
+    return Chi2ContingencyResult(
+        statistic,
+        _chi2_tail(statistic, Float64(dof)),
+        dof,
+        Static[dtype, r, c](expected^, ctx),
+    )
+
+
+def _nan_f64() -> Float64:
+    return _inf_f64() - _inf_f64()
+
+
+def _inf_f64() -> Float64:
+    return Float64.MAX * 2.0
