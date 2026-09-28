@@ -186,7 +186,7 @@ def halley_tol[
     """Halley's method on `f`, iterating until the step is smaller than
     `tol`.
 
-    The tier-2 sibling of `numax.optimize.array.halley`, standing to it
+    The tier-2 sibling of `numax.optimize.halley`, standing to it
     exactly as `newton_tol` stands to `newton`: same mathematics, a
     convergence test instead of a fixed trip count, and a status to check.
 
@@ -292,7 +292,7 @@ def bisect_tol[
     """Bisection on `[a, b]`, halving until the bracket is narrower than
     `tol`.
 
-    The tier-2 sibling of `numax.optimize.array.bisection`. The tier-1 one
+    The tier-2 sibling of `numax.optimize.bisection`. The tier-1 one
     is branchless and blends both endpoint updates on a `0`/`1` indicator,
     because SIMD lanes bisecting different problems disagree about which
     endpoint moves; this one is on the host with one problem in hand, so it
@@ -490,7 +490,7 @@ def root_scalar[
     There is no `fprime`/`fprime2` argument, and that is the tier's whole
     point: `f` is a `FloatLike` kernel, so `"newton"` evaluates it at `Dual`
     and `"halley"` at `Dual[Dual]`, and both derivatives are exact rather
-    than differenced. `numax.optimize.array` has fixed-iteration siblings of
+    than differenced. `numax.optimize`'s `Array` tier has fixed-iteration siblings of
     all three for use inside a GPU kernel body, under `newton`, `halley` and
     `bisection`.
 

@@ -45,7 +45,7 @@ from ...core.dual import Dual
 from ...special.legendre import legendre_p
 from ...core.numeric import FloatLike
 from ...core.plain import Plain
-from ...optimize.array.solve import newton
+from ...optimize._array.solve import newton
 
 comptime _PI = 3.14159265358979323846
 

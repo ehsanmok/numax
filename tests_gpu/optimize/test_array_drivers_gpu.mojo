@@ -1,4 +1,4 @@
-"""`numax.optimize.array`'s converge-to-tolerance drivers inside a device
+"""`numax.optimize`'s `Array` tier's converge-to-tolerance drivers inside a device
 kernel body at `float32`, against the same kernel on the CPU.
 
 Every lane of one launch solves its own problem -- the root of `x^2 - c`
@@ -17,7 +17,7 @@ from max.gpu.host import DeviceContext
 
 from numax.core.numeric import FloatLike
 from numax.core.tensor import Static
-from numax.optimize.array import (
+from numax.optimize import (
     bfgs,
     bisect_tol,
     brent,

@@ -28,7 +28,7 @@ from numax import FloatLike
 from numax.core.tensor import Static
 from numax.core.tensorlike import TensorView
 from numax.optimize import MinimizeResult, minimize
-from numax.optimize.array import minimize as array_minimize
+from numax.optimize import minimize
 
 comptime dtype = DType.float64
 
@@ -158,7 +158,7 @@ def test_the_two_tiers_agree() raises:
     var array_start = Array[Float64, 2](fill=0)
     array_start[0] = -1.2
     array_start[1] = 1.0
-    var array_side = array_minimize[2, _rosenbrock_array](array_start^)
+    var array_side = minimize[2, _rosenbrock_array](array_start^)
 
     assert_true(tensor_side.converged)
     assert_true(array_side.converged)

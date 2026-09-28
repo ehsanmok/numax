@@ -101,7 +101,7 @@ siblings rather than replacements.
 
 | Tier | Rule | Who |
 |---|---|---|
-| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate`'s `Array` tier, `fft.array`, `signal`'s `Array` tier, `optimize.array`'s fixed-iteration `newton`/`halley`/`bisection`, `integrate`'s `Array` tier's fixed-node quadrature and fixed-step ODE steps |
+| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate`'s `Array` tier, `fft.array`, `signal`'s `Array` tier, `optimize`'s `Array` tier's fixed-iteration `newton`/`halley`/`bisection`, `integrate`'s `Array` tier's fixed-node quadrature and fixed-step ODE steps |
 | **Tier 2** | Free to loop or branch on data; `Plain`-only, host-side unless the row says otherwise | `ops`, `logic`, `sorting`, `io`, `stats`'s order statistics and scans, the `Tensor` tiers of `linalg`, `interpolate`, `fft` and `signal` (host-orchestrated; `gpu=True` still runs MAX's kernels), `optimize`'s converge-to-tolerance minimizers, `integrate`'s adaptive `quad`/`solve_ivp`. `ops`, `elementwise`, `logic`, `rowwise` and `stats`'s monoid reductions are tier 2 in shape only: `Plain`-only, but one body on both targets |
 
 ## `numax.core` — the tensor engine
@@ -318,7 +318,7 @@ runs MAX's GPU kernels.
 The `Tensor` tier takes `x0` (and `curve_fit`'s data) through the `TensorLike` bound, so a `TensorView` starts a minimization; the callbacks still receive an owned `Static`, since that is what a user writes them against. `minimize[f=f, jac=jac](x0)` infers everything else from the tensor and the callbacks.
 
 Two tiers, one import each. `numax.optimize` is the `Tensor` one and holds
-the nonlinear fits; `numax.optimize.array` holds everything that works on a
+the nonlinear fits; `numax.optimize`'s `Array` tier holds everything that works on a
 handful of scalars, split in turn by whether the iteration count is known up
 front.
 
@@ -340,29 +340,29 @@ neither.
 
 `"nelder-mead"` is deliberately not a `Tensor` method. Its simplex is
 `n + 1` points of `n` entries compared every iteration, which is the shape a
-`Tensor` tier exists to not be; it stays in `numax.optimize.array`.
+`Tensor` tier exists to not be; it stays in `numax.optimize`'s `Array` tier.
 
 Every tier-2 driver below takes `dtype` (`float64` by default) and runs
 inside a device kernel body at `float32`, one problem per thread; the
 SciPy-shaped dispatchers (`root_scalar`, `root`, `minimize_scalar`,
 `minimize`) raise on a bad `method` and are host spellings.
 
-| Surface — over `Array[T, n]`, from `numax.optimize.array` | Tier | Where |
+| Surface — over `Array[T, n]`, from `numax.optimize`'s `Array` tier | Tier | Where |
 |---|---|---|
-| `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/array/solve.mojo`](../numax/optimize/array/solve.mojo) |
-| `root_scalar` — `scipy.optimize.root_scalar`, dispatching on `method=` to the five below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `root` — `scipy.optimize.root` for a square vector system, `method="lm"` over `least_squares` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `brentq`, `bisect_tol` — bracketed scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `newton_tol`, `halley_tol` — from a single guess, with `f′` and `f″` exact from `Dual` and `Dual[Dual]` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `secant` — the one root finder here that uses no derivative at all, for objectives whose derivative lies | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `minimize_scalar` — `scipy.optimize.minimize_scalar`, dispatching on `method=` to the three below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `brent`, `golden` — one-variable minimization from a downhill *direction*, which the search expands into a bracket | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `fminbound` — the same engine constrained to `[lower, upper]`, which the answer may not leave | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `minimize` — `scipy.optimize.minimize`, dispatching on `method=` to the three below | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `bfgs` — quasi-Newton minimization to a tolerance, returning `ArrayMinimizeResult` | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `cg` — Polak-Ribière conjugate gradients under a strong-Wolfe line search; one direction vector rather than an `n × n` inverse Hessian | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `least_squares`, `curve_fit` — Levenberg-Marquardt, the second with the data as a runtime argument | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
-| `nelder_mead` — derivative-free simplex, for objectives whose gradient exists but should not be trusted | 2 | [`optimize/array/optimize.mojo`](../numax/optimize/array/optimize.mojo) |
+| `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/_array/solve.mojo`](../numax/optimize/_array/solve.mojo) |
+| `root_scalar` — `scipy.optimize.root_scalar`, dispatching on `method=` to the five below | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `root` — `scipy.optimize.root` for a square vector system, `method="lm"` over `least_squares` | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `brentq`, `bisect_tol` — bracketed scalar root finding to a tolerance, returning `OptimizeResult` | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `newton_tol`, `halley_tol` — from a single guess, with `f′` and `f″` exact from `Dual` and `Dual[Dual]` | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `secant` — the one root finder here that uses no derivative at all, for objectives whose derivative lies | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `minimize_scalar` — `scipy.optimize.minimize_scalar`, dispatching on `method=` to the three below | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `brent`, `golden` — one-variable minimization from a downhill *direction*, which the search expands into a bracket | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `fminbound` — the same engine constrained to `[lower, upper]`, which the answer may not leave | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `minimize` — `scipy.optimize.minimize`, dispatching on `method=` to the three below | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `bfgs` — quasi-Newton minimization to a tolerance, returning `ArrayMinimizeResult` | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `cg` — Polak-Ribière conjugate gradients under a strong-Wolfe line search; one direction vector rather than an `n × n` inverse Hessian | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `least_squares`, `curve_fit` — Levenberg-Marquardt, the second with the data as a runtime argument | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
+| `nelder_mead` — derivative-free simplex, for objectives whose gradient exists but should not be trusted | 2 | [`optimize/_array/optimize.mojo`](../numax/optimize/_array/optimize.mojo) |
 
 The objective is an ordinary `FloatLike` kernel, so `bfgs` evaluates it at
 `Gradient` and gets every partial derivative *exactly* — there is no `jac`

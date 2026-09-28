@@ -3,7 +3,7 @@
 The fits here are exactly recoverable -- the data is generated from known
 parameters with no noise -- so a converged fit must return those parameters,
 not merely a small residual. Two of them also pin the `Tensor` tier against
-`numax.optimize.array`, which reads its Jacobian off `Gradient` rather than
+`numax.optimize`'s `Array` tier, which reads its Jacobian off `Gradient` rather than
 taking one, so agreement means the caller-supplied Jacobian and the exact
 one drive the same iteration.
 """
@@ -17,7 +17,7 @@ from std.collections import Array
 from numax.core.tensor import Static
 from numax.core.numeric import FloatLike
 from numax.optimize import curve_fit, least_squares
-from numax.optimize.array import least_squares as array_least_squares
+from numax.optimize import least_squares
 
 comptime dtype = DType.float64
 
@@ -228,7 +228,7 @@ def test_the_two_tiers_agree() raises:
     var start = Array[Float64, 2](fill=0.0)
     start[0] = 1.0
     start[1] = 1.0
-    var array_fit = array_least_squares[2, 4, _array_residuals](start)
+    var array_fit = least_squares[2, 4, _array_residuals](start)
 
     assert_true(tensor_fit.converged)
     assert_true(array_fit.converged)

@@ -68,7 +68,7 @@ from ._array.quadrature import (
 # Fixed to float64 because an error tolerance of 1e-10 is meaningless at
 # float32 and these integrators are host drivers. Mojo 1.1 does accept a
 # struct instantiated with a function-level `DType` as a `FloatLike`
-# argument -- `numax.optimize.array`'s drivers take `dtype` that way -- so
+# argument -- `numax.optimize`'s `Array` tier's drivers take `dtype` that way -- so
 # a per-call dtype is a change of this file, not a language limit.
 comptime _P = Plain[DType.float64, 1]
 

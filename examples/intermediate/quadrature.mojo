@@ -34,7 +34,7 @@ from numax import (
 )
 from numax.integrate import gauss_legendre, simpson, trapezoid
 
-from numax.optimize.array import newton
+from numax.optimize import newton
 
 comptime dtype = DType.float64
 comptime width = 1

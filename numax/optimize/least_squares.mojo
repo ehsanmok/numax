@@ -2,12 +2,12 @@
 
 **This module is tier 2.** It iterates to a tolerance and its driver loop
 runs on the host, so nothing here is launchable inside a kernel body.
-`numax.optimize.array` is the `FloatLike` tier; this one is `Plain`-only and
+`numax.optimize`'s `Array` tier is the `FloatLike` tier; this one is `Plain`-only and
 exists for fits whose residual vector is too large to sit in registers.
 
 ## Why the Jacobian is an argument here and not there
 
-`numax.optimize.array.least_squares` takes no Jacobian: it evaluates the
+`numax.optimize.least_squares` takes no Jacobian: it evaluates the
 residuals at `Gradient[_P, n_params]`, and every residual comes back
 carrying all `n_params` partial derivatives, so one call produces the exact
 Jacobian by the chain rule.
@@ -75,6 +75,12 @@ from ..linalg.blas import dot, matvec
 from ..linalg.qr import lstsq
 
 from .common import _as_tensor
+from std.collections import Array
+from ._array.optimize import ArrayMinimizeResult
+from ..core.numeric import FloatLike
+from ._array.optimize import _FLAT_TOL
+from ._array.optimize import curve_fit as _array_curve_fit
+from ._array.optimize import least_squares as _array_least_squares
 
 
 struct FitResult[dtype: DType, n_params: Int](Movable):
@@ -618,3 +624,41 @@ def curve_fit[
         max_iter,
         False,
     )
+
+
+def curve_fit[
+    n_params: Int,
+    n_points: Int,
+    model: def[U: FloatLike](U, Array[U, n_params]) thin -> U,
+    dtype: DType = DType.float64,
+](
+    xdata: Array[Scalar[dtype], n_points],
+    ydata: Array[Scalar[dtype], n_points],
+    p0: Array[Scalar[dtype], n_params],
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, 1e-10],
+    max_iter: Int = 100,
+) -> ArrayMinimizeResult[n_params, dtype] where dtype.is_floating_point():
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.optimize._array.optimize.curve_fit`."""
+    return _array_curve_fit[
+        n_params=n_params, n_points=n_points, model=model, dtype=dtype
+    ](xdata, ydata, p0, tol, max_iter)
+
+
+def least_squares[
+    n_params: Int,
+    n_resid: Int,
+    residuals: def[U: FloatLike](Array[U, n_params]) thin -> Array[U, n_resid],
+    dtype: DType = DType.float64,
+](
+    x0: Array[Scalar[dtype], n_params],
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, 1e-10],
+    max_iter: Int = 100,
+) -> ArrayMinimizeResult[n_params, dtype] where dtype.is_floating_point():
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.optimize._array.optimize.least_squares`."""
+    return _array_least_squares[
+        n_params=n_params, n_resid=n_resid, residuals=residuals, dtype=dtype
+    ](x0, tol, max_iter)

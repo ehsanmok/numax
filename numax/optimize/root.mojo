@@ -2,7 +2,7 @@
 `scipy.optimize.root`.
 
 **This module is tier 2.** It iterates to a tolerance with a host driver
-loop; the linear algebra of each step is MAX's. `numax.optimize.array.root`
+loop; the linear algebra of each step is MAX's. `numax.optimize.root`
 is the `FloatLike` tier for a handful of unknowns, and reads its Jacobian
 off `Gradient`; this one takes `jac` as an argument for the reason
 `numax.optimize.minimize` gives -- a `Tensor` cannot hold a conformer.
@@ -38,6 +38,10 @@ from ..linalg.basic import solve
 from .common import _as_tensor
 from .least_squares import least_squares
 from .minimize import _infinity_norm, _to_list
+from std.collections import Array
+from ._array.optimize import ArrayMinimizeResult
+from ..core.numeric import FloatLike
+from ._array.optimize import root as _array_root
 
 
 struct RootResult[dtype: DType, n: Int](Movable):
@@ -179,3 +183,19 @@ def root[
                 " the module docstring."
             ),
         )
+
+
+def root[
+    n: Int,
+    f: def[U: FloatLike](Array[U, n]) thin -> Array[U, n],
+    method: StaticString = "lm",
+    dtype: DType = DType.float64,
+](
+    x0: Array[Scalar[dtype], n],
+    tol: Optional[Scalar[dtype]] = None,
+    max_iter: Optional[Int] = None,
+) raises -> ArrayMinimizeResult[n, dtype] where dtype.is_floating_point():
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.optimize._array.optimize.root`."""
+    return _array_root[n=n, f=f, method=method, dtype=dtype](x0, tol, max_iter)

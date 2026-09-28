@@ -1,4 +1,4 @@
-"""Tests for `numax.optimize.array`'s SciPy-shaped entry points.
+"""Tests for `numax.optimize`'s `Array` tier's SciPy-shaped entry points.
 
 Covers `minimize` and the `cg` method it adds, `minimize_scalar` with the
 three one-variable minimizers underneath it, `root_scalar` with the five
@@ -29,7 +29,7 @@ from std.testing import (
 )
 
 from numax import FloatLike, Plain
-from numax.optimize.array import (
+from numax.optimize import (
     bfgs,
     bisect_tol,
     brent,
@@ -38,10 +38,10 @@ from numax.optimize.array import (
     fminbound,
     golden,
     halley_tol,
+    least_squares,
     minimize,
     minimize_scalar,
     nelder_mead,
-    least_squares,
     newton_tol,
     root,
     root_scalar,

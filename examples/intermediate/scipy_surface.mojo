@@ -58,12 +58,7 @@ from numax.linalg import (
     toeplitz,
 )
 from numax.optimize import nnls
-from numax.optimize.array import (
-    minimize,
-    minimize_scalar,
-    root,
-    root_scalar,
-)
+from numax.optimize import minimize, minimize_scalar, root, root_scalar
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]

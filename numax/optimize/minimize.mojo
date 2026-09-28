@@ -2,13 +2,13 @@
 
 **This module is tier 2.** It iterates to a tolerance and its driver loop
 runs on the host, so nothing here is launchable inside a kernel body.
-`numax.optimize.array` is the `FloatLike` tier; this one is `Plain`-only and
+`numax.optimize`'s `Array` tier is the `FloatLike` tier; this one is `Plain`-only and
 exists for objectives whose argument vector is too large to sit in
 registers.
 
 ## Why the gradient is an argument here and not there
 
-`numax.optimize.array.minimize` takes no Jacobian and no `jac`: it evaluates
+`numax.optimize.minimize` takes no Jacobian and no `jac`: it evaluates
 the objective at `Gradient[_P, n_vars]`, and one call returns the value
 together with every partial derivative, exactly, by the chain rule.
 
@@ -76,7 +76,7 @@ bounds.
 `"nelder-mead"` is deliberately absent. Its simplex is `n_vars + 1` points
 of `n_vars` entries each, and comparing function values across all of them
 every iteration is exactly the shape a `Tensor` tier exists to not be. It
-stays in `numax.optimize.array`. General constraints are out of scope.
+stays in `numax.optimize`'s `Array` tier. General constraints are out of scope.
 """
 
 from max.gpu.host import DeviceContext
@@ -87,6 +87,11 @@ from ..core.ops import add, multiply
 from ..linalg.blas import matvec, outer
 
 from .common import _as_tensor
+from std.collections import Array
+from ._array.optimize import ArrayMinimizeResult
+from ..core.numeric import FloatLike
+from ._array.optimize import bfgs
+from ._array.optimize import minimize as _array_minimize
 
 
 struct MinimizeResult[dtype: DType, n_vars: Int](Movable):
@@ -197,7 +202,7 @@ def _wolfe_step[
 ) raises -> Float64:
     """A step length satisfying the **strong Wolfe** conditions, or `0` if
     none was found. Nocedal & Wright algorithms 3.5 and 3.6, and the same
-    search `numax.optimize.array`'s `cg` uses -- its docstring carries the
+    search `numax.optimize`'s `Array` tier's `cg` uses -- its docstring carries the
     full reasoning.
 
     The short version, because it is the difference between a CG that
@@ -743,7 +748,7 @@ def minimize[
 
     A run that exhausts `max_iter`, or whose line search cannot find a
     downhill step, returns `converged=False` with the best point it reached
-    rather than raising. See `minimize` in `numax.optimize.array` for why an
+    rather than raising. See `minimize` in `numax.optimize`'s `Array` tier for why an
     unrecognized `method` raises rather than failing to compile.
     """
     comptime dtype = T.dtype
@@ -1110,4 +1115,22 @@ def _descend[
         grad_norm,
         max_iter,
         False,
+    )
+
+
+def minimize[
+    n_vars: Int,
+    f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+    method: StaticString = "bfgs",
+    dtype: DType = DType.float64,
+](
+    x0: Array[Scalar[dtype], n_vars],
+    tol: Optional[Scalar[dtype]] = None,
+    max_iter: Optional[Int] = None,
+) raises -> ArrayMinimizeResult[n_vars, dtype] where dtype.is_floating_point():
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.optimize._array.optimize.minimize`."""
+    return _array_minimize[n_vars=n_vars, f=f, method=method, dtype=dtype](
+        x0, tol, max_iter
     )
