@@ -340,6 +340,11 @@ neither.
 `n + 1` points of `n` entries compared every iteration, which is the shape a
 `Tensor` tier exists to not be; it stays in `numax.optimize.array`.
 
+Every tier-2 driver below takes `dtype` (`float64` by default) and runs
+inside a device kernel body at `float32`, one problem per thread; the
+SciPy-shaped dispatchers (`root_scalar`, `root`, `minimize_scalar`,
+`minimize`) raise on a bad `method` and are host spellings.
+
 | Surface — over `Array[T, n]`, from `numax.optimize.array` | Tier | Where |
 |---|---|---|
 | `newton`, `halley`, `bisection` — fixed number of steps, no data-dependent branching | 1 | [`optimize/array/solve.mojo`](../numax/optimize/array/solve.mojo) |

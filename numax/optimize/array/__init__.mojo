@@ -21,10 +21,13 @@ Two halves, split by whether the iteration count is known up front.
 `solve`'s `newton`/`halley`/`bisection` run a fixed number of steps with no
 data-dependent branching, so they are **tier 1** and GPU-launchable inside a
 kernel body. The rest converge to a tolerance and are **tier 2**,
-`Plain`-only and host-side -- including `newton_tol`, `halley_tol` and
-`bisect_tol`, which are those same three algorithms with a convergence test
-and a status instead of a fixed trip count. Both of each pair ship; they are
-alternatives, not replacements.
+`Plain`-only, one problem per call -- including `newton_tol`, `halley_tol`
+and `bisect_tol`, which are those same three algorithms with a convergence
+test and a status instead of a fixed trip count. Every tier-2 driver takes
+`dtype` (`float64` by default) and runs inside a device kernel body at
+`float32`, one problem per thread; only the SciPy-shaped dispatchers, which
+raise on a bad `method`, are host spellings. Both of each pair ship; they
+are alternatives, not replacements.
 
 ## Why this tier exists at all
 

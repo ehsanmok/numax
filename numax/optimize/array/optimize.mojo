@@ -4,8 +4,20 @@
 met or an iteration cap is hit, and branches on data to decide. That is a
 deliberate exception to the fixed-iteration invariant the rest of `numax`
 holds absolutely, and it is why nothing here is `FloatLike`-generic in its
-*driver*: these run on the host, on `Plain` values, and none of them is
-launchable inside a GPU thread. See `docs/architecture.md`'s "Two tiers".
+*driver*: a driver runs on `Plain` values, one problem at a time, and its
+lanes cannot disagree about when to stop. See `docs/architecture.md`'s
+"Two tiers".
+
+**One problem per thread is still a device workload.** Every driver takes
+`dtype` (`float64` by default), allocates nothing and raises nothing, so it
+runs inside a device kernel body at `dtype=float32` -- a thread per
+problem, each converging on its own schedule. Metal compiles no `double`,
+so `float32` is the device spelling there; the default tolerances rise to
+what `float32` can resolve (`_ROOT_TOL`, `_FLAT_TOL`) and stay exactly as
+documented at `float64`. The SciPy-shaped dispatchers -- `root_scalar`,
+`minimize_scalar`, `minimize`, `root` -- raise on a wrong `method` or a
+missing argument, so they are host spellings; inside a kernel, name the
+method (`brentq[f, dtype=float32](...)`).
 
 The objective function is a different matter, and this is the whole point of
 the module. `f` is still an ordinary `FloatLike` kernel -- written once,
@@ -42,9 +54,10 @@ thread. They are not superseded by anything here:
 | `newton` | `newton_tol` | fixed 20 steps vs. loop until `\\|dx\\| < tol` |
 | `bisection` | `brentq` | fixed halvings vs. inverse-quadratic interpolation to tolerance |
 
-Reach for the tier-1 version inside a kernel or when the iteration count
-has to be predictable; reach for these when accuracy matters more than
-uniformity and you are on the host anyway.
+Reach for the tier-1 version when the iteration count has to be
+predictable or every SIMD lane must do the same work; reach for these when
+accuracy matters more than uniformity, on the host or one problem per
+device thread.
 
 ## What converged, and what didn't
 
@@ -64,14 +77,38 @@ from ...core.numeric import FloatLike
 from ...core.plain import Plain
 from ...linalg.array.cholesky import cholesky, cholesky_solve
 
-# Fixed to float64, not a parameter: a tolerance of 1e-12 is meaningless at
-# float32, and Mojo rejects a struct instantiated with a function-level
-# `DType` as a `FloatLike` argument, so a per-call dtype would not compile.
-comptime _P = Plain[DType.float64]
+# Every driver takes `dtype`, `float64` by default. At a narrower dtype the
+# default tolerances are raised to what that dtype can resolve -- four ulps
+# for a location, `sqrt(eps)` for a minimizer's `x` and a gradient -- since
+# a `1e-12` step test would never pass at `float32`. `float64` keeps the
+# documented defaults exactly.
+comptime _EPS[dtype: DType] = (
+    2.220446049250313e-16 if dtype
+    == DType.float64 else (
+        1.1920928955078125e-07 if dtype == DType.float32 else 9.765625e-04
+    )
+)
+comptime _SQRT_EPS[dtype: DType] = (
+    1.4901161193847656e-08 if dtype
+    == DType.float64 else (
+        3.4526698300124393e-04 if dtype == DType.float32 else 3.125e-02
+    )
+)
+comptime _ROOT_TOL[dtype: DType, tol: Float64] = Scalar[dtype](
+    tol if dtype == DType.float64 else max(tol, 4.0 * _EPS[dtype])
+)
+"""A root finder's default step tolerance at `dtype`: `tol` at `float64`,
+floored at four ulps otherwise."""
+comptime _FLAT_TOL[dtype: DType, tol: Float64] = Scalar[dtype](
+    tol if dtype == DType.float64 else max(tol, _SQRT_EPS[dtype])
+)
+"""A minimizer's default tolerance on `x` or on the gradient at `dtype`:
+`tol` at `float64`, floored at `sqrt(eps)` otherwise, the resolution a
+quadratic minimum allows."""
 
 
 @fieldwise_init
-struct OptimizeResult(Copyable):
+struct OptimizeResult[dtype: DType = DType.float64](Copyable):
     """The outcome of a tier-2 iteration: the answer, plus whether it is
     one.
 
@@ -81,28 +118,33 @@ struct OptimizeResult(Copyable):
     knows which.
     """
 
-    var x: Float64
-    var f_x: Float64
+    var x: Scalar[Self.dtype]
+    var f_x: Scalar[Self.dtype]
     var iterations: Int
     var converged: Bool
 
 
 @fieldwise_init
-struct ArrayMinimizeResult[n_vars: Int](Copyable):
+struct ArrayMinimizeResult[n_vars: Int, dtype: DType = DType.float64](Copyable):
     """`OptimizeResult` for a multi-variable minimization: `x` is the
     argument vector, `grad_norm` the infinity-norm of the gradient at it
     (the quantity the convergence test actually looks at)."""
 
-    var x: Array[Float64, Self.n_vars]
-    var f_x: Float64
-    var grad_norm: Float64
+    var x: Array[Scalar[Self.dtype], Self.n_vars]
+    var f_x: Scalar[Self.dtype]
+    var grad_norm: Scalar[Self.dtype]
     var iterations: Int
     var converged: Bool
 
 
 def newton_tol[
     f: def[U: FloatLike](U) thin -> U,
-](x0: Float64, tol: Float64 = 1e-12, max_iter: Int = 64,) -> OptimizeResult:
+    dtype: DType = DType.float64,
+](
+    x0: Scalar[dtype],
+    tol: Scalar[dtype] = _ROOT_TOL[dtype, 1e-12],
+    max_iter: Int = 64,
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Newton's method on `f`, iterating until the step is smaller than
     `tol`.
 
@@ -117,6 +159,7 @@ def newton_tol[
     but the function is not well behaved, since it cannot leave the
     bracket.
     """
+    comptime _P = Plain[dtype]
 
     var x = x0
     for i in range(max_iter):
@@ -124,17 +167,22 @@ def newton_tol[
         var value = evaluated.value.v
         var derivative = evaluated.deriv.v
         if derivative == 0:
-            return OptimizeResult(x, value, i + 1, False)
+            return OptimizeResult[dtype](x, value, i + 1, False)
         var step = value / derivative
         x = x - step
         if abs(step) < tol:
-            return OptimizeResult(x, f[_P](_P(x)).v, i + 1, True)
-    return OptimizeResult(x, f[_P](_P(x)).v, max_iter, False)
+            return OptimizeResult[dtype](x, f[_P](_P(x)).v, i + 1, True)
+    return OptimizeResult[dtype](x, f[_P](_P(x)).v, max_iter, False)
 
 
 def halley_tol[
     f: def[U: FloatLike](U) thin -> U,
-](x0: Float64, tol: Float64 = 1e-12, max_iter: Int = 32) -> OptimizeResult:
+    dtype: DType = DType.float64,
+](
+    x0: Scalar[dtype],
+    tol: Scalar[dtype] = _ROOT_TOL[dtype, 1e-12],
+    max_iter: Int = 32,
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Halley's method on `f`, iterating until the step is smaller than
     `tol`.
 
@@ -153,6 +201,7 @@ def halley_tol[
     step is undefined, and that returns `converged=False` at the last good
     iterate rather than producing an infinity.
     """
+    comptime _P = Plain[dtype]
     comptime _D = Dual[_P]
     comptime _DD = Dual[_D]
 
@@ -166,22 +215,23 @@ def halley_tol[
 
         var denominator = 2 * d1 * d1 - value * d2
         if denominator == 0:
-            return OptimizeResult(x, value, i + 1, False)
+            return OptimizeResult[dtype](x, value, i + 1, False)
         var step = 2 * value * d1 / denominator
         x = x - step
         if abs(step) < tol:
-            return OptimizeResult(x, f[_P](_P(x)).v, i + 1, True)
-    return OptimizeResult(x, f[_P](_P(x)).v, max_iter, False)
+            return OptimizeResult[dtype](x, f[_P](_P(x)).v, i + 1, True)
+    return OptimizeResult[dtype](x, f[_P](_P(x)).v, max_iter, False)
 
 
 def secant[
     f: def[U: FloatLike](U) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    x0: Float64,
-    x1: Optional[Float64] = None,
-    tol: Float64 = 1e-12,
+    x0: Scalar[dtype],
+    x1: Optional[Scalar[dtype]] = None,
+    tol: Scalar[dtype] = _ROOT_TOL[dtype, 1e-12],
     max_iter: Int = 64,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """The secant method: Newton with the derivative replaced by the slope
     through the last two iterates.
 
@@ -203,12 +253,15 @@ def secant[
     `x1` defaults to a small relative perturbation of `x0`, SciPy's choice,
     scaled so it is nonzero even at `x0 = 0`.
     """
+    comptime _P = Plain[dtype]
     var a = x0
-    var b: Float64
+    var b: Scalar[dtype]
     if x1:
         b = x1.value()
     else:
-        b = a * (1 + 1e-4) + (1e-4 if a >= 0 else -1e-4)
+        b = a * (1 + 1e-4) + (
+            Scalar[dtype](1e-4) if a >= 0 else Scalar[dtype](-1e-4)
+        )
 
     var f_a = f[_P](_P(a)).v
     var f_b = f[_P](_P(b)).v
@@ -216,25 +269,26 @@ def secant[
     for i in range(max_iter):
         var difference = f_b - f_a
         if difference == 0:
-            return OptimizeResult(b, f_b, i + 1, False)
+            return OptimizeResult[dtype](b, f_b, i + 1, False)
         var step = f_b * (b - a) / difference
         a = b
         f_a = f_b
         b = b - step
         f_b = f[_P](_P(b)).v
         if abs(step) < tol:
-            return OptimizeResult(b, f_b, i + 1, True)
-    return OptimizeResult(b, f_b, max_iter, False)
+            return OptimizeResult[dtype](b, f_b, i + 1, True)
+    return OptimizeResult[dtype](b, f_b, max_iter, False)
 
 
 def bisect_tol[
     f: def[U: FloatLike](U) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    a: Float64,
-    b: Float64,
-    tol: Float64 = 1e-12,
+    a: Scalar[dtype],
+    b: Scalar[dtype],
+    tol: Scalar[dtype] = _ROOT_TOL[dtype, 1e-12],
     max_iter: Int = 128,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Bisection on `[a, b]`, halving until the bracket is narrower than
     `tol`.
 
@@ -253,40 +307,42 @@ def bisect_tol[
     case where that one-bit-per-iteration *predictability* is the point, and
     because a caller comparing methods should be able to name it.
     """
+    comptime _P = Plain[dtype]
     var lo = a
     var hi = b
     var f_lo = f[_P](_P(lo)).v
     var f_hi = f[_P](_P(hi)).v
 
     if f_lo == 0:
-        return OptimizeResult(lo, f_lo, 0, True)
+        return OptimizeResult[dtype](lo, f_lo, 0, True)
     if f_hi == 0:
-        return OptimizeResult(hi, f_hi, 0, True)
+        return OptimizeResult[dtype](hi, f_hi, 0, True)
     if (f_lo > 0) == (f_hi > 0):
-        return OptimizeResult(lo, f_lo, 0, False)
+        return OptimizeResult[dtype](lo, f_lo, 0, False)
 
     for i in range(max_iter):
         var mid = (lo + hi) / 2
         var f_mid = f[_P](_P(mid)).v
         if f_mid == 0 or (hi - lo) / 2 < tol:
-            return OptimizeResult(mid, f_mid, i + 1, True)
+            return OptimizeResult[dtype](mid, f_mid, i + 1, True)
         if (f_mid > 0) == (f_lo > 0):
             lo = mid
             f_lo = f_mid
         else:
             hi = mid
     var mid = (lo + hi) / 2
-    return OptimizeResult(mid, f[_P](_P(mid)).v, max_iter, False)
+    return OptimizeResult[dtype](mid, f[_P](_P(mid)).v, max_iter, False)
 
 
 def brentq[
     f: def[U: FloatLike](U) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    a: Float64,
-    b: Float64,
-    tol: Float64 = 1e-12,
+    a: Scalar[dtype],
+    b: Scalar[dtype],
+    tol: Scalar[dtype] = _ROOT_TOL[dtype, 1e-12],
     max_iter: Int = 128,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Brent's method: find a root of `f` in `[a, b]`, where `f(a)` and
     `f(b)` must have opposite signs.
 
@@ -302,6 +358,7 @@ def brentq[
     sign change, since every guarantee the method has follows from that
     precondition.
     """
+    comptime _P = Plain[dtype]
 
     var lo = a
     var hi = b
@@ -309,11 +366,11 @@ def brentq[
     var f_hi = f[_P](_P(hi)).v
 
     if f_lo == 0:
-        return OptimizeResult(lo, f_lo, 0, True)
+        return OptimizeResult[dtype](lo, f_lo, 0, True)
     if f_hi == 0:
-        return OptimizeResult(hi, f_hi, 0, True)
+        return OptimizeResult[dtype](hi, f_hi, 0, True)
     if (f_lo > 0) == (f_hi > 0):
-        return OptimizeResult(lo, f_lo, 0, False)
+        return OptimizeResult[dtype](lo, f_lo, 0, False)
 
     # Keep `hi` as the better of the two endpoints, which is what makes the
     # interpolation formulas below well-conditioned.
@@ -331,7 +388,7 @@ def brentq[
     var used_bisection = True
 
     for i in range(max_iter):
-        var candidate: Float64
+        var candidate: Scalar[dtype]
         if f_hi != f_prev and f_lo != f_prev:
             # Inverse quadratic interpolation through the three points.
             var d1 = (f_hi - f_lo) * (f_hi - f_prev)
@@ -388,21 +445,22 @@ def brentq[
             f_hi = swap_f
 
         if f_hi == 0 or abs(hi - lo) < tol:
-            return OptimizeResult(hi, f_hi, i + 1, True)
+            return OptimizeResult[dtype](hi, f_hi, i + 1, True)
 
-    return OptimizeResult(hi, f_hi, max_iter, False)
+    return OptimizeResult[dtype](hi, f_hi, max_iter, False)
 
 
 def root_scalar[
     f: def[U: FloatLike](U) thin -> U,
     method: StaticString = "brentq",
+    dtype: DType = DType.float64,
 ](
-    x0: Optional[Float64] = None,
-    x1: Optional[Float64] = None,
-    bracket: Optional[Tuple[Float64, Float64]] = None,
-    tol: Optional[Float64] = None,
+    x0: Optional[Scalar[dtype]] = None,
+    x1: Optional[Scalar[dtype]] = None,
+    bracket: Optional[Tuple[Scalar[dtype], Scalar[dtype]]] = None,
+    tol: Optional[Scalar[dtype]] = None,
     max_iter: Optional[Int] = None,
-) raises -> OptimizeResult:
+) raises -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Find a root of a one-variable `f`. `scipy.optimize.root_scalar`.
 
     | `method` | Runs | Wants | Uses |
@@ -451,16 +509,16 @@ def root_scalar[
                 ),
             )
         var pair = bracket.value()
-        var resolved_tol = tol.value() if tol else 1e-12
+        var resolved_tol = tol.value() if tol else _ROOT_TOL[dtype, 1e-12]
         comptime if method == "brentq":
-            return brentq[f](
+            return brentq[f, dtype=dtype](
                 pair[0],
                 pair[1],
                 resolved_tol,
                 max_iter.value() if max_iter else 128,
             )
         else:
-            return bisect_tol[f](
+            return bisect_tol[f, dtype=dtype](
                 pair[0],
                 pair[1],
                 resolved_tol,
@@ -487,17 +545,17 @@ def root_scalar[
                 ),
             )
         var start = x0.value()
-        var resolved_tol = tol.value() if tol else 1e-12
+        var resolved_tol = tol.value() if tol else _ROOT_TOL[dtype, 1e-12]
         comptime if method == "newton":
-            return newton_tol[f](
+            return newton_tol[f, dtype=dtype](
                 start, resolved_tol, max_iter.value() if max_iter else 64
             )
         elif method == "halley":
-            return halley_tol[f](
+            return halley_tol[f, dtype=dtype](
                 start, resolved_tol, max_iter.value() if max_iter else 32
             )
         else:
-            return secant[f](
+            return secant[f, dtype=dtype](
                 start,
                 x1,
                 resolved_tol,
@@ -525,7 +583,7 @@ comptime _MINIMIZER_TOL = 1.48e-8
 
 
 @fieldwise_init
-struct _Bracket(Copyable):
+struct _Bracket[dtype: DType](Copyable):
     """Three points with `f(b)` below both `f(a)` and `f(c)`, which is what
     guarantees a minimum lies between `a` and `c`. `found` is false when the
     search ran out of expansions, which means `f` decreased monotonically
@@ -534,16 +592,20 @@ struct _Bracket(Copyable):
     `f_b` rides along because the caller needs a value to report on that
     failure path, where there is no interval left to refine."""
 
-    var a: Float64
-    var b: Float64
-    var c: Float64
-    var f_b: Float64
+    var a: Scalar[Self.dtype]
+    var b: Scalar[Self.dtype]
+    var c: Scalar[Self.dtype]
+    var f_b: Scalar[Self.dtype]
     var found: Bool
 
 
 def _bracket_minimum[
+    dtype: DType,
+    //,
     f: def[U: FloatLike](U) thin -> U,
-](start: Float64, second: Float64) -> _Bracket:
+](start: Scalar[dtype], second: Scalar[dtype]) -> _Bracket[
+    dtype
+] where dtype.is_floating_point():
     """Expand `[start, second]` downhill until it brackets a minimum.
 
     Orient the interval so `f` decreases from `a` to `b`, then keep stepping
@@ -556,6 +618,7 @@ def _bracket_minimum[
     An unbounded descent is reported (`found=False`) rather than raised,
     matching how everything else in this module reports rather than throws.
     """
+    comptime _P = Plain[dtype]
     var a = start
     var b = second
     var f_a = f[_P](_P(a)).v
@@ -575,25 +638,27 @@ def _bracket_minimum[
 
     for _ in range(80):
         if f_c >= f_b:
-            return _Bracket(a, b, c, f_b, True)
+            return _Bracket[dtype](a, b, c, f_b, True)
         a = b
         b = c
         f_b = f_c
         c = b + _GOLDEN_GROW * (b - a)
         f_c = f[_P](_P(c)).v
 
-    return _Bracket(a, b, c, f_b, False)
+    return _Bracket[dtype](a, b, c, f_b, False)
 
 
 def _brent_on_interval[
+    dtype: DType,
+    //,
     f: def[U: FloatLike](U) thin -> U,
 ](
-    lower: Float64,
-    upper: Float64,
-    start: Float64,
-    tol: Float64,
+    lower: Scalar[dtype],
+    upper: Scalar[dtype],
+    start: Scalar[dtype],
+    tol: Scalar[dtype],
     max_iter: Int,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Brent's minimization on `[lower, upper]`, starting from `start`.
 
     The shared engine under `brent` and `fminbound`; the two differ only in
@@ -609,6 +674,7 @@ def _brent_on_interval[
     the bracket is the more robust structure anyway, since it cannot leave
     the interval the way a Newton step can.
     """
+    comptime _P = Plain[dtype]
     var a = lower
     var b = upper
 
@@ -620,15 +686,15 @@ def _brent_on_interval[
     var f_w = f_x
     var f_v = f_x
 
-    var step: Float64 = 0
-    var previous_step: Float64 = 0
+    var step: Scalar[dtype] = 0
+    var previous_step: Scalar[dtype] = 0
 
     for iteration in range(max_iter):
         var middle = (a + b) / 2
         var tol1 = tol * abs(x) + 1e-11
         var tol2 = 2 * tol1
         if abs(x - middle) <= tol2 - (b - a) / 2:
-            return OptimizeResult(x, f_x, iteration, True)
+            return OptimizeResult[dtype](x, f_x, iteration, True)
 
         var take_golden = True
         if abs(previous_step) > tol1:
@@ -667,7 +733,7 @@ def _brent_on_interval[
             step = _GOLDEN_SECTION * previous_step
 
         # Never step by less than `tol1`: a shorter one cannot be resolved.
-        var trial: Float64
+        var trial: Scalar[dtype]
         if abs(step) >= tol1:
             trial = x + step
         else:
@@ -699,17 +765,18 @@ def _brent_on_interval[
                 v = trial
                 f_v = f_trial
 
-    return OptimizeResult(x, f_x, max_iter, False)
+    return OptimizeResult[dtype](x, f_x, max_iter, False)
 
 
 def brent[
     f: def[U: FloatLike](U) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    xa: Float64 = 0,
-    xb: Float64 = 1,
-    tol: Float64 = _MINIMIZER_TOL,
+    xa: Scalar[dtype] = 0.0,
+    xb: Scalar[dtype] = 1.0,
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, _MINIMIZER_TOL],
     max_iter: Int = 500,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Minimize a one-variable `f` by Brent's method. `scipy.optimize.brent`,
     and `scipy.optimize.minimize_scalar(method="Brent")`.
 
@@ -732,7 +799,7 @@ def brent[
     """
     var bracket = _bracket_minimum[f](xa, xb)
     if not bracket.found:
-        return OptimizeResult(bracket.b, bracket.f_b, 0, False)
+        return OptimizeResult[dtype](bracket.b, bracket.f_b, 0, False)
     var lower = min(bracket.a, bracket.c)
     var upper = max(bracket.a, bracket.c)
     return _brent_on_interval[f](lower, upper, bracket.b, tol, max_iter)
@@ -740,12 +807,13 @@ def brent[
 
 def golden[
     f: def[U: FloatLike](U) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    xa: Float64 = 0,
-    xb: Float64 = 1,
-    tol: Float64 = _MINIMIZER_TOL,
+    xa: Scalar[dtype] = 0.0,
+    xb: Scalar[dtype] = 1.0,
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, _MINIMIZER_TOL],
     max_iter: Int = 500,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Minimize a one-variable `f` by golden-section search.
     `scipy.optimize.golden`, and `minimize_scalar(method="Golden")`.
 
@@ -763,7 +831,7 @@ def golden[
     """
     var bracket = _bracket_minimum[f](xa, xb)
     if not bracket.found:
-        return OptimizeResult(bracket.b, bracket.f_b, 0, False)
+        return OptimizeResult[dtype](bracket.b, bracket.f_b, 0, False)
 
     var lower = min(bracket.a, bracket.c)
     var upper = max(bracket.a, bracket.c)
@@ -771,13 +839,19 @@ def golden[
 
 
 def _golden_on_interval[
+    dtype: DType,
+    //,
     f: def[U: FloatLike](U) thin -> U,
 ](
-    lower: Float64, upper: Float64, tol: Float64, max_iter: Int
-) -> OptimizeResult:
+    lower: Scalar[dtype],
+    upper: Scalar[dtype],
+    tol: Scalar[dtype],
+    max_iter: Int,
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Golden-section refinement of a known interval. Shared by `golden` and
     nothing else so far; kept separate so `golden`'s own body is the
     bracketing decision and this is the loop."""
+    comptime _P = Plain[dtype]
     comptime shrink = 0.6180339887498949
 
     var a = lower
@@ -791,7 +865,7 @@ def _golden_on_interval[
         if abs(b - a) < tol:
             var best = x1 if f1 < f2 else x2
             var f_best = f1 if f1 < f2 else f2
-            return OptimizeResult(best, f_best, iteration, True)
+            return OptimizeResult[dtype](best, f_best, iteration, True)
         if f1 < f2:
             b = x2
             x2 = x1
@@ -807,17 +881,18 @@ def _golden_on_interval[
 
     var best = x1 if f1 < f2 else x2
     var f_best = f1 if f1 < f2 else f2
-    return OptimizeResult(best, f_best, max_iter, False)
+    return OptimizeResult[dtype](best, f_best, max_iter, False)
 
 
 def fminbound[
     f: def[U: FloatLike](U) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    lower: Float64,
-    upper: Float64,
-    tol: Float64 = 1e-5,
+    lower: Scalar[dtype],
+    upper: Scalar[dtype],
+    tol: Scalar[dtype] = 1e-5,
     max_iter: Int = 500,
-) -> OptimizeResult:
+) -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Minimize a one-variable `f` *inside* `[lower, upper]`.
     `scipy.optimize.fminbound`, and `minimize_scalar(method="Bounded")`.
 
@@ -841,12 +916,13 @@ def fminbound[
 def minimize_scalar[
     f: def[U: FloatLike](U) thin -> U,
     method: StaticString = "brent",
+    dtype: DType = DType.float64,
 ](
-    bracket: Optional[Tuple[Float64, Float64]] = None,
-    bounds: Optional[Tuple[Float64, Float64]] = None,
-    tol: Optional[Float64] = None,
+    bracket: Optional[Tuple[Scalar[dtype], Scalar[dtype]]] = None,
+    bounds: Optional[Tuple[Scalar[dtype], Scalar[dtype]]] = None,
+    tol: Optional[Scalar[dtype]] = None,
     max_iter: Optional[Int] = None,
-) raises -> OptimizeResult:
+) raises -> OptimizeResult[dtype] where dtype.is_floating_point():
     """Minimize a one-variable `f`. `scipy.optimize.minimize_scalar`.
 
     | `method` | Runs | Wants |
@@ -880,17 +956,23 @@ def minimize_scalar[
                     " constrain the answer."
                 ),
             )
-        var start: Float64 = 0
-        var second: Float64 = 1
+        var start: Scalar[dtype] = 0
+        var second: Scalar[dtype] = 1
         if bracket:
             start = bracket.value()[0]
             second = bracket.value()[1]
-        var resolved_tol = tol.value() if tol else _MINIMIZER_TOL
+        var resolved_tol = tol.value() if tol else _FLAT_TOL[
+            dtype, _MINIMIZER_TOL
+        ]
         var resolved_iter = max_iter.value() if max_iter else 500
         comptime if method == "brent":
-            return brent[f](start, second, resolved_tol, resolved_iter)
+            return brent[f, dtype=dtype](
+                start, second, resolved_tol, resolved_iter
+            )
         else:
-            return golden[f](start, second, resolved_tol, resolved_iter)
+            return golden[f, dtype=dtype](
+                start, second, resolved_tol, resolved_iter
+            )
     elif method == "bounded":
         if not bounds:
             raise Error(
@@ -903,7 +985,7 @@ def minimize_scalar[
                 "minimize_scalar: 'bounds' must be increasing, got a lower"
                 " bound at or above the upper one"
             )
-        return fminbound[f](
+        return fminbound[f, dtype=dtype](
             pair[0],
             pair[1],
             tol.value() if tol else 1e-5,
@@ -920,11 +1002,12 @@ def minimize_scalar[
 def bfgs[
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    x0: Array[Float64, n_vars],
-    tol: Float64 = 1e-8,
+    x0: Array[Scalar[dtype], n_vars],
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, 1e-8],
     max_iter: Int = 200,
-) -> ArrayMinimizeResult[n_vars]:
+) -> ArrayMinimizeResult[n_vars, dtype] where dtype.is_floating_point():
     """Minimize `f` by BFGS with a backtracking line search.
 
     **The gradient is exact.** `f` is evaluated once per iteration at
@@ -950,18 +1033,19 @@ def bfgs[
     Convergence is `max|grad| < tol`. `ArrayMinimizeResult.grad_norm` reports
     that quantity so a caller can see how close a non-converged run got.
     """
+    comptime _P = Plain[dtype]
 
     var x = x0.copy()
 
     # Inverse Hessian approximation, row-major n_vars x n_vars, starting at
     # the identity: the first step is therefore plain steepest descent.
-    var h = Array[Float64, n_vars * n_vars](fill=0)
+    var h = Array[Scalar[dtype], n_vars * n_vars](fill=0)
     for i in range(n_vars):
         h[i * n_vars + i] = 1
 
-    var f_x: Float64 = 0
-    var grad = Array[Float64, n_vars](fill=0)
-    var grad_norm: Float64 = 0
+    var f_x: Scalar[dtype] = 0
+    var grad = Array[Scalar[dtype], n_vars](fill=0)
+    var grad_norm: Scalar[dtype] = 0
 
     for iteration in range(max_iter):
         # One call: value and every partial derivative, exactly.
@@ -971,31 +1055,31 @@ def bfgs[
         for i in range(n_vars):
             grad_norm = max(grad_norm, abs(grad[i]))
         if grad_norm < tol:
-            return ArrayMinimizeResult[n_vars](
+            return ArrayMinimizeResult[n_vars, dtype](
                 x^, f_x, grad_norm, iteration, True
             )
 
         # Search direction p = -H @ grad.
-        var p = Array[Float64, n_vars](fill=0)
+        var p = Array[Scalar[dtype], n_vars](fill=0)
         for i in range(n_vars):
-            var total: Float64 = 0
+            var total: Scalar[dtype] = 0
             for j in range(n_vars):
                 total += h[i * n_vars + j] * grad[j]
             p[i] = -total
 
         # Backtracking line search: halve until Armijo is satisfied.
-        var directional: Float64 = 0
+        var directional: Scalar[dtype] = 0
         for i in range(n_vars):
             directional += grad[i] * p[i]
-        var step: Float64 = 1
+        var step: Scalar[dtype] = 1
         var accepted = False
-        var candidate = Array[Float64, n_vars](fill=0)
+        var candidate = Array[Scalar[dtype], n_vars](fill=0)
         for _ in range(60):
             for i in range(n_vars):
                 candidate[i] = x[i] + step * p[i]
             if (
                 _evaluate_at[n_vars, f](candidate)
-                <= f_x + Float64(1e-4) * step * directional
+                <= f_x + Scalar[dtype](1e-4) * step * directional
             ):
                 accepted = True
                 break
@@ -1003,24 +1087,24 @@ def bfgs[
         if not accepted:
             # The direction is not a descent direction any more, which
             # means `H` has gone bad. Report rather than spin.
-            return ArrayMinimizeResult[n_vars](
+            return ArrayMinimizeResult[n_vars, dtype](
                 x^, f_x, grad_norm, iteration + 1, False
             )
 
         # s = x_new - x, y = grad_new - grad. The new gradient needs
         # another AD evaluation; that is the honest cost of BFGS, and it is
         # one call rather than `n_vars` finite-difference pairs.
-        var s = Array[Float64, n_vars](fill=0)
+        var s = Array[Scalar[dtype], n_vars](fill=0)
         for i in range(n_vars):
             s[i] = candidate[i] - x[i]
 
-        var grad_new = Array[Float64, n_vars](fill=0)
+        var grad_new = Array[Scalar[dtype], n_vars](fill=0)
         _ = _value_and_grad[n_vars, f](candidate, grad_new)
-        var y = Array[Float64, n_vars](fill=0)
+        var y = Array[Scalar[dtype], n_vars](fill=0)
         for i in range(n_vars):
             y[i] = grad_new[i] - grad[i]
 
-        var sy: Float64 = 0
+        var sy: Scalar[dtype] = 0
         for i in range(n_vars):
             sy += s[i] * y[i]
 
@@ -1036,13 +1120,13 @@ def bfgs[
             continue
 
         # H <- (I - s y^T / sy) H (I - y s^T / sy) + s s^T / sy
-        var hy = Array[Float64, n_vars](fill=0)
+        var hy = Array[Scalar[dtype], n_vars](fill=0)
         for i in range(n_vars):
-            var total: Float64 = 0
+            var total: Scalar[dtype] = 0
             for j in range(n_vars):
                 total += h[i * n_vars + j] * y[j]
             hy[i] = total
-        var yhy: Float64 = 0
+        var yhy: Scalar[dtype] = 0
         for i in range(n_vars):
             yhy += y[i] * hy[i]
 
@@ -1053,17 +1137,20 @@ def bfgs[
                 updated += s[i] * s[j] * (1 + yhy / sy) / sy
                 h[i * n_vars + j] = updated
 
-    return ArrayMinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_vars, dtype](
+        x^, f_x, grad_norm, max_iter, False
+    )
 
 
 def cg[
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    x0: Array[Float64, n_vars],
-    tol: Float64 = 1e-8,
+    x0: Array[Scalar[dtype], n_vars],
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, 1e-8],
     max_iter: Int = 200,
-) -> ArrayMinimizeResult[n_vars]:
+) -> ArrayMinimizeResult[n_vars, dtype] where dtype.is_floating_point():
     """Minimize `f` by nonlinear conjugate gradients (Polak-Ribiere).
     `scipy.optimize.minimize(method="CG")`.
 
@@ -1105,31 +1192,32 @@ def cg[
     `bfgs`, so the two are directly comparable. `nelder_mead`'s is not; see
     its docstring.
     """
+    comptime _P = Plain[dtype]
 
     var x = x0.copy()
-    var grad = Array[Float64, n_vars](fill=0)
+    var grad = Array[Scalar[dtype], n_vars](fill=0)
     var f_x = _value_and_grad[n_vars, f](x, grad)
-    var grad_norm: Float64 = 0
+    var grad_norm: Scalar[dtype] = 0
     for i in range(n_vars):
         grad_norm = max(grad_norm, abs(grad[i]))
 
-    var direction = Array[Float64, n_vars](fill=0)
+    var direction = Array[Scalar[dtype], n_vars](fill=0)
     for i in range(n_vars):
         direction[i] = -grad[i]
 
     # The previous accepted step and the slope it was accepted at, which
     # together set the next iteration's first trial step. Zero means "no
     # previous step yet"; see the guess below.
-    var previous_step: Float64 = 0
-    var previous_directional: Float64 = 0
+    var previous_step: Scalar[dtype] = 0
+    var previous_directional: Scalar[dtype] = 0
 
     for iteration in range(max_iter):
         if grad_norm < tol:
-            return ArrayMinimizeResult[n_vars](
+            return ArrayMinimizeResult[n_vars, dtype](
                 x^, f_x, grad_norm, iteration, True
             )
 
-        var directional: Float64 = 0
+        var directional: Scalar[dtype] = 0
         for i in range(n_vars):
             directional += grad[i] * direction[i]
 
@@ -1148,39 +1236,39 @@ def cg[
         # is Nocedal & Wright (3.60) -- the previous step rescaled by the
         # ratio of the slopes -- with the first iteration falling back to a
         # step that moves `x` by about one unit.
-        var guess: Float64
+        var guess: Scalar[dtype]
         if previous_step > 0 and directional < 0:
             guess = previous_step * previous_directional / directional
         else:
-            var longest: Float64 = 0
+            var longest: Scalar[dtype] = 0
             for i in range(n_vars):
                 longest = max(longest, abs(direction[i]))
             guess = 1 / longest if longest > 1 else 1
 
         var step = _wolfe_step[n_vars, f](x, direction, f_x, directional, guess)
         if step <= 0:
-            return ArrayMinimizeResult[n_vars](
+            return ArrayMinimizeResult[n_vars, dtype](
                 x^, f_x, grad_norm, iteration + 1, False
             )
-        var candidate = Array[Float64, n_vars](fill=0)
+        var candidate = Array[Scalar[dtype], n_vars](fill=0)
         for i in range(n_vars):
             candidate[i] = x[i] + step * direction[i]
         previous_step = step
         previous_directional = directional
 
-        var grad_new = Array[Float64, n_vars](fill=0)
+        var grad_new = Array[Scalar[dtype], n_vars](fill=0)
         var f_new = _value_and_grad[n_vars, f](candidate, grad_new)
 
         # Polak-Ribiere: beta = grad_new . (grad_new - grad) / (grad . grad),
         # clamped at zero, and forced to zero on the periodic restart.
-        var numerator: Float64 = 0
-        var denominator: Float64 = 0
+        var numerator: Scalar[dtype] = 0
+        var denominator: Scalar[dtype] = 0
         for i in range(n_vars):
             numerator += grad_new[i] * (grad_new[i] - grad[i])
             denominator += grad[i] * grad[i]
-        var beta: Float64 = 0
+        var beta: Scalar[dtype] = 0
         if denominator > 0 and (iteration + 1) % n_vars != 0:
-            beta = max(Float64(0), numerator / denominator)
+            beta = max(Scalar[dtype](0), numerator / denominator)
 
         for i in range(n_vars):
             direction[i] = -grad_new[i] + beta * direction[i]
@@ -1191,17 +1279,20 @@ def cg[
         for i in range(n_vars):
             grad_norm = max(grad_norm, abs(grad[i]))
 
-    return ArrayMinimizeResult[n_vars](x^, f_x, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_vars, dtype](
+        x^, f_x, grad_norm, max_iter, False
+    )
 
 
 def nelder_mead[
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    x0: Array[Float64, n_vars],
-    tol: Float64 = 1e-10,
+    x0: Array[Scalar[dtype], n_vars],
+    tol: Scalar[dtype] = _ROOT_TOL[dtype, 1e-10],
     max_iter: Int = 1000,
-) -> ArrayMinimizeResult[n_vars]:
+) -> ArrayMinimizeResult[n_vars, dtype] where dtype.is_floating_point():
     """Minimize `f` by the Nelder-Mead simplex method.
     `scipy.optimize.minimize(method="Nelder-Mead")`.
 
@@ -1231,10 +1322,11 @@ def nelder_mead[
     a large gradient norm at a converged simplex means the simplex
     collapsed rather than found anything.
     """
+    comptime _P = Plain[dtype]
     comptime n_points = n_vars + 1
 
-    var points = Array[Float64, n_points * n_vars](fill=0)
-    var values = Array[Float64, n_points](fill=0)
+    var points = Array[Scalar[dtype], n_points * n_vars](fill=0)
+    var values = Array[Scalar[dtype], n_points](fill=0)
 
     for j in range(n_vars):
         points[j] = x0[j]
@@ -1273,12 +1365,12 @@ def nelder_mead[
             break
 
         # Centroid of everything but the worst point.
-        var centroid = Array[Float64, n_vars](fill=0)
+        var centroid = Array[Scalar[dtype], n_vars](fill=0)
         for i in range(n_points - 1):
             for j in range(n_vars):
-                centroid[j] += points[i * n_vars + j] / Float64(n_vars)
+                centroid[j] += points[i * n_vars + j] / Scalar[dtype](n_vars)
 
-        var reflected = Array[Float64, n_vars](fill=0)
+        var reflected = Array[Scalar[dtype], n_vars](fill=0)
         for j in range(n_vars):
             reflected[j] = (
                 centroid[j] + centroid[j] - points[(n_points - 1) * n_vars + j]
@@ -1286,7 +1378,7 @@ def nelder_mead[
         var reflected_value = _evaluate_at[n_vars, f](reflected)
 
         if reflected_value < values[0]:
-            var expanded = Array[Float64, n_vars](fill=0)
+            var expanded = Array[Scalar[dtype], n_vars](fill=0)
             for j in range(n_vars):
                 expanded[j] = centroid[j] + 2 * (reflected[j] - centroid[j])
             var expanded_value = _evaluate_at[n_vars, f](expanded)
@@ -1307,7 +1399,7 @@ def nelder_mead[
         # is better, which is what keeps a contraction from stepping the
         # wrong way across a valley.
         var toward_reflection = reflected_value < values[n_points - 1]
-        var contracted = Array[Float64, n_vars](fill=0)
+        var contracted = Array[Scalar[dtype], n_vars](fill=0)
         for j in range(n_vars):
             var target = reflected[j] if toward_reflection else points[
                 (n_points - 1) * n_vars + j
@@ -1328,7 +1420,7 @@ def nelder_mead[
                 )
             values[i] = _evaluate[n_vars, f](points, i)
 
-    var best = Array[Float64, n_vars](fill=0)
+    var best = Array[Scalar[dtype], n_vars](fill=0)
     for j in range(n_vars):
         best[j] = points[j]
 
@@ -1338,11 +1430,11 @@ def nelder_mead[
     for i in range(n_vars):
         seeded[i] = Gradient[_P, n_vars].variable(_P(best[i]), i)
     var evaluated = f[Gradient[_P, n_vars]](seeded^)
-    var grad_norm: Float64 = 0
+    var grad_norm: Scalar[dtype] = 0
     for i in range(n_vars):
         grad_norm = max(grad_norm, abs(evaluated.grad[i].v))
 
-    return ArrayMinimizeResult[n_vars](
+    return ArrayMinimizeResult[n_vars, dtype](
         best^, values[0], grad_norm, iteration, converged
     )
 
@@ -1351,11 +1443,12 @@ def minimize[
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
     method: StaticString = "bfgs",
+    dtype: DType = DType.float64,
 ](
-    x0: Array[Float64, n_vars],
-    tol: Optional[Float64] = None,
+    x0: Array[Scalar[dtype], n_vars],
+    tol: Optional[Scalar[dtype]] = None,
     max_iter: Optional[Int] = None,
-) raises -> ArrayMinimizeResult[n_vars]:
+) raises -> ArrayMinimizeResult[n_vars, dtype] where dtype.is_floating_point():
     """Minimize `f` from `x0`. `scipy.optimize.minimize`.
 
     The SciPy-shaped entry point over the minimizers in this module, with
@@ -1394,21 +1487,21 @@ def minimize[
     first call, never a silent fallthrough to a different algorithm.
     """
     comptime if method == "bfgs":
-        return bfgs[n_vars, f](
+        return bfgs[n_vars, f, dtype=dtype](
             x0,
-            tol.value() if tol else 1e-8,
+            tol.value() if tol else _FLAT_TOL[dtype, 1e-8],
             max_iter.value() if max_iter else 200,
         )
     elif method == "cg":
-        return cg[n_vars, f](
+        return cg[n_vars, f, dtype=dtype](
             x0,
-            tol.value() if tol else 1e-8,
+            tol.value() if tol else _FLAT_TOL[dtype, 1e-8],
             max_iter.value() if max_iter else 200,
         )
     elif method == "nelder-mead":
-        return nelder_mead[n_vars, f](
+        return nelder_mead[n_vars, f, dtype=dtype](
             x0,
-            tol.value() if tol else 1e-10,
+            tol.value() if tol else _ROOT_TOL[dtype, 1e-10],
             max_iter.value() if max_iter else 1000,
         )
     else:
@@ -1420,14 +1513,16 @@ def minimize[
 
 
 def _slope_along[
+    dtype: DType,
+    //,
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
 ](
-    x: Array[Float64, n_vars],
-    direction: Array[Float64, n_vars],
-    alpha: Float64,
-    mut value: Float64,
-) -> Float64:
+    x: Array[Scalar[dtype], n_vars],
+    direction: Array[Scalar[dtype], n_vars],
+    alpha: Scalar[dtype],
+    mut value: Scalar[dtype],
+) -> Scalar[dtype] where dtype.is_floating_point():
     """`phi'(alpha)` for `phi(alpha) = f(x + alpha * direction)`, with
     `phi(alpha)` left in `value`.
 
@@ -1436,27 +1531,29 @@ def _slope_along[
     makes a Wolfe search affordable here and is the reason `_wolfe_step`
     exists rather than a cheaper backtracking loop.
     """
-    var trial = Array[Float64, n_vars](fill=0)
+    var trial = Array[Scalar[dtype], n_vars](fill=0)
     for i in range(n_vars):
         trial[i] = x[i] + alpha * direction[i]
-    var grad = Array[Float64, n_vars](fill=0)
+    var grad = Array[Scalar[dtype], n_vars](fill=0)
     value = _value_and_grad[n_vars, f](trial, grad)
-    var slope: Float64 = 0
+    var slope: Scalar[dtype] = 0
     for i in range(n_vars):
         slope += grad[i] * direction[i]
     return slope
 
 
 def _wolfe_step[
+    dtype: DType,
+    //,
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
 ](
-    x: Array[Float64, n_vars],
-    direction: Array[Float64, n_vars],
-    f_x: Float64,
-    directional: Float64,
-    first_guess: Float64,
-) -> Float64:
+    x: Array[Scalar[dtype], n_vars],
+    direction: Array[Scalar[dtype], n_vars],
+    f_x: Scalar[dtype],
+    directional: Scalar[dtype],
+    first_guess: Scalar[dtype],
+) -> Scalar[dtype] where dtype.is_floating_point():
     """A step length satisfying the **strong Wolfe** conditions, or `0` if
     none was found. Nocedal & Wright algorithms 3.5 and 3.6.
 
@@ -1486,12 +1583,12 @@ def _wolfe_step[
     comptime c1 = 1e-4
     comptime c2 = 0.1
 
-    var lo: Float64 = 0
+    var lo: Scalar[dtype] = 0
     var lo_value = f_x
-    var hi: Float64 = 0
+    var hi: Scalar[dtype] = 0
     var bracketed = False
 
-    var previous = Float64(0)
+    var previous = Scalar[dtype](0)
     var previous_value = f_x
     var alpha = first_guess
 
@@ -1556,11 +1653,12 @@ def root[
     n: Int,
     f: def[U: FloatLike](Array[U, n]) thin -> Array[U, n],
     method: StaticString = "lm",
+    dtype: DType = DType.float64,
 ](
-    x0: Array[Float64, n],
-    tol: Optional[Float64] = None,
+    x0: Array[Scalar[dtype], n],
+    tol: Optional[Scalar[dtype]] = None,
     max_iter: Optional[Int] = None,
-) raises -> ArrayMinimizeResult[n]:
+) raises -> ArrayMinimizeResult[n, dtype] where dtype.is_floating_point():
     """Solve `f(x) = 0` for a vector `x`. `scipy.optimize.root`.
 
     `"lm"`, the only method, is `least_squares` applied to `f` itself: a
@@ -1595,10 +1693,11 @@ def root[
     See `minimize` for why an unrecognized `method` raises rather than
     failing to compile.
     """
+    comptime _P = Plain[dtype]
     comptime if method == "lm":
-        return least_squares[n, n, f](
+        return least_squares[n, n, f, dtype=dtype](
             x0,
-            tol.value() if tol else 1e-10,
+            tol.value() if tol else _FLAT_TOL[dtype, 1e-10],
             max_iter.value() if max_iter else 100,
         )
     else:
@@ -1610,9 +1709,13 @@ def root[
 
 
 def _value_and_grad[
+    dtype: DType,
+    //,
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
-](x: Array[Float64, n_vars], mut grad: Array[Float64, n_vars]) -> Float64:
+](
+    x: Array[Scalar[dtype], n_vars], mut grad: Array[Scalar[dtype], n_vars]
+) -> Scalar[dtype] where dtype.is_floating_point():
     """`f(x)` and every partial derivative at `x`, from one evaluation.
 
     The whole point of the conformer tier in one function: seeding each
@@ -1625,6 +1728,7 @@ def _value_and_grad[
     a caller that already owns the destination -- which every driver here
     does, across iterations -- should not allocate a second one per step.
     """
+    comptime _P = Plain[dtype]
     var seeded = Array[Gradient[_P, n_vars], n_vars](
         fill=Gradient[_P, n_vars].constant(0.0)
     )
@@ -1637,9 +1741,14 @@ def _value_and_grad[
 
 
 def _evaluate_at[
+    dtype: DType,
+    //,
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
-](x: Array[Float64, n_vars]) -> Float64:
+](x: Array[Scalar[dtype], n_vars]) -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    comptime _P = Plain[dtype]
     var as_plain = Array[_P, n_vars](fill=_P.constant(0.0))
     for i in range(n_vars):
         as_plain[i] = _P(x[i])
@@ -1647,9 +1756,14 @@ def _evaluate_at[
 
 
 def _evaluate[
+    dtype: DType,
+    //,
     n_vars: Int,
     f: def[U: FloatLike](Array[U, n_vars]) thin -> U,
-](points: Array[Float64, (n_vars + 1) * n_vars], row: Int) -> Float64:
+](points: Array[Scalar[dtype], (n_vars + 1) * n_vars], row: Int) -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    comptime _P = Plain[dtype]
     var as_plain = Array[_P, n_vars](fill=_P.constant(0.0))
     for i in range(n_vars):
         as_plain[i] = _P(points[row * n_vars + i])
@@ -1657,19 +1771,22 @@ def _evaluate[
 
 
 def _replace_worst[
-    n_vars: Int, n_points: Int
-](mut points: Array[Float64, n_points * n_vars], x: Array[Float64, n_vars]):
+    dtype: DType, //, n_vars: Int, n_points: Int
+](
+    mut points: Array[Scalar[dtype], n_points * n_vars],
+    x: Array[Scalar[dtype], n_vars],
+) where dtype.is_floating_point():
     for j in range(n_vars):
         points[(n_points - 1) * n_vars + j] = x[j]
 
 
 def _lm_step[
-    n_params: Int, n_resid: Int
+    dtype: DType, //, n_params: Int, n_resid: Int
 ](
-    jacobian: Array[Float64, n_resid * n_params],
-    residual: Array[Float64, n_resid],
-    damping: Float64,
-) -> Array[Float64, n_params]:
+    jacobian: Array[Scalar[dtype], n_resid * n_params],
+    residual: Array[Scalar[dtype], n_resid],
+    damping: Scalar[dtype],
+) -> Array[Scalar[dtype], n_params] where dtype.is_floating_point():
     """The Levenberg-Marquardt step: solve `(J.T J + damping * diag(J.T J))
     d = -J.T r`.
 
@@ -1680,16 +1797,17 @@ def _lm_step[
     parameter the residuals do not depend on at all has a zero diagonal
     that no multiple of itself can lift.
     """
+    comptime _P = Plain[dtype]
     var normal = Array[_P, n_params * n_params](fill=_P.constant(0.0))
     var gradient = Array[_P, n_params](fill=_P.constant(0.0))
 
     for i in range(n_params):
         for j in range(n_params):
-            var total: Float64 = 0
+            var total: Scalar[dtype] = 0
             for k in range(n_resid):
                 total += jacobian[k * n_params + i] * jacobian[k * n_params + j]
             normal[i * n_params + j] = _P(total)
-        var slope: Float64 = 0
+        var slope: Scalar[dtype] = 0
         for k in range(n_resid):
             slope += jacobian[k * n_params + i] * residual[k]
         gradient[i] = _P(-slope)
@@ -1703,7 +1821,7 @@ def _lm_step[
     var factor = cholesky[_P, n_params](normal)
     var step = cholesky_solve[_P, n_params](factor, gradient)
 
-    var out = Array[Float64, n_params](fill=0)
+    var out = Array[Scalar[dtype], n_params](fill=0)
     for i in range(n_params):
         out[i] = step[i].v
     return out^
@@ -1713,11 +1831,12 @@ def least_squares[
     n_params: Int,
     n_resid: Int,
     residuals: def[U: FloatLike](Array[U, n_params]) thin -> Array[U, n_resid],
+    dtype: DType = DType.float64,
 ](
-    x0: Array[Float64, n_params],
-    tol: Float64 = 1e-10,
+    x0: Array[Scalar[dtype], n_params],
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, 1e-10],
     max_iter: Int = 100,
-) -> ArrayMinimizeResult[n_params]:
+) -> ArrayMinimizeResult[n_params, dtype] where dtype.is_floating_point():
     """Minimize `sum(residuals(x)**2) / 2` by Levenberg-Marquardt.
     `scipy.optimize.least_squares`.
 
@@ -1746,10 +1865,11 @@ def least_squares[
     treatment rather than a clamp, since clamping an LM step silently
     breaks the step's own model of the cost.
     """
+    comptime _P = Plain[dtype]
     var x = x0.copy()
-    var cost: Float64 = 0
-    var grad_norm: Float64 = 0
-    var damping: Float64 = 1e-3
+    var cost: Scalar[dtype] = 0
+    var grad_norm: Scalar[dtype] = 0
+    var damping: Scalar[dtype] = 1e-3
 
     for iteration in range(max_iter):
         var seeded = Array[Gradient[_P, n_params], n_params](
@@ -1759,8 +1879,8 @@ def least_squares[
             seeded[i] = Gradient[_P, n_params].variable(_P(x[i]), i)
         var evaluated = residuals[Gradient[_P, n_params]](seeded^)
 
-        var residual = Array[Float64, n_resid](fill=0)
-        var jacobian = Array[Float64, n_resid * n_params](fill=0)
+        var residual = Array[Scalar[dtype], n_resid](fill=0)
+        var jacobian = Array[Scalar[dtype], n_resid * n_params](fill=0)
         cost = 0
         for k in range(n_resid):
             residual[k] = evaluated[k].value.v
@@ -1771,17 +1891,17 @@ def least_squares[
 
         grad_norm = 0
         for j in range(n_params):
-            var slope: Float64 = 0
+            var slope: Scalar[dtype] = 0
             for k in range(n_resid):
                 slope += jacobian[k * n_params + j] * residual[k]
             grad_norm = max(grad_norm, abs(slope))
         if grad_norm < tol:
-            return ArrayMinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params, dtype](
                 x^, cost, grad_norm, iteration, True
             )
 
         var accepted = False
-        var candidate = Array[Float64, n_params](fill=0)
+        var candidate = Array[Scalar[dtype], n_params](fill=0)
         for _ in range(30):
             var step = _lm_step[n_params, n_resid](jacobian, residual, damping)
             for i in range(n_params):
@@ -1791,7 +1911,7 @@ def least_squares[
             for i in range(n_params):
                 as_plain[i] = _P(candidate[i])
             var trial = residuals[_P](as_plain^)
-            var trial_cost: Float64 = 0
+            var trial_cost: Scalar[dtype] = 0
             for k in range(n_resid):
                 trial_cost += trial[k].v * trial[k].v
             trial_cost = trial_cost / 2
@@ -1802,27 +1922,30 @@ def least_squares[
                 break
             damping = damping * 3
         if not accepted:
-            return ArrayMinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params, dtype](
                 x^, cost, grad_norm, iteration + 1, False
             )
 
         for i in range(n_params):
             x[i] = candidate[i]
 
-    return ArrayMinimizeResult[n_params](x^, cost, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_params, dtype](
+        x^, cost, grad_norm, max_iter, False
+    )
 
 
 def curve_fit[
     n_params: Int,
     n_points: Int,
     model: def[U: FloatLike](U, Array[U, n_params]) thin -> U,
+    dtype: DType = DType.float64,
 ](
-    xdata: Array[Float64, n_points],
-    ydata: Array[Float64, n_points],
-    p0: Array[Float64, n_params],
-    tol: Float64 = 1e-10,
+    xdata: Array[Scalar[dtype], n_points],
+    ydata: Array[Scalar[dtype], n_points],
+    p0: Array[Scalar[dtype], n_params],
+    tol: Scalar[dtype] = _FLAT_TOL[dtype, 1e-10],
     max_iter: Int = 100,
-) -> ArrayMinimizeResult[n_params]:
+) -> ArrayMinimizeResult[n_params, dtype] where dtype.is_floating_point():
     """Fit `model(x, params)` to `(xdata, ydata)` by least squares.
     `scipy.optimize.curve_fit`, first return value.
 
@@ -1844,10 +1967,11 @@ def curve_fit[
     assumption about the noise that belongs to the caller's problem rather
     than to the fit.
     """
+    comptime _P = Plain[dtype]
     var p = p0.copy()
-    var cost: Float64 = 0
-    var grad_norm: Float64 = 0
-    var damping: Float64 = 1e-3
+    var cost: Scalar[dtype] = 0
+    var grad_norm: Scalar[dtype] = 0
+    var damping: Scalar[dtype] = 1e-3
 
     for iteration in range(max_iter):
         var seeded = Array[Gradient[_P, n_params], n_params](
@@ -1856,13 +1980,13 @@ def curve_fit[
         for i in range(n_params):
             seeded[i] = Gradient[_P, n_params].variable(_P(p[i]), i)
 
-        var residual = Array[Float64, n_points](fill=0)
-        var jacobian = Array[Float64, n_points * n_params](fill=0)
+        var residual = Array[Scalar[dtype], n_points](fill=0)
+        var jacobian = Array[Scalar[dtype], n_points * n_params](fill=0)
         cost = 0
         for k in range(n_points):
-            var predicted = model[Gradient[_P, n_params]](
-                Gradient[_P, n_params].constant(xdata[k]), seeded.copy()
-            )
+            var at = Gradient[_P, n_params].constant(0.0)
+            at.value = _P(xdata[k])
+            var predicted = model[Gradient[_P, n_params]](at^, seeded.copy())
             residual[k] = predicted.value.v - ydata[k]
             cost += residual[k] * residual[k]
             for j in range(n_params):
@@ -1871,17 +1995,17 @@ def curve_fit[
 
         grad_norm = 0
         for j in range(n_params):
-            var slope: Float64 = 0
+            var slope: Scalar[dtype] = 0
             for k in range(n_points):
                 slope += jacobian[k * n_params + j] * residual[k]
             grad_norm = max(grad_norm, abs(slope))
         if grad_norm < tol:
-            return ArrayMinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params, dtype](
                 p^, cost, grad_norm, iteration, True
             )
 
         var accepted = False
-        var candidate = Array[Float64, n_params](fill=0)
+        var candidate = Array[Scalar[dtype], n_params](fill=0)
         for _ in range(30):
             var step = _lm_step[n_params, n_points](jacobian, residual, damping)
             for i in range(n_params):
@@ -1890,7 +2014,7 @@ def curve_fit[
             var as_plain = Array[_P, n_params](fill=_P.constant(0.0))
             for i in range(n_params):
                 as_plain[i] = _P(candidate[i])
-            var trial_cost: Float64 = 0
+            var trial_cost: Scalar[dtype] = 0
             for k in range(n_points):
                 var difference = (
                     model[_P](_P(xdata[k]), as_plain.copy()).v - ydata[k]
@@ -1904,11 +2028,13 @@ def curve_fit[
                 break
             damping = damping * 3
         if not accepted:
-            return ArrayMinimizeResult[n_params](
+            return ArrayMinimizeResult[n_params, dtype](
                 p^, cost, grad_norm, iteration + 1, False
             )
 
         for i in range(n_params):
             p[i] = candidate[i]
 
-    return ArrayMinimizeResult[n_params](p^, cost, grad_norm, max_iter, False)
+    return ArrayMinimizeResult[n_params, dtype](
+        p^, cost, grad_norm, max_iter, False
+    )
