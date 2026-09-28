@@ -1,5 +1,6 @@
 """Linear convolution and correlation over `numax.core.tensor.Tensor`:
-`convolve`, `correlate` and `fftconvolve`, in NumPy's three modes.
+`convolve`, `correlate` and `fftconvolve`, in NumPy's three modes, and the
+2-D `convolve2d`/`correlate2d` with SciPy's three boundaries.
 
 **This module is tier 2**, like the rest of `numax.signal` over `Tensor`:
 host-driven, device-resident, `Plain`-only. `numax.signal`'s `Array` tier has the
@@ -55,6 +56,7 @@ without changing the answer.
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
+from ..core._drive import _check_device, _notice
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import Static
 from ..fft.fft import Spectrum, _rfft, irfft, next_fast_len
@@ -434,6 +436,254 @@ def oaconvolve[
     comptime m = dim[A, 0]
     comptime k = dim[B, 0]
     return fftconvolve[mode=mode, gpu=gpu](a, b)
+
+
+comptime _Conv2dLen[a: Int, b: Int, mode: Int] = (
+    a + b - 1 if mode == MODE_FULL else (a if mode == MODE_SAME else a - b + 1)
+)
+"""One extent of a 2-D convolution's output under `mode`, `in1` being
+`a` long on that axis and `in2` `b` long."""
+
+
+@always_inline
+def _boundary_index[boundary: StaticString](i: Int, n: Int) -> Int:
+    """Where `in1`'s index `i` reads from under `boundary`: itself inside
+    `[0, n)`, and outside it `-1` for `"fill"`, the index modulo `n` for
+    `"wrap"`, and the mirror image with the edge repeated for `"symm"`,
+    SciPy's three."""
+    if i >= 0 and i < n:
+        return i
+    comptime if boundary == "fill":
+        return -1
+    elif boundary == "wrap":
+        return ((i % n) + n) % n
+    else:
+        var j = i
+        var period = 2 * n
+        j = ((j % period) + period) % period
+        return j if j < n else period - 1 - j
+
+
+def _conv2d[
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int,
+    boundary: StaticString,
+    flip: Bool,
+    gpu: Bool,
+    name: StaticString,
+](in1: A, in2: B, fillvalue: Float64) raises -> Static[
+    A.dtype,
+    _Conv2dLen[dim[A, 0], dim[B, 0], mode],
+    _Conv2dLen[dim[A, 1], dim[B, 1], mode],
+] where (A.dtype == B.dtype and A.dtype.is_floating_point()):
+    """The shared body of `convolve2d` (`flip = False`) and `correlate2d`
+    (`flip = True`, the kernel read backwards on both axes). Output
+    `(i, j)` is the full result at `(i + oi, j + oj)`, the offset `mode`
+    and the operation fix; each is one sum over the kernel with `in1` read
+    through `boundary`."""
+    comptime dtype = A.dtype
+    comptime m1 = dim[A, 0]
+    comptime n1 = dim[A, 1]
+    comptime m2 = dim[B, 0]
+    comptime n2 = dim[B, 1]
+    comptime rows = _Conv2dLen[m1, m2, mode]
+    comptime cols = _Conv2dLen[n1, n2, mode]
+    comptime oi = 0 if mode == MODE_FULL else (
+        (m2 // 2 if flip else (m2 - 1) // 2) if mode == MODE_SAME else m2 - 1
+    )
+    comptime oj = 0 if mode == MODE_FULL else (
+        (n2 // 2 if flip else (n2 - 1) // 2) if mode == MODE_SAME else n2 - 1
+    )
+    var fill = Scalar[dtype](fillvalue)
+
+    @always_inline
+    def value(
+        a: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+        k: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+        i: Int,
+        j: Int,
+        fill: Scalar[dtype],
+    ) -> Scalar[dtype]:
+        var acc = Scalar[dtype](0)
+        var fi = i + oi
+        var fj = j + oj
+        for p in range(m2):
+            var r = _boundary_index[boundary](fi - p, m1)
+            for q in range(n2):
+                var c = _boundary_index[boundary](fj - q, n1)
+                var kv: Scalar[dtype]
+                comptime if flip:
+                    kv = k[(m2 - 1 - p) * n2 + (n2 - 1 - q)]
+                else:
+                    kv = k[p * n2 + q]
+                if r < 0 or c < 0:
+                    acc += kv * fill
+                else:
+                    acc += kv * a[r * n1 + c]
+        return acc
+
+    var ctx = in1.context()
+    if _check_device[A, gpu](in1) and _check_device[B, gpu](in2):
+        var out = Static[dtype, rows, cols]._uninitialized(ctx)
+        var ap = in1.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var kp = in2.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var op = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+        @always_inline
+        def lane[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var ap, var kp, var op, var fill}:
+            var f = coord_to_index_list(coord)[0]
+            op[unsafe_offset=f] = rebind[Scalar[A.dtype]](
+                value(
+                    rebind[UnsafePointer[Scalar[dtype], MutAnyOrigin]](ap),
+                    rebind[UnsafePointer[Scalar[dtype], MutAnyOrigin]](kp),
+                    f // cols,
+                    f % cols,
+                    fill,
+                )
+            )
+
+        elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+            lane, Coord(rows * cols), ctx
+        )
+        ctx.synchronize()
+        return out^
+    _notice[gpu](name)
+    var av = in1.to_host()
+    var kv = in2.to_host[dtype]()
+    var ap = av.unsafe_ptr().unsafe_origin_cast[MutAnyOrigin]()
+    var kp = kv.unsafe_ptr().unsafe_origin_cast[MutAnyOrigin]()
+    var values = List[Scalar[dtype]](capacity=rows * cols)
+    for f in range(rows * cols):
+        values.append(value(ap, kp, f // cols, f % cols, fill))
+    _ = av^
+    _ = kv^
+    return Static[dtype, rows, cols](values^, ctx)
+
+
+def convolve2d[
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int = MODE_FULL,
+    boundary: StaticString = "fill",
+    gpu: Bool = False,
+](in1: A, in2: B, fillvalue: Float64 = 0.0) raises -> Static[
+    A.dtype,
+    _Conv2dLen[dim[A, 0], dim[B, 0], mode],
+    _Conv2dLen[dim[A, 1], dim[B, 1], mode],
+] where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and is_row_major[A]
+    and is_row_major[B]
+    and (
+        mode != MODE_VALID
+        or (dim[A, 0] >= dim[B, 0] and dim[A, 1] >= dim[B, 1])
+    )
+):
+    """The 2-D convolution of `in1` with the kernel `in2`.
+    `scipy.signal.convolve2d(in1, in2, mode, boundary, fillvalue)`.
+
+    `mode` is `MODE_FULL` (every overlap, `(m1 + m2 - 1, n1 + n2 - 1)`),
+    `MODE_SAME` (`in1`'s shape, centered as SciPy centers it) or
+    `MODE_VALID` (only full overlaps, `in1` at least `in2`'s size on both
+    axes). `boundary` is how `in1` reads past its edges: `"fill"` with
+    `fillvalue` (the default, zero), `"wrap"` or `"symm"` (mirrored with
+    the edge repeated). One device lane per output element, each a sum
+    over the kernel -- the direct form, `O(m1 n1 m2 n2)`; for a large
+    kernel the transform route is the faster one.
+
+    Parameters:
+        A: The tensor type of `in1`, rank 2, static shape.
+        B: The tensor type of `in2`, rank 2, static shape, same dtype.
+        mode: `MODE_FULL` (the default), `MODE_SAME` or `MODE_VALID`.
+        boundary: `"fill"` (the default), `"wrap"` or `"symm"`.
+        gpu: Run on the inputs' device when `True`; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        in1: The image.
+        in2: The kernel.
+        fillvalue: The value read past `in1`'s edges under `"fill"`.
+
+    Returns:
+        The convolution at the shape `mode` gives.
+
+    Raises:
+        If the fallback policy is `"raise"` on a residency mismatch, or a
+        device operation fails.
+    """
+    comptime assert (
+        boundary == "fill" or boundary == "wrap" or boundary == "symm"
+    ), 'convolve2d: boundary is "fill", "wrap" or "symm"'
+    return _conv2d[A, B, mode, boundary, False, gpu, "convolve2d"](
+        in1, in2, fillvalue
+    )
+
+
+def correlate2d[
+    A: TensorLike,
+    B: TensorLike,
+    mode: Int = MODE_FULL,
+    boundary: StaticString = "fill",
+    gpu: Bool = False,
+](in1: A, in2: B, fillvalue: Float64 = 0.0) raises -> Static[
+    A.dtype,
+    _Conv2dLen[dim[A, 0], dim[B, 0], mode],
+    _Conv2dLen[dim[A, 1], dim[B, 1], mode],
+] where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and is_row_major[A]
+    and is_row_major[B]
+    and (
+        mode != MODE_VALID
+        or (dim[A, 0] >= dim[B, 0] and dim[A, 1] >= dim[B, 1])
+    )
+):
+    """The 2-D cross-correlation of `in1` with `in2`.
+    `scipy.signal.correlate2d(in1, in2, mode, boundary, fillvalue)`.
+
+    `convolve2d` with the kernel read backwards on both axes, in the same
+    loop; its `MODE_SAME` window is SciPy's for a correlation, which sits
+    one sample later than a convolution's on an even kernel axis.
+
+    Parameters:
+        A: The tensor type of `in1`, rank 2, static shape.
+        B: The tensor type of `in2`, rank 2, static shape, same dtype.
+        mode: `MODE_FULL` (the default), `MODE_SAME` or `MODE_VALID`.
+        boundary: `"fill"` (the default), `"wrap"` or `"symm"`.
+        gpu: Run on the inputs' device when `True`; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        in1: The image.
+        in2: The template.
+        fillvalue: The value read past `in1`'s edges under `"fill"`.
+
+    Returns:
+        The correlation at the shape `mode` gives.
+
+    Raises:
+        If the fallback policy is `"raise"` on a residency mismatch, or a
+        device operation fails.
+    """
+    comptime assert (
+        boundary == "fill" or boundary == "wrap" or boundary == "symm"
+    ), 'correlate2d: boundary is "fill", "wrap" or "symm"'
+    return _conv2d[A, B, mode, boundary, True, gpu, "correlate2d"](
+        in1, in2, fillvalue
+    )
 
 
 def convolve[

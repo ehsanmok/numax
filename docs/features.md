@@ -512,6 +512,7 @@ routed.
 | Surface — over `Tensor`, from `numax.signal` | Where |
 |---|---|
 | `convolve`, `correlate` — `numpy.convolve`/`numpy.correlate` in `MODE_FULL` (default), `MODE_SAME` and `MODE_VALID`, one `elementwise` launch of dot products over the overlap | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
+| `convolve2d`, `correlate2d` — the direct 2-D forms in `MODE_FULL`/`MODE_SAME`/`MODE_VALID` with SciPy's `"fill"`/`"wrap"`/`"symm"` boundaries and `fillvalue`, one device lane per output element; `MODE_SAME` windows are SciPy's for each operation | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `fftconvolve` — the same answer through `numax.fft`: pad to `next_fast_len(m + k - 1)`, multiply the `rfft`s, `irfft`, slice; the route for a long kernel | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `boxcar`, `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `tukey`, `gaussian`, `flattop`, `nuttall`, `chebwin`, `get_window` — `scipy.signal.windows` as `Tensor` factories, symmetric (`sym=True`, the factories' default) or periodic (`get_window`'s default `fftbins=True`); a device `ctx` fills on the device in one launch | [`signal/windows.mojo`](../numax/signal/windows.mojo) |
 | `sawtooth`, `square`, `chirp` (linear, quadratic, logarithmic, hyperbolic) — SciPy's generators, one launch over the sample times each with `gpu: Bool`; the square wave is `numax.signal.square`, since the root `square` is `x * x` | [`signal/waveforms.mojo`](../numax/signal/waveforms.mojo) |

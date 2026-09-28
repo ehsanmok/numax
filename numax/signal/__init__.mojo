@@ -12,7 +12,7 @@ register tier's own names are exported here too:
 
 | Tier | Holds | Good for |
 | --- | --- | --- |
-| `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `MODE_FULL`/`MODE_SAME`/`MODE_VALID` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`tukey`/`gaussian`/`flattop`/`nuttall`/`chebwin`/`get_window` in SciPy's symmetric and periodic forms, the waveforms `sawtooth`/`square`/`chirp`; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt`/`sosfilt_zi`/`sosfiltfilt` (host recurrences at `dtype`, in place over the tensor's own host mapping), `medfilt`, `detrend`, `savgol_filter`, `resample`, `resample_poly`/`upfirdn` and the multiband `firwin`; the spectral estimators `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, `peak_widths`, `argrelmax`/`argrelmin`/`argrelextrema`, and the IIR design family -- `butter`/`cheby1`/`cheby2`/`ellip` in all four band shapes behind one `iirfilter` front door -- with `freqz`, `output=` for `(b, a)`, zeros-poles-gain or second-order sections, and the conversions `tf2zpk`/`zpk2sos`/`tf2sos`/`sos2tf`/`sosfreqz`; the order estimators `buttord`/`cheb1ord`/`cheb2ord`/`ellipord`; `iirnotch`/`iirpeak`, `bilinear`, `group_delay` and `lfiltic` |
+| `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `MODE_FULL`/`MODE_SAME`/`MODE_VALID` as one launch of dot products, `fftconvolve` through `numax.fft`, the 2-D `convolve2d`/`correlate2d`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`tukey`/`gaussian`/`flattop`/`nuttall`/`chebwin`/`get_window` in SciPy's symmetric and periodic forms, the waveforms `sawtooth`/`square`/`chirp`; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt`/`sosfilt_zi`/`sosfiltfilt` (host recurrences at `dtype`, in place over the tensor's own host mapping), `medfilt`, `detrend`, `savgol_filter`, `resample`, `resample_poly`/`upfirdn` and the multiband `firwin`; the spectral estimators `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, `peak_widths`, `argrelmax`/`argrelmin`/`argrelextrema`, and the IIR design family -- `butter`/`cheby1`/`cheby2`/`ellip` in all four band shapes behind one `iirfilter` front door -- with `freqz`, `output=` for `(b, a)`, zeros-poles-gain or second-order sections, and the conversions `tf2zpk`/`zpk2sos`/`tf2sos`/`sos2tf`/`sosfreqz`; the order estimators `buttord`/`cheb1ord`/`cheb2ord`/`ellipord`; `iirnotch`/`iirpeak`, `bilinear`, `group_delay` and `lfiltic` |
 | `Array[T, n]` and `FloatLike`, tier 1 | a frame inside a kernel: the direct `convolve`/`correlate`, `lfilter`, the lowpass `firwin`, and the cosine windows as compile-time tables, all differentiating at `Dual` |
 
 `apply_window` has no `Tensor` spelling
@@ -26,13 +26,15 @@ signal-processing one; `numax/signal/convolution.mojo` records why the
 """
 
 from .convolution import (
-    convolve,
-    correlate,
-    fftconvolve,
     MODE_FULL,
-    oaconvolve,
     MODE_SAME,
     MODE_VALID,
+    convolve,
+    convolve2d,
+    correlate,
+    correlate2d,
+    fftconvolve,
+    oaconvolve,
 )
 from .waveforms import chirp, sawtooth, square
 from .windows import (

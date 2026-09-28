@@ -569,7 +569,9 @@ from .signal.convolution import (
     MODE_SAME,
     MODE_VALID,
     convolve,
+    convolve2d,
     correlate,
+    correlate2d,
     fftconvolve,
 )
 
