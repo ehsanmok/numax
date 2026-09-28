@@ -2543,7 +2543,10 @@ def group_delay[
         lane, Coord(worN), ctx
     )
     ctx.synchronize()
+    # The lane read both through erased pointers; on a host context a
+    # buffer is freed at its last named use, so both are held to here.
     _ = coeffs^
+    _ = grid^
     return GroupDelay[dtype, worN](Static[dtype, worN](scaled^, ctx), gd^)
 
 
