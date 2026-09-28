@@ -2,8 +2,9 @@
 `percentile`, their NaN-ignoring forms, `nanmedian` and `iqr`, with every
 `method` NumPy names.
 
-**Tier 2, host-side**, the way `median` is -- but by **selection, not a
-sort**. A quantile reads one or two order statistics, so the tensor comes
+**Tier 2.** On the host by **selection, not a sort**; on a device, at
+`gpu=True`, by a device sort and a gather of the one or two order
+statistics each quantile reads (see "On the device" below). A quantile reads one or two order statistics, so the tensor comes
 to the host once and one `O(n)` three-way quickselect puts exactly those
 in place; nothing else is ordered. The selection is `_select_pair` here
 rather than `std.builtin.sort.partition`, whose two-way split goes
@@ -41,16 +42,37 @@ All thirteen are the same shape once written as positions: `v[lo] + w
 (v[hi] - v[lo])` over the ascending sample, with `hi` equal to `lo` or
 `lo + 1`. `_positions` is that table, and it is what lets every method be a
 selection rather than a sort.
+
+## On the device
+
+Every entry point takes `gpu: Bool = False`. At `gpu=True` with the
+tensor on a device, the sample is sorted there by
+`numax.core.sorting`'s bitonic sort, which puts NaN last; one single-lane
+launch binary-searches for the first NaN, which is the count of numbers;
+`_positions` turns each `q` into indices against that count on the host
+(`O(1)` per quantile); and one `take` gathers exactly those order
+statistics, which are all that comes back. The blend is the host's
+`Float64` one. So the device answer is the host answer, value for value
+-- the same order statistics, the same weights -- and a NaN propagates
+(or is dropped, for the `nan*` family) by the same rule. A quickselect
+would do less work than the sort, but a device selection is a partition
+with data-dependent rounds; the sort is `O(n log^2 n)` in `log^2 n`
+uniform launches and already exists. A residency mismatch takes the
+host path with the `_drive` notice.
 """
 
 from std.builtin.sort import sort as _sort
 from std.math import floor as _floor, ceil as _ceil
 from std.utils.numerics import nan as _nan
 
-from layout.tile_layout import TensorLayout
+from layout import Coord
+from layout.tile_layout import TensorLayout, row_major
+from max.algorithm.functional import elementwise
 
+from ..core._drive import _check_device, _notice
+from ..core.sorting import _sort_device, take
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.tensor import Static, Tensor
+from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
 
 
 def _virtual_index(
@@ -375,8 +397,86 @@ def _read_many[
     return out^
 
 
-def quantile[
+def _valid_count[dtype: DType](mut s: Dynamic[dtype, 1]) raises -> Int:
+    """The number of non-NaN values in the ascending, NaN-last `s`, by
+    one single-lane binary search for the first NaN on `s`'s device."""
+    var ctx = s.context()
+    var n = s.size()
+    var out = Static[DType.int64, 1]._uninitialized(ctx)
+    var sv = s.tile()
+    var ov = out.tile()
+
+    @always_inline
+    def search[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var sv, var ov, var n}:
+        var lo = 0
+        var hi = n
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            var v = sv[Coord(mid)][0]
+            if v == v:
+                lo = mid + 1
+            else:
+                hi = mid
+        ov.store[1](Coord(0), Int64(lo))
+
+    elementwise[simd_width=1, target="gpu"](search, Coord(1), ctx)
+    return Int(out.to_host()[0])
+
+
+def _quantiles_device[
     T: TensorLike
+](
+    xs: T,
+    qs: List[Float64],
+    method: StaticString,
+    drop_nan: Bool,
+    empty_is_nan: Bool,
+) raises -> List[Scalar[T.dtype]] where T.dtype.is_floating_point():
+    """Each of `qs` (in `[0, 1]`) as a quantile of `xs`, from a device
+    sort and one gather of the order statistics; the module docstring's
+    "On the device". A NaN makes every answer NaN unless `drop_nan`; no
+    numbers at all gives NaN when `empty_is_nan` and raises (through
+    `_positions`) otherwise, the host family's two rules."""
+    comptime dtype = T.dtype
+    var m = len(qs)
+    var sorted = _sort_device(xs)
+    var n = sorted.size()
+    var valid = _valid_count(sorted)
+    var out = List[Scalar[dtype]](capacity=m)
+    if (not drop_nan and valid < n) or (valid == 0 and empty_is_nan):
+        for _ in range(m):
+            out.append(_nan[dtype]())
+        return out^
+    var indices = List[Scalar[DType.int64]](capacity=2 * m)
+    var weights = List[Float64](capacity=m)
+    for i in range(m):
+        var at = _positions(qs[i], valid, method)
+        indices.append(Int64(at[0]))
+        indices.append(Int64(at[1]))
+        weights.append(at[2])
+    var picks = Dynamic[DType.int64, 1](
+        sorted.context(), row_major(_dyn_shape[1](2 * m)), indices^
+    )
+    var values = take[axis=0, gpu=True](sorted, picks).to_host()
+    for i in range(m):
+        out.append(_blend(values[2 * i], values[2 * i + 1], weights[i]))
+    return out^
+
+
+def _q_list[
+    dtype: DType, m: Int
+](q: Static[dtype, m], scale: Float64) raises -> List[Float64]:
+    var raw = q.to_host()
+    var out = List[Float64](capacity=m)
+    for i in range(m):
+        out.append(Float64(raw[i]) / scale)
+    return out^
+
+
+def quantile[
+    T: TensorLike, gpu: Bool = False
 ](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
     T.dtype
 ] where T.dtype.is_floating_point():
@@ -389,14 +489,19 @@ def quantile[
     propagates, as NumPy's does -- `nanquantile` is the one that ignores it.
 
     One `O(n)` selection on a host copy, not a sort: see the module
-    docstring for why the selection is not on the device.
+    docstring; at `gpu=True`, a device sort and a two-element gather.
     """
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _quantiles_device(xs, [q], method, False, True)[0]
+    else:
+        _notice[gpu]("quantile")
     var values = _host_values(xs, False)
     return _read(values, q, method)
 
 
 def quantile[
-    T: TensorLike, m: Int
+    T: TensorLike, m: Int, gpu: Bool = False
 ](
     xs: T,
     q: Static[T.dtype, m],
@@ -407,25 +512,34 @@ def quantile[
 
     `_select_route` documents the threshold -- selection while
     `3 m < log2 n`, one sort above it -- and the answer is the same either
-    way.
+    way. At `gpu=True`, one device sort and one gather of all `2 m` order
+    statistics.
     """
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return Static[dtype, m](
+                q.context(),
+                _quantiles_device(xs, _q_list(q, 1.0), method, False, True),
+            )
+    else:
+        _notice[gpu]("quantile")
     var values = _host_values(xs, False)
     var out = _read_many[dtype, m](values, q.to_host(), 1.0, method, True)
     return Static[dtype, m](q.context(), out^)
 
 
 def percentile[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
     T.dtype
 ] where T.dtype.is_floating_point():
     """`quantile` with `q` in percent. `numpy.percentile(a, q)`."""
-    return quantile(xs, q / 100.0, method)
+    return quantile[gpu=gpu](xs, q / 100.0, method)
 
 
 def percentile[
-    T: TensorLike, m: Int
+    T: TensorLike, m: Int, gpu: Bool = False
 ](
     xs: T,
     q: Static[T.dtype, m],
@@ -433,24 +547,37 @@ def percentile[
 ) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
     """Several percentiles at once, on `quantile`'s selection route."""
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return Static[dtype, m](
+                q.context(),
+                _quantiles_device(xs, _q_list(q, 100.0), method, False, True),
+            )
+    else:
+        _notice[gpu]("percentile")
     var values = _host_values(xs, False)
     var out = _read_many[dtype, m](values, q.to_host(), 100.0, method, True)
     return Static[dtype, m](q.context(), out^)
 
 
 def nanquantile[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
     T.dtype
 ] where T.dtype.is_floating_point():
     """`quantile` over the non-NaN elements. `numpy.nanquantile`. Raises
     when every element is NaN, where NumPy warns and returns NaN."""
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _quantiles_device(xs, [q], method, True, False)[0]
+    else:
+        _notice[gpu]("nanquantile")
     var values = _host_values(xs, True)
     return _quantile_of(values, q, method)
 
 
 def nanquantile[
-    T: TensorLike, m: Int
+    T: TensorLike, m: Int, gpu: Bool = False
 ](
     xs: T,
     q: Static[T.dtype, m],
@@ -458,31 +585,39 @@ def nanquantile[
 ) raises -> Static[T.dtype, m] where (T.dtype.is_floating_point() and m > 0):
     """Several NaN-ignoring quantiles at once, on the same route."""
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return Static[dtype, m](
+                q.context(),
+                _quantiles_device(xs, _q_list(q, 1.0), method, True, False),
+            )
+    else:
+        _notice[gpu]("nanquantile")
     var values = _host_values(xs, True)
     var out = _read_many[dtype, m](values, q.to_host(), 1.0, method, False)
     return Static[dtype, m](q.context(), out^)
 
 
 def nanpercentile[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, q: Float64, method: StaticString = "linear") raises -> Scalar[
     T.dtype
 ] where T.dtype.is_floating_point():
     """`percentile` over the non-NaN elements. `numpy.nanpercentile`."""
-    return nanquantile(xs, q / 100.0, method)
+    return nanquantile[gpu=gpu](xs, q / 100.0, method)
 
 
 def nanmedian[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Scalar[T.dtype] where T.dtype.is_floating_point():
     """The median of the non-NaN elements. `numpy.nanmedian` -- the
     `"linear"` quantile at `1/2`, which is `median`'s even-count average,
     and like `median` a selection rather than a sort."""
-    return nanquantile(xs, 0.5)
+    return nanquantile[gpu=gpu](xs, 0.5)
 
 
 def iqr[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](
     xs: T,
     interpolation: StaticString = "linear",
@@ -503,6 +638,14 @@ def iqr[
     comptime dtype = T.dtype
     if not (nan_policy == "propagate" or nan_policy == "omit"):
         raise Error("iqr: nan_policy must be 'propagate' or 'omit'")
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var both = _quantiles_device(
+                xs, [0.75, 0.25], interpolation, nan_policy == "omit", True
+            )
+            return both[0] - both[1]
+    else:
+        _notice[gpu]("iqr")
     var values = _host_values(xs, nan_policy == "omit")
     if len(values) == 0:
         return _nan[dtype]()

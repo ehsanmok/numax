@@ -146,7 +146,7 @@ from ..core.rowwise import (
     reduce_all,
     sum_axis,
 )
-from .quantiles import _select_pair
+from .quantiles import _quantiles_device, _select_pair
 
 
 @always_inline
@@ -682,19 +682,24 @@ def _axis_extents[T: TensorLike, axis: Int](xs: T) raises -> List[Int]:
 
 
 def median[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> SIMD[T.dtype, 1] where T.dtype.is_floating_point():
     """The median of `xs` -- the average of the two middle elements when
     `xs` has an even count, matching NumPy's default.
 
-    **Host-side**, unlike `sum`/`min`/`max`: a median is an order
-    statistic, not a monoid fold, so it downloads `xs`. It does not sort --
-    one `O(n)` quickselect puts the one or two middle elements in place
-    (`numax.stats.quantiles`) and the rest stay unordered. It takes no
-    `gpu` parameter because MAX ships no selection kernel and `nn.top_k` at
-    `k = n / 2 + 1` is its own worst case; that argument is in
-    `numax/stats/quantiles.mojo`'s module docstring.
+    A median is an order statistic, not a monoid fold. On the host it does
+    not sort -- one `O(n)` quickselect puts the one or two middle elements
+    in place (`numax.stats.quantiles`) and the rest stay unordered. At
+    `gpu=True` it is the device `quantile` at `1/2`: a device sort and a
+    two-element gather, so only the middle pair comes back. There a NaN
+    anywhere makes the median NaN, as NumPy has it; the host selection
+    does not look for one.
     """
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _quantiles_device(xs, [0.5], "linear", False, True)[0]
+    else:
+        _notice[gpu]("median")
     return _median_of(xs.to_host())
 
 
