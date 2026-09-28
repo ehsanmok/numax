@@ -151,7 +151,7 @@ from std.builtin.device_passable import DevicePassable
 from std.memory import MutOpaquePointer
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.coord import DynamicCoord
-from layout.tile_layout import row_major, TensorLayout
+from layout.tile_layout import Layout, row_major, TensorLayout
 from linalg.matmul import matmul as _max_matmul
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from max.algorithm.functional import elementwise
@@ -215,6 +215,14 @@ def _product[*dims: Int]() -> Int:
 
 comptime _LayoutOf[*dims: Int] = type_of(row_major[*dims]())
 """The row-major layout type of a compile-time shape."""
+
+comptime _BlockLayout[m: Int, n: Int, L: TensorLayout] = Layout[
+    shape_types=_LayoutOf[m, n]._shape_types, stride_types=L._stride_types
+]
+"""The layout of an `m x n` block of a tensor laid out as `L`: the block's
+compile-time extents over the parent's strides, which is what
+`Tensor.block` returns and MAX's own `tile[m, n]` produces."""
+
 
 comptime _DynLayoutOf[rank: Int] = type_of(
     row_major(DynamicCoord[DType.int64, rank]())
@@ -679,7 +687,11 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         a host mapping *per access*, which costs about 0.8 ms an element
         (measured) -- take one `to_host()` copy and index that instead when
         reading more than a handful of elements off a device tensor.
+
+        An index outside `[0, size())` raises rather than reading past the
+        buffer.
         """
+        self._check_flat(i)
         if self.host_addressable:
             return self.buffer.unsafe_ptr()[unsafe_offset=i]
         with self.buffer.map_to_host() as host:
@@ -692,13 +704,209 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         shape is. Rank-2 only -- axis `1` is a compile-time error on
         a rank-1 tensor, so a wrong-rank call fails where it is written.
         `.tile()[i, j, k]` is the general form, and the same per-access
-        mapping cost applies on a GPU.
+        mapping cost applies on a GPU. Each index is checked against its
+        own axis, so `a[0, cols]` raises rather than reading `a[1, 0]`.
         """
+        self._check_axis(0, r)
+        self._check_axis(1, c)
         return self[r * self.dim[1]() + c]
+
+    def __getitem__(
+        self, i: Int, j: Int, k: Int
+    ) raises -> Scalar[Self.dtype] where Self.rank == 3:
+        """`a[i, j, k]` on a rank-3 tensor, row-major, each index checked
+        against its axis. The per-access device cost of the flat read
+        applies."""
+        self._check_axis(0, i)
+        self._check_axis(1, j)
+        self._check_axis(2, k)
+        return self[(i * self.dim_at(1) + j) * self.dim_at(2) + k]
 
     def __setitem__(mut self, r: Int, c: Int, value: Scalar[Self.dtype]) raises:
         """`a[r, c] = v` on a rank-2 tensor. See `__getitem__` above."""
+        self._check_axis(0, r)
+        self._check_axis(1, c)
         self[r * self.dim[1]() + c] = value
+
+    def __setitem__(
+        mut self, i: Int, j: Int, k: Int, value: Scalar[Self.dtype]
+    ) raises where Self.rank == 3:
+        """`a[i, j, k] = v` on a rank-3 tensor. See `__getitem__` above."""
+        self._check_axis(0, i)
+        self._check_axis(1, j)
+        self._check_axis(2, k)
+        self[(i * self.dim_at(1) + j) * self.dim_at(2) + k] = value
+
+    def _check_flat(self, i: Int) raises:
+        """Raise unless `0 <= i < size()`."""
+        if i < 0 or i >= self.size():
+            raise Error(
+                "Tensor: index ",
+                i,
+                " is out of range for ",
+                self.size(),
+                " elements",
+            )
+
+    def _check_axis(self, axis: Int, i: Int) raises:
+        """Raise unless `0 <= i < dim_at(axis)`."""
+        if i < 0 or i >= self.dim_at(axis):
+            raise Error(
+                "Tensor: index ",
+                i,
+                " is out of range for axis ",
+                axis,
+                " of extent ",
+                self.dim_at(axis),
+            )
+
+    def _view_of[
+        rank: Int
+    ](
+        mut self, starts: IndexList[rank], stops: IndexList[rank]
+    ) raises -> TensorViewOver[
+        Self.dtype, _DynLayoutOf[rank], origin_of(self)
+    ] where (
+        rank == Self.rank
+    ):
+        """The borrowed box `[starts, stops)` of this row-major tensor: the
+        parent's pointer advanced to the box's first element, the box's
+        extents, and the parent's own strides -- the layout every slice of
+        a row-major tensor has, contiguous only when all but the leading
+        sliced axis are whole."""
+        var parent = List[Int](length=rank, fill=0)
+        var shape = List[Int](length=rank, fill=0)
+        var offset = 0
+        var stride = 1
+        for k in range(rank):
+            var d = rank - 1 - k
+            var extent = self.dim_at(d)
+            if starts[d] < 0 or stops[d] > extent or starts[d] > stops[d]:
+                raise Error(
+                    "Tensor: slice ",
+                    starts[d],
+                    ":",
+                    stops[d],
+                    " is out of range for axis ",
+                    d,
+                    " of extent ",
+                    extent,
+                )
+            parent[d] = extent
+            shape[d] = stops[d] - starts[d]
+            offset += starts[d] * stride
+            stride *= extent
+        var layout = rebind[_DynLayoutOf[rank]](
+            Layout(
+                _dyn_shape_from[rank](shape),
+                row_major(_dyn_shape_from[rank](parent)).stride_coord(),
+            )
+        )
+        var t = self.tile()
+        var sub = TileTensor[Self.dtype, _DynLayoutOf[rank], origin_of(self)](
+            ptr=t.ptr.unsafe_offset(offset), layout=layout
+        )
+        return TensorView(sub, self.context())
+
+    @staticmethod
+    def _bounds(s: Slice, extent: Int) raises -> Tuple[Int, Int]:
+        """`s` resolved against `extent` the way NumPy resolves it --
+        negative ends count from the back, missing ones are the whole axis,
+        out-of-range ones clip -- with a step of one required."""
+        var resolved = s.indices(extent)
+        if resolved[2] != 1:
+            raise Error(
+                "Tensor: a slice step of ",
+                resolved[2],
+                " is not a view; take a strided copy with `slice` or `take`",
+            )
+        return (resolved[0], max(resolved[0], resolved[1]))
+
+    def __getitem__(
+        mut self, rows: Slice
+    ) raises -> TensorViewOver[
+        Self.dtype, _DynLayoutOf[Self.rank], origin_of(self)
+    ]:
+        """`a[i:j]`: the rows `i` to `j` along the first axis, every other
+        axis whole, as a `TensorView` over this tensor's storage -- no copy,
+        and writes through the view land here. NumPy's basic slicing: ends
+        may be omitted or negative, and clip to the axis. A step other than
+        one raises, since it would not be a view of contiguous rows.
+        `slice` is the copying spelling, returning an owned `Dynamic`.
+
+        The view is contiguous, so every flattening routine takes it.
+
+        Bind the view before operating on it -- `var v = a[1:3]` then
+        `v * 2.0`. Chained inline, `a[1:3] * 2.0` fails to compile: the
+        pinned toolchain cannot infer the origin of a view returned from a
+        `mut self` call inside a larger expression.
+        """
+        var starts = IndexList[Self.rank](0)
+        var stops = IndexList[Self.rank](0)
+        for d in range(Self.rank):
+            stops[d] = self.dim_at(d)
+        var b = Self._bounds(rows, self.dim_at(0))
+        starts[0] = b[0]
+        stops[0] = b[1]
+        return self._view_of[Self.rank](starts, stops)
+
+    def __getitem__(
+        mut self, rows: Slice, cols: Slice
+    ) raises -> TensorViewOver[
+        Self.dtype, _DynLayoutOf[Self.rank], origin_of(self)
+    ] where (Self.rank >= 2):
+        """`a[i:j, k:l]`: a box of the first two axes as a `TensorView`,
+        no copy. A box that does not span every column is strided -- its
+        rows are `a`'s rows apart -- so the routines that flatten their
+        argument refuse it with a clear error, and `copy(v)` (or `to_host`)
+        makes it contiguous; `a[i:j, :]` stays contiguous."""
+        var starts = IndexList[Self.rank](0)
+        var stops = IndexList[Self.rank](0)
+        for d in range(Self.rank):
+            stops[d] = self.dim_at(d)
+        var r = Self._bounds(rows, self.dim_at(0))
+        var c = Self._bounds(cols, self.dim_at(1))
+        starts[0] = r[0]
+        stops[0] = r[1]
+        starts[1] = c[0]
+        stops[1] = c[1]
+        return self._view_of[Self.rank](starts, stops)
+
+    def block[
+        m: Int, n: Int
+    ](mut self, r: Int, c: Int) raises -> TensorViewOver[
+        Self.dtype, _BlockLayout[m, n, Self.LayoutType], origin_of(self)
+    ] where (Self.rank == 2 and Self.LayoutType.all_dims_known):
+        """The `m x n` block whose top-left element is `a[r, c]`, as a
+        `TensorView` of a compile-time shape -- so a factorization runs on
+        one quadrant in place, `cholesky(a.block[2, 2](0, 0))`, in place of
+        `TensorView(a.tile().tile[2, 2](0, 0), a.context())`. Element
+        offsets, not tile indices, and the parent's strides; a block that
+        does not fit raises."""
+        if r < 0 or c < 0 or r + m > self.dim_at(0) or c + n > self.dim_at(1):
+            raise Error(
+                "Tensor.block: a ",
+                m,
+                "x",
+                n,
+                " block at (",
+                r,
+                ", ",
+                c,
+                ") does not fit a ",
+                self.dim_at(0),
+                "x",
+                self.dim_at(1),
+                " tensor",
+            )
+        var t = self.tile()
+        var layout = rebind[_BlockLayout[m, n, Self.LayoutType]](
+            Layout(row_major[m, n]().shape_coord(), t.layout.stride_coord())
+        )
+        var sub = TileTensor[
+            Self.dtype, _BlockLayout[m, n, Self.LayoutType], origin_of(self)
+        ](ptr=t.ptr.unsafe_offset(r * self.dim_at(1) + c), layout=layout)
+        return TensorView(sub, self.context())
 
     def __setitem__(mut self, i: Int, value: Scalar[Self.dtype]) raises:
         """Flat (row-major) element assignment.
@@ -1499,20 +1707,56 @@ def _same_order[
     On a device, a contiguous `a` is one device-to-device `enqueue_copy`.
     That is a driver call rather than a compiled kernel, so it follows
     `a`'s residency at run time and needs no `gpu` parameter; before it,
-    each of these downloaded the tensor and uploaded it again. On the host,
-    and for a strided view, the elements go through `to_host`, which reads
-    a strided host view in its own row-major order and refuses a strided
-    device one.
+    each of these downloaded the tensor and uploaded it again. A strided
+    device view -- a box sliced out of a larger tensor -- is gathered
+    through its strides in one launch. On the host the elements go through
+    `to_host`, which reads a strided view in its own row-major order.
     """
     if layout.size() != a.size():
         raise Error("cannot lay out ", a.size(), " elements as ", layout.size())
     var ctx = a.context()
-    comptime if T.LayoutType.all_dims_known and not is_row_major[T]:
-        return Tensor[T.dtype, L](ctx, layout, a.to_host())
     if a.on_host():
         return Tensor[T.dtype, L](ctx, layout, a.to_host())
-    _require_contiguous(a)
     var result = Tensor[T.dtype, L]._uninitialized(ctx, layout)
+    comptime rank = T.LayoutType.rank
+    var shape = IndexList[rank]()
+    var strides = IndexList[rank]()
+    var contiguous = True
+    var expected = 1
+    for k in range(rank):
+        var d = rank - 1 - k
+        shape[d] = a.dim_at(d)
+        strides[d] = a.stride_at(d)
+        if a.dim_at(d) > 1 and a.stride_at(d) != expected:
+            contiguous = False
+        expected *= a.dim_at(d)
+    if not contiguous:
+        # A strided device view -- a box sliced out of a larger tensor --
+        # gathered through its strides in one launch, one lane per element.
+        # Not at `float64`, which Metal cannot compile and numax cannot ask
+        # about without naming an architecture; there it raises as before.
+        comptime if has_accelerator() and T.dtype != DType.float64:
+            var src = a.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+            var dst = result.buffer.unsafe_ptr()
+            var total = a.size()
+
+            @always_inline
+            def gather[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var src, var dst, var shape, var strides}:
+                var f = coord_to_index_list(coord)[0]
+                var rem = f
+                var at = 0
+                comptime for k in range(rank):
+                    comptime d = rank - 1 - k
+                    at += (rem % shape[d]) * strides[d]
+                    rem //= shape[d]
+                dst[unsafe_offset=f] = src[unsafe_offset=at]
+
+            elementwise[simd_width=1, target="gpu"](gather, Coord(total), ctx)
+            ctx.synchronize()
+            return result^
+        _require_contiguous(a)
     var source = DeviceBuffer[T.dtype](
         ctx,
         a.tile().ptr.unsafe_origin_cast[MutAnyOrigin]().unsafe_mut_cast[True](),

@@ -11,9 +11,9 @@ The example builds a 4x4 whose leading 2x2 block is symmetric positive
 definite, factors and solves against that block through a `TensorView`, sums a
 row of a matrix the same way, writes through a `TensorView` and shows the parent
 change, and ends with a routine written once against the bound and called
-with both conformers. Nothing here names `TileTensor` except to take the
-block: `a.tile().tile[2, 2](0, 0)` is MAX's own tiling, and `TensorView` is what
-lets `numax` accept it.
+with both conformers. Nothing here names `TileTensor`: `a.block[2, 2](0, 0)`
+is the compile-time-shaped block, `a[1:2]` a row slice, and both come back
+as `TensorView`s over `a`'s own storage.
 """
 
 from layout import Coord
@@ -64,10 +64,9 @@ def main() raises:
     print("--- the parent matrix ---")
     print(big)
 
-    # 1. Factor and solve against the quadrant, through a TensorView. `TensorView`
-    #    takes the tile and the device it lives on; the context is optional
-    #    and means the host when omitted, like every factory.
-    var block = TensorView(big.tile().tile[2, 2](0, 0), big.context())
+    # 1. Factor and solve against the quadrant, through a TensorView: a
+    #    block of `big`, on `big`'s device, with no copy.
+    var block = big.block[2, 2](0, 0)
     print("--- cholesky of the leading 2x2 block, no copy ---")
     print(cholesky(block))  # [[2, 0], [1, sqrt(2)]]
     var rhs = Static[f64, 2](big.context(), [1.0, 2.0])
@@ -80,17 +79,14 @@ def main() raises:
 
     # 3. Reductions and elementwise math take a TensorView too.
     var m = reshape[rows=3, cols=4](arange_n[12, f64]())
-    var row1 = TensorView(m.tile().tile[1, 4](1, 0), m.context())
+    var row1 = m[1:2]
     print("--- stats on one row of a 3x4, through a TensorView ---")
     print("sum(row 1):", sum(row1), " mean(row 1):", mean(row1))
     print("exp(row 1):", exp(TensorView(m.tile())).to_host()[4])
 
     # 4. Writing through a TensorView lands in the parent.
-    var corner = TensorView(big.tile().tile[2, 2](1, 1), big.context())
-    var cv = corner.tile()
-    for i in range(2):
-        for j in range(2):
-            cv[Coord(i, j)] = Float64(-1)
+    var corner = big.block[2, 2](1, 1)
+    corner.copy_from_host([-1.0, -1.0, -1.0, -1.0])
     print("--- after writing -1 into the trailing 2x2 through a TensorView ---")
     print(big)
 
