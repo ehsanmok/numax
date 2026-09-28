@@ -521,10 +521,14 @@ from .signal.windows import (
     bartlett,
     blackman,
     boxcar,
+    chebwin,
+    flattop,
     get_window,
     hamming,
     hann,
     kaiser,
+    nuttall,
+    tukey,
 )
 from .signal.filters import (
     detrend,
