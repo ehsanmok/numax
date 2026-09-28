@@ -223,6 +223,7 @@ from .core.elementwise import (
     cosh,
     degrees,
     diff,
+    ediff1d,
     exp,
     exp2,
     expm1,
@@ -255,6 +256,7 @@ from .core.elementwise import (
     square,
     tan,
     trunc,
+    unwrap,
 )
 from .core.gradient import Gradient
 from .core.interval import Interval

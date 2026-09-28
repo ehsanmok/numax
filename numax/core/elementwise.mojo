@@ -80,7 +80,8 @@ from std.math import (
 )
 
 from layout import Coord, coord_to_index_list
-from layout.tile_layout import TensorLayout
+from layout.tile_layout import TensorLayout, row_major
+from max.algorithm.functional import elementwise
 
 # `exp`, `log`, `log1p`, `log2`, `exp2` and `cosh` at float64 are numax's
 # own (`numax/core/libm.mojo`); `std.math`'s are from `1e4` to `1e9` ulp
@@ -92,12 +93,13 @@ from .libm import exp2 as _std_exp2
 from .libm import log1p as _std_log1p
 from .libm import log2 as _std_log2
 from .tensorlike import TensorLike, dim, is_row_major
-from .tensor import Dynamic, Static, Tensor
+from .tensor import Dynamic, Static, Tensor, _dyn_shape, _scan_device
 from ._drive import (
     _BroadcastRank,
     _check_device,
     _flat,
     _flat_out,
+    _flat_unchecked,
     _launch,
     _notice,
     _width,
@@ -1791,6 +1793,211 @@ def gradient[
 
     _launch[gpu=gpu, lanes=1](body, n, ctx)
     return out^
+
+
+def ediff1d[
+    T: TensorLike, gpu: Bool = False
+](
+    ary: T,
+    to_end: Optional[Scalar[T.dtype]] = None,
+    to_begin: Optional[Scalar[T.dtype]] = None,
+) raises -> Dynamic[T.dtype, 1] where is_row_major[T]:
+    """First differences of `ary` read flat, with optional values before
+    and after. `numpy.ediff1d`.
+
+    `diff` at any rank and any shape: the input is flattened row-major, so
+    the result has `ary.size() - 1` differences (none for one element or
+    fewer), preceded by `to_begin` and followed by `to_end` when they are
+    given. NumPy also accepts arrays there; this takes one value each,
+    which is the common case, and `concatenate_dyn` joins anything longer.
+    One launch either way.
+
+    Parameters:
+        T: The `TensorLike` type of `ary`, row-major, at any rank.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        ary: Tensor whose flat neighbors are differenced.
+        to_end: A value appended after the differences, if given.
+        to_begin: A value prepended before the differences, if given.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of `T.dtype` holding `to_begin`, then
+        `flat[i+1] - flat[i]`, then `to_end`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    var n = ary.size()
+    var inner = n - 1 if n > 1 else 0
+    var b = 1 if to_begin else 0
+    var e = 1 if to_end else 0
+    var m = b + inner + e
+    var begin = to_begin.or_else(0)
+    var end = to_end.or_else(0)
+    if not _check_device[gpu=gpu](ary):
+        _notice[gpu]("ediff1d")
+        var values = ary.to_host()
+        var walked = List[Scalar[dtype]](capacity=m)
+        if b == 1:
+            walked.append(begin)
+        for i in range(inner):
+            walked.append(values[i + 1] - values[i])
+        if e == 1:
+            walked.append(end)
+        return Dynamic[dtype, 1](
+            row_major(_dyn_shape[1](m)), walked^, ary.context()
+        )
+
+    var ctx = ary.context()
+    var out = Dynamic[dtype, 1]._uninitialized(ctx, row_major(_dyn_shape[1](m)))
+    if m == 0:
+        return out^
+    var xs = _flat(ary)
+    var ys = _flat_out(out)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xs, var ys, var b, var inner, var begin, var end}:
+        var j = coord_to_index_list(coord)[0]
+        var i = j - b
+        if i < 0:
+            ys.store[1](coord, SIMD[dtype, 1](begin))
+        elif i >= inner:
+            ys.store[1](coord, SIMD[dtype, 1](end))
+        else:
+            ys.store[1](coord, xs.load[1](Coord(i + 1)) - xs.load[1](Coord(i)))
+
+    _launch[gpu=gpu, lanes=1](body, m, ctx)
+    return out^
+
+
+def _unwrap_step[
+    dtype: DType
+](
+    dd: Scalar[dtype],
+    half: Scalar[dtype],
+    period: Scalar[dtype],
+    cut: Scalar[dtype],
+) -> Scalar[dtype]:
+    """The correction one neighbor difference `dd` contributes: `dd` moved
+    into `[-period/2, period/2)` by whole periods, less `dd` itself, or
+    nothing when `|dd|` is under the cut. NumPy's rule, including sending
+    `-period/2` to `+period/2` when `dd` was positive."""
+    var shifted = dd + half
+    var wrapped = shifted - period * _std_floor(shifted / period) - half
+    if wrapped == -half and dd > 0:
+        wrapped = half
+    if dd < cut and -dd < cut:
+        return 0
+    return wrapped - dd
+
+
+def unwrap[
+    T: TensorLike, gpu: Bool = False
+](
+    p: T,
+    discont: Optional[Scalar[T.dtype]] = None,
+    period: Scalar[T.dtype] = Scalar[T.dtype](6.283185307179586),
+) raises -> Tensor[T.dtype, T.LayoutType] where (
+    T.LayoutType.rank == 1 and is_row_major[T] and T.dtype.is_floating_point()
+):
+    """Phase unwrapping: remove jumps larger than `discont` by adding whole
+    periods. `numpy.unwrap`.
+
+    Each neighbor difference is moved into `[-period/2, period/2)` by a
+    whole number of periods unless it is already smaller than `discont`
+    (default and floor `period / 2`, as in NumPy), and the running sum of
+    those corrections is added back. Rank-1, which is NumPy's `axis=-1` on a
+    vector. At `gpu=True` it is one launch for the corrections, the device
+    scan, and one launch adding them.
+
+    Parameters:
+        T: The `TensorLike` type of `p`: rank 1, row-major, floating-point.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        p: The wrapped phase samples.
+        discont: The smallest jump that is unwrapped; `period / 2` if unset,
+            and raised to it if smaller.
+        period: The size of the range the input wraps over, `2 pi` for
+            radians.
+
+    Returns:
+        A new tensor at `p`'s layout holding the unwrapped phase; the first
+        element is unchanged.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    var n = p.size()
+    var half = period / 2
+    var cut = discont.or_else(half)
+    if cut < half:
+        cut = half
+    if _check_device[T, gpu](p):
+        comptime if gpu:
+            var ctx = p.context()
+            var corr = Dynamic[dtype, 1]._uninitialized(
+                ctx, row_major(_dyn_shape[1](n))
+            )
+            if n == 0:
+                return Tensor[dtype, LayoutType]._uninitialized(
+                    ctx, p.tile().layout
+                )
+            var xs = _flat(p)
+            var cs = _flat_out(corr)
+
+            @always_inline
+            def correct[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var xs, var cs, var half, var period, var cut}:
+                var i = coord_to_index_list(coord)[0]
+                if i == 0:
+                    cs.store[1](coord, SIMD[dtype, 1](0))
+                else:
+                    var dd = xs.load[1](coord)[0] - xs.load[1](Coord(i - 1))[0]
+                    cs.store[1](coord, _unwrap_step(dd, half, period, cut))
+
+            elementwise[simd_width=1, target="gpu"](correct, Coord(n), ctx)
+            var total = _scan_device["sum"](
+                corr, row_major(_dyn_shape[1](n)), n, 1
+            )
+            var out = Tensor[dtype, LayoutType]._uninitialized(
+                ctx, p.tile().layout
+            )
+            var tv = _flat_unchecked(total)
+            var ys = _flat_out(out)
+
+            @always_inline
+            def shift[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var xs, var tv, var ys}:
+                ys.store[1](coord, xs.load[1](coord) + tv.load[1](coord))
+
+            elementwise[simd_width=1, target="gpu"](shift, Coord(n), ctx)
+            ctx.synchronize()
+            return out^
+    else:
+        _notice[gpu]("unwrap")
+    var values = p.to_host()
+    var running = Scalar[dtype](0)
+    var out = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        if i > 0:
+            running += _unwrap_step(
+                values[i] - values[i - 1], half, period, cut
+            )
+        out.append(values[i] + running)
+    return Tensor[dtype, LayoutType](p.tile().layout, out^, p.context())
 
 
 def _logaddexp_op[

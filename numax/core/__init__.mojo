@@ -129,6 +129,7 @@ from .elementwise import (
     cosh,
     degrees,
     diff,
+    ediff1d,
     exp,
     exp2,
     expm1,
@@ -162,6 +163,7 @@ from .elementwise import (
     tan,
     tanh,
     trunc,
+    unwrap,
 )
 from .gradient import Gradient
 from .interval import Interval
