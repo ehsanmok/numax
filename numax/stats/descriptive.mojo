@@ -24,12 +24,22 @@ from std.utils.numerics import inf as _inf
 from layout.tile_layout import TensorLayout
 
 from ..core._drive import _check_device, _notice
-from ..core.elementwise import clip as _clip, log as _vlog, reciprocal
+from ..core.elementwise import (
+    abs as _vabs,
+    clip as _clip,
+    log as _vlog,
+    reciprocal,
+)
 from ..core.logic import any as _any, equal, greater, logical_and
 from ..core.ops import divide, multiply, subtract
 from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.tensor import Static, Tensor, zeros_like
-from .statistics import max as _tmax, min as _tmin, sum as _tsum
+from .statistics import (
+    max as _tmax,
+    median as _tmedian,
+    min as _tmin,
+    sum as _tsum,
+)
 
 
 def _values[T: TensorLike](xs: T) raises -> List[Float64]:
@@ -592,3 +602,38 @@ def describe[
         skew(xs, bias),
         kurtosis(xs, True, bias),
     )
+
+
+def median_abs_deviation[
+    T: TensorLike, gpu: Bool = False
+](x: T, scale: Float64 = 1.0) raises -> Float64 where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """The median absolute deviation, `median(|x - median(x)|) / scale`.
+    `scipy.stats.median_abs_deviation(x, scale=scale)`.
+
+    A robust spread: half the data lie within one MAD of the median
+    whatever the tails do. SciPy's `scale="normal"` -- which makes the MAD
+    estimate a normal's standard deviation -- is `scale =
+    0.6744897501960817`, the normal's quartile. Two device medians and one
+    deviation launch at `gpu=True`, one scalar back.
+
+    Parameters:
+        T: The tensor type of `x`, row-major and floating-point.
+        gpu: Whether to compute on `x`'s device.
+
+    Args:
+        x: The sample, read flat.
+        scale: The divisor; `1.0` is the raw MAD.
+
+    Returns:
+        The median absolute deviation over `scale`.
+
+    Raises:
+        If `x` is empty, or a device operation fails.
+    """
+    if x.size() == 0:
+        raise Error("median_abs_deviation: the sample is empty")
+    var center = _tmedian[gpu=gpu](x)
+    var deviations = _vabs[gpu=gpu](subtract[gpu=gpu](x, center))
+    return Float64(_tmedian[gpu=gpu](deviations)) / scale
