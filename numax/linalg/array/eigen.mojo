@@ -512,9 +512,7 @@ def matrix_rank[
     `ge_indicator` results -- a `0`/`1` blend built from `copysign` -- so
     nothing branches, and it differentiates and launches inside a kernel
     body like the rest of this module. A branching version would have been
-    `Plain`-only *and* would have hit the recorded Mojo limitation that a
-    struct instantiated with a function-level `DType` parameter is not
-    accepted as a `FloatLike` argument.
+    `Plain`-only.
 
     `rcond` is relative to the largest singular value, matching
     `numpy.linalg.matrix_rank` and `pinv`, which applies the identical
