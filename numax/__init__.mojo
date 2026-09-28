@@ -53,10 +53,7 @@ and hands results back the same way. The full inventory is
 `docs/features.md`; what is routed to MAX, written here, or left out on
 purpose -- sparse, iterative solvers, distributed execution, dtype
 promotion, reverse-mode autodiff -- is `docs/parity.md`, which carries a
-disposition for every name left out rather than only the themes. One limit
-there is a bug and not a decision: the spectral decompositions have no
-working device path, so `gpu=True` on `eigh`, `svd`, `schur` and their
-neighbours is refused at compile time rather than answered wrongly.
+disposition for every name left out rather than only the themes.
 
 **Measured, per processor.** CPU and GPU numbers are never mixed into one
 comparison, and `docs/performance.md` carries every figure with the

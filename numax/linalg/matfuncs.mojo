@@ -715,9 +715,6 @@ def funm[
     """`f(a)` for a scalar `FloatLike` function `f`, as a function of the
     matrix. `scipy.linalg.funm(a, f)`.
 
-    **`gpu=True` does not compile**, since this reaches
-    `schur` and `schur` refuses it.
-
     **Tier 2.** `schur` reduces `a` to real Schur form with the cubic term
     in `linalg.matmul`, the block Parlett recurrence evaluates `f` on the
     quasi-triangular factor on the host -- `f` itself at `Plain` on a `1 x
@@ -736,10 +733,6 @@ def funm[
     ```
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "funm: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var decomposed = schur[gpu=gpu](a)
     var t = decomposed.t.to_host()
@@ -758,9 +751,6 @@ def sqrtm[
 ):
     """The principal matrix square root, `X @ X == a`. `scipy.linalg.sqrtm`.
 
-    **`gpu=True` does not compile**, since this reaches
-    `schur` and `schur` refuses it.
-
     **Tier 2.** `schur`, then the Bjorck-Hammarling recurrence on the real
     Schur form -- Higham's algorithm, whose denominators are sums of
     principal square roots and never vanish, so repeated and defective
@@ -771,10 +761,6 @@ def sqrtm[
     route through `eigh` for matrices small enough to live in registers.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "sqrtm: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var decomposed = schur[gpu=gpu](a)
     var t = decomposed.t.to_host()
@@ -794,9 +780,6 @@ def logm[
     """The principal matrix logarithm, `expm(logm(a)) == a`.
     `scipy.linalg.logm`.
 
-    **`gpu=True` does not compile**, since this reaches
-    `schur` and `schur` refuses it.
-
     **Tier 2.** `schur`, then inverse scaling and squaring on the real
     Schur form -- square roots by the `sqrtm` recurrence until the factor
     is within `1/4` of the identity, the degree-8 Pade approximant of
@@ -805,10 +788,6 @@ def logm[
     closed negative real axis, NaN otherwise.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "logm: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var decomposed = schur[gpu=gpu](a)
     var t = decomposed.t.to_host()
@@ -834,15 +813,8 @@ def cosm[
     and dim[T, 1] == dim[T, 0]
 ):
     """The matrix cosine, `funm` at `cos`. `scipy.linalg.cosm`. `cosm(a) @
-    cosm(a) + sinm(a) @ sinm(a)` is the identity.
-
-    **`gpu=True` does not compile**, since this reaches
-    `schur` and `schur` refuses it."""
+    cosm(a) + sinm(a) @ sinm(a)` is the identity."""
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "cosm: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     return funm[f=_cos_f, gpu=gpu](a)
 
 
@@ -855,15 +827,8 @@ def sinm[
     and T.LayoutType.all_dims_known
     and dim[T, 1] == dim[T, 0]
 ):
-    """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`.
-
-    **`gpu=True` does not compile**, since this reaches
-    `schur` and `schur` refuses it."""
+    """The matrix sine, `funm` at `sin`. `scipy.linalg.sinm`."""
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "sinm: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     return funm[f=_sin_f, gpu=gpu](a)
 
 
@@ -885,15 +850,8 @@ def tanm[
     cosine is singular -- an eigenvalue at an odd multiple of `pi / 2` --
     has no tangent, and `solve`'s pivoting reports that rather than
     returning a large finite answer.
-
-    **`gpu=True` does not compile**, since this reaches `schur` through
-    `funm` and `schur` refuses it.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "tanm: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var s = sinm[gpu=gpu](a)
     var c = cosm[gpu=gpu](a)
     # `X C = S` is not a form `lu_factor` solves, so transpose it into
@@ -919,15 +877,8 @@ def fractional_matrix_power[
     `scipy.linalg.fractional_matrix_power`. Real for a matrix with no
     eigenvalue on the closed negative real axis, and `t = 1/2` agrees with
     `sqrtm` to rounding; SciPy's Schur-Pade route is sharper for `t` near
-    an integer and is the upgrade.
-
-    **`gpu=True` does not compile**, since this reaches
-    `logm` and so `schur`, which refuses it."""
+    an integer and is the upgrade."""
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "fractional_matrix_power: gpu=True is a known-wrong device path and is"
-        " refused; run the default gpu=False. See the docstring."
-    )
     var l = logm[gpu=gpu](a)
     var scaled = multiply(l, Scalar[T.dtype](t))
     return expm[gpu=gpu](scaled)

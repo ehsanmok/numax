@@ -359,8 +359,8 @@ def roots[
     order is NumPy's `roots`, not its `polynomial` package's, matching
     `polyfit` and `polyval`.
 
-    **Tier 2, and `gpu=True` does not compile**, because `eigvals` refuses
-    it -- see `numax.linalg.eigvals`.
+    **Tier 2**, through `numax.linalg.eigvals`, whose device path
+    `gpu=True` takes.
     """
     var c = companion[gpu=gpu](p)
     return eigvals[gpu=gpu](c)

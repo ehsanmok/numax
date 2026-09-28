@@ -151,18 +151,15 @@ def sytrd[
     Householder reflections, device-resident and blocked. LAPACK's
     `sytrd` over `latrd` panels.
 
-    **`gpu=True` does not compile.** The device path disagrees with the
-    host band at every `block`, including `1`, so a `comptime assert`
-    refuses the parameter rather than returning a wrong answer. Fixing it
-    is Backlog 0.3; until then a compile error is the only honest answer,
-    and every spectral routine reached from here carries the same refusal.
-
-    The refusal is a `comptime assert` in the body rather than a `where`
-    clause on purpose. A `where` clause propagates: every generic caller
-    passing its own `gpu` through would have to restate `not gpu` to
-    discharge it, which costs `lstsq[gpu=True]` its working `"qr"` route
-    for the sake of its `"svd"` one. The assert fires at instantiation, so
-    only the instantiations that actually reach the device path fail.
+    **`gpu=True` is the whole reduction on the device**: the panel, the
+    `p = A v` product and the rank-`2 * block` update all launch there, and
+    the band comes back as two `n`-vectors. The spectral routines built on
+    this one keep only their band iteration on the host -- sequential and
+    `O(n^2)` -- with its rotations applied to the vectors as device GEMMs.
+    `tests_gpu/linalg/test_spectral_gpu.mojo` holds every one of them to
+    the host answer at `float32`. The panel kernels capture by value: a
+    by-reference capture forwarded into a device launch reads zeros on
+    Metal, which is what kept this path wrong through 0.2.
 
     `a` is read as symmetric and is **not checked** -- checking costs a
     full pass and the reduction is meaningless on a matrix that is not,
@@ -226,10 +223,6 @@ def sytrd[
     launchable inside a GPU thread.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "sytrd: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     comptime width = min(block, n)
     var ctx = a.context()
     var work = zeros[T.dtype, n, n](ctx)
@@ -1000,8 +993,8 @@ def eigvalsh[
     """**Tier 2.** The eigenvalues of a symmetric `a`, ascending, without
     the eigenvectors. `numpy.linalg.eigvalsh` / `scipy.linalg.eigvalsh`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reduction is wrong at every `block`.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     Two phases, and the split is the whole story. `sytrd` reduces `a` to
     tridiagonal form device-resident -- `O(4n^3/3)` with the cubic term in
@@ -1031,10 +1024,6 @@ def eigvalsh[
     `a` is read as symmetric and not checked; see `sytrd`.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "eigvalsh: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var reduced = sytrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
@@ -1089,8 +1078,8 @@ def eigh[
     ascending and orthonormal eigenvectors as columns.
     `numpy.linalg.eigh` / `scipy.linalg.eigh`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reduction is wrong at every `block`.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     Three steps, all three GEMM-shaped. `sytrd` reduces `a` to
     tridiagonal form device-resident, `O(4n^3/3)` through `linalg.matmul`.
@@ -1124,10 +1113,6 @@ def eigh[
     `a` is read as symmetric and not checked; see `sytrd`.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "eigh: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var reduced = sytrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
@@ -1390,8 +1375,8 @@ def hessenberg[
     Householder reflections, device-resident and blocked. LAPACK's
     `gehrd` over `lahr2` panels, `scipy.linalg.hessenberg`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reductions are wrong at every `block`.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     The shape is `sytrd`'s, minus the symmetry: a panel of `block` columns
     is reduced one column at a time without touching the trailing block,
@@ -1452,10 +1437,6 @@ def hessenberg[
     matrices small enough to live in registers.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "hessenberg: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     comptime width = min(block, n)
     var ctx = a.context()
     var work = zeros[T.dtype, n, n](ctx)
@@ -1955,8 +1936,8 @@ def eigvals[
     complex, as a `(re, im)` pair. `numpy.linalg.eigvals`,
     `scipy.linalg.eigvals`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reductions are wrong at every `block`.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     `hessenberg` reduces `a` device-resident with the cubic term in
     `linalg.matmul`, then the Francis double-shift QR iteration runs on
@@ -1978,10 +1959,6 @@ def eigvals[
     may report the same spectrum in a different order.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "eigvals: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var reduced = hessenberg[gpu=gpu, block=block](a)
     var h = reduced.h.to_host()
@@ -2069,10 +2046,8 @@ def schur[
     """**Tier 2.** The real Schur decomposition `a = Z T Z^T`.
     `scipy.linalg.schur(a, output="real")`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reductions are wrong at every `block`.
-    Every matrix function in `numax.linalg.matfuncs` that reaches `schur`
-    inherits the same refusal.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     Three steps, and the Schur vectors never touch the host in any of
     them. `hessenberg` reduces `a` device-resident. The Francis iteration
@@ -2124,10 +2099,6 @@ def schur[
     beyond `expm` is built on.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "schur: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var reduced = hessenberg[gpu=gpu, block=block](a)
     var h = reduced.h.to_host()
@@ -2371,8 +2342,8 @@ def gebrd[
     form by alternating left and right Householder reflections,
     device-resident and blocked. LAPACK's `gebrd` over `labrd` panels.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reductions are wrong at every `block`.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     Column `k` takes a left reflector from `a[k.., k]` and row `k` a right
     one from `a[k, k+1..]`. What blocking changes is when the rest of the
@@ -2419,10 +2390,6 @@ def gebrd[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "gebrd: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     comptime width = min(block, n)
     var ctx = a.context()
     var work = zeros[T.dtype, m, n](ctx)
@@ -3024,8 +2991,8 @@ def svdvals[
     """**Tier 2.** The singular values of an `m x n` matrix, `m >= n`,
     descending. `scipy.linalg.svdvals`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reductions are wrong at every `block`.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     `gebrd` reduces `a` to bidiagonal form device-resident and blocked,
     then `_bdsqr` runs the implicit-shift QR iteration on the two
@@ -3040,10 +3007,6 @@ def svdvals[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "svdvals: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var reduced = gebrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
@@ -3116,9 +3079,8 @@ def svd[
     matrix, `m >= n`: `A = U diag(s) V^T` with `s` descending.
     `scipy.linalg.svd(a, full_matrices=False)`.
 
-    **`gpu=True` does not compile**, for the reason `sytrd` records: the
-    device reductions are wrong at every `block`.
-    `pinv`, `cond` and `matrix_rank` inherit the same refusal.
+    **`gpu=True`** runs the reduction and every `O(n^3)` product on the
+    device; `sytrd` says what stays on the host and why.
 
     Three steps, and the vectors never touch the host in any of them.
     `gebrd` reduces `A` to bidiagonal `B = Q^T A P` device-resident.
@@ -3159,10 +3121,6 @@ def svd[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "svd: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var ctx = a.context()
     var reduced = gebrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
@@ -3248,9 +3206,6 @@ def matrix_rank[
     """**Tier 2.** How many singular values exceed `tol`.
     `numpy.linalg.matrix_rank`.
 
-    **`gpu=True` does not compile**, since this is `svdvals` plus a count
-    and `svdvals` refuses it.
-
     `tol` defaults to NumPy's: the largest singular value times
     `max(m, n)` times the machine epsilon of `T.dtype`, which is the noise
     floor an SVD of that size can be expected to carry. Pass an explicit
@@ -3262,10 +3217,6 @@ def matrix_rank[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "matrix_rank: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var s = svdvals[gpu=gpu](a).to_host()
     var eps: Float64
     comptime if T.dtype == DType.float32:

@@ -125,9 +125,6 @@ def pinv[
     singular values below `rcond` times the largest dropped.
     `numpy.linalg.pinv`, and `scipy.linalg.pinv`'s shape.
 
-    **`gpu=True` does not compile**, since this is `svd` plus a reciprocal
-    and `svd` refuses it.
-
     Reach for this instead of `inverse` when the matrix might be singular,
     nearly so, or not square at all: `inverse` solves against the identity
     through a pivoted LU and returns enormous garbage for a near-singular
@@ -143,10 +140,6 @@ def pinv[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "pinv: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var factored = svd[gpu=gpu](a)
     var s = factored.s.to_host()
     var threshold = Float64(s[0]) * rcond
@@ -207,14 +200,10 @@ def orth[
     `max(m, n)` times the machine epsilon -- and an explicit one is read as
     a multiplier of the largest singular value, matching `pinv` above.
 
-    **Tier 2, and `gpu=True` does not compile**, since `svd` refuses it.
+    **Tier 2**, through `svd`, whose device path `gpu=True` takes.
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "orth: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var factored = svd[gpu=gpu](a)
     var s = factored.s.to_host()
     var cutoff = _svd_tolerance(s, m, n, rcond)
@@ -260,10 +249,6 @@ def null_space[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime assert not gpu, (
-        "null_space: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var factored = svd[gpu=gpu](a)
     var s = factored.s.to_host()
     var cutoff = _svd_tolerance(s, m, n, rcond)
@@ -350,13 +335,9 @@ def polar[
     `P` here never forms `a^T a`, so it does not square the condition
     number.
 
-    **Tier 2, and `gpu=True` does not compile**, since `svd` refuses it.
+    **Tier 2**, through `svd`, whose device path `gpu=True` takes.
     """
     comptime n = dim[T, 0]
-    comptime assert not gpu, (
-        "polar: gpu=True is a known-wrong device path and is refused;"
-        " run the default gpu=False. See the docstring."
-    )
     var factored = svd[gpu=gpu](a)
 
     # U = W V^T, with `inner` supplying the transpose of its second

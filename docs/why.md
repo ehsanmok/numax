@@ -143,9 +143,9 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
   in the middle of the range, down from 14x before the engine was fused.
   `quantile` is 2.85x behind NumPy, because at `2^24` it still moves the
   whole tensor to the host to select on it.
-- **A GPU spectral path.** The six spectral entry points accept `gpu=True`
-  and return wrong answers on Metal in 0.2; the factorizations do not.
-  Use the default until it is fixed.
+- **A measured GPU spectral path.** The spectral routines run on the
+  device and match the host at `float32`, but no device spectral number has
+  been measured yet.
 
   The surfaces that are one `elementwise` launch, one GEMM or one batched
   transform are ahead: `interp` 9.4x, `welch` 8.9x, `norm.cdf` 6.3x, `cov`

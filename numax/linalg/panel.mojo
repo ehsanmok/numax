@@ -660,7 +660,7 @@ def latrd_column[
         return
 
     @always_inline
-    def update_row(index: Int) {imm}:
+    def update_row(index: Int) {var}:
         var row = i + index
         var total = a[Coord(row, i)]
         for c in range(j):
@@ -769,7 +769,7 @@ def latrd_w[
 
     # Phase one: the `2j + 1` reductions, one task each.
     @always_inline
-    def reduce_one(r: Int) {imm}:
+    def reduce_one(r: Int) {var}:
         var total = Scalar[dtype](0)
         for row in range(first, n):
             var value = Scalar[dtype](0)
@@ -810,8 +810,7 @@ def latrd_w[
 
     # Phase two: `alpha`, which needs every reduction and is one scalar.
     @always_inline
-    @__parameter
-    def fold_alpha():
+    def fold_alpha() {var}:
         var this_tau = tau[Coord(i)]
         var total = red[Coord(0)]
         for c in range(j):
@@ -829,14 +828,16 @@ def latrd_w[
         @always_inline
         def fold[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var red, var tau, var i, var j, var slot}:
+        ](coord: Coord) {
+            var red, var tau, var i, var j, var slot, var fold_alpha
+        }:
             fold_alpha()
 
         elementwise[simd_width=1, target=target](fold, Coord(1), ctx)
 
     # Phase three: the masked axpy and the two operand stores, per row.
     @always_inline
-    def build_row(row: Int) {imm}:
+    def build_row(row: Int) {var}:
         var this_tau = tau[Coord(i)]
         var alpha = red[Coord(slot)]
         var v = vpad[Coord(row)]
@@ -931,7 +932,7 @@ def labrd_column[
         return
 
     @always_inline
-    def update_row(index: Int) {imm}:
+    def update_row(index: Int) {var}:
         var row = i + index
         var total = a[Coord(row, i)]
         for c in range(j):
@@ -1004,7 +1005,7 @@ def labrd_row[
         return
 
     @always_inline
-    def update_col(index: Int) {imm}:
+    def update_col(index: Int) {var}:
         var col = i + 1 + index
         var total = a[Coord(i, col)]
         for c in range(j + 1):
@@ -1090,7 +1091,7 @@ def labrd_y[
     var i = k0 + j
 
     @always_inline
-    def reduce_one(r: Int) {imm}:
+    def reduce_one(r: Int) {var}:
         var total = Scalar[dtype](0)
         if r < j:
             for row in range(i, m):
@@ -1129,7 +1130,7 @@ def labrd_y[
             )
 
     @always_inline
-    def build_col(col: Int) {imm}:
+    def build_col(col: Int) {var}:
         var value = Scalar[dtype](0)
         if col > i:
             var acc = t1[Coord(col)]
@@ -1211,7 +1212,7 @@ def labrd_x[
     var i = k0 + j
 
     @always_inline
-    def reduce_one(r: Int) {imm}:
+    def reduce_one(r: Int) {var}:
         var total = Scalar[dtype](0)
         if r <= j:
             for col in range(i + 1, n):
@@ -1251,7 +1252,7 @@ def labrd_x[
         )
 
     @always_inline
-    def build_row(row: Int) {imm}:
+    def build_row(row: Int) {var}:
         var value = Scalar[dtype](0)
         if row > i:
             var acc = t2[Coord(row)]
@@ -1352,7 +1353,7 @@ def lahr2_column[
 
     # Phase one: the deferred right update, over the whole column.
     @always_inline
-    def defer_row(row: Int) {imm}:
+    def defer_row(row: Int) {var}:
         var total = a[Coord(row, i)]
         for c in range(j):
             total -= y[Coord(row, c)] * v[Coord(i, k0 + c)]
@@ -1378,7 +1379,7 @@ def lahr2_column[
 
     # Phase two: `w = V^T b`, one dot product per panel column.
     @always_inline
-    def reduce_one(c: Int) {imm}:
+    def reduce_one(c: Int) {var}:
         var total = Scalar[dtype](0)
         for row in range(k0 + 1, n):
             total += v[Coord(row, k0 + c)] * a[Coord(row, i)]
@@ -1405,8 +1406,7 @@ def lahr2_column[
     # Phase two and a half: `w <- T^T w`, `T` upper triangular so entry
     # `c` reads `T[0:c+1, c]`.
     @always_inline
-    @__parameter
-    def fold_one(c: Int):
+    def fold_one(c: Int) {var}:
         var total = Scalar[dtype](0)
         for r in range(c + 1):
             total += t_block[Coord(r, c)] * red[Coord(r)]
@@ -1420,7 +1420,7 @@ def lahr2_column[
         @always_inline
         def fold[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var t_block, var red, var half}:
+        ](coord: Coord) {var t_block, var red, var half, var fold_one}:
             fold_one(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](fold, Coord(j), ctx)
@@ -1431,7 +1431,7 @@ def lahr2_column[
         return
 
     @always_inline
-    def apply_row(index: Int) {imm}:
+    def apply_row(index: Int) {var}:
         var row = k0 + 1 + index
         var total = a[Coord(row, i)]
         for c in range(j):
@@ -1512,7 +1512,7 @@ def lahr2_y[
     var i = k0 + j
 
     @always_inline
-    def reduce_one(c: Int) {imm}:
+    def reduce_one(c: Int) {var}:
         var total = Scalar[dtype](0)
         for row in range(i + 1, n):
             total += v[Coord(row, k0 + c)] * v[Coord(row, i)]
@@ -1538,7 +1538,7 @@ def lahr2_y[
             elementwise[simd_width=1, target=target](reduce_all, Coord(j), ctx)
 
     @always_inline
-    def build_row(row: Int) {imm}:
+    def build_row(row: Int) {var}:
         var acc = p[Coord(row)]
         for c in range(j):
             acc -= y[Coord(row, c)] * red[Coord(c)]
@@ -1563,8 +1563,7 @@ def lahr2_y[
         elementwise[simd_width=1, target=target](build, Coord(n), ctx)
 
     @always_inline
-    @__parameter
-    def build_t(c: Int):
+    def build_t(c: Int) {var}:
         if c == j:
             t_block.store[1](Coord(j, j), tau[Coord(i)])
             return
@@ -1581,7 +1580,9 @@ def lahr2_y[
         @always_inline
         def fill_t[
             w: Int, alignment: Int = 1
-        ](coord: Coord) {var t_block, var red, var tau, var i, var j}:
+        ](coord: Coord) {
+            var t_block, var red, var tau, var i, var j, var build_t
+        }:
             build_t(coord_to_index_list(coord)[0])
 
         elementwise[simd_width=1, target=target](fill_t, Coord(j + 1), ctx)
@@ -1883,7 +1884,7 @@ def gemv_sub[
         return
 
     @always_inline
-    def update_row(index: Int) {imm}:
+    def update_row(index: Int) {var}:
         var row = row0 + index
         var total = x[Coord(row)]
         for j in range(cols):
@@ -2292,7 +2293,7 @@ def trsm_right_lower_t[
     comptime lanes = simd_width_of[dtype]()
 
     @always_inline
-    def solve_row(index: Int) {imm}:
+    def solve_row(index: Int) {var}:
         var row = k + nb + index
         for j in range(nb):
             # The dot product of this row's finished prefix against row
@@ -2359,7 +2360,7 @@ def trsm_left_lower_unit[
         return
 
     @always_inline
-    def solve_col(index: Int) {imm}:
+    def solve_col(index: Int) {var}:
         var col = k + nb + index
         for i in range(nb):
             var total = a[Coord(k + i, col)]

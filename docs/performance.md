@@ -720,18 +720,13 @@ band iteration runs at the caller's `dtype` throughout (`_tql` is generic
 over it and `sytrd` hands it `List[Scalar[dtype]]`), and there is no
 `float64` promotion anywhere in these routines.
 
-**One known correctness bug is not in this table, and is now guarded.**
-Every row above is `gpu=False`. The same routines named with `gpu=True`
-returned wrong answers on Metal -- `sytrd[gpu=True]` disagrees with the
-host band at `n = 4` already, at every `block` including 1, so it predates
-the `latrd` panel -- and `svd[gpu=True]` raised rather than converging.
-Nothing in numax, its tests or its examples called that spelling, which is
-why it went unnoticed. **`gpu=True` no longer compiles** on any spectral
-routine or on `pinv`/`cond`/`matrix_rank`: a `comptime assert` in each body
-refuses it and names the routine, so a wrong answer is no longer reachable.
-There is still no device spectral table here, because a compile error is
-not a measurement either -- fixing the path is Backlog 0.3. See "What is
-not measured" below.
+**Every row above is `gpu=False`; the device path is correct but not yet
+measured.** Through 0.2 the same routines named with `gpu=True` returned
+wrong answers on Metal and were refused by a `comptime assert`. The panel
+kernels forwarded by-reference closures into device launches, where the
+captured scalars read as zero; they capture by value now, and
+`tests_gpu/linalg/test_spectral_gpu.mojo` holds every spectral routine to
+the host answer at `float32`. See "What is not measured" below.
 
 **How it got here.** The four changes that produced the after column,
 each measured back to back against the commit before it on the same
@@ -1152,11 +1147,10 @@ per-architecture code anywhere in numax -- so the *coverage* is inherited
 from MAX's dispatch. That is a statement about what compiles and runs, not
 about what it costs, and nothing here should be read as an AMD number.
 
-**There is no Metal spectral table, and the reason is a correctness bug
-rather than a build limit.** The spectral routines all take a `gpu`
-parameter, and naming it `True` returned wrong answers on Metal -- it is
-now a compile error, so the diagnosis below is the record of what the
-guard refuses rather than a live hazard. Measured
+**There is no Metal spectral table yet.** Through 0.2 the device path was
+wrong, and the diagnosis below is kept as the record of what the by-value
+capture in the panel kernels fixed; the path now matches the host at
+`float32`, and the table waits on a measurement. Measured
 against the host path on the same matrices: `eigvalsh[gpu=True]` at
 `n = 8` differs from `eigvalsh[gpu=False]` by 6.3 in an eigenvalue and
 leaves a trace gap of 3.1 where the host path leaves 5e-6; at `n = 128`
@@ -1168,9 +1162,9 @@ older than the `latrd` panel and is not the blocking.
 
 Nothing in numax, its tests, its examples or its benches called that
 spelling, which is why it survived: `examples-gpu-build` compiles no
-spectral device kernel and CI has no GPU. That is what the `comptime
-assert` in each body now closes -- an untested path that answered instead
-of refusing. The harness rows for the table
+spectral device kernel and CI has no GPU. `tests_gpu/` is what now
+closes that hole: an untested device path is a test that does not exist
+yet, rather than a guard. The harness rows for the table
 were written and are what found this, and they are not committed, because
 a benchmark that times a wrong answer publishes a number worse than none.
 They belong in the commit that fixes the device path, where they are the
