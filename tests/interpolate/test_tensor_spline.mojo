@@ -19,8 +19,8 @@ from numax.interpolate import (
     CubicSpline,
     PchipInterpolator,
 )
-from numax.interpolate.array import cubic_spline_eval as eval_a
-from numax.interpolate.array import cubic_spline_moments as moments_a
+from numax.interpolate import cubic_spline_eval
+from numax.interpolate import cubic_spline_moments
 from numax import Plain
 from std.collections import Array
 
@@ -407,7 +407,7 @@ def test_akima_matches_scipy_and_is_nan_outside() raises:
 
 
 def test_array_tier_non_uniform_moments_agree_with_the_tensor_natural_spline() raises:
-    """`numax.interpolate.array`'s non-uniform `cubic_spline_moments` are
+    """`numax.interpolate`'s `Array` tier's non-uniform `cubic_spline_moments` are
     SciPy's natural second derivatives at the knots, and its
     `cubic_spline_eval` agrees with the `Tensor` natural spline strictly
     inside the knots -- two tiers, two formulations (moments against
@@ -419,7 +419,7 @@ def test_array_tier_non_uniform_moments_agree_with_the_tensor_natural_spline() r
     for i in range(5):
         xa[i] = P(knots[i])
         ya[i] = P(samples[i])
-    var moments = moments_a[P, 5](xa, ya)
+    var moments = cubic_spline_moments[P, 5](xa, ya)
     var expected = [
         0.0,
         -4.60377358490566,
@@ -437,7 +437,7 @@ def test_array_tier_non_uniform_moments_agree_with_the_tensor_natural_spline() r
     var q = _from[8](inside)
     var tensor_values = spline(q).to_host()
     for i in range(8):
-        var array_value = eval_a[P, 5](xa, ya, moments, P(inside[i]))
+        var array_value = cubic_spline_eval[P, 5](xa, ya, moments, P(inside[i]))
         assert_almost_equal(
             Float64(array_value.v), Float64(tensor_values[i]), atol=1e-11
         )

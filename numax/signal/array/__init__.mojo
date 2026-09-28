@@ -11,7 +11,7 @@ gets one tier per import and the surface never resolves an overload by a
 type the reader has to look up. `numax.signal`, `numax.prelude` and `numax`
 itself export the `Tensor` tier; this subpackage is the other one, the same
 split `numax.linalg.array`, `numax.fft.array`, `numax.optimize.array`,
-`numax.integrate.array` and `numax.interpolate.array` make.
+`numax.integrate.array` and `numax.interpolate`'s `Array` tier make.
 
 | Module | Holds |
 | --- | --- |

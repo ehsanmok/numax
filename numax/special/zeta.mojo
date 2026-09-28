@@ -111,7 +111,7 @@ def _euler_maclaurin[T: FloatLike, riemann: Bool](s: T, q: T) -> T:
     comptime for k in range(_N):
         comptime if riemann:
             # Bound as a `comptime` alias so the table read folds to a
-            # literal, the idiom `numax.interpolate.array` uses for its nodes.
+            # literal, the idiom `numax.interpolate`'s `Array` tier uses for its nodes.
             comptime ln_k = _LN[k]
             total = total + (-(s * T.constant(ln_k))).exp()
         else:

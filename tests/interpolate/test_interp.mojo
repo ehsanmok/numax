@@ -7,7 +7,7 @@ from std.math import sin as sin_f64
 from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Dual, FloatLike, Plain
-from numax.interpolate.array import (
+from numax.interpolate import (
     ArrayChebyshev,
     ArrayCubicSpline,
     chebyshev_eval,

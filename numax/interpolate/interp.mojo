@@ -20,7 +20,7 @@ the query points -- host-driven, device-resident, `Plain`-only -- and
 inside that launch a lane may branch on data: the interval search is a
 bisection whose trip count is `log2(n)` and whose path depends on the
 query. That is exactly what the `FloatLike` tier cannot do, and why
-`numax.interpolate.array`'s spline scans every interval and blends instead.
+`numax.interpolate`'s `Array` tier's spline scans every interval and blends instead.
 The two tiers are cross-referenced rather than ranked: that one is for a
 handful of knots inside a per-lane kernel, this one for a device buffer of
 samples.
@@ -56,6 +56,9 @@ from ..core.tensor import Static, vander
 from ..linalg.eigen import Eigenvalues, eigvals
 from ..linalg.qr import lstsq
 from ..linalg.special_matrices import companion
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.interp import horner as _array_horner
 
 comptime _View[dtype: DType, LayoutType: TensorLayout] = TileTensor[
     dtype, LayoutType, MutAnyOrigin
@@ -119,7 +122,7 @@ def interp[
 
     One launch over the `m` queries: bisection to the interval, then the
     linear blend, so a query costs `O(log n)` and the grid is read in
-    place. `numax.interpolate.array` has no `interp` -- an `Array` of knots
+    place. `numax.interpolate`'s `Array` tier has no `interp` -- an `Array` of knots
     small enough for registers is a spline's or a polynomial's, not a
     lookup table's.
     """
@@ -194,7 +197,7 @@ def horner[
 
     Horner's rule per lane, `k - 1` multiply-adds, the coefficients read in
     place from the device buffer. The same rule as
-    `numax.interpolate.array.horner`, over a tensor of points rather than
+    `numax.interpolate.horner`, over a tensor of points rather than
     one `FloatLike` value -- and the ascending order is NumPy's
     `polynomial` package's, not the descending order of the legacy
     `numpy.polyval`.
@@ -453,3 +456,10 @@ def polyfit[
     comptime n = dim[A, 0]
     var design = vander[cols=deg + 1](x)
     return lstsq[gpu=gpu](design, y)
+
+
+def horner[T: FloatLike, n: Int](coefficients: Array[T, n], x: T) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.interpolate._array.interp.horner`."""
+    return _array_horner[T=T, n=n](coefficients, x)

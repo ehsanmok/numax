@@ -9,7 +9,7 @@ same computation NumPy's `chebfit` does -- and evaluation is one
 
 ## Data, not a function
 
-`numax.interpolate.array.ArrayChebyshev` fits a `FloatLike` *function* by
+`numax.interpolate.ArrayChebyshev` fits a `FloatLike` *function* by
 sampling it at the Chebyshev nodes, which is the near-minimax construction
 and the one to use when the function is available. This tier has
 *samples* at points the caller did not choose, so it does what NumPy's
@@ -46,7 +46,7 @@ struct Chebyshev[dtype: DType, n: Int](Movable):
 
     `coefficients[k]` multiplies `T_k(u)` with `u = (2x - a - b) / (b - a)`,
     NumPy's convention including a full-weight `c_0` -- where
-    `numax.interpolate.array`'s nodal fit halves `c_0`, since its `2/N`
+    `numax.interpolate`'s `Array` tier's nodal fit halves `c_0`, since its `2/N`
     normalization produces that; the two are the same series written two
     ways, and each `__call__` matches its own `fit`.
     """
