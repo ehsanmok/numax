@@ -474,6 +474,42 @@ def searchsorted[
     )
 
 
+def _check_index_bounds_device[
+    L: TensorLayout
+](name: StaticString, indices: Tensor[DType.int64, L], length: Int) raises:
+    """Raise, naming `name`, unless every one of the device `indices` lies
+    in `[0, length)`: a device `min` and `max`, two scalars read back."""
+    var count = indices.size()
+    if count == 0:
+        return
+    var ctx = indices.context()
+    var lo = Static[DType.int64, 1](ctx)
+    var hi = Static[DType.int64, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[DType.int64, w], idx: RowCoord[1]) {} -> SIMD[DType.int64, w]:
+        return tile
+
+    reduce_all[monoid="min", target="gpu"](
+        _flat_unchecked(indices), lo.tile(), identity, count, Optional(ctx)
+    )
+    reduce_all[monoid="max", target="gpu"](
+        _flat_unchecked(indices), hi.tile(), identity, count, Optional(ctx)
+    )
+    var smallest = Int(lo.to_host()[0])
+    var largest = Int(hi.to_host()[0])
+    if smallest < 0 or largest >= length:
+        raise Error(
+            name,
+            ": index ",
+            smallest if smallest < 0 else largest,
+            " is out of range for an extent of ",
+            length,
+        )
+
+
 def _take_device[
     T: TensorLike, IndexLayout: TensorLayout, //, axis: Int
 ](a: T, indices: Tensor[DType.int64, IndexLayout]) raises -> Dynamic[
@@ -489,33 +525,7 @@ def _take_device[
     var ctx = a.context()
     var count = indices.size()
     var length = a.dim_at(axis)
-    if count > 0:
-        var lo = Static[DType.int64, 1](ctx)
-        var hi = Static[DType.int64, 1](ctx)
-
-        @always_inline
-        def identity[
-            w: Int
-        ](tile: SIMD[DType.int64, w], idx: RowCoord[1]) {} -> SIMD[
-            DType.int64, w
-        ]:
-            return tile
-
-        reduce_all[monoid="min", target="gpu"](
-            _flat_unchecked(indices), lo.tile(), identity, count, Optional(ctx)
-        )
-        reduce_all[monoid="max", target="gpu"](
-            _flat_unchecked(indices), hi.tile(), identity, count, Optional(ctx)
-        )
-        var smallest = Int(lo.to_host()[0])
-        var largest = Int(hi.to_host()[0])
-        if smallest < 0 or largest >= length:
-            raise Error(
-                "take: index ",
-                smallest if smallest < 0 else largest,
-                " is out of range for an axis of extent ",
-                length,
-            )
+    _check_index_bounds_device("take", indices, length)
     var in_extents = List[Int](capacity=rank)
     var out_extents = List[Int](capacity=rank)
     for d in range(rank):
@@ -612,8 +622,71 @@ def take[
     )
 
 
+def _take_along_axis_device[
+    T: TensorLike, IndexLayout: TensorLayout, //, axis: Int
+](a: T, indices: Tensor[DType.int64, IndexLayout]) raises -> Dynamic[
+    T.dtype, T.LayoutType.rank
+] where (IndexLayout.rank == T.LayoutType.rank):
+    """`take_along_axis` on the device: one lane per output element
+    decomposes its flat index over `indices`'s extents, substitutes its
+    index on `axis`, and reads `a` there."""
+    comptime rank = T.LayoutType.rank
+    var ctx = a.context()
+    var length = a.dim_at(axis)
+    var out_extents = List[Int](capacity=rank)
+    var shape = IndexList[rank]()
+    var strides = IndexList[rank]()
+    var stride = 1
+    for k in range(rank):
+        var d = rank - 1 - k
+        strides[d] = stride
+        stride *= a.dim_at(d)
+    for d in range(rank):
+        if d != axis and a.dim_at(d) != indices.dim_at(d):
+            raise Error(
+                "take_along_axis: extents ",
+                a.dim_at(d),
+                " and ",
+                indices.dim_at(d),
+                " differ on axis ",
+                d,
+            )
+        shape[d] = indices.dim_at(d)
+        out_extents.append(indices.dim_at(d))
+    _check_index_bounds_device("take_along_axis", indices, length)
+    var result = Dynamic[T.dtype, rank]._uninitialized(
+        ctx, row_major(_dyn_shape_from[rank](out_extents))
+    )
+    var total = result.size()
+    if total == 0:
+        return result^
+    var src = _flat_unchecked(a)
+    var iv = _flat_unchecked(indices)
+    var dst = _flat_out(result)
+
+    @always_inline
+    def gather[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var src, var iv, var dst, var shape, var strides}:
+        var f = coord_to_index_list(coord)[0]
+        var rem = f
+        var at = 0
+        for k in range(rank):
+            var d = rank - 1 - k
+            var c = rem % shape[d]
+            rem //= shape[d]
+            if d == axis:
+                c = Int(iv[coord][0])
+            at += c * strides[d]
+        dst.store[1](coord, src[Coord(at)][0])
+
+    elementwise[simd_width=1, target="gpu"](gather, Coord(total), ctx)
+    ctx.synchronize()
+    return result^
+
+
 def take_along_axis[
-    T: TensorLike, IndexLayout: TensorLayout, axis: Int
+    T: TensorLike, IndexLayout: TensorLayout, axis: Int, gpu: Bool = False
 ](a: T, indices: Tensor[DType.int64, IndexLayout]) raises -> Dynamic[
     T.dtype, T.LayoutType.rank
 ] where (
@@ -630,14 +703,26 @@ def take_along_axis[
     per-row output usable -- `take_along_axis(a, argsort_rows, axis=1)` is
     each row of `a` sorted.
 
-    Routed to `nn.gather_elements`, which is ONNX `GatherElements` (Torch's
-    `gather`) and takes a `DeviceContext`. The result has `indices`'s
-    shape, which is that operator's contract and NumPy's too.
+    On the host, routed to `nn.gather_elements`, which is ONNX
+    `GatherElements` (Torch's `gather`). The result has `indices`'s shape,
+    which is that operator's contract and NumPy's too. That operator takes
+    a `DeviceContext` but launches its `elementwise` with the default CPU
+    target, so it has no device path; at `gpu=True`, with both tensors on
+    a device and contiguous, numax's own gather runs one lane per output
+    element, and the bounds check is a device `min`/`max` of the indices.
+    A residency mismatch takes the host path with the `_drive` notice.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime rank = LayoutType.rank
     var length = a.dim_at(axis)
+    if _check_device[T, gpu](a) and not indices.on_host():
+        comptime if gpu:
+            _require_contiguous(a)
+            _require_contiguous(indices)
+            return _take_along_axis_device[axis=axis](a, indices)
+    elif gpu or not a.on_host():
+        _notice[gpu]("take_along_axis")
     var index_values = indices.to_host()
     for q in range(len(index_values)):
         var at = Int(index_values[q])
@@ -990,14 +1075,85 @@ def argwhere[
     )
 
 
+def _put_device[
+    T: TensorLike, L: TensorLayout
+](
+    mut a: T, indices: Tensor[DType.int64, L], values: List[Scalar[T.dtype]]
+) raises:
+    """`put`'s scatter on the device: the (host) `values` uploaded once,
+    the device `indices` bounds-checked by a device `min`/`max`, and one
+    lane per index writing its value. Duplicate indices race, and the
+    last writer is unspecified, where NumPy's last index wins."""
+    var n = a.size()
+    var count = indices.size()
+    if len(values) != count and len(values) != 1:
+        raise Error(
+            "put: ",
+            len(values),
+            " values for ",
+            count,
+            " indices -- give one value or one per index",
+        )
+    if count == 0:
+        return
+    _check_index_bounds_device("put", indices, n)
+    var ctx = a.context()
+    var upload = Dynamic[T.dtype, 1](
+        ctx, row_major(_dyn_shape[1](len(values))), values.copy()
+    )
+    var iv = _flat_unchecked(indices)
+    var vv = _flat_unchecked(upload)
+    var dst = _flat_out(a)
+    var single = len(values) == 1
+
+    @always_inline
+    def scatter[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var iv, var vv, var dst, var single}:
+        var q = coord_to_index_list(coord)[0]
+        var value = vv[Coord(0)][0] if single else vv[coord][0]
+        dst.store[1](Coord(Int(iv[coord][0])), value)
+
+    elementwise[simd_width=1, target="gpu"](scatter, Coord(count), ctx)
+    ctx.synchronize()
+
+
 def put[
-    T: TensorLike, I: TensorLike
+    T: TensorLike, I: TensorLike, gpu: Bool = False
 ](mut a: T, indices: I, values: List[Scalar[T.dtype]]) raises where (
     I.dtype == DType.int64
 ):
     """`put` with the indices as a tensor, the form `nonzero` and
-    `argsort` return. The indices are read on the host, as the list form
-    reads them."""
+    `argsort` return. On the host the indices are read there, as the list
+    form reads them; at `gpu=True`, with `a` and `indices` on a device and
+    contiguous, the scatter runs there (`_put_device`) and the indices
+    never come back. A residency mismatch takes the host path with the
+    `_drive` notice."""
+    if _check_device[T, gpu](a) and _check_device[I, gpu](indices):
+        comptime if gpu:
+            _require_contiguous(a)
+            _require_contiguous(indices)
+            var count = indices.size()
+            var widened = Dynamic[DType.int64, 1]._uninitialized(
+                a.context(), row_major(_dyn_shape[1](count))
+            )
+            if count > 0:
+                var sv = _flat_unchecked(indices)
+                var wv = _flat_out(widened)
+
+                @always_inline
+                def widen[
+                    width: Int, alignment: Int = 1
+                ](coord: Coord) {var sv, var wv}:
+                    wv.store[1](coord, Int64(sv[coord][0]))
+
+                elementwise[simd_width=1, target="gpu"](
+                    widen, Coord(count), a.context()
+                )
+            _put_device(a, widened, values)
+            return
+    else:
+        _notice[gpu]("put")
     var raw = indices.to_host()
     var flat = List[Int](capacity=len(raw))
     for i in range(len(raw)):
@@ -1006,7 +1162,7 @@ def put[
 
 
 def put[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](mut a: T, indices: List[Int], values: List[Scalar[T.dtype]],) raises:
     """Write `values` into `a` at the flat `indices`. `numpy.put`.
 
@@ -1025,8 +1181,27 @@ def put[
     and neither fits: both want the indices as a tensor shaped like the
     output slice rather than a flat list, so numax would build the very
     thing the caller is trying to avoid.
+
+    At `gpu=True`, with `a` on a device and contiguous, the indices and
+    values -- the caller's host data -- are uploaded once and scattered
+    there in one launch, so `a` itself never crosses; duplicate indices
+    then race, where on the host the last one wins. A residency mismatch
+    takes the host path with the `_drive` notice.
     """
     var n = a.size()
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            _require_contiguous(a)
+            var picks = List[Scalar[DType.int64]](capacity=len(indices))
+            for i in range(len(indices)):
+                picks.append(Int64(indices[i]))
+            var index_tensor = Dynamic[DType.int64, 1](
+                a.context(), row_major(_dyn_shape[1](len(indices))), picks^
+            )
+            _put_device(a, index_tensor, values)
+            return
+    else:
+        _notice[gpu]("put")
     if len(values) != len(indices) and len(values) != 1:
         raise Error(
             "put: ",
@@ -1195,7 +1370,9 @@ def argpartition[
     return argsort[gpu=gpu](a)
 
 
-def take[T: TensorLike](a: T, indices: List[Int]) raises -> Dynamic[T.dtype, 1]:
+def take[
+    T: TensorLike, gpu: Bool = False
+](a: T, indices: List[Int]) raises -> Dynamic[T.dtype, 1]:
     """The elements of `a` at `indices`, in the order given. `numpy.take`.
 
     The consumer for the index lists `nonzero` and `argsort` return, which
@@ -1206,9 +1383,36 @@ def take[T: TensorLike](a: T, indices: List[Int]) raises -> Dynamic[T.dtype, 1]:
     Indices are flat and row-major, matching `numpy.take` with no `axis`.
     Out of range raises rather than wrapping, since a silent wrap turns an
     indexing bug into wrong numbers.
+
+    At `gpu=True`, with `a` on a device and contiguous, the list -- the
+    caller's host data, checked on the host -- is uploaded once and the
+    gather runs there (`take[axis=0, gpu=True]` over a flat view). A
+    residency mismatch takes the host path with the `_drive` notice.
     """
     comptime dtype = T.dtype
     var n = a.size()
+    for i in range(len(indices)):
+        if indices[i] < 0 or indices[i] >= n:
+            raise Error(
+                "take: index ",
+                indices[i],
+                " is outside a tensor of ",
+                n,
+                " elements",
+            )
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            _require_contiguous(a)
+            var picks = List[Scalar[DType.int64]](capacity=len(indices))
+            for i in range(len(indices)):
+                picks.append(Int64(indices[i]))
+            var index_tensor = Dynamic[DType.int64, 1](
+                a.context(), row_major(_dyn_shape[1](len(indices))), picks^
+            )
+            var flat = _same_order(a, row_major(_dyn_shape[1](n)))
+            return take[axis=0, gpu=True](flat, index_tensor)
+    else:
+        _notice[gpu]("take")
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=len(indices))
     for i in range(len(indices)):
