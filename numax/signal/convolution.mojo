@@ -172,7 +172,7 @@ def convolve[
     `out[i] = sum_j a[j] * b[i - j]` over the `j` where both indices are
     in range, in `mode` `MODE_FULL` (default), `MODE_SAME` or `MODE_VALID`; the module
     docstring has the lengths and offsets. Linear, not circular: nothing
-    wraps, which is what `numax.fft.array.circular_convolve` does instead.
+    wraps, which is what `numax.fft.circular_convolve` does instead.
 
     One `elementwise` launch, `O(m k)`; `fftconvolve` is the same answer by
     the transform route for a long kernel. Both inputs are borrowed, since

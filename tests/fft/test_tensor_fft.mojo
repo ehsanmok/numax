@@ -1,7 +1,7 @@
 """Tests for `numax.fft` over `Tensor`.
 
 The load-bearing check is the last group: the `Tensor` tier is pinned
-against `numax.fft.array`, which is separately tested against NumPy's exact
+against `numax.fft`'s `Array` tier, which is separately tested against NumPy's exact
 outputs. Two tiers computing the same transform by different routes -- a
 register-resident `comptime` butterfly against a fused device kernel and
 a handful of radix-4 ones -- agreeing to `1e-12` is a much
@@ -32,8 +32,8 @@ from numax.fft import (
     rfftfreq,
 )
 from numax.fft.fft import _as_matrix, _bluestein, _dft, _log2_exact
-from numax.fft.array import fft as array_fft
-from numax.fft.array import fft2 as array_fft2
+from numax.fft import fft
+from numax.fft import fft2
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]
@@ -218,7 +218,7 @@ def test_rfftfreq_is_non_negative() raises:
 
 
 def test_the_two_tiers_agree() raises:
-    """The `Tensor` tier against `numax.fft.array`, which is itself pinned
+    """The `Tensor` tier against `numax.fft`'s `Array` tier, which is itself pinned
     to NumPy. Different algorithms -- a `comptime` butterfly over a register
     `Array` against one fused device launch that bit-reverses and runs six
     stages -- so agreement here is a real cross-check rather than a
@@ -228,7 +228,7 @@ def test_the_two_tiers_agree() raises:
     var packed = Array[Complex[P], 16](uninitialized=True)
     for i in range(16):
         packed[i] = Complex[P](P(Float64(i + 1)), P(0.0))
-    var reference = array_fft[P, 4](packed)
+    var reference = fft[P, 4](packed)
 
     var real = _ramp[16]()
     var imag = zeros[dtype, 16](ctx)
@@ -468,14 +468,14 @@ def test_fftshift_of_a_2d_spectrum_centres_dc() raises:
 
 
 def test_the_two_tiers_agree_on_fft2() raises:
-    """`fft2` over `Tensor` against `numax.fft.array.fft2` on the one
+    """`fft2` over `Tensor` against `numax.fft.fft2` on the one
     shape both can take, a `4 x 4`."""
     var ctx = _cpu()
     var image = _image()
     var packed = Array[Complex[P], 16](uninitialized=True)
     for i in range(16):
         packed[i] = Complex[P](P(image[i]), P(Float64(i % 3)))
-    var reference = array_fft2[P, 2](packed)
+    var reference = fft2[P, 2](packed)
 
     var im_values = List[Float64]()
     for i in range(16):
@@ -773,7 +773,7 @@ def _check_power_of_two[n: Int]() raises where n > 0:
     """One length of the power-of-two sweep: `fft` against a reference, and
     `ifft(fft(x))` back to `x`.
 
-    Up to `n = 64` the reference is `numax.fft.array`, which is pinned to
+    Up to `n = 64` the reference is `numax.fft`'s `Array` tier, which is pinned to
     NumPy -- the whole transform in one register `Array` against one fused
     device launch. Past that the `Array` tier's register footprint stops,
     and the reference is the naive `O(n^2)` DFT on a stride of bins.
@@ -795,7 +795,7 @@ def _check_power_of_two[n: Int]() raises where n > 0:
         var packed = Array[Complex[P], 1 << bits](uninitialized=True)
         for i in range(n):
             packed[i] = Complex[P](P(re_values[i]), P(im_values[i]))
-        var reference = array_fft[P, bits](packed)
+        var reference = fft[P, bits](packed)
         for k in range(n):
             assert_almost_equal(
                 Float64(re[k]), Float64(reference[k].re.v), atol=1e-9

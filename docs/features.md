@@ -101,7 +101,7 @@ siblings rather than replacements.
 
 | Tier | Rule | Who |
 |---|---|---|
-| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate`'s `Array` tier, `fft.array`, `signal`'s `Array` tier, `optimize`'s `Array` tier's fixed-iteration `newton`/`halley`/`bisection`, `integrate`'s `Array` tier's fixed-node quadrature and fixed-step ODE steps |
+| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate`'s `Array` tier, `fft`'s `Array` tier, `signal`'s `Array` tier, `optimize`'s `Array` tier's fixed-iteration `newton`/`halley`/`bisection`, `integrate`'s `Array` tier's fixed-node quadrature and fixed-step ODE steps |
 | **Tier 2** | Free to loop or branch on data; `Plain`-only, host-side unless the row says otherwise | `ops`, `logic`, `sorting`, `io`, `stats`'s order statistics and scans, the `Tensor` tiers of `linalg`, `interpolate`, `fft` and `signal` (host-orchestrated; `gpu=True` still runs MAX's kernels), `optimize`'s converge-to-tolerance minimizers, `integrate`'s adaptive `quad`/`solve_ivp`. `ops`, `elementwise`, `logic`, `rowwise` and `stats`'s monoid reductions are tier 2 in shape only: `Plain`-only, but one body on both targets |
 
 ## `numax.core` — the tensor engine
@@ -484,13 +484,13 @@ radix-4 kernel per remaining pair of stages, then a radix-2 kernel when an
 odd stage is left. `gpu=True` is `float32` on Apple
 silicon, which is Metal's limit on `double` rather than this module's.
 
-| Surface — over `Array[Complex[T], n]`, from `numax.fft.array` | Where |
+| Surface — over `Array[Complex[T], n]`, from `numax.fft`'s `Array` tier | Where |
 |---|---|
-| `fft`, `ifft` — complex forward and inverse | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
-| `rfft`, `irfft` — real input, half spectrum | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
-| `fft2`, `ifft2` — square 2-D transforms | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
-| `fftfreq`, `rfftfreq`, `fftshift` — frequency grids and centring | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
-| `circular_convolve` — convolution in the transform domain | [`fft/array/fft.mojo`](../numax/fft/array/fft.mojo) |
+| `fft`, `ifft` — complex forward and inverse | [`fft/_array/fft.mojo`](../numax/fft/_array/fft.mojo) |
+| `rfft`, `irfft` — real input, half spectrum | [`fft/_array/fft.mojo`](../numax/fft/_array/fft.mojo) |
+| `fft2`, `ifft2` — square 2-D transforms | [`fft/_array/fft.mojo`](../numax/fft/_array/fft.mojo) |
+| `fftfreq`, `rfftfreq`, `fftshift` — frequency grids and centring | [`fft/_array/fft.mojo`](../numax/fft/_array/fft.mojo) |
+| `circular_convolve` — convolution in the transform domain | [`fft/_array/fft.mojo`](../numax/fft/_array/fft.mojo) |
 
 Tier 1, and the only tier that differentiates: the butterfly is `Complex`
 arithmetic over `FloatLike`, so `fft` at `Complex[Dual[Plain]]` returns the
@@ -529,7 +529,7 @@ one.
 | `hann`, `hamming`, `blackman`, `apply_window` — compile-time tables, so they work inside a GPU kernel body | [`signal/_array/signal.mojo`](../numax/signal/_array/signal.mojo) |
 | `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/_array/signal.mojo`](../numax/signal/_array/signal.mojo) |
 
-Tier 1; `numax.fft.array.circular_convolve` is that tier's transform-domain
+Tier 1; `numax.fft.circular_convolve` is that tier's transform-domain
 route.
 
 ## `numax.stats`

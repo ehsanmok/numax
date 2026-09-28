@@ -2,7 +2,7 @@
 
 **This module is tier 2.** The stage loop runs on the host and each stage is
 a device kernel, so nothing here is launchable *inside* a kernel body the
-way the `FloatLike` tier is. `numax.fft.array` is that tier, and it is the
+way the `FloatLike` tier is. `numax.fft`'s `Array` tier is that tier, and it is the
 one that differentiates; this one is `Plain`-only and exists for the sizes
 an `Array` cannot hold. The two are cross-referenced rather than ranked:
 call the `Array` tier for a 64-point transform inside a per-lane kernel,
@@ -124,6 +124,18 @@ from std.collections import Array
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import _DEVICE_FILL, Static, Tensor, zeros
+from ..core.complex import Complex
+from ..core.numeric import FloatLike
+from ._array.fft import fft as _array_fft
+from ._array.fft import fft2 as _array_fft2
+from ._array.fft import fftfreq as _array_fftfreq
+from ._array.fft import fftshift as _array_fftshift
+from ._array.fft import ifft as _array_ifft
+from ._array.fft import ifft2 as _array_ifft2
+from ._array.fft import ifftshift as _array_ifftshift
+from ._array.fft import irfft as _array_irfft
+from ._array.fft import rfft as _array_rfft
+from ._array.fft import rfftfreq as _array_rfftfreq
 
 comptime _TWO_PI = 6.283185307179586
 comptime _PI = 3.141592653589793
@@ -789,7 +801,7 @@ def fft[
     -- the module docstring has the accounting, and `next_fast_len` is the
     length to pad to when padding is an option.
 
-    `numax.fft.array.fft` is the sibling that differentiates and runs inside
+    `numax.fft.fft` is the sibling that differentiates and runs inside
     a kernel body, at register-resident sizes.
     """
     return _dft1[gpu=gpu, inverse=False](x^)
@@ -823,7 +835,7 @@ def rfft[
     This embeds the input as complex with a zero imaginary part and
     truncates the result, which does about twice the arithmetic the
     half-length-plus-post-pass trick would. That is the same choice
-    `numax.fft.array` documents, and for the same reason: it is one code
+    `numax.fft`'s `Array` tier documents, and for the same reason: it is one code
     path rather than two, and the transform is memory-bound at the sizes
     this tier is for. Specializing it is a later commit, not a missing
     feature.
@@ -961,7 +973,7 @@ def fft2[
     of the result. The 2-D DFT separates exactly, so this is the definition
     evaluated in the cheaper order -- `rows + cols` transforms rather than
     one of length `rows * cols` -- not an approximation. Rectangular, where
-    `numax.fft.array.fft2` is square only: the column pass runs the same
+    `numax.fft.fft2` is square only: the column pass runs the same
     engine over a transposed view of the same buffer, so a second extent
     costs a second twiddle table and nothing else. Either extent may be any
     length; each axis picks radix-2 or Bluestein on its own.
@@ -1226,3 +1238,95 @@ def rfftfreq[
     return Static[dtype, keep](
         values^, ctx.value() if ctx else DeviceContext(api="cpu")
     )
+
+
+def fft[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.fft`."""
+    return _array_fft[T=T, log2n=log2n](x)
+
+
+def fft2[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[
+    Complex[T], (1 << log2n) * (1 << log2n)
+]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.fft2`."""
+    return _array_fft2[T=T, log2n=log2n](x)
+
+
+def fftfreq[T: FloatLike, log2n: Int](spacing: T) -> Array[T, 1 << log2n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.fftfreq`."""
+    return _array_fftfreq[T=T, log2n=log2n](spacing)
+
+
+def fftshift[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.fftshift`."""
+    return _array_fftshift[T=T, log2n=log2n](x)
+
+
+def ifft[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.ifft`."""
+    return _array_ifft[T=T, log2n=log2n](x)
+
+
+def ifft2[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], (1 << log2n) * (1 << log2n)]) -> Array[
+    Complex[T], (1 << log2n) * (1 << log2n)
+]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.ifft2`."""
+    return _array_ifft2[T=T, log2n=log2n](x)
+
+
+def ifftshift[
+    T: FloatLike, log2n: Int
+](x: Array[Complex[T], 1 << log2n]) -> Array[Complex[T], 1 << log2n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.ifftshift`."""
+    return _array_ifftshift[T=T, log2n=log2n](x)
+
+
+def irfft[
+    T: FloatLike, log2n: Int
+](spectrum: Array[Complex[T], (1 << log2n) // 2 + 1]) -> Array[T, 1 << log2n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.irfft`."""
+    return _array_irfft[T=T, log2n=log2n](spectrum)
+
+
+def rfft[
+    T: FloatLike, log2n: Int
+](x: Array[T, 1 << log2n]) -> Array[Complex[T], (1 << log2n) // 2 + 1]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.rfft`."""
+    return _array_rfft[T=T, log2n=log2n](x)
+
+
+def rfftfreq[
+    T: FloatLike, log2n: Int
+](spacing: T) -> Array[T, (1 << log2n) // 2 + 1]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.fft._array.fft.rfftfreq`."""
+    return _array_rfftfreq[T=T, log2n=log2n](spacing)

@@ -13,14 +13,17 @@ first six stages and the bit-reversal gather run together in registers, and
 every pair of stages after them is one radix-4 launch, so a `2^17`-point
 transform is 7 kernels rather than 18.
 
-Two tiers, one import each, the same split `numax.linalg` makes:
+Two tiers under one import. A name the two tiers share is one function
+with two overloads, picked by the argument -- a `Tensor` takes the device
+tier, an `Array[T, n]` of `FloatLike` values the register tier -- and the
+register tier's own names are exported here too:
 
-| Import | Holds | Good for |
+| Tier | Holds | Good for |
 | --- | --- | --- |
-| `numax.fft` | `Tensor`, `Plain`-only, tier 2 | the large transform: `1 + ceil((log2(n) - 6) / 2)` device launches, no host round trip; also the only tier with `dct`/`dst` |
-| `numax.fft.array` | `Array[Complex[T], n]`, `FloatLike`-generic, tier 1 | the small one: register-resident, differentiates at `Dual`, runs per SIMD lane inside a kernel body |
+| `Tensor`, `Plain`-only, tier 2 | the large transform: `1 + ceil((log2(n) - 6) / 2)` device launches, no host round trip; also the only tier with `dct`/`dst` |
+| `Array[Complex[T], n]`, `FloatLike`-generic, tier 1 | the small one: register-resident, differentiates at `Dual`, runs per SIMD lane inside a kernel body |
 
-This surface is the `Tensor` one, and it carries `fft`/`ifft`,
+The `Tensor` tier carries `fft`/`ifft`,
 `rfft`/`irfft`, `fft2`/`ifft2`/`rfft2` (rectangular, where the `Array`
 tier's is square), `fftshift`/`ifftshift` at rank 1 and 2,
 `fftfreq`/`rfftfreq`, `next_fast_len` -- the next power of two, the length
@@ -47,3 +50,6 @@ from .fft import (
     rfftfreq,
 )
 from .trig import dct, dst, idct, idst
+from ._array import (
+    circular_convolve,
+)
