@@ -959,6 +959,41 @@ def asarray[
     return result^
 
 
+def _same_order[
+    T: TensorLike, L: TensorLayout
+](a: T, layout: L) raises -> Tensor[T.dtype, L]:
+    """`a`'s elements, in row-major order, as a new tensor laid out as
+    `layout` on `a`'s device: the whole of `reshape`, `ravel`, `squeeze`,
+    `expand_dims`, the `atleast_*` family and `copy`.
+
+    On a device, a contiguous `a` is one device-to-device `enqueue_copy`.
+    That is a driver call rather than a compiled kernel, so it follows
+    `a`'s residency at run time and needs no `gpu` parameter; before it,
+    each of these downloaded the tensor and uploaded it again. On the host,
+    and for a strided view, the elements go through `to_host`, which reads
+    a strided host view in its own row-major order and refuses a strided
+    device one.
+    """
+    if layout.size() != a.size():
+        raise Error("cannot lay out ", a.size(), " elements as ", layout.size())
+    var ctx = a.context()
+    comptime if T.LayoutType.all_dims_known and not is_row_major[T]:
+        return Tensor[T.dtype, L](ctx, layout, a.to_host())
+    if a.on_host():
+        return Tensor[T.dtype, L](ctx, layout, a.to_host())
+    _require_contiguous(a)
+    var result = Tensor[T.dtype, L]._uninitialized(ctx, layout)
+    var source = DeviceBuffer[T.dtype](
+        ctx,
+        a.tile().ptr.unsafe_origin_cast[MutAnyOrigin]().unsafe_mut_cast[True](),
+        a.size(),
+        owning=False,
+    )
+    ctx.enqueue_copy(result.buffer, source)
+    ctx.synchronize()
+    return result^
+
+
 def ones[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
@@ -1423,7 +1458,7 @@ def squeeze[
     """Drop a size-1 leading axis: `(1, n) -> (n,)`."""
     comptime dtype = T.dtype
     comptime n = dim[T, 1]
-    return Static[dtype, n](a.context(), a.to_host())
+    return _same_order(a, Static[dtype, n]._static_layout())
 
 
 def squeeze[
@@ -1434,7 +1469,7 @@ def squeeze[
     """Drop a size-1 trailing axis: `(n, 1) -> (n,)`."""
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
-    return Static[dtype, n](a.context(), a.to_host())
+    return _same_order(a, Static[dtype, n]._static_layout())
 
 
 def squeeze[
@@ -1469,9 +1504,7 @@ def squeeze[
     for d in range(rank):
         if d != axis:
             extents.append(a.dim_at(d))
-    return Dynamic[dtype, rank - 1](
-        a.context(), row_major(_dyn_shape_from[rank - 1](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[rank - 1](extents)))
 
 
 def atleast_1d[
@@ -1484,7 +1517,7 @@ def atleast_1d[
     spell the intent, the way `numpy.atleast_1d` is written before code
     that indexes.
     """
-    return asarray(a.to_host(), a.context())
+    return _same_order(a, row_major(_dyn_shape[1](a.size())))
 
 
 def atleast_2d[
@@ -1501,9 +1534,7 @@ def atleast_2d[
     var extents = List[Int](capacity=2)
     extents.append(1)
     extents.append(a.size())
-    return Dynamic[dtype, 2](
-        a.context(), row_major(_dyn_shape_from[2](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[2](extents)))
 
 
 def atleast_2d[
@@ -1518,9 +1549,7 @@ def atleast_2d[
     var extents = List[Int](capacity=rank)
     for d in range(rank):
         extents.append(a.dim_at(d))
-    return Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape_from[rank](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[rank](extents)))
 
 
 def atleast_3d[
@@ -1539,9 +1568,7 @@ def atleast_3d[
     extents.append(1)
     extents.append(a.size())
     extents.append(1)
-    return Dynamic[dtype, 3](
-        a.context(), row_major(_dyn_shape_from[3](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[3](extents)))
 
 
 def atleast_3d[
@@ -1558,9 +1585,7 @@ def atleast_3d[
     extents.append(a.dim_at(0))
     extents.append(a.dim_at(1))
     extents.append(1)
-    return Dynamic[dtype, 3](
-        a.context(), row_major(_dyn_shape_from[3](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[3](extents)))
 
 
 def atleast_3d[
@@ -1575,9 +1600,7 @@ def atleast_3d[
     var extents = List[Int](capacity=rank)
     for d in range(rank):
         extents.append(a.dim_at(d))
-    return Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape_from[rank](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[rank](extents)))
 
 
 def stack[
@@ -1641,7 +1664,7 @@ def reshape[
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
-    return Static[dtype, rows, cols](a.context(), a.to_host())
+    return _same_order(a, Static[dtype, rows, cols]._static_layout())
 
 
 def reshape[
@@ -1657,7 +1680,7 @@ def reshape[
     """A rank-3 copy of a rank-1 tensor, in row-major order. See the rank-2
     overload above for why the ranks are spelled out."""
     comptime dtype = T.dtype
-    return Static[dtype, d0, d1, d2](a.context(), a.to_host())
+    return _same_order(a, Static[dtype, d0, d1, d2]._static_layout())
 
 
 def reshape_dyn[
@@ -1686,11 +1709,7 @@ def reshape_dyn[
             " elements does not fit ",
             a.size(),
         )
-    var result = Dynamic[dtype, rank](
-        a.context(), row_major(_dyn_shape[rank](*extents))
-    )
-    result.copy_from_host(a.to_host())
-    return result^
+    return _same_order(a, row_major(_dyn_shape[rank](*extents)))
 
 
 def slice[
@@ -1981,7 +2000,9 @@ def ravel[
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
-    return Static[dtype, LayoutType.static_product](a.context(), a.to_host())
+    return _same_order(
+        a, Static[dtype, LayoutType.static_product]._static_layout()
+    )
 
 
 def ravel[
@@ -1992,7 +2013,7 @@ def ravel[
     Same copy as the overload above; the result's length is a run-time
     value because the input's is.
     """
-    return asarray(a.to_host(), a.context())
+    return _same_order(a, row_major(_dyn_shape[1](a.size())))
 
 
 def flatten[
@@ -2754,9 +2775,7 @@ def expand_dims[
             extents.append(1)
         else:
             extents.append(a.dim_at(d - 1))
-    return Dynamic[dtype, rank + 1](
-        a.context(), row_major(_dyn_shape_from[rank + 1](extents)), a.to_host()
-    )
+    return _same_order(a, row_major(_dyn_shape_from[rank + 1](extents)))
 
 
 def roll[
@@ -2984,7 +3003,7 @@ def copy[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
-    return Tensor[dtype, LayoutType](a.context(), a.tile().layout, a.to_host())
+    return _same_order(a, a.tile().layout)
 
 
 def vstack[
