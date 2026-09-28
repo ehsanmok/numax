@@ -517,6 +517,9 @@ from .signal.convolution import (
     correlate,
     fftconvolve,
 )
+
+# The square *wave* is `numax.signal.square`; `square` here is `x * x`.
+from .signal.waveforms import chirp, sawtooth
 from .signal.windows import (
     bartlett,
     blackman,
