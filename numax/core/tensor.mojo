@@ -137,6 +137,7 @@ the one-line `stderr` notice and takes the host walk.
 from std.collections import Array
 
 from max.gpu.host import DeviceBuffer, DeviceContext
+from std.sys import has_accelerator
 from max.gpu.host.device_context import DeviceTypeEncoder
 from std.builtin.device_passable import DevicePassable
 from std.memory import MutOpaquePointer
@@ -732,76 +733,108 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         except e:
             writer.write("<unreadable: ", String(e), ">")
 
-    # Forward to `numax.core.ops` at `gpu=False`: an operator has no
-    # parameter list to write `[gpu=True]` in, so `a + b` on a device
-    # tensor takes the host walk and prints one `stderr` line naming
-    # `add[gpu=True]`. Each carries `where is_row_major[Self]` because the
+    # Forward to `numax.core.ops`, picking `gpu` from where `self` lives on
+    # a build with an accelerator (`__add__` says why and where not). Each
+    # carries `where is_row_major[Self]` because the
     # routine it forwards to flattens, and a generic `Self` cannot prove
     # that on its own; at a concrete shape the clause is immediate.
 
     def __add__(self, other: Self) raises -> Self where is_row_major[Self]:
         """`a + b`, elementwise. Forwards to `numax.core.ops.add`.
 
-        On a GPU-context tensor this runs on the host and says so on
-        `stderr`; `numax.core.ops.add[gpu=True](a, b)` is the device
-        spelling.
+        **The operators follow the tensor.** An operator cannot spell a
+        `gpu` parameter, so on a build with an accelerator it checks where
+        `self` lives at run time and calls `add[gpu=True]` for a GPU-context
+        tensor. The check sits under `comptime if has_accelerator()`, which
+        the compiler answers from the build target: a GPU-less build never
+        compiles the device kernel, so this costs nothing there and still
+        builds. A host-context tensor, or any tensor on a GPU-less build,
+        takes the host path; an operand on the other device takes the
+        `_drive` stderr notice.
+
+        `ponytail:` **not at `float64`.** A `float64` device kernel does not
+        compile on Metal, and numax names no architecture, so there is no
+        way to ask "does this target have `double`" short of an Apple
+        branch. A `float64` operator therefore stays on the host with the
+        notice, on every backend; `add[gpu=True]` still reaches a CUDA
+        device at `float64`. The upgrade is a target capability query for
+        `float64`, if the stdlib grows one.
         """
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _add[gpu=True](self, other)
         return _add(self, other)
 
     def __add__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a + b` with a scalar `b`. Host-side; see `__add__` above."""
+        """`a + b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _add[gpu=True](self, other)
         return _add(self, other)
 
     def __sub__(self, other: Self) raises -> Self where is_row_major[Self]:
-        """`a - b`, elementwise. Forwards to `numax.core.ops.subtract`.
-
-        Host-side on a GPU-context tensor, with the notice `__add__`
-        describes; `subtract[gpu=True]` is the device spelling.
+        """`a - b`, elementwise. Forwards to `numax.core.ops.subtract`. Follows the tensor to its
+        device, as `__add__` describes.
         """
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _subtract[gpu=True](self, other)
         return _subtract(self, other)
 
     def __sub__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a - b` with a scalar `b`. Host-side; see `__add__` above."""
+        """`a - b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _subtract[gpu=True](self, other)
         return _subtract(self, other)
 
     def __mul__(self, other: Self) raises -> Self where is_row_major[Self]:
-        """`a * b`, elementwise. Forwards to `numax.core.ops.multiply`.
-
-        Host-side on a GPU-context tensor, with the notice `__add__`
-        describes; `multiply[gpu=True]` is the device spelling.
+        """`a * b`, elementwise. Forwards to `numax.core.ops.multiply`. Follows the tensor to its
+        device, as `__add__` describes.
         """
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _multiply[gpu=True](self, other)
         return _multiply(self, other)
 
     def __mul__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a * b` with a scalar `b`. Host-side; see `__add__` above."""
+        """`a * b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _multiply[gpu=True](self, other)
         return _multiply(self, other)
 
     def __truediv__(self, other: Self) raises -> Self where is_row_major[Self]:
-        """`a / b`, elementwise. Forwards to `numax.core.ops.divide`.
-
-        Host-side on a GPU-context tensor, with the notice `__add__`
-        describes; `divide[gpu=True]` is the device spelling.
+        """`a / b`, elementwise. Forwards to `numax.core.ops.divide`. Follows the tensor to its
+        device, as `__add__` describes.
         """
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _divide[gpu=True](self, other)
         return _divide(self, other)
 
     def __truediv__(
         self, other: Scalar[Self.dtype]
     ) raises -> Self where is_row_major[Self]:
-        """`a / b` with a scalar `b`. Host-side; see `__add__` above."""
+        """`a / b` with a scalar `b`. Follows the tensor; see `__add__`."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _divide[gpu=True](self, other)
         return _divide(self, other)
 
     def __neg__(self) raises -> Self where is_row_major[Self]:
-        """`-a`, elementwise. Forwards to `numax.core.ops.negative`.
-
-        Host-side on a GPU-context tensor, with the notice `__add__`
-        describes; `negative[gpu=True]` is the device spelling.
+        """`-a`, elementwise. Forwards to `numax.core.ops.negative`. Follows the tensor to its
+        device, as `__add__` describes.
         """
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _negative[gpu=True](self)
         return _negative(self)
 
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:

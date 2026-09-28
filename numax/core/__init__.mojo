@@ -25,9 +25,10 @@ per-lane branching, launchable inside a GPU thread. `ops`, `elementwise`,
 `logic` and `sorting` are tier 2: `Plain`-only. `ops`, `elementwise` and
 `logic` are tier 2 in shape only -- like `rowwise`, one body serves both
 targets through `_drive`, and every routine in them takes `gpu: Bool = False`
-as its last compile-time parameter. The operators on `Tensor` forward at that
-default, so `a + b` on a device tensor runs the host walk and says so;
-`add[gpu=True]` is the device spelling. `logic`'s `all`/`any` return a `Bool`
+as its last compile-time parameter. The operators on `Tensor` cannot spell
+it, so on a build with an accelerator they follow the tensor: `a + b` on a
+device tensor runs `add[gpu=True]`, below `float64` (which Metal cannot
+compile a kernel for). `logic`'s `all`/`any` return a `Bool`
 and stay host reads, and so does the fold half of `allclose`/`array_equal`.
 `numax.stats`' `sum`/`prod`/`min`/`max`/`argmax`/`argmin` take the same
 `gpu: Bool` and route through `rowwise` rather than `_drive`, since a
