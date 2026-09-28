@@ -40,7 +40,9 @@ host walks here are built on, over a host copy of the tensor's elements
 ## Results whose length the data decides
 
 `unique`, `extract` and `take` return a run-time-shaped rank-1 tensor, sized
-to what they actually produced. That is the whole reason a `Tensor`'s extents
+to what they actually produced, and so do the set routines built on
+`unique` -- `unique_counts`, `unique_inverse`, `intersect1d`, `setdiff1d`,
+`union1d` -- while `isin` keeps its input's shape. That is the whole reason a `Tensor`'s extents
 need not be compile-time: these three have no length until the values are
 read. `sort` and `select` keep their input's shape, since theirs does not
 depend on the values at all.
@@ -99,6 +101,7 @@ from .tensor import (
     _same_order,
     _axis_gather,
     _scan_device,
+    concatenate_dyn,
 )
 
 
@@ -932,23 +935,7 @@ def unique[
             var sorted = _sort_device(a)
             if n == 0:
                 return sorted^
-            var flags = Dynamic[DType.int64, 1]._uninitialized(
-                sorted.context(), row_major(_dyn_shape[1](n))
-            )
-            var sv = _flat_unchecked(sorted)
-            var fv = _flat_out(flags)
-
-            @always_inline
-            def fresh[
-                width: Int, alignment: Int = 1
-            ](coord: Coord) {var sv, var fv}:
-                var i = coord_to_index_list(coord)[0]
-                var differs = i == 0 or sv[coord][0] != sv[Coord(i - 1)][0]
-                fv.store[1](coord, Int64(1) if differs else Int64(0))
-
-            elementwise[simd_width=1, target="gpu"](
-                fresh, Coord(n), sorted.context()
-            )
+            var flags = _run_starts_device(sorted)
             return _pack_device[indices=False](flags, sorted, n)
     else:
         _notice[gpu]("unique")
@@ -965,6 +952,472 @@ def unique[
             count += 1
     values.resize(count, fill=0)
     return asarray(values^, a.context())
+
+
+# The set routines: `unique` with its counts or inverse, membership, and the
+# three binary set operations. Every result whose length the data decides
+# is a right-sized `Dynamic`, as `unique`'s is; each is a composition of the
+# device sort, the flag-and-pack compaction and `searchsorted`, so each runs
+# where its inputs live.
+
+
+def _run_starts_device[
+    V: TensorLike
+](sorted: V) raises -> Dynamic[DType.int64, 1]:
+    """For a sorted rank-1 device tensor: `1` where an element differs from
+    its predecessor and `0` elsewhere -- the first element of each run."""
+    var n = sorted.size()
+    var flags = Dynamic[DType.int64, 1]._uninitialized(
+        sorted.context(), row_major(_dyn_shape[1](n))
+    )
+    var sv = _flat_unchecked(sorted)
+    var fv = _flat_out(flags)
+
+    @always_inline
+    def fresh[width: Int, alignment: Int = 1](coord: Coord) {var sv, var fv}:
+        var i = coord_to_index_list(coord)[0]
+        var differs = i == 0 or sv[coord][0] != sv[Coord(i - 1)][0]
+        fv.store[1](coord, Int64(1) if differs else Int64(0))
+
+    elementwise[simd_width=1, target="gpu"](fresh, Coord(n), sorted.context())
+    return flags^
+
+
+@fieldwise_init
+struct UniqueCountsResult[dtype: DType](Movable):
+    """What `unique_counts` returns: the distinct values and how often each
+    occurs. `numpy.unique_counts`'s named tuple, field for field.
+
+    Parameters:
+        dtype: The element type of the tensor the values came from.
+    """
+
+    var values: Dynamic[Self.dtype, 1]
+    """The distinct values, ascending, each NaN kept as its own value."""
+    var counts: Dynamic[DType.int64, 1]
+    """How many times `values[i]` occurs, at `values`' length."""
+
+
+@fieldwise_init
+struct UniqueInverseResult[dtype: DType, LayoutType: TensorLayout](Movable):
+    """What `unique_inverse` returns: the distinct values and, for every
+    input element, its position among them. `numpy.unique_inverse`'s named
+    tuple, field for field.
+
+    Parameters:
+        dtype: The element type of the tensor the values came from.
+        LayoutType: The input's layout, which `inverse_indices` keeps.
+    """
+
+    var values: Dynamic[Self.dtype, 1]
+    """The distinct values, ascending, each NaN kept as its own value."""
+    var inverse_indices: Tensor[DType.int64, Self.LayoutType]
+    """At the input's shape: `values[inverse_indices[i]]` is element `i`."""
+
+
+def unique_counts[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> UniqueCountsResult[T.dtype]:
+    """The distinct values of `a` and how often each occurs.
+    `numpy.unique_counts`, the NumPy 2 spelling of
+    `numpy.unique(a, return_counts=True)`.
+
+    The values are exactly `unique(a)`'s. At `gpu=True`, with `a` on a
+    device: the device sort, the run-start flags `unique` uses, the packed
+    positions of those starts, and one launch differencing neighboring
+    starts into counts; only the count of distinct values is read back.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, read as flat row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose distinct values are counted.
+
+    Returns:
+        A `UniqueCountsResult` whose `values` are the ascending distinct
+        values and whose `counts` say how often each occurs; the counts sum
+        to `a.size()`.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    var n = a.size()
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var sorted = _sort_device(a)
+            var ctx = sorted.context()
+            if n == 0:
+                return UniqueCountsResult(
+                    sorted^,
+                    Dynamic[DType.int64, 1](row_major(_dyn_shape[1](0)), ctx),
+                )
+            var flags = _run_starts_device(sorted)
+            var starts = _pack_device[indices=True](flags, sorted, n)
+            var k = starts.size()
+            var values = take[axis=0, gpu=True](sorted, starts)
+            var counts = Dynamic[DType.int64, 1]._uninitialized(
+                ctx, row_major(_dyn_shape[1](k))
+            )
+            var st = _flat_unchecked(starts)
+            var cv = _flat_out(counts)
+
+            @always_inline
+            def width_of[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var st, var cv, var k, var n}:
+                var j = coord_to_index_list(coord)[0]
+                var end = st[Coord(j + 1)][0] if j + 1 < k else Int64(n)
+                cv.store[1](coord, end - st[coord][0])
+
+            elementwise[simd_width=1, target="gpu"](width_of, Coord(k), ctx)
+            ctx.synchronize()
+            return UniqueCountsResult(values^, counts^)
+    else:
+        _notice[gpu]("unique_counts")
+    var values = a.to_host()
+    comptime if dtype.is_floating_point():
+        _std_sort(values, _nan_last_less[dtype])
+    else:
+        _std_sort(values)
+    var distinct = List[Scalar[dtype]]()
+    var counts = List[Scalar[DType.int64]]()
+    for i in range(n):
+        if len(distinct) == 0 or values[i] != distinct[len(distinct) - 1]:
+            distinct.append(values[i])
+            counts.append(1)
+        else:
+            counts[len(counts) - 1] += 1
+    return UniqueCountsResult(
+        asarray(distinct^, a.context()), asarray(counts^, a.context())
+    )
+
+
+def unique_inverse[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> UniqueInverseResult[T.dtype, T.LayoutType] where is_row_major[
+    T
+]:
+    """The distinct values of `a` and where each element sits among them.
+    `numpy.unique_inverse`, the NumPy 2 spelling of
+    `numpy.unique(a, return_inverse=True)`.
+
+    `inverse_indices` has `a`'s shape, as NumPy 2 returns it, so
+    `take(values, inverse_indices)` rebuilds `a` flat. At `gpu=True`: the
+    device `argsort`, a gather into sorted order, the run-start flags and
+    their running count -- which is each sorted element's position among
+    the distinct values -- and one scatter back through the permutation.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, row-major.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor whose distinct values are wanted.
+
+    Returns:
+        A `UniqueInverseResult` whose `values` are the ascending distinct
+        values and whose `inverse_indices`, at `a`'s shape, index into them.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    var n = a.size()
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var ctx = a.context()
+            var inverse = Tensor[DType.int64, LayoutType]._uninitialized(
+                ctx, a.tile().layout
+            )
+            if n == 0:
+                return UniqueInverseResult(
+                    Dynamic[dtype, 1](row_major(_dyn_shape[1](0)), ctx),
+                    inverse^,
+                )
+            var flat = _same_order(a, row_major(_dyn_shape[1](n)))
+            var order = argsort[gpu=True](flat)
+            var sorted = take[axis=0, gpu=True](flat, order)
+            var flags = _run_starts_device(sorted)
+            var rank = _scan_device["sum"](
+                flags, row_major(_dyn_shape[1](n)), n, 1
+            )
+            var values = _pack_device[indices=False](flags, sorted, n)
+            var ov = _flat_unchecked(order)
+            var rv = _flat_unchecked(rank)
+            var iv = _flat_out(inverse)
+
+            @always_inline
+            def scatter[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var ov, var rv, var iv}:
+                iv.store[1](Coord(Int(ov[coord][0])), rv[coord][0] - 1)
+
+            elementwise[simd_width=1, target="gpu"](scatter, Coord(n), ctx)
+            ctx.synchronize()
+            return UniqueInverseResult(values^, inverse^)
+    else:
+        _notice[gpu]("unique_inverse")
+    # The host `argsort` is stable with NaN last, so walking it in order
+    # numbers the distinct values the way the device scan does -- each NaN
+    # its own value, in input order.
+    var values = a.to_host()
+    var order = argsort(a).to_host()
+    var distinct = List[Scalar[dtype]]()
+    var inverse = List[Scalar[DType.int64]](length=n, fill=0)
+    for i in range(n):
+        var at = Int(order[i])
+        var x = values[at]
+        if len(distinct) == 0 or x != distinct[len(distinct) - 1]:
+            distinct.append(x)
+        inverse[at] = Int64(len(distinct) - 1)
+    return UniqueInverseResult(
+        asarray(distinct^, a.context()),
+        Tensor[DType.int64, LayoutType](a.tile().layout, inverse^, a.context()),
+    )
+
+
+def _isin_host[
+    dtype: DType
+](
+    values: List[Scalar[dtype]], tests: List[Scalar[dtype]], invert: Bool
+) -> List[Scalar[DType.bool]]:
+    """`isin` over host lists: sort `tests` once, binary-search each value."""
+    var haystack = tests.copy()
+    comptime if dtype.is_floating_point():
+        _std_sort(haystack, _nan_last_less[dtype])
+    else:
+        _std_sort(haystack)
+    var n = len(haystack)
+    var out = List[Scalar[DType.bool]](capacity=len(values))
+    for i in range(len(values)):
+        var x = values[i]
+        var lo = 0
+        var hi = n
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if haystack[mid] < x:
+                lo = mid + 1
+            else:
+                hi = mid
+        var found = lo < n and haystack[lo] == x
+        out.append(found != invert)
+    return out^
+
+
+def _isin_device[
+    A: TensorLike, B: TensorLike, O: TensorLike, //, invert: Bool
+](element: A, test_elements: B, mut out: O) raises where (
+    A.dtype == B.dtype and O.dtype == DType.bool
+):
+    """`isin` on the device, flat into `out`: sort `test_elements`,
+    `searchsorted` every element into it, and one launch comparing what it
+    lands on."""
+    var ctx = element.context()
+    var m = element.size()
+    if m == 0:
+        return
+    var n = test_elements.size()
+    var haystack = _sort_device(test_elements)
+    var at = _searchsorted_device[right=False](haystack, element)
+    var hv = _flat_unchecked(haystack)
+    var ev = _flat_unchecked(element)
+    var av = _flat_unchecked(at)
+    var ov = _flat_out(out)
+
+    @always_inline
+    def member[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var hv, var ev, var av, var ov, var n}:
+        var i = Int(av[coord][0])
+        var x = rebind[Scalar[B.dtype]](ev[coord][0])
+        var found = i < n and hv[Coord(i)][0] == x
+        ov.store[1](
+            coord, rebind[Scalar[O.dtype]](Scalar[DType.bool](found != invert))
+        )
+
+    elementwise[simd_width=1, target="gpu"](member, Coord(m), ctx)
+    ctx.synchronize()
+
+
+def isin[
+    A: TensorLike, B: TensorLike, //, invert: Bool = False, gpu: Bool = False
+](element: A, test_elements: B) raises -> Tensor[
+    DType.bool, A.LayoutType
+] where (A.dtype == B.dtype and is_row_major[A]):
+    """Whether each element of `element` occurs in `test_elements`.
+    `numpy.isin`.
+
+    A boolean tensor at `element`'s shape; `test_elements` is read flat, at
+    any shape. `invert=True` asks the opposite question in the same pass,
+    as NumPy's `invert` does. NaN is never a member of anything, since it
+    compares unequal to itself. `O((n + m) log n)`: `test_elements` is
+    sorted once and each element binary-searched into it -- on the device
+    at `gpu=True`, one lane per element.
+
+    Parameters:
+        A: The `TensorLike` type of `element`, row-major.
+        B: The `TensorLike` type of `test_elements`, with `A`'s dtype.
+        invert: `True` answers "not in" instead.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        element: The values to test.
+        test_elements: The values to test against, read flat.
+
+    Returns:
+        A new `bool` tensor at `element`'s layout, `True` where the element
+        occurs in `test_elements` (or, with `invert`, where it does not).
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
+    comptime LayoutType = A.LayoutType
+    if _check_device[A, gpu](element) and _check_device[B, gpu](test_elements):
+        comptime if gpu:
+            var out = Tensor[DType.bool, LayoutType]._uninitialized(
+                element.context(), element.tile().layout
+            )
+            _isin_device[invert=invert](element, test_elements, out)
+            return out^
+    else:
+        _notice[gpu]("isin")
+    var got = _isin_host(
+        element.to_host(),
+        rebind[List[Scalar[A.dtype]]](test_elements.to_host()),
+        invert,
+    )
+    return Tensor[DType.bool, LayoutType](
+        element.tile().layout, got^, element.context()
+    )
+
+
+def _select_unique[
+    A: TensorLike,
+    B: TensorLike,
+    //,
+    invert: Bool,
+    gpu: Bool,
+    name: StaticString,
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where A.dtype == B.dtype:
+    """`unique(a)` kept where it is (or, with `invert`, is not) in `b`: the
+    body of `intersect1d` and `setdiff1d`."""
+    var distinct = unique[gpu=gpu](a)
+    var k = distinct.size()
+    if _check_device[gpu=gpu](distinct) and _check_device[B, gpu](b):
+        comptime if gpu:
+            var keep = Dynamic[DType.bool, 1]._uninitialized(
+                distinct.context(), row_major(_dyn_shape[1](k))
+            )
+            _isin_device[invert=invert](distinct, b, keep)
+            return _pack_device[indices=False](keep, distinct, k)
+    else:
+        _notice[gpu](name)
+    var values = distinct.to_host()
+    var keep = _isin_host(
+        values, rebind[List[Scalar[A.dtype]]](b.to_host()), invert
+    )
+    var kept = List[Scalar[A.dtype]]()
+    for i in range(k):
+        if keep[i]:
+            kept.append(values[i])
+    return asarray(kept^, a.context())
+
+
+def intersect1d[
+    A: TensorLike, B: TensorLike, gpu: Bool = False
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where A.dtype == B.dtype:
+    """The sorted distinct values in both `a` and `b`. `numpy.intersect1d`.
+
+    Both read flat. `unique(a)` kept where `isin` finds it in `b`, then
+    packed -- on the device at `gpu=True`, where only the length is read
+    back. NaN is in no intersection, as in NumPy.
+
+    Parameters:
+        A: The `TensorLike` type of `a`.
+        B: The `TensorLike` type of `b`, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First set of values, read flat.
+        b: Second set of values, read flat.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of the ascending values found in both.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
+    return _select_unique[invert=False, gpu=gpu, name="intersect1d"](a, b)
+
+
+def setdiff1d[
+    A: TensorLike, B: TensorLike, gpu: Bool = False
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where A.dtype == B.dtype:
+    """The sorted distinct values of `a` that are not in `b`.
+    `numpy.setdiff1d`.
+
+    `intersect1d` with the membership test inverted, so the same
+    composition and the same device path. Every NaN of `a` is kept, since
+    none is found in `b`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`.
+        B: The `TensorLike` type of `b`, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: The values to keep from, read flat.
+        b: The values to remove, read flat.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of the ascending values of `a` absent
+        from `b`.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
+    return _select_unique[invert=True, gpu=gpu, name="setdiff1d"](a, b)
+
+
+def union1d[
+    A: TensorLike, B: TensorLike, gpu: Bool = False
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where A.dtype == B.dtype:
+    """The sorted distinct values in either `a` or `b`. `numpy.union1d`.
+
+    `unique` of the two joined flat by `concatenate_dyn`, which is
+    NumPy's own definition; both steps run on the device at `gpu=True`.
+
+    Parameters:
+        A: The `TensorLike` type of `a`.
+        B: The `TensorLike` type of `b`, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: First set of values, read flat.
+        b: Second set of values, read flat.
+
+    Returns:
+        A new `Dynamic` rank-1 tensor of the ascending values in either.
+
+    Raises:
+        If a host read-back or a device launch fails, or on a residency mismatch
+        under the `"raise"` fallback policy.
+    """
+    return unique[gpu=gpu](concatenate_dyn[gpu=gpu](a, b))
 
 
 def count_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Int:

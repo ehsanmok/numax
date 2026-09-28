@@ -331,6 +331,8 @@ from .core.dtypes import (
     u64,
 )
 from .core.sorting import (
+    UniqueCountsResult,
+    UniqueInverseResult,
     all_nonzero,
     any_nonzero,
     argpartition,
@@ -339,16 +341,22 @@ from .core.sorting import (
     compress,
     count_nonzero,
     extract,
+    intersect1d,
+    isin,
     nonzero,
     partition,
     put,
     searchsorted,
+    select,
+    setdiff1d,
     sort,
     take,
     take_along_axis,
     top_k,
+    union1d,
     unique,
-    select,
+    unique_counts,
+    unique_inverse,
 )
 
 # Special functions and activations -- `numax.special`.

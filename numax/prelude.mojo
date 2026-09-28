@@ -257,22 +257,30 @@ from .core.logic import (
     not_equal,
 )
 from .core.sorting import (
+    UniqueCountsResult,
+    UniqueInverseResult,
     argpartition,
     argsort,
     argwhere,
     compress,
     count_nonzero,
     extract,
+    intersect1d,
+    isin,
     nonzero,
     partition,
     put,
     searchsorted,
     select,
+    setdiff1d,
     sort,
     take,
     take_along_axis,
     top_k,
+    union1d,
     unique,
+    unique_counts,
+    unique_inverse,
 )
 
 # The special functions reached for first.
