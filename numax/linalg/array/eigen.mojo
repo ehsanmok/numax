@@ -28,7 +28,7 @@ from ...core.numeric import (
 )
 from ...core.complex import Complex
 
-from ..common import _PIVOT_FLOOR, _zeros
+from ..common import _ARRAY_MAX_N, _PIVOT_FLOOR, _zeros
 
 
 def _jacobi_rotation[T: FloatLike](numerator: T, denominator: T) -> Tuple[T, T]:
@@ -86,6 +86,11 @@ def hessenberg[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     the reduced matrix itself (a Krylov method, a condensed form to hand
     on) does not have to redo it.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.hessenberg: n is past the 64 the register tier"
+        " compiles in reasonable time; use numax.linalg.hessenberg over a"
+        " Tensor"
+    )
     var h = _zeros[T, n * n]()
     for i in range(n * n):
         h[i] = a[i].copy()
@@ -272,6 +277,10 @@ def eigvals[
 
     No MAX equivalent exists at any size -- MAX ships no eigensolver.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.eigvals: n is past the 64 the register tier"
+        " compiles in reasonable time; use numax.linalg.eigvals over a Tensor"
+    )
     var h = hessenberg[T, n](a)
     comptime if n >= 2:
         for _ in range(sweeps):
@@ -336,6 +345,10 @@ def eigh[
     entries were seeded from. That is not true of any LAPACK-backed
     `eigh`.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.eigh: n is past the 64 the register tier compiles"
+        " in reasonable time; use numax.linalg.eigh over a Tensor"
+    )
     # `work` is driven toward diagonal; `vectors` accumulates the rotations.
     var work = _zeros[T, n * n]()
     for i in range(n * n):
@@ -404,6 +417,10 @@ def svd[
     and a decision about thin-vs-full factors; nothing in `numax` needs one
     yet, and doing it half-way would be worse than not doing it.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.svd: n is past the 64 the register tier compiles"
+        " in reasonable time; use numax.linalg.svd over a Tensor"
+    )
     # Columns of `work` get orthogonalized; `v` accumulates the rotations.
     var work = _zeros[T, n * n]()
     for i in range(n * n):

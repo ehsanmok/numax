@@ -18,7 +18,7 @@ from std.math import log as _log_f64
 from ...core.numeric import FloatLike, guard_nonzero
 from ...core.plain import Plain
 
-from ..common import _PIVOT_FLOOR, _zeros
+from ..common import _ARRAY_MAX_N, _PIVOT_FLOOR, _zeros
 from .triangular import back_substitution, forward_substitution
 
 
@@ -35,6 +35,10 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     `Tensor`: blocked, partially pivoted, trailing update in MAX's
     `matmul`. It pivots, so it also factors matrices this cannot start on.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.lu: n is past the 64 the register tier compiles"
+        " in reasonable time; use numax.linalg.lu_factor over a Tensor"
+    )
     var out = _zeros[T, n * n]()
     for i in range(n * n):
         out[i] = a[i].copy()
@@ -168,6 +172,10 @@ def lu_factor[
 
     See `PivotedLU` for what pivoting costs and what it buys.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.lu_factor: n is past the 64 the register tier"
+        " compiles in reasonable time; use numax.linalg.lu_factor over a Tensor"
+    )
     var out = _zeros[Plain[dtype, 1], n * n]()
     for i in range(n * n):
         out[i] = a[i].copy()

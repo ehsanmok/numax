@@ -16,7 +16,7 @@ from std.collections import Array
 
 from ...core.numeric import FloatLike, guard_nonzero
 
-from ..common import _PIVOT_FLOOR, _zeros
+from ..common import _ARRAY_MAX_N, _PIVOT_FLOOR, _zeros
 
 
 def qr[
@@ -59,6 +59,10 @@ def qr[
     `matmul` -- and until it lands, a large QR is genuinely missing rather
     than one import away.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.qr: n is past the 64 the register tier compiles"
+        " in reasonable time; use numax.linalg.qr_factor over a Tensor"
+    )
     var r = _zeros[T, n * n]()
     for i in range(n * n):
         r[i] = a[i].copy()

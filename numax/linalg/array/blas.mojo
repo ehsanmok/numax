@@ -17,7 +17,7 @@ from std.collections import Array
 
 from ...core.numeric import FloatLike
 
-from ..common import _zeros
+from ..common import _ARRAY_MAX_N, _zeros
 
 
 def dot[T: FloatLike, n: Int](a: Array[T, n], b: Array[T, n]) -> T:
@@ -132,6 +132,10 @@ def matmul[
     `TileTensor` in memory, it can be called from inside a single GPU
     thread -- one matrix per SIMD lane, if `T` is itself a vector.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.matmul: n is past the 64 the register tier compiles"
+        " in reasonable time; use numax.linalg.matmul over a Tensor"
+    )
     var out = _zeros[T, n * n]()
     for i in range(n):
         for k in range(n):

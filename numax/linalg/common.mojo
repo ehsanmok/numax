@@ -26,6 +26,14 @@ from ..core.numeric import FloatLike
 comptime _PIVOT_FLOOR = 1e-30
 
 
+comptime _ARRAY_MAX_N = 64
+"""The largest `n` the `Array` tier's `n x n` routines accept. The tier
+unrolls over `Array[T, n * n]`, so compile time grows steeply with `n`:
+64 takes about a minute and 128 does not finish. Past it the `Tensor`
+spelling of the same routine is the one to call, and each entry point's
+`comptime assert` says which."""
+
+
 def _zeros[T: FloatLike, size: Int]() -> Array[T, size]:
     return Array[T, size](fill=T.constant(0.0))
 

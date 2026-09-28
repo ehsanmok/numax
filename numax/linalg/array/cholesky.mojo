@@ -19,7 +19,7 @@ from std.collections import Array
 
 from ...core.numeric import FloatLike, guard_nonzero
 
-from ..common import _PIVOT_FLOOR, _zeros
+from ..common import _ARRAY_MAX_N, _PIVOT_FLOOR, _zeros
 from .triangular import back_substitution, forward_substitution
 
 
@@ -42,6 +42,10 @@ def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     its trailing update in MAX's `matmul`. It also raises on a matrix that
     is not positive definite, which this one cannot.
     """
+    comptime assert n <= _ARRAY_MAX_N, (
+        "numax.linalg.array.cholesky: n is past the 64 the register tier"
+        " compiles in reasonable time; use numax.linalg.cholesky over a Tensor"
+    )
     var out = _zeros[T, n * n]()
 
     for j in range(n):
