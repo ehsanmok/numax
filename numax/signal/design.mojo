@@ -2133,6 +2133,96 @@ def freqz[
     return FrequencyResponse[A.dtype, worN](grid^, real^, imag^)
 
 
+def sosfreqz[
+    T: TensorLike,
+    worN: Int = 512,
+    gpu: Bool = False,
+](sos: T) raises -> FrequencyResponse[T.dtype, worN] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == 6
+    and worN > 0
+):
+    """The frequency response of a cascade of second-order sections at
+    `worN` frequencies evenly spaced over `[0, pi)`.
+    `scipy.signal.sosfreqz(sos, worN)`.
+
+    The product of the sections' own responses, never the expanded
+    polynomial's, which is what keeps a high-order response accurate: one
+    lane per frequency evaluates every biquad at `e^{-jw}` and multiplies
+    the quotients.
+
+    Parameters:
+        T: The tensor type of `sos`, `(sections, 6)`, floating-point.
+        worN: The number of frequencies on the grid, default 512.
+        gpu: Whether the per-frequency launch targets the GPU rather than
+            the CPU; `sos` must live on the matching device.
+
+    Args:
+        sos: The sections, one `[b0, b1, b2, a0, a1, a2]` row each.
+
+    Returns:
+        A `FrequencyResponse` on `sos`'s device: the grid `w = pi k / worN`
+        and the real and imaginary parts of `H` at each.
+
+    Raises:
+        If allocating the result or launching the kernel fails.
+    """
+    comptime sections = dim[T, 0]
+    comptime dtype = T.dtype
+    var ctx = sos.context()
+    var w = List[Scalar[dtype]](capacity=worN)
+    for k in range(worN):
+        w.append(Scalar[dtype](_PI * Float64(k) / Float64(worN)))
+    var grid = Static[dtype, worN](w^, ctx)
+    var real = Static[dtype, worN]._uninitialized(ctx)
+    var imag = Static[dtype, worN]._uninitialized(ctx)
+    var ws = grid.tile()
+    var ss = sos.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var rs = real.tile()
+    var ims = imag.tile()
+
+    @always_inline
+    def lane[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var ws, var ss, var rs, var ims}:
+        var k = coord_to_index_list(coord)[0]
+        var angle = rebind[Scalar[dtype]](ws[Coord(k)])
+        var er = _cos(angle)
+        var ei = -_sin(angle)
+        var e2r = er * er - ei * ei
+        var e2i = 2 * er * ei
+        var hr = Scalar[dtype](1)
+        var hi = Scalar[dtype](0)
+        for s in range(sections):
+            var o = s * 6
+            var b0 = rebind[Scalar[dtype]](ss[unsafe_offset=o])
+            var b1 = rebind[Scalar[dtype]](ss[unsafe_offset=o + 1])
+            var b2 = rebind[Scalar[dtype]](ss[unsafe_offset=o + 2])
+            var a0 = rebind[Scalar[dtype]](ss[unsafe_offset=o + 3])
+            var a1 = rebind[Scalar[dtype]](ss[unsafe_offset=o + 4])
+            var a2 = rebind[Scalar[dtype]](ss[unsafe_offset=o + 5])
+            var nr = b0 + b1 * er + b2 * e2r
+            var ni = b1 * ei + b2 * e2i
+            var dr = a0 + a1 * er + a2 * e2r
+            var di = a1 * ei + a2 * e2i
+            var mag = dr * dr + di * di
+            var qr = (nr * dr + ni * di) / mag
+            var qi = (ni * dr - nr * di) / mag
+            var tr = hr * qr - hi * qi
+            hi = hr * qi + hi * qr
+            hr = tr
+        rs.store[1](Coord(k), hr)
+        ims.store[1](Coord(k), hi)
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        lane, Coord(worN), ctx
+    )
+    ctx.synchronize()
+    return FrequencyResponse[dtype, worN](grid^, real^, imag^)
+
+
 def zpk2tf[
     dtype: DType, nz: Int, np: Int
 ](

@@ -591,6 +591,8 @@ from .signal.filters import (
     resample,
     savgol_filter,
     sosfilt,
+    sosfilt_zi,
+    sosfiltfilt,
 )
 
 # `hilbert` the transform stays at `numax.signal.hilbert`: the flat surface
@@ -620,6 +622,7 @@ from .signal.design import (
     freqz,
     iirfilter,
     sos2tf,
+    sosfreqz,
     tf2sos,
     tf2zpk,
     zpk2sos,

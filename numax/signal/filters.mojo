@@ -774,7 +774,7 @@ def sosfilt[
     B: TensorLike,
     gpu: Bool = False,
 ](sos: A, x: B) raises -> Static[A.dtype, dim[B, 0]] where (
-    (A.dtype.is_floating_point() and dim[A, 0] > 0 and dim[B, 0] > 0)
+    (A.dtype.is_floating_point() and dim[B, 0] > 0)
     and A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
     and dim[A, 1] == 6
@@ -865,6 +865,207 @@ def sosfilt[
             var norm = _normalized(b^, a^)
             var state = List[Scalar[A.dtype]](length=2, fill=0)
             _recurrence(norm[0], norm[1], state, buffer, buffer, n)
+    return out^
+
+
+def _sections_of[
+    dtype: DType
+](table: List[Scalar[dtype]], sections: Int) raises -> List[
+    Tuple[List[Scalar[dtype]], List[Scalar[dtype]]]
+]:
+    """Each row of a `(sections, 6)` table as its normalized `(b, a)`."""
+    var out = List[Tuple[List[Scalar[dtype]], List[Scalar[dtype]]]](
+        capacity=sections
+    )
+    for s in range(sections):
+        var b = List[Scalar[dtype]](capacity=3)
+        var a = List[Scalar[dtype]](capacity=3)
+        for k in range(3):
+            b.append(table[s * 6 + k])
+            a.append(table[s * 6 + 3 + k])
+        out.append(_normalized(b^, a^))
+    return out^
+
+
+def sosfilt_zi[
+    T: TensorLike
+](sos: T) raises -> Static[T.dtype, dim[T, 0], 2] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == 6
+):
+    """The initial state at which `sosfilt` responds to a unit step with
+    no transient. `scipy.signal.sosfilt_zi(sos)`.
+
+    Section by section, `lfilter_zi` of the section scaled by the product
+    of the DC gains `sum(b) / sum(a)` of the sections before it -- the
+    step level that section sees in steady state -- as SciPy builds it.
+    Scale it by the signal's first sample to start the cascade settled.
+
+    Parameters:
+        T: The tensor type of `sos`, `(sections, 6)`, floating-point.
+
+    Args:
+        sos: The sections, one `[b0, b1, b2, a0, a1, a2]` row each.
+
+    Returns:
+        A `(sections, 2)` tensor of initial states on `sos`'s device.
+
+    Raises:
+        If a section's `a0` is zero, or a section has a pole at `z = 1`.
+    """
+    comptime sections = dim[T, 0]
+    var rows = _sections_of(sos.to_host(), sections)
+    var zi = List[Scalar[T.dtype]](capacity=sections * 2)
+    var scale = Scalar[T.dtype](1)
+    for s in range(sections):
+        var bq = rows[s][0].copy()
+        var aq = rows[s][1].copy()
+        var z = _zi_host(bq, aq)
+        zi.append(scale * z[0])
+        zi.append(scale * z[1])
+        var sum_b = bq[0] + bq[1] + bq[2]
+        var sum_a = aq[0] + aq[1] + aq[2]
+        scale *= sum_b / sum_a
+    return Static[T.dtype, sections, 2](zi^, sos.context())
+
+
+def sosfiltfilt[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](sos: A, x: B, padlen: Optional[Int] = None) raises -> Static[
+    A.dtype, dim[B, 0]
+] where (
+    (A.dtype.is_floating_point() and dim[B, 0] > 0)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == 6
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
+    """Forward-backward filtering through second-order sections, so the
+    phase cancels and the magnitude response is applied twice.
+    `scipy.signal.sosfiltfilt(sos, x, padtype="odd", padlen)`.
+
+    `filtfilt`'s scheme with the cascade in place of one long recurrence --
+    the stable way to run it at a high order: the signal is odd-extended by
+    `padlen` samples at each end (default `3 * (2 sections + 1 - k)`,
+    `k` the sections whose `b2` and `a2` both vanish, SciPy's count), every
+    section runs forward over the extension and then backward, each started
+    from its `lfilter_zi` scaled by the first sample it reads -- which is
+    `sosfilt_zi(sos)` scaled by the signal's first sample, since each
+    section's first output is its DC gain times that sample -- and the
+    extension is cut away. On the device that is one extension launch, the
+    block-parallel recurrence per section in each direction, and a window.
+
+    Parameters:
+        A: The tensor type of `sos`, `(sections, 6)`, floating-point.
+        B: The tensor type of `x`, rank 1 with a static length, same dtype.
+        gpu: Run on `x`'s device when `True`; a residency mismatch falls
+            back to the host with a notice.
+
+    Args:
+        sos: The sections, one `[b0, b1, b2, a0, a1, a2]` row each.
+        x: The signal, longer than `padlen`.
+        padlen: The odd-extension length at each end; `None` is SciPy's
+            default.
+
+    Returns:
+        The zero-phase filtered signal, the same length as `x`.
+
+    Raises:
+        If `x` is not longer than `padlen`, a section's `a0` is zero, the
+        fallback policy is `"raise"` on a residency mismatch, or a device
+        operation fails.
+    """
+    comptime sections = dim[A, 0]
+    comptime n = dim[B, 0]
+    comptime dtype = A.dtype
+    var table = sos.to_host()
+    var rows = _sections_of(table, sections)
+    var trivial_b = 0
+    var trivial_a = 0
+    for s in range(sections):
+        if table[s * 6 + 2] == 0:
+            trivial_b += 1
+        if table[s * 6 + 5] == 0:
+            trivial_a += 1
+    var ntaps = 2 * sections + 1 - min(trivial_b, trivial_a)
+    var edge = padlen.value() if padlen else 3 * ntaps
+    if n <= edge:
+        raise Error(
+            "sosfiltfilt: the signal length must be greater than padlen ",
+            edge,
+        )
+    var m = n + 2 * edge
+    if _check_device[B, gpu](x):
+        comptime if gpu:
+            _require_contiguous(x)
+            var ctx = x.context()
+            var ext = Dynamic[dtype, 1]._uninitialized(
+                ctx, row_major(_dyn_shape[1](m))
+            )
+            var xp = _device_ptr[dtype](x)
+            var ep = _device_ptr[dtype](ext)
+
+            @always_inline
+            def extend[
+                w: Int, alignment: Int = 1
+            ](coord: Coord) {var xp, var ep, var edge}:
+                var j = coord_to_index_list(coord)[0]
+                var value: Scalar[dtype]
+                if j < edge:
+                    value = 2 * xp[unsafe_offset=0] - xp[unsafe_offset=edge - j]
+                elif j < edge + n:
+                    value = xp[unsafe_offset=j - edge]
+                else:
+                    value = (
+                        2 * xp[unsafe_offset=n - 1]
+                        - xp[unsafe_offset=n - 2 - (j - edge - n)]
+                    )
+                ep[unsafe_offset=j] = value
+
+            elementwise[simd_width=1, target="gpu"](extend, Coord(m), ctx)
+            for backward in range(2):
+                for s in range(sections):
+                    var bq = rows[s][0].copy()
+                    var aq = rows[s][1].copy()
+                    var zi = _zi_host(bq, aq)
+                    _iir_device(bq, aq, ep, ep, m, zi, True, backward == 1, ctx)
+            return _axis_gather["offset"](
+                ext, Static[dtype, n]._static_layout(), 0, edge
+            )
+    else:
+        _notice[gpu]("sosfiltfilt")
+    var ext = List[Scalar[dtype]](capacity=m)
+    var staged = List[Scalar[dtype]]()
+    var src = _read_ptr[dtype](x, staged)
+    var first = src[unsafe_offset=0]
+    var last = src[unsafe_offset=n - 1]
+    for i in range(edge):
+        ext.append(2 * first - src[unsafe_offset=edge - i])
+    for i in range(n):
+        ext.append(src[unsafe_offset=i])
+    for i in range(edge):
+        ext.append(2 * last - src[unsafe_offset=n - 2 - i])
+    for backward in range(2):
+        for s in range(sections):
+            var bq = rows[s][0].copy()
+            var aq = rows[s][1].copy()
+            var zi = _zi_host(bq, aq)
+            var start = ext[m - 1] if backward == 1 else ext[0]
+            var state = List[Scalar[dtype]](length=2, fill=0)
+            state[0] = zi[0] * start
+            state[1] = zi[1] * start
+            var buffer = _loose(ext.unsafe_ptr())
+            _recurrence(bq, aq, state, buffer, buffer, m, backward == 1)
+    var out = Static[dtype, n]._uninitialized(x.context())
+    with out._buffer.map_to_host() as dst:
+        for i in range(n):
+            dst[i] = ext[edge + i]
     return out^
 
 
