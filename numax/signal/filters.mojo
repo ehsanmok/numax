@@ -47,12 +47,12 @@ these. **Extend** throughout.
 
 ## What is not here
 
-`deconvolve` and `resample_poly` wait on a caller. `decimate` is here, in SciPy's `ftype="fir"` form. IIR *design* -- `butter`, `cheby1`,
+`deconvolve` waits on a caller. `decimate` is here, in SciPy's `ftype="fir"` form. IIR *design* -- `butter`, `cheby1`,
 `iirfilter` -- is `design.mojo`'s, one module over.
 """
 
 from std.collections import Array
-from std.math import cos as _cos, sin as _sin
+from std.math import cos as _cos, sin as _sin, sqrt as _sqrt
 
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
@@ -1872,6 +1872,295 @@ def _resample_device[
     return _same_order(back[0], Static[dtype, num]._static_layout())
 
 
+def _gcd_int(a: Int, b: Int) -> Int:
+    var x = a
+    var y = b
+    while y != 0:
+        var r = x % y
+        x = y
+        y = r
+    return x
+
+
+def upfirdn[
+    H: TensorLike,
+    X: TensorLike,
+    up: Int = 1,
+    down: Int = 1,
+    gpu: Bool = False,
+](h: H, x: X) raises -> Static[
+    X.dtype, ((dim[X, 0] - 1) * up + dim[H, 0] - 1) // down + 1
+] where (
+    X.dtype.is_floating_point()
+    and H.dtype == X.dtype
+    and H.LayoutType.rank == 1
+    and H.LayoutType.all_dims_known
+    and X.LayoutType.rank == 1
+    and X.LayoutType.all_dims_known
+    and dim[H, 0] > 0
+    and dim[X, 0] > 0
+    and up >= 1
+    and down >= 1
+):
+    """Upsample by `up`, filter with the FIR `h`, downsample by `down`, in
+    one pass. `scipy.signal.upfirdn(h, x, up, down)` with its default
+    zero padding.
+
+    The polyphase form rather than the three steps: output `k` is
+    `sum_j h[j] x_up[k down - j]`, and only every `up`-th tap meets a real
+    sample, so each output reads `len(h) / up` taps -- one device lane per
+    output, nothing upsampled or discarded ever materialized. The output
+    length is `((len(x) - 1) up + len(h) - 1) // down + 1`, SciPy's.
+
+    Parameters:
+        H: The tensor type of `h`, rank 1, static length.
+        X: The tensor type of `x`, rank 1, static length, same dtype.
+        up: The upsampling factor, at least 1.
+        down: The downsampling factor, at least 1.
+        gpu: Run on `x`'s device when `True`; a residency mismatch falls
+            back to the host with a notice.
+
+    Args:
+        h: The FIR filter coefficients.
+        x: The signal.
+
+    Returns:
+        The resampled, filtered signal.
+
+    Raises:
+        If the fallback policy is `"raise"` on a residency mismatch, or a
+        device operation fails.
+    """
+    comptime dtype = X.dtype
+    comptime nh = dim[H, 0]
+    comptime n = dim[X, 0]
+    comptime m = ((n - 1) * up + nh - 1) // down + 1
+    if not _check_device[X, gpu](x):
+        _notice[gpu]("upfirdn")
+        var hv = h.to_host[dtype]()
+        var xv = x.to_host()
+        var out = List[Scalar[dtype]](length=m, fill=0)
+        for k in range(m):
+            var at = k * down
+            var j = at % up
+            var acc = Scalar[dtype](0)
+            while j < nh and j <= at:
+                var i = (at - j) // up
+                if i < n:
+                    acc += hv[j] * xv[i]
+                j += up
+            out[k] = acc
+        return Static[dtype, m](out^, x.context())
+    var ctx = x.context()
+    var out = Static[dtype, m]._uninitialized(ctx)
+    var taps = _same_order(h, row_major(_dyn_shape[1](nh)))
+    var hp = taps.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var xp = x.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var yp = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def lane[w: Int, alignment: Int = 1](coord: Coord) {var hp, var xp, var yp}:
+        var k = coord_to_index_list(coord)[0]
+        var at = k * down
+        var j = at % up
+        var acc = Scalar[dtype](0)
+        while j < nh and j <= at:
+            var i = (at - j) // up
+            if i < n:
+                acc += rebind[Scalar[dtype]](hp[unsafe_offset=j]) * rebind[
+                    Scalar[dtype]
+                ](xp[unsafe_offset=i])
+            j += up
+        yp[unsafe_offset=k] = acc
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        lane, Coord(m), ctx
+    )
+    ctx.synchronize()
+    _ = taps^
+    return out^
+
+
+comptime _RATIO_UP[up: Int, down: Int] = up // _gcd_int(up, down)
+comptime _RATIO_DOWN[up: Int, down: Int] = down // _gcd_int(up, down)
+comptime _POLY_LEN[n: Int, up: Int, down: Int] = (
+    n * _RATIO_UP[up, down] // _RATIO_DOWN[up, down]
+    + (1 if (n * _RATIO_UP[up, down]) % _RATIO_DOWN[up, down] != 0 else 0)
+)
+
+
+def _i0_host(x: Float64) -> Float64:
+    """The modified Bessel function `I_0(x)` by its power series, on the
+    host: `sum_k ((x/2)^k / k!)^2`, which converges for every `beta` a
+    Kaiser window is used at."""
+    var term = 1.0
+    var total = 1.0
+    var half = x / 2.0
+    for k in range(1, 200):
+        term *= (half / Float64(k)) * (half / Float64(k))
+        total += term
+        if term < 1e-17 * total:
+            break
+    return total
+
+
+def _kaiser_lowpass(
+    numtaps: Int, cutoff: Float64, beta: Float64
+) -> List[Float64]:
+    """`firwin(numtaps, cutoff, window=("kaiser", beta))` for a lowpass, on
+    the host at a run-time length: the ideal `cutoff sinc(cutoff m)` taps,
+    the symmetric Kaiser window, and unit DC gain."""
+    var alpha = 0.5 * Float64(numtaps - 1)
+    var scale = 1.0 / _i0_host(beta)
+    var taps = List[Float64](capacity=numtaps)
+    var total = 0.0
+    for i in range(numtaps):
+        var m = Float64(i) - alpha
+        var ratio = 2.0 * Float64(i) / Float64(numtaps - 1) - 1.0
+        var window = (
+            _i0_host(beta * _sqrt(max(0.0, 1.0 - ratio * ratio))) * scale
+        )
+        var tap = cutoff * _sinc(cutoff * m) * window
+        taps.append(tap)
+        total += tap
+    for i in range(numtaps):
+        taps[i] /= total
+    return taps^
+
+
+def resample_poly[
+    T: TensorLike, up: Int, down: Int, gpu: Bool = False
+](x: T, beta: Float64 = 5.0) raises -> Static[
+    T.dtype, _POLY_LEN[dim[T, 0], up, down]
+] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and dim[T, 0] > 0
+    and up >= 1
+    and down >= 1
+):
+    """`x` resampled by the rational factor `up / down` with a polyphase
+    FIR filter. `scipy.signal.resample_poly(x, up, down,
+    window=("kaiser", beta))`.
+
+    SciPy's construction: the ratio reduced by its gcd, a lowpass at
+    `1 / max(up, down)` of Nyquist with `20 max(up, down) + 1` taps --
+    `firwin`'s windowed sinc with a Kaiser window -- scaled by `up`, padded so its delay
+    lands on an output sample, run through `upfirdn`, and the
+    `ceil(len(x) up / down)` samples aligned with the input kept. Unlike
+    `resample`, which is exact for a periodic signal, this assumes nothing
+    about the ends beyond zeros past them.
+
+    Parameters:
+        T: The tensor type of `x`, rank 1, static length.
+        up: The upsampling factor, at least 1.
+        down: The downsampling factor, at least 1.
+        gpu: Run the filtering on `x`'s device when `True`; a residency
+            mismatch falls back to the host with a notice.
+
+    Args:
+        x: The signal.
+        beta: The Kaiser window's `beta`, SciPy's default `5.0`.
+
+    Returns:
+        The resampled signal, `ceil(len(x) up / down)` long.
+
+    Raises:
+        If the design or a device operation fails.
+    """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    comptime u = _RATIO_UP[up, down]
+    comptime d = _RATIO_DOWN[up, down]
+    comptime n_out = _POLY_LEN[n, up, down]
+    comptime if u == 1 and d == 1:
+        return rebind_var[Static[dtype, n_out]](
+            _same_order(x, Static[dtype, n]._static_layout())
+        )
+    comptime max_rate = u if u > d else d
+    comptime half_len = 10 * max_rate
+    comptime numtaps = 2 * half_len + 1
+    comptime n_pre_pad = d - half_len % d
+    comptime n_pre_remove = (half_len + n_pre_pad) // d
+    var taps = _kaiser_lowpass(numtaps, 1.0 / Float64(max_rate), beta)
+    var n_post_pad = 0
+    while (
+        (n - 1) * u + numtaps + n_pre_pad + n_post_pad - 1
+    ) // d + 1 < n_out + n_pre_remove:
+        n_post_pad += 1
+    var h = List[Scalar[dtype]](capacity=n_pre_pad + numtaps + n_post_pad)
+    for _ in range(n_pre_pad):
+        h.append(0)
+    for i in range(numtaps):
+        h.append(Scalar[dtype](taps[i] * Float64(u)))
+    for _ in range(n_post_pad):
+        h.append(0)
+    var nh = len(h)
+    var m = ((n - 1) * u + nh - 1) // d + 1
+    if _check_device[T, gpu](x):
+        comptime if gpu:
+            var hd = Dynamic[dtype, 1](
+                row_major(_dyn_shape[1](nh)), h^, x.context()
+            )
+            var full = _upfirdn_device[u, d](hd, x, m)
+            return _axis_gather["offset"](
+                full, Static[dtype, n_out]._static_layout(), 0, n_pre_remove
+            )
+    else:
+        _notice[gpu]("resample_poly")
+    var xv = x.to_host()
+    var out = List[Scalar[dtype]](capacity=n_out)
+    for k in range(n_pre_remove, n_pre_remove + n_out):
+        var at = k * d
+        var j = at % u
+        var acc = Scalar[dtype](0)
+        while j < nh and j <= at:
+            var i = (at - j) // u
+            if i < n:
+                acc += h[j] * xv[i]
+            j += u
+        out.append(acc)
+    return Static[dtype, n_out](out^, x.context())
+
+
+def _upfirdn_device[
+    H: TensorLike, X: TensorLike, //, up: Int, down: Int
+](h: H, x: X, m: Int) raises -> Dynamic[X.dtype, 1] where H.dtype == X.dtype:
+    """`upfirdn` on the device with a run-time filter length, into `m`
+    samples: the body `resample_poly` needs, whose padded filter length is
+    decided at run time. `h` and `x` are on one GPU context."""
+    comptime dtype = X.dtype
+    var n = x.size()
+    var nh = h.size()
+    var ctx = x.context()
+    var out = Dynamic[dtype, 1]._uninitialized(ctx, row_major(_dyn_shape[1](m)))
+    var hp = h.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var xp = x.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var yp = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def lane[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var hp, var xp, var yp, var n, var nh}:
+        var k = coord_to_index_list(coord)[0]
+        var at = k * down
+        var j = at % up
+        var acc = Scalar[dtype](0)
+        while j < nh and j <= at:
+            var i = (at - j) // up
+            if i < n:
+                acc += rebind[Scalar[dtype]](hp[unsafe_offset=j]) * rebind[
+                    Scalar[dtype]
+                ](xp[unsafe_offset=i])
+            j += up
+        yp[unsafe_offset=k] = acc
+
+    elementwise[simd_width=1, target="gpu"](lane, Coord(m), ctx)
+    ctx.synchronize()
+    return out^
+
+
 def resample[
     T: TensorLike,
     num: Int,
@@ -1978,6 +2267,7 @@ def firwin[
     window: StaticString = "hamming",
     scale: Bool = True,
     ctx: Optional[DeviceContext] = None,
+    beta: Float64 = 0.0,
 ) raises -> Static[dtype, numtaps] where (
     dtype.is_floating_point() and numtaps > 0
 ):
@@ -2010,6 +2300,8 @@ def firwin[
         window: `get_window` name of the symmetric taper.
         scale: Normalize to unit gain at the center of the first pass band.
         ctx: Device to upload the taps to; `None` uses the host.
+        beta: The Kaiser `beta` when `window` is `"kaiser"`, SciPy's
+            `window=("kaiser", beta)`; ignored by the other windows.
 
     Returns:
         The length-`numtaps` FIR coefficients on `ctx`.
@@ -2047,7 +2339,7 @@ def firwin[
     var device = ctx.value() if ctx else DeviceContext(api="cpu")
     var win = _as_float64(
         get_window[dtype=dtype, n=numtaps](
-            window, fftbins=False, ctx=device
+            window, beta, fftbins=False, ctx=device
         ).to_host()
     )
     for i in range(numtaps):

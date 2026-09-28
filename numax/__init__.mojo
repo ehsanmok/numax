@@ -598,6 +598,8 @@ from .signal.filters import (
     lfiltic,
     medfilt,
     resample,
+    resample_poly,
+    upfirdn,
     savgol_filter,
     sosfilt,
     sosfilt_zi,

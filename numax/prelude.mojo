@@ -540,6 +540,8 @@ from .signal.filters import (
     lfilter,
     medfilt,
     resample,
+    resample_poly,
+    upfirdn,
     savgol_filter,
     sosfilt,
     sosfilt_zi,
