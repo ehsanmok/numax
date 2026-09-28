@@ -123,7 +123,7 @@ from max.gpu.host import DeviceContext
 from std.collections import Array
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Static, Tensor, zeros
+from ..core.tensor import _DEVICE_FILL, Static, Tensor, zeros
 
 comptime _TWO_PI = 6.283185307179586
 comptime _PI = 3.141592653589793
@@ -1154,6 +1154,30 @@ def ifftshift[
     return _rolled2[gpu=gpu](x^, rows // 2, cols // 2)
 
 
+def _freq_device[
+    dtype: DType, n: Int, m: Int, kind: StaticString
+](spacing: Scalar[dtype], ctx: DeviceContext) raises -> Static[dtype, m]:
+    """`fftfreq` (`"full"`, `m == n`) or `rfftfreq` (`"half"`, `m == n//2
+    + 1`) filled on `ctx` from each index."""
+    var result = Static[dtype, m]._uninitialized(ctx)
+    var dst = result.tile()
+    var denominator = Scalar[dtype](n) * spacing
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var dst, var denominator}:
+        var i = coord_to_index_list(coord)[0]
+        var index = i
+        comptime if kind == "full":
+            index = i if i < (n + 1) // 2 else i - n
+        dst.store[1](coord, Scalar[dtype](index) / denominator)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(m), ctx)
+    ctx.synchronize()
+    return result^
+
+
 def fftfreq[
     dtype: DType, n: Int
 ](
@@ -1162,8 +1186,12 @@ def fftfreq[
     """The frequency grid `fft` output sits on. `numpy.fft.fftfreq`.
 
     `[0, 1, ..., n/2-1, -n/2, ..., -1] / (n * spacing)` -- the second half
-    is negative, which is what `fftshift` reorders.
+    is negative, which is what `fftshift` reorders. On a device context
+    it fills there in one launch; see `rfftfreq`.
     """
+    comptime if _DEVICE_FILL[dtype]:
+        if ctx and ctx.value().api() != "cpu":
+            return _freq_device[dtype, n, n, "full"](spacing, ctx.value())
     var values = List[Scalar[dtype]](capacity=n)
     var denominator = Scalar[dtype](n) * spacing
     for i in range(n):
@@ -1180,8 +1208,17 @@ def rfftfreq[
     spacing: Scalar[dtype] = 1, ctx: Optional[DeviceContext] = None
 ) raises -> Static[dtype, n // 2 + 1] where dtype.is_floating_point():
     """The frequency grid `rfft` output sits on: `[0, 1, ..., n/2] / (n *
-    spacing)`, all non-negative. `numpy.fft.rfftfreq`."""
+    spacing)`, all non-negative. `numpy.fft.rfftfreq`.
+
+    On a device context the grid fills there, one launch over the index
+    at the tensor's dtype, rather than uploading a host table; the gate is
+    `numax.core.tensor`'s factories' (`_DEVICE_FILL`: not at `float64`,
+    which Metal cannot compile).
+    """
     comptime keep = n // 2 + 1
+    comptime if _DEVICE_FILL[dtype]:
+        if ctx and ctx.value().api() != "cpu":
+            return _freq_device[dtype, n, keep, "half"](spacing, ctx.value())
     var values = List[Scalar[dtype]](capacity=keep)
     var denominator = Scalar[dtype](n) * spacing
     for i in range(keep):

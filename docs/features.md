@@ -464,7 +464,7 @@ not.
 | `rfft`, `irfft` — real input, half spectrum, and back (`irfft[n=...]`, since `n` cannot be read off the half) | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fft2`, `ifft2`, `rfft2` — rectangular 2-D transforms: the same lane engine along the rows, then along the columns through a zero-copy transposed view | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fftshift`, `ifftshift` — centring, at rank 1 and over both axes of a matrix; the two differ for odd `n` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
-| `fftfreq`, `rfftfreq` — frequency grids | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `fftfreq`, `rfftfreq` — frequency grids, filled on the device when `ctx` is one | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `next_fast_len` — the next power of two, the length this engine is fast at; a non-power-of-two `n` costs three transforms of `next_fast_len(2n - 1)` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `dct`, `idct`, `dst`, `idst` — types I-IV, `norm` `"backward"`/`"ortho"`/`"forward"`, SciPy's definitions; each is one complex DFT of length `2N` (`2(N∓1)` for type I) between a gather-and-weight pass and a twiddle-and-project pass, so all eight are three host tables over one kernel pair | [`fft/trig.mojo`](../numax/fft/trig.mojo) |
 
@@ -503,7 +503,7 @@ routed.
 |---|---|
 | `convolve`, `correlate` — `numpy.convolve`/`numpy.correlate` in `MODE_FULL` (default), `MODE_SAME` and `MODE_VALID`, one `elementwise` launch of dot products over the overlap | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
 | `fftconvolve` — the same answer through `numax.fft`: pad to `next_fast_len(m + k - 1)`, multiply the `rfft`s, `irfft`, slice; the route for a long kernel | [`signal/convolution.mojo`](../numax/signal/convolution.mojo) |
-| `boxcar`, `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `get_window` — `scipy.signal.windows` as `Tensor` factories, symmetric (`sym=True`, the factories' default) or periodic (`get_window`'s default `fftbins=True`) | [`signal/windows.mojo`](../numax/signal/windows.mojo) |
+| `boxcar`, `hann`, `hamming`, `blackman`, `bartlett`, `kaiser`, `get_window` — `scipy.signal.windows` as `Tensor` factories, symmetric (`sym=True`, the factories' default) or periodic (`get_window`'s default `fftbins=True`); a device `ctx` fills on the device in one launch | [`signal/windows.mojo`](../numax/signal/windows.mojo) |
 | `lfilter`, `lfilter_zi`, `filtfilt`, `sosfilt` — the recursive filters, SciPy's transposed direct form II, odd-padded forward-backward pass, second-order cascade. **Host-side by nature**: a recurrence has no lanes to launch. It reads and writes through the tensor's own host mapping rather than a `List` copy, computes at `dtype` (where SciPy computes), and runs its passes in place — `filtfilt` filters one extension buffer forwards then backwards over itself, `sosfilt` chains sections through one | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
 | `medfilt`, `detrend`, `savgol_filter` — a window per lane, one launch each; `savgol_filter` in all five of SciPy's edge modes and any derivative order, `detrend` linear or constant through two reductions | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
 | `resample`, `firwin` — Fourier resampling with SciPy's Nyquist-bin rule, and the window-method design for lowpass, highpass, bandpass, bandstop and multiband responses | [`signal/filters.mojo`](../numax/signal/filters.mojo) |
@@ -512,8 +512,8 @@ routed.
 | `find_peaks` — local maxima with `height`, `threshold`, `distance`, as a `List[Int]` like `nonzero` | [`signal/peaks.mojo`](../numax/signal/peaks.mojo) |
 | `butter`, `cheby1`, `cheby2`, `ellip`, `iirfilter`, `freqz` — IIR design on SciPy's exact route (analog prototype, warped edge, `lp2lp`/`lp2hp`/`lp2bp`/`lp2bs`, bilinear at `fs = 2`, `zpk2tf`) into a `TransferFunction`, and the response on the unit circle. Each family takes a single `wn` for `"lowpass"`/`"highpass"` at `order`, or a `(low, high)` tuple for `"bandpass"`/`"bandstop"` at `2 * order` — the band forms double the order and a `StaticString` cannot steer a return type, so the tuple is the dispatch. `iirfilter` is the named-`ftype` front door over all four; an unknown name raises. `ellip` takes its complete `K(m)` from an arithmetic-geometric mean local to the module rather than the tier-1 `elliptic_k`, whose `2e-8` would show up in the coefficients | [`signal/design.mojo`](../numax/signal/design.mojo) |
 
-Tier 2: host-driven, device-resident; the windows are host tables uploaded
-once. `apply_window` has no `Tensor` spelling because `multiply` already is
+Tier 2: host-driven, device-resident; the windows fill on the device for a
+device `ctx`. `apply_window` has no `Tensor` spelling because `multiply` already is
 one.
 
 | Surface — over `Array[T, n]`, from `numax.signal.array` | Where |
