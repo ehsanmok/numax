@@ -35,12 +35,22 @@ matches first and still returns the input's own layout type. A stretched
 axis has stride 0, so the broadcast bodies run one element per thread and
 rebuild each operand's offset in integer arithmetic.
 
+`logaddexp`, `logaddexp2`, `sinc`, `heaviside` and `nan_to_num` are the
+NumPy names that are compositions rather than one `std.math` call; each is
+still one uniform body, both sides of every `select` evaluated and safe.
+
 `tanh` is the one name this module shares with `numax.special.activations`,
 which has the `FloatLike` scalar of the same name. The root package exports
 the activation, because that is the one a kernel calls; the tensor form here
 is `numax.core.tanh`.
 """
 
+from std.utils.numerics import (
+    inf as _inf,
+    max_finite as _max_finite,
+    min_finite as _min_finite,
+    neg_inf as _neg_inf,
+)
 from std.math import (
     acos as _std_acos,
     acosh as _std_acosh,
@@ -1051,6 +1061,11 @@ def _sign_op[
     return x.lt(zero).select(SIMD[dtype, w](-1), pos) + (x - x)
 
 
+comptime _PI = 3.141592653589793
+comptime _LN2 = 0.6931471805599453
+comptime _LOG2E = 1.4426950408889634
+
+
 def sign[
     T: TensorLike, gpu: Bool = False
 ](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
@@ -1777,6 +1792,297 @@ def gradient[
     return out^
 
 
+def _log1p_small[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
+    """`log(1 + x)` for `x` in `[0, 1]`, accurate to a few ulp at every
+    dtype: Goldberg's `log(u) * x / (u - 1)` with `u = 1 + x`, over numax's
+    own `log`. `std.math.log1p` is only about `float32`-accurate at
+    `float64`. Where `u` rounds to `1`, `x` is the answer."""
+    var u = SIMD[dtype, w](1) + x
+    var d = u - SIMD[dtype, w](1)
+    var exact = d.eq(SIMD[dtype, w](0))
+    var safe = exact.select(SIMD[dtype, w](1), d)
+    return exact.select(x, _std_log(u) * x / safe)
+
+
+def _logaddexp_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    # `max + log1p(exp(min - max))` never overflows. Equal operands take the
+    # `a + ln 2` branch, which is what keeps `logaddexp(-inf, -inf) == -inf`
+    # and `logaddexp(inf, inf) == inf` rather than the `inf - inf` NaN; a
+    # NaN on either side is carried by `a + b`.
+    var big = max(a, b)
+    var r = big + _log1p_small(_std_exp(min(a, b) - big))
+    var same = a.eq(b).select(a + SIMD[dtype, w](_LN2), r)
+    return (_std_isnan(a) | _std_isnan(b)).select(a + b, same)
+
+
+def logaddexp[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """Elementwise `log(exp(a) + exp(b))` without overflow.
+    `numpy.logaddexp`.
+
+    Computed as `max(a, b) + log1p(exp(min(a, b) - max(a, b)))`, so neither exponential
+    is formed at full size; equal infinities give that infinity back, and
+    a NaN on either side gives NaN. The reduction over a whole tensor is
+    `numax.special.logsumexp`.
+
+    Parameters:
+        T: The `TensorLike` type of both operands, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of first log-magnitudes.
+        b: Tensor of second log-magnitudes. At `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `T.dtype` holding
+        `log(exp(a) + exp(b))` for every element pair.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_logaddexp_op[dtype, _], gpu=gpu, name="logaddexp"](
+        a, b
+    )
+
+
+def _logaddexp2_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    # `logaddexp` in base 2: `max + log2(1 + 2**(min - max))`, with the same
+    # equal-operand and NaN branches (`a + 1` is `log2(2 * 2**a)`).
+    var big = max(a, b)
+    var t = (min(a, b) - big) * SIMD[dtype, w](_LN2)
+    var r = big + _log1p_small(_std_exp(t)) * SIMD[dtype, w](_LOG2E)
+    var same = a.eq(b).select(a + SIMD[dtype, w](1), r)
+    return (_std_isnan(a) | _std_isnan(b)).select(a + b, same)
+
+
+def logaddexp2[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """Elementwise `log2(2**a + 2**b)` without overflow. `numpy.logaddexp2`.
+
+    `logaddexp` in base 2, with the same handling of equal infinities and
+    NaN.
+
+    Parameters:
+        T: The `TensorLike` type of both operands, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of first base-2 log-magnitudes.
+        b: Tensor of second base-2 log-magnitudes. At `a`'s shape.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `T.dtype` holding
+        `log2(2**a + 2**b)` for every element pair.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_logaddexp2_op[dtype, _], gpu=gpu, name="logaddexp2"](
+        a, b
+    )
+
+
+def _heaviside_op[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], h0: SIMD[dtype, w]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    var zero = SIMD[dtype, w](0)
+    var step = x.gt(zero).select(SIMD[dtype, w](1), zero)
+    # `+ (x - x)` carries a NaN `x` through, as in `sign`.
+    return x.eq(zero).select(h0, step) + (x - x)
+
+
+def heaviside[
+    T: TensorLike, gpu: Bool = False
+](x: T, h0: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """The Heaviside step: `0` below zero, `h0` at zero, `1` above.
+    `numpy.heaviside`.
+
+    `-0.0` is zero, so it takes `h0` too; a NaN `x` gives NaN, as NumPy
+    does. The broadcasting overload below is the one a scalar `h0` wants,
+    against a one-element tensor.
+
+    Parameters:
+        T: The `TensorLike` type of both operands, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        x: Tensor of inputs to the step.
+        h0: Tensor of the values taken where `x == 0`. At `x`'s shape.
+
+    Returns:
+        A new `Tensor` at `x`'s layout and `T.dtype` holding `0`, `h0` or `1`
+        by the sign of each element of `x`.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return binary[T, op=_heaviside_op[dtype, _], gpu=gpu, name="heaviside"](
+        x, h0
+    )
+
+
+def _sinc_op[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
+    # Both sides of the select are evaluated, so the zero lanes divide by a
+    # stand-in `1` rather than by `0`.
+    var zero = SIMD[dtype, w](0)
+    var px = x * SIMD[dtype, w](_PI)
+    var at_zero = x.eq(zero)
+    var safe = at_zero.select(SIMD[dtype, w](1), px)
+    return at_zero.select(SIMD[dtype, w](1), _std_sin(safe) / safe)
+
+
+def sinc[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """The normalized sinc, `sin(pi x) / (pi x)`, with `sinc(0) == 1`.
+    `numpy.sinc`.
+
+    Normalized, as NumPy's is: its zeros are the nonzero integers. The
+    unnormalized `sin(x) / x` is `sinc(x / pi)`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of inputs.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `T.dtype` holding
+        `sin(pi x) / (pi x)` for every element, and `1` where it is zero.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    return unary[T, op=_sinc_op[dtype, _], gpu=gpu, name="sinc"](a)
+
+
+def nan_to_num[
+    T: TensorLike, gpu: Bool = False
+](
+    a: T,
+    nan: Scalar[T.dtype] = 0,
+    posinf: Optional[Scalar[T.dtype]] = None,
+    neginf: Optional[Scalar[T.dtype]] = None,
+) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """NaN and the infinities replaced by finite values. `numpy.nan_to_num`.
+
+    NaN becomes `nan`, `+inf` becomes `posinf` and `-inf` becomes `neginf`;
+    an unset infinity takes the largest finite value of its sign, as NumPy
+    does. Every other element is copied. A new tensor, never in place --
+    NumPy's `copy=False` has no counterpart here.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a row-major layout over a
+            floating-point dtype.
+        gpu: `True` runs on the tensor's device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor to clean.
+        nan: Value written for a NaN.
+        posinf: Value written for `+inf`; the largest finite value if unset.
+        neginf: Value written for `-inf`; the most negative finite value if
+            unset.
+
+    Returns:
+        A new `Tensor` at `a`'s layout and `T.dtype` with every NaN and
+        infinity replaced.
+
+    Raises:
+        If allocating the result or launching the walk fails, or on a residency
+        mismatch under the `"raise"` fallback policy.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    var nan_value = nan
+    var pos_value = posinf.or_else(_max_finite[dtype]())
+    var neg_value = neginf.or_else(_min_finite[dtype]())
+    if not _check_device[gpu=gpu](a):
+        _notice[gpu]("nan_to_num")
+        var values = a.to_host()
+        for i in range(len(values)):
+            var x = values[i]
+            if x != x:
+                values[i] = nan_value
+            elif x == _inf[dtype]():
+                values[i] = pos_value
+            elif x == _neg_inf[dtype]():
+                values[i] = neg_value
+        return Tensor[dtype, LayoutType](a.tile().layout, values^, a.context())
+
+    var ctx = a.context()
+    var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
+    var xs = _flat(a)
+    var ys = _flat_out(out)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var xs, var ys, var nan_value, var pos_value, var neg_value
+    }:
+        var x = xs.load[width](coord)
+        var r = x.eq(SIMD[dtype, width](_inf[dtype]())).select(
+            SIMD[dtype, width](pos_value), x
+        )
+        r = x.eq(SIMD[dtype, width](_neg_inf[dtype]())).select(
+            SIMD[dtype, width](neg_value), r
+        )
+        ys.store[width](
+            coord, _std_isnan(x).select(SIMD[dtype, width](nan_value), r)
+        )
+
+    _launch[gpu=gpu, lanes=_width[dtype, gpu]()](body, a.size(), ctx)
+    return out^
+
+
 # The broadcasting forms, matching `numax.core.ops`: same operation, two
 # shapes NumPy would broadcast rather than one shape twice, and a `Dynamic`
 # result because the broadcast extents are run-time values.
@@ -2135,4 +2441,139 @@ def fmin[
         op=_fmin_op[dtype, _],
         gpu=gpu,
         name="fmin",
+    ](a, b)
+
+
+def logaddexp[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
+    """`logaddexp` at two broadcastable shapes.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major and floating-point.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of first log-magnitudes. Read through stride 0 on any axis it stretches.
+        b: Tensor of second log-magnitudes. At a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `A.dtype` at the broadcast
+        shape of `a` and `b`, holding `log(exp(a) + exp(b))`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[
+        A,
+        B,
+        op=_logaddexp_op[dtype, _],
+        gpu=gpu,
+        name="logaddexp",
+    ](a, b)
+
+
+def logaddexp2[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
+    """`logaddexp2` at two broadcastable shapes.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major and floating-point.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of first base-2 log-magnitudes. Read through stride 0 on any axis it stretches.
+        b: Tensor of second base-2 log-magnitudes. At a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `A.dtype` at the broadcast
+        shape of `a` and `b`, holding `log2(2**a + 2**b)`.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[
+        A,
+        B,
+        op=_logaddexp2_op[dtype, _],
+        gpu=gpu,
+        name="logaddexp2",
+    ](a, b)
+
+
+def heaviside[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, b: B) raises -> Dynamic[
+    A.dtype, _BroadcastRank[A.LayoutType, B.LayoutType]
+] where (
+    A.dtype == B.dtype
+    and is_row_major[A]
+    and is_row_major[B]
+    and A.dtype.is_floating_point()
+):
+    """`heaviside` at two broadcastable shapes.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, row-major and floating-point.
+        B: The `TensorLike` type of `b`, row-major, with `A`'s dtype.
+        gpu: `True` runs on the tensors' device, `False` on the host; a
+            residency mismatch falls back to the host with a `stderr` notice.
+
+    Args:
+        a: Tensor of inputs to the step. Read through stride 0 on any axis it stretches.
+        b: Tensor of the values taken where `a == 0`. At a shape that broadcasts against `a`'s.
+
+    Returns:
+        A new run-time-shaped `Dynamic` tensor of `A.dtype` at the broadcast
+        shape of `a` and `b`, holding the step of `a` with `b` at zero.
+
+    Raises:
+        If the two shapes do not broadcast, if allocating the result or
+        launching the walk fails, or on a residency mismatch under the `"raise"`
+        fallback policy.
+    """
+    comptime dtype = A.dtype
+    comptime ALayout = A.LayoutType
+    comptime BLayout = B.LayoutType
+    return broadcast_binary[
+        A,
+        B,
+        op=_heaviside_op[dtype, _],
+        gpu=gpu,
+        name="heaviside",
     ](a, b)
