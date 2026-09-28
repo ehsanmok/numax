@@ -1,14 +1,22 @@
 """Solvers for banded and Toeplitz systems. `scipy.linalg`'s `solve_banded`
 family.
 
-**This module is tier 2, `Plain`-only, and host-side, and that is not a
-staging post.** A banded elimination has no `O(n^3)` term: its work is
+**This module is tier 2 and `Plain`-only, and its pivoted eliminations
+are host-side.** A banded elimination has no `O(n^3)` term: its work is
 `O(n * bandwidth^2)`, spread over `n` sequential column steps that each
 touch a `bandwidth x bandwidth` corner. There is no GEMM to hand anything
 to, which is the same reason `numax.linalg.array.tridiagonal_solve` stays
-where it is. So this is an **entry-surface** commit -- it adds names a
-SciPy user reaches for and a shape numax could not express, not a faster
-path to an answer numax already had.
+where it is. So this is an **entry surface** -- it adds names a SciPy user
+reaches for and a shape numax could not express, not a faster path to an
+answer numax already had.
+
+The one device path is the tridiagonal case, `solve_banded[l=1, u=1,
+gpu=True]`: parallel cyclic reduction, `ceil(log2 n)` launches that each
+eliminate every equation's neighbours at once. It does not pivot, so it
+is for the systems that need none -- diagonally dominant, as a spline's
+or a second-difference operator's is -- and `numax.interpolate` builds
+its splines on it. Every other bandwidth at `gpu=True` runs the host
+elimination and says so on `stderr`.
 
 The dense `numax.linalg.solve` is the alternative and it is not a silly
 one: it is blocked, device-resident, and sends its cubic term through
@@ -68,8 +76,98 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
 from ..core.rowwise import reduce_all
+from ..core._drive import _notice
 from ..core.tensor import _canonical, _same_order, Static, copy, zeros
 from ..fft.fft import Spectrum, fft, ifft
+
+
+def _tridiagonal_device[
+    dtype: DType, n: Int
+](
+    var sub: Static[dtype, n],
+    var diag: Static[dtype, n],
+    var sup: Static[dtype, n],
+    var rhs: Static[dtype, n],
+    ctx: DeviceContext,
+) raises -> Static[dtype, n]:
+    """The tridiagonal system `sub[i] x[i-1] + diag[i] x[i] + sup[i] x[i+1]
+    = rhs[i]` on the device, by parallel cyclic reduction.
+
+    Each of `ceil(log2(n))` launches eliminates the neighbours `s` places
+    away from every equation at once (`s = 1, 2, 4, ...`), between two sets
+    of buffers, until every equation stands alone and `x = rhs / diag`.
+    `O(n log n)` work, every step parallel. **No pivoting**, so it wants a
+    system that needs none -- diagonally dominant, as a spline's is; a
+    general tridiagonal system is `solve_banded`'s host path. `sub[0]` and
+    `sup[n - 1]` are ignored.
+    """
+    var sub2 = Static[dtype, n]._uninitialized(ctx)
+    var diag2 = Static[dtype, n]._uninitialized(ctx)
+    var sup2 = Static[dtype, n]._uninitialized(ctx)
+    var rhs2 = Static[dtype, n]._uninitialized(ctx)
+    var s = 1
+    while s < n:
+        var a = sub.tile().as_unsafe_any_origin()
+        var b = diag.tile().as_unsafe_any_origin()
+        var c = sup.tile().as_unsafe_any_origin()
+        var d = rhs.tile().as_unsafe_any_origin()
+        var a2 = sub2.tile().as_unsafe_any_origin()
+        var b2 = diag2.tile().as_unsafe_any_origin()
+        var c2 = sup2.tile().as_unsafe_any_origin()
+        var d2 = rhs2.tile().as_unsafe_any_origin()
+
+        @always_inline
+        def reduce[
+            width: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var a, var b, var c, var d, var a2, var b2, var c2, var d2, var s
+        }:
+            var i = coord_to_index_list(coord)[0]
+            var ai = a[coord][0] if i > 0 else Scalar[dtype](0)
+            var ci = c[coord][0] if i < n - 1 else Scalar[dtype](0)
+            var nb = b[coord][0]
+            var nd = d[coord][0]
+            var na = Scalar[dtype](0)
+            var nc = Scalar[dtype](0)
+            if i - s >= 0:
+                var alpha = -ai / b[Coord(i - s)][0]
+                na = alpha * (
+                    a[Coord(i - s)][0] if i - s > 0 else Scalar[dtype](0)
+                )
+                nb += alpha * c[Coord(i - s)][0]
+                nd += alpha * d[Coord(i - s)][0]
+            if i + s < n:
+                var gamma = -ci / b[Coord(i + s)][0]
+                nc = gamma * (
+                    c[Coord(i + s)][0] if i + s < n - 1 else Scalar[dtype](0)
+                )
+                nb += gamma * a[Coord(i + s)][0]
+                nd += gamma * d[Coord(i + s)][0]
+            a2.store[1](coord, na)
+            b2.store[1](coord, nb)
+            c2.store[1](coord, nc)
+            d2.store[1](coord, nd)
+
+        elementwise[simd_width=1, target="gpu"](reduce, Coord(n), ctx)
+        swap(sub, sub2)
+        swap(diag, diag2)
+        swap(sup, sup2)
+        swap(rhs, rhs2)
+        s *= 2
+    var x = Static[dtype, n]._uninitialized(ctx)
+    var bv = diag.tile().as_unsafe_any_origin()
+    var dv = rhs.tile().as_unsafe_any_origin()
+    var xv = x.tile()
+
+    @always_inline
+    def finish[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var bv, var dv, var xv}:
+        xv.store[1](coord, dv[coord][0] / bv[coord][0])
+
+    elementwise[simd_width=1, target="gpu"](finish, Coord(n), ctx)
+    ctx.synchronize()
+    return x^
 
 
 def solve_banded[
@@ -77,6 +175,7 @@ def solve_banded[
     B: TensorLike,
     l: Int,
     u: Int,
+    gpu: Bool = False,
 ](ab: A, b: B) raises -> Static[A.dtype, dim[A, 1]] where (
     (A.dtype.is_floating_point() and l >= 0 and u >= 0 and dim[A, 1] >= 1)
     and A.LayoutType.rank == 2
@@ -107,9 +206,58 @@ def solve_banded[
 
     A zero pivot -- a singular matrix, or one whose band is misdescribed --
     raises rather than returning infinities.
+
+    At `gpu=True` with `l == u == 1` and `ab` on a device, the solve stays
+    there: cyclic reduction **without pivoting**, so the system must not
+    need it (diagonal dominance suffices), and a zero pivot is not
+    detected. Any other bandwidth at `gpu=True` takes the host path above
+    and prints the `_drive` notice.
     """
     comptime n = dim[A, 1]
     var ctx = ab.context()
+    comptime if gpu and l == 1 and u == 1:
+        if not ab.on_host():
+            # The tridiagonal case on the device, by cyclic reduction
+            # without pivoting (`_tridiagonal_device` says what it wants of
+            # the system); other bandwidths stay on the host.
+            var sub = Static[A.dtype, n]._uninitialized(ctx)
+            var diag = Static[A.dtype, n]._uninitialized(ctx)
+            var sup = Static[A.dtype, n]._uninitialized(ctx)
+            var abv = ab.tile().as_unsafe_any_origin()
+            var sv = sub.tile()
+            var dv = diag.tile()
+            var uv = sup.tile()
+
+            @always_inline
+            def split[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var abv, var sv, var dv, var uv}:
+                var j = coord_to_index_list(coord)[0]
+                dv.store[1](coord, abv[Coord(1, j)][0])
+                sv.store[1](
+                    coord,
+                    abv[Coord(2, j - 1)][0] if j > 0 else Scalar[A.dtype](0),
+                )
+                uv.store[1](
+                    coord,
+                    abv[Coord(0, j + 1)][0] if j
+                    < n - 1 else Scalar[A.dtype](0),
+                )
+
+            elementwise[simd_width=1, target="gpu"](split, Coord(n), ctx)
+            return _tridiagonal_device[A.dtype, n](
+                sub^,
+                diag^,
+                sup^,
+                _same_order(
+                    _canonical[n, dtype=A.dtype](b),
+                    Static[A.dtype, n]._static_layout(),
+                ),
+                ctx,
+            )
+    elif gpu:
+        if not ab.on_host():
+            _notice[gpu]("solve_banded")
     var band = ab.to_host()
     var rhs = b.to_host[A.dtype]()
 
