@@ -53,8 +53,12 @@ from ..core.plain import Plain
 from .array.ode import dopri5_step
 from .ode import dopri5_step as _tensor_dopri5_step
 from ..core.tensorlike import TensorLike, dim
-from ..core.tensor import Static, copy
+from ..core.tensor import _same_order, Static, copy
 from max.gpu.host import DeviceContext
+from algorithm.rowwise_types import RowCoord
+from layout import Coord, coord_to_index_list
+from max.algorithm.functional import elementwise
+from ..core.rowwise import reduce_all
 from .array.quadrature import (
     _gauss_legendre_nodes,
     _gauss_legendre_weights,
@@ -361,7 +365,7 @@ def solve_ivp[
 
 
 def _max_abs_ratio[
-    dtype: DType, n: Int
+    dtype: DType, n: Int, gpu: Bool = False
 ](
     mut y: Static[dtype, n],
     mut y_next: Static[dtype, n],
@@ -374,7 +378,47 @@ def _max_abs_ratio[
 
     At `n == 1` this is exactly the scalar `solve_ivp`'s ratio, which is
     what lets the test pin the two against each other step for step.
+
+    At `gpu=True` on device-resident states it is one launch writing each
+    component's ratio and a device `max`, so one scalar crosses back per
+    step rather than three state vectors.
     """
+    comptime if gpu:
+        if not y.on_host():
+            var ctx = y.context()
+            var ratios = Static[dtype, n]._uninitialized(ctx)
+            var ap = y.tile()
+            var bp = y_next.tile()
+            var cp = y_hat.tile()
+            var rp = ratios.tile()
+            var lo = Scalar[dtype](atol)
+            var rel = Scalar[dtype](rtol)
+
+            @always_inline
+            def ratio[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var ap, var bp, var cp, var rp, var lo, var rel}:
+                var a = ap[coord][0]
+                var b = bp[coord][0]
+                var scale = lo + rel * max(abs(a), abs(b))
+                var err = abs(b - cp[coord][0])
+                rp.store[1](
+                    coord, err / scale if scale > 0 else Scalar[dtype](0)
+                )
+
+            elementwise[simd_width=1, target="gpu"](ratio, Coord(n), ctx)
+            var worst = Static[dtype, 1](ctx)
+
+            @always_inline
+            def identity[
+                w: Int
+            ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+                return tile
+
+            reduce_all[monoid="max", target="gpu"](
+                ratios.tile(), worst.tile(), identity, n, Optional(ctx)
+            )
+            return Float64(worst.to_host()[0])
     var a = y.to_host()
     var b = y_next.to_host()
     var c = y_hat.to_host()
@@ -441,20 +485,21 @@ def solve_ivp[
     `|y5 - y4| / (atol + rtol * max(|y|, |y5|))`, which at `n == 1` is the
     scalar controller's ratio exactly -- so on a one-component problem the
     two take the same steps and return the same counts, and a test says so.
-    Reading those two vectors back each step is the one host round trip in
-    the loop, and the decision it feeds is what makes this tier 2.
+    The step decision is host control flow over one scalar per step, which
+    is what makes this tier 2; at `gpu=True` the ratio itself is computed on
+    the device and the state never leaves it.
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     if t0 == t1:
         return IVPResult[dtype, n](
-            t0, Static[dtype, n](y0.context(), y0.to_host()), 0, 0, True
+            t0, _same_order(y0, Static[dtype, n]._static_layout()), 0, 0, True
         )
 
     var direction = 1.0 if t1 > t0 else -1.0
     var span = abs(t1 - t0)
     var t = t0
-    var y = Static[dtype, n](y0.context(), y0.to_host())
+    var y = _same_order(y0, Static[dtype, n]._static_layout())
     var h = direction * span / 100.0
     var accepted = 0
     var rejected = 0
@@ -466,7 +511,9 @@ def solve_ivp[
             h = t1 - t
 
         var stepped = _tensor_dopri5_step[f=f, gpu=gpu](t, y, h)
-        var ratio = _max_abs_ratio(y, stepped.y, stepped.y_hat, rtol, atol)
+        var ratio = _max_abs_ratio[gpu=gpu](
+            y, stepped.y, stepped.y_hat, rtol, atol
+        )
 
         if ratio <= 1.0:
             t += h

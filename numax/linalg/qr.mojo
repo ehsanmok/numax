@@ -40,6 +40,7 @@ from ..core.tensor import (
     transpose,
     zeros,
     zeros_dyn,
+    _axis_gather,
 )
 
 from .basic import pinv
@@ -747,14 +748,21 @@ struct RQ[dtype: DType, n: Int](
 
 def _reverse_rows[
     T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
     T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
     and dim[T, 1] == dim[T, 0]
 ):
     """`J A`, with `J` the reversal permutation: row `i` becomes row
-    `n - 1 - i`. Host-side, `n` row copies."""
+    `n - 1 - i`. On a device, a flip along axis 0; on the host, `n` row
+    copies."""
     comptime n = dim[T, 0]
+    comptime if gpu:
+        if not a.on_host():
+            return _axis_gather["flip"](
+                a, Static[T.dtype, n, n]._static_layout(), 0, 0
+            )
     var source = a.to_host()
     var values = List[Scalar[T.dtype]](length=n * n, fill=0)
     for i in range(n):
@@ -765,6 +773,7 @@ def _reverse_rows[
 
 def _reverse_both[
     T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
     T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -775,9 +784,17 @@ def _reverse_both[
 
     This is the step that turns a lower triangular matrix into an upper
     triangular one, which is what makes the reversal trick below produce
-    an `R` rather than an `L`.
+    an `R` rather than an `L`. On a device, flips along both axes.
     """
     comptime n = dim[T, 0]
+    comptime if gpu:
+        if not a.on_host():
+            var rows = _axis_gather["flip"](
+                a, Static[T.dtype, n, n]._static_layout(), 0, 0
+            )
+            return _axis_gather["flip"](
+                rows, Static[T.dtype, n, n]._static_layout(), 1, 0
+            )
     var source = a.to_host()
     var values = List[Scalar[T.dtype]](length=n * n, fill=0)
     for i in range(n):
@@ -826,7 +843,7 @@ def rq[
     `O(n^3)` on the device.
     """
     comptime n = dim[T, 0]
-    var reversed = _reverse_rows(a)
+    var reversed = _reverse_rows[gpu=gpu](a)
     var transposed = transpose[gpu=gpu](reversed)
     var factored = qr_factor[gpu=gpu, block=block](transposed)
 
@@ -836,4 +853,6 @@ def rq[
     var rb_t = transpose[gpu=gpu](rb)
     var qb_t = transpose[gpu=gpu](qb)
 
-    return RQ[T.dtype, n](_reverse_both(rb_t), _reverse_rows(qb_t))
+    return RQ[T.dtype, n](
+        _reverse_both[gpu=gpu](rb_t), _reverse_rows[gpu=gpu](qb_t)
+    )

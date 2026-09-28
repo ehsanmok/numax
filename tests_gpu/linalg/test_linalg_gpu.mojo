@@ -8,7 +8,15 @@ from std.testing import TestSuite, assert_almost_equal, assert_equal
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Static
-from numax.linalg import NORM_INF, NORM_NEG_INF, cholesky, matmul, norm, solve
+from numax.linalg import (
+    NORM_INF,
+    NORM_NEG_INF,
+    cholesky,
+    matmul,
+    norm,
+    rq,
+    solve,
+)
 
 comptime f32 = DType.float32
 comptime n = 96
@@ -86,6 +94,17 @@ def test_the_extremal_norms_on_the_device_match_the_host() raises:
         norm[ord=NORM_NEG_INF, gpu=True](_rhs(gpu)),
         norm[ord=NORM_NEG_INF](_rhs(cpu)),
     )
+
+
+def test_rq_on_the_device_matches_the_host() raises:
+    """`rq`'s reversals are device flips now; both factors match the
+    host's."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var d = rq[gpu=True](_spd(gpu))
+    var h = rq(_spd(cpu))
+    _assert_close(d.r.to_host(), h.r.to_host(), atol=1e-2)
+    _assert_close(d.q.to_host(), h.q.to_host(), atol=1e-4)
 
 
 def main() raises:

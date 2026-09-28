@@ -35,7 +35,7 @@ from max.gpu.host import DeviceContext
 from std.sys.info import simd_width_of
 
 from ..core.tensorlike import TensorLike, dim
-from ..core.tensor import Static, copy
+from ..core.tensor import _same_order, Static, copy
 
 from .array.ode import (
     _A21,
@@ -130,7 +130,7 @@ def rk4_system[
     comptime n = dim[T, 0]
     var ctx = y0.context()
     var h = (t1 - t0) / Float64(num_steps)
-    var y = Static[dtype, n](ctx, y0.to_host())
+    var y = _same_order(y0, Static[dtype, n]._static_layout())
 
     for step in range(num_steps):
         var t = t0 + Float64(step) * h
@@ -206,7 +206,7 @@ def dopri5_step[
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     var ctx = y_in.context()
-    var y = Static[dtype, n](ctx, y_in.to_host())
+    var y = _same_order(y_in, Static[dtype, n]._static_layout())
     var hs = Scalar[dtype](h)
 
     var k1 = f(Scalar[dtype](t), y, ctx)
@@ -280,7 +280,7 @@ def dopri5[
     comptime n = dim[T, 0]
     var h = (t1 - t0) / Float64(num_steps)
     var ctx = y0.context()
-    var y = Static[dtype, n](ctx, y0.to_host())
+    var y = _same_order(y0, Static[dtype, n]._static_layout())
     for step in range(num_steps):
         var t = t0 + Float64(step) * h
         var stepped = dopri5_step[f=f, gpu=gpu](t, y, h)

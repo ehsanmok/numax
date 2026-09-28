@@ -21,6 +21,9 @@ from test_linalg_gpu import (
 from test_linalg_gpu import (
     test_the_extremal_norms_on_the_device_match_the_host as test_linalg_gpu__test_the_extremal_norms_on_the_device_match_the_host,
 )
+from test_linalg_gpu import (
+    test_rq_on_the_device_matches_the_host as test_linalg_gpu__test_rq_on_the_device_matches_the_host,
+)
 from test_spectral_gpu import (
     test_eigvalsh_on_the_device_matches_the_host as test_spectral_gpu__test_eigvalsh_on_the_device_matches_the_host,
 )
@@ -59,6 +62,7 @@ def main() raises:
     suite.test[
         test_linalg_gpu__test_the_extremal_norms_on_the_device_match_the_host
     ]()
+    suite.test[test_linalg_gpu__test_rq_on_the_device_matches_the_host]()
     # tests_gpu/linalg/test_spectral_gpu.mojo
     suite.test[
         test_spectral_gpu__test_eigvalsh_on_the_device_matches_the_host

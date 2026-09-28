@@ -60,8 +60,18 @@ from std.math import sqrt as _sqrt
 
 from max.gpu.host import DeviceContext
 
+from ..core.ops import multiply, negative, subtract
 from ..core.tensorlike import TensorLike, dim
-from ..core.tensor import Static
+from ..core.tensor import (
+    _canonical,
+    _same_order,
+    Static,
+    concatenate,
+    eye,
+    transpose,
+    vstack,
+)
+from ..linalg.blas import dot, matvec
 from ..linalg.qr import lstsq
 
 from .common import _as_tensor
@@ -154,6 +164,51 @@ def _cost_of(residual: List[Float64], count: Int) -> Float64:
     return total / 2
 
 
+def _cost_device[
+    dtype: DType, m: Int
+](r: Static[dtype, m]) raises -> Float64 where dtype.is_floating_point():
+    """`sum(r**2) / 2` as one device dot product."""
+    return Float64(dot[gpu=True](r, r)) / 2
+
+
+def _grad_norm_device[
+    dtype: DType, m: Int, p: Int
+](j: Static[dtype, m, p], r: Static[dtype, m]) raises -> Float64:
+    """`max|J^T r|`: `J^T r` on the device, `p` numbers back."""
+    var slope = matvec[gpu=True](transpose[gpu=True](j), r).to_host()
+    var largest = 0.0
+    for k in range(p):
+        largest = max(largest, abs(Float64(slope[k])))
+    return largest
+
+
+def _damped_step_device[
+    dtype: DType, m: Int, p: Int, block: Int
+](
+    j: Static[dtype, m, p],
+    r: Static[dtype, m],
+    damping: Float64,
+    ctx: DeviceContext,
+) raises -> List[Float64] where (
+    dtype.is_floating_point() and m + p >= p and p >= 1
+):
+    """`_damped_step` with `[J; sqrt(damping) I]` and `[-r; 0]` assembled on
+    the device and solved by `lstsq[gpu=True]`; the `p`-long step comes
+    back, the rest never leaves."""
+    var scaled = multiply[gpu=True](
+        eye[p, dtype](ctx), Scalar[dtype](_sqrt(damping))
+    )
+    var a = vstack[gpu=True](j, scaled)
+    var rhs = concatenate[gpu=True](
+        negative[gpu=True](r), Static[dtype, p](ctx)
+    )
+    var solved = lstsq[gpu=True, block=block](a, rhs).to_host()
+    var step = List[Float64](capacity=p)
+    for k in range(p):
+        step.append(Float64(solved[k]))
+    return step^
+
+
 def least_squares[
     T: TensorLike,
     n_resid: Int,
@@ -214,6 +269,59 @@ def least_squares[
     var cost = 0.0
     var grad_norm = 0.0
     var damping = 1e-3
+
+    comptime if gpu:
+        if not x0.on_host():
+            # Device-resident: the residuals, the Jacobian and the damped
+            # system stay on the device, and each iteration moves only the
+            # `n_params` parameters and step plus a few scalars.
+            for iteration in range(max_iter):
+                var point = _as_tensor[dtype, n_params](current, ctx)
+                var r = residuals(point, ctx)
+                var jac = jacobian(point, ctx)
+                cost = _cost_device(r)
+                grad_norm = _grad_norm_device(jac, r)
+                if grad_norm < tol:
+                    return FitResult[dtype, n_params](
+                        _as_tensor[dtype, n_params](current, ctx),
+                        cost,
+                        grad_norm,
+                        iteration,
+                        True,
+                    )
+                var accepted = False
+                var candidate = List[Float64](capacity=n_params)
+                for _ in range(30):
+                    var step = _damped_step_device[block=block](
+                        jac, r, damping, ctx
+                    )
+                    candidate = List[Float64](capacity=n_params)
+                    for j in range(n_params):
+                        candidate.append(current[j] + step[j])
+                    var trial_point = _as_tensor[dtype, n_params](
+                        candidate, ctx
+                    )
+                    if _cost_device(residuals(trial_point, ctx)) < cost:
+                        accepted = True
+                        damping = max(damping / 3, 1e-12)
+                        break
+                    damping = damping * 3
+                if not accepted:
+                    return FitResult[dtype, n_params](
+                        _as_tensor[dtype, n_params](current, ctx),
+                        cost,
+                        grad_norm,
+                        iteration + 1,
+                        False,
+                    )
+                current = candidate^
+            return FitResult[dtype, n_params](
+                _as_tensor[dtype, n_params](current, ctx),
+                cost,
+                grad_norm,
+                max_iter,
+                False,
+            )
 
     for iteration in range(max_iter):
         var point = _as_tensor[dtype, n_params](current, ctx)
@@ -286,6 +394,82 @@ def least_squares[
     )
 
 
+def _curve_fit_device[
+    dtype: DType,
+    n_points: Int,
+    n_params: Int,
+    model: def(
+        Static[dtype, n_points], Static[dtype, n_params], DeviceContext
+    ) raises thin -> Static[dtype, n_points],
+    model_jacobian: def(
+        Static[dtype, n_points], Static[dtype, n_params], DeviceContext
+    ) raises thin -> Static[dtype, n_points, n_params],
+    block: Int,
+](
+    xdata: Static[dtype, n_points],
+    observed: Static[dtype, n_points],
+    var current: List[Float64],
+    tol: Float64,
+    max_iter: Int,
+    ctx: DeviceContext,
+) raises -> FitResult[dtype, n_params] where (
+    dtype.is_floating_point()
+    and n_params >= 1
+    and n_points + n_params >= n_params
+):
+    """`curve_fit`'s loop with the data, the residuals and the Jacobian
+    device-resident; only the parameters, the step and scalars move."""
+    var cost = 0.0
+    var grad_norm = 0.0
+    var damping = 1e-3
+    for iteration in range(max_iter):
+        var point = _as_tensor[dtype, n_params](current, ctx)
+        var r = subtract[gpu=True](model(xdata, point, ctx), observed)
+        var jac = model_jacobian(xdata, point, ctx)
+        cost = _cost_device(r)
+        grad_norm = _grad_norm_device(jac, r)
+        if grad_norm < tol:
+            return FitResult[dtype, n_params](
+                _as_tensor[dtype, n_params](current, ctx),
+                cost,
+                grad_norm,
+                iteration,
+                True,
+            )
+        var accepted = False
+        var candidate = List[Float64](capacity=n_params)
+        for _ in range(30):
+            var step = _damped_step_device[block=block](jac, r, damping, ctx)
+            candidate = List[Float64](capacity=n_params)
+            for j in range(n_params):
+                candidate.append(current[j] + step[j])
+            var trial_point = _as_tensor[dtype, n_params](candidate, ctx)
+            var trial = subtract[gpu=True](
+                model(xdata, trial_point, ctx), observed
+            )
+            if _cost_device(trial) < cost:
+                accepted = True
+                damping = max(damping / 3, 1e-12)
+                break
+            damping = damping * 3
+        if not accepted:
+            return FitResult[dtype, n_params](
+                _as_tensor[dtype, n_params](current, ctx),
+                cost,
+                grad_norm,
+                iteration + 1,
+                False,
+            )
+        current = candidate^
+    return FitResult[dtype, n_params](
+        _as_tensor[dtype, n_params](current, ctx),
+        cost,
+        grad_norm,
+        max_iter,
+        False,
+    )
+
+
 def curve_fit[
     A: TensorLike,
     B: TensorLike,
@@ -337,6 +521,24 @@ def curve_fit[
     comptime n_params = dim[C, 0]
     var ctx = p0.context()
     var start = p0.to_host()
+    comptime if gpu:
+        if not xdata.on_host():
+            var initial = List[Float64](capacity=n_params)
+            for j in range(n_params):
+                initial.append(Float64(start[j]))
+            return _curve_fit_device[
+                dtype, n_points, n_params, model, model_jacobian, block
+            ](
+                _same_order(xdata, Static[dtype, n_points]._static_layout()),
+                _same_order(
+                    _canonical[n_points, dtype=dtype](ydata),
+                    Static[dtype, n_points]._static_layout(),
+                ),
+                initial^,
+                tol,
+                max_iter,
+                ctx,
+            )
     var observed = ydata.to_host[dtype]()
     var xdata_c = Static[dtype, n_points](ctx, xdata.to_host[dtype]())
     var current = List[Float64](capacity=n_params)
