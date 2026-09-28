@@ -57,6 +57,8 @@ from numax import (
     chebyshev_t,
     comb,
     digamma,
+    ellipeinc,
+    ellipkinc,
     elliptic_e,
     elliptic_k,
     erf,
@@ -628,6 +630,52 @@ def main():
     for i in range(ELLIPTIC_E_N):
         s.observe(xs[i], elliptic_e(p(xs[i])).v[0], refs[i])
     s.report("elliptic_e (A&S 17.3.36), m in [0,1]")
+
+    s = Stats()
+    xs = materialize[ELLIPKINC_0P5_X]()
+    refs = materialize[ELLIPKINC_0P5_REF]()
+    for i in range(ELLIPKINC_0P5_N):
+        s.observe(xs[i], ellipkinc(p(xs[i]), p(0.5)).v[0], refs[i])
+    s.report("ellipkinc(phi, m=0.5) (Carlson, 16 duplications), phi in [-5,5]")
+
+    s = Stats()
+    xs = materialize[ELLIPEINC_0P5_X]()
+    refs = materialize[ELLIPEINC_0P5_REF]()
+    for i in range(ELLIPEINC_0P5_N):
+        s.observe(xs[i], ellipeinc(p(xs[i]), p(0.5)).v[0], refs[i])
+    s.report("ellipeinc(phi, m=0.5) (Carlson, 16 duplications), phi in [-5,5]")
+
+    s = Stats()
+    xs = materialize[ELLIPKINC_0P99_X]()
+    refs = materialize[ELLIPKINC_0P99_REF]()
+    for i in range(ELLIPKINC_0P99_N):
+        s.observe(xs[i], ellipkinc(p(xs[i]), p(0.99)).v[0], refs[i])
+    s.report(
+        "ellipkinc(phi, m=0.99) (Carlson, 16 duplications), phi in [0,1.5]"
+    )
+
+    s = Stats()
+    xs = materialize[ELLIPEINC_0P99_X]()
+    refs = materialize[ELLIPEINC_0P99_REF]()
+    for i in range(ELLIPEINC_0P99_N):
+        s.observe(xs[i], ellipeinc(p(xs[i]), p(0.99)).v[0], refs[i])
+    s.report(
+        "ellipeinc(phi, m=0.99) (Carlson, 16 duplications), phi in [0,1.5]"
+    )
+
+    s = Stats()
+    xs = materialize[ELLIPKINC_M3P0_X]()
+    refs = materialize[ELLIPKINC_M3P0_REF]()
+    for i in range(ELLIPKINC_M3P0_N):
+        s.observe(xs[i], ellipkinc(p(xs[i]), p(-3.0)).v[0], refs[i])
+    s.report("ellipkinc(phi, m=-3.0) (Carlson, 16 duplications), phi in [-2,2]")
+
+    s = Stats()
+    xs = materialize[ELLIPEINC_M3P0_X]()
+    refs = materialize[ELLIPEINC_M3P0_REF]()
+    for i in range(ELLIPEINC_M3P0_N):
+        s.observe(xs[i], ellipeinc(p(xs[i]), p(-3.0)).v[0], refs[i])
+    s.report("ellipeinc(phi, m=-3.0) (Carlson, 16 duplications), phi in [-2,2]")
 
     # --- Incomplete gamma, at four shape parameters -------------------
     section("Incomplete gamma")

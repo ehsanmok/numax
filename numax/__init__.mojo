@@ -386,7 +386,14 @@ from .special.bessel import (
     yv,
 )
 from .special.beta import beta, betainc, betaincc, betaincinv, betaln
-from .special.elliptic import elliptic_e, elliptic_k
+from .special.elliptic import (
+    elliprd,
+    elliprf,
+    ellipeinc,
+    ellipkinc,
+    elliptic_e,
+    elliptic_k,
+)
 from .special.erf import erf, erfc, erfcinv, erfinv
 from .special.gamma import (
     comb,

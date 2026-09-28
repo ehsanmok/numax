@@ -214,7 +214,7 @@ differentiable or extra-precise through whichever conformer instantiates it.
 | [`airy`](../numax/special/airy.mojo) | `airy` -- `(Ai, Ai', Bi, Bi')` for `|x| <= 44`: the Maclaurin series inside `1.5`, `K`/`I` at `zeta = (2/3) x^{3/2}` to the right, `J`/`Y` to the left |
 | [`struve`](../numax/special/struve.mojo) | `struve` -- `H_v(x)` for `v >= 0`: DLMF's Bessel-function series over Miller's recurrence to `x = 40`, the asymptotic expansion past it |
 | [`owens`](../numax/special/owens.mojo) | `owens_t` -- Owen's `T(h, a)`, two fixed 64-node Gauss-Legendre rules after reducing to `h >= 0`, `0 <= a <= 1` |
-| [`elliptic`](../numax/special/elliptic.mojo) | `elliptic_k`, `elliptic_e` |
+| [`elliptic`](../numax/special/elliptic.mojo) | `elliptic_k`, `elliptic_e`; `ellipkinc`, `ellipeinc` and Carlson's `elliprf`, `elliprd` -- a fixed sixteen duplication steps and the fifth-order series, `1e-15` relative, any amplitude through the period |
 | [`lambertw`](../numax/special/lambertw.mojo) | `lambertw`, `lambertw_m1` |
 | [`legendre`](../numax/special/legendre.mojo) | `legendre_p` |
 | [`orthopoly`](../numax/special/orthopoly.mojo) | `chebyshev_t`, `chebyshev_u`, `hermite_h`, `laguerre_l` |

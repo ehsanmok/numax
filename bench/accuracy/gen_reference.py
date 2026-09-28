@@ -376,6 +376,16 @@ def build() -> list[Case]:
         Case("elliptic_e", "elliptic_e, m in [0, 1]",
              clustered(0.0, 1.0), mp.ellipe)
     )
+    for (m, lo, hi) in ((0.5, -5.0, 5.0), (0.99, 0.0, 1.5), (-3.0, -2.0, 2.0)):
+        tag = str(m).replace(".", "p").replace("-", "m")
+        cases.append(
+            Case(f"ellipkinc_{tag}", f"ellipkinc(phi, m={m}), phi in [{lo}, {hi}]",
+                 clustered(lo, hi), lambda x, m=m: mp.ellipf(x, m))
+        )
+        cases.append(
+            Case(f"ellipeinc_{tag}", f"ellipeinc(phi, m={m}), phi in [{lo}, {hi}]",
+                 clustered(lo, hi), lambda x, m=m: mp.ellipe(x, m))
+        )
 
     # --- Two-argument functions, at fixed parameters ------------------
     # `gammainc` here is the *regularized* lower incomplete gamma, which is

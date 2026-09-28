@@ -26,7 +26,7 @@ from numax.special import gamma, j0, erf, gaussian
 | `airy` | `airy` -- `(Ai, Ai', Bi, Bi')`, series in the middle and the Bessel forms on both sides |
 | `struve` | `struve` -- the Bessel-function series over Miller's recurrence to `x = 40`, the asymptotic expansion past it |
 | `owens` | `owens_t` -- two fixed Gauss-Legendre rules after the argument reduction |
-| `elliptic` | `elliptic_k`, `elliptic_e` |
+| `elliptic` | `elliptic_k`, `elliptic_e`; `ellipkinc`, `ellipeinc` and Carlson's `elliprf`, `elliprd` by fixed-step duplication |
 | `lambertw` | `lambertw`, `lambertw_m1` |
 | `legendre`, `orthopoly` | `legendre_p`; Chebyshev `T`/`U`, Hermite `H`, Laguerre `L` |
 | `activations` | `gaussian`, `sigmoid`, `swish`, `tanh`, `relu`, `leaky_relu`, `gelu`, `softmax` |
@@ -61,7 +61,14 @@ from .bessel import (
     yv,
 )
 from .beta import beta, betainc, betaincc, betaincinv, betaln
-from .elliptic import elliptic_e, elliptic_k
+from .elliptic import (
+    elliprd,
+    elliprf,
+    ellipeinc,
+    ellipkinc,
+    elliptic_e,
+    elliptic_k,
+)
 from .erf import erf, erfc, erfcinv, erfinv
 from .gamma import (
     comb,
