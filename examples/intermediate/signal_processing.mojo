@@ -201,5 +201,5 @@ def main() raises:
     var power_copy = Static[dtype, 129](ctx, estimate.power.to_host())
     var located = find_peaks(power_copy, height=0.001)
     print("  find_peaks(power, height=0.001) at:")
-    for i in range(len(located)):
-        print("    ", frequencies[located[i]], "Hz")
+    for i in range(located.size()):
+        print("    ", frequencies[Int(located[i])], "Hz")

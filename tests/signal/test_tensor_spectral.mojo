@@ -286,25 +286,30 @@ def test_find_peaks_matches_scipy() raises:
         [0.0, 1.0, 0.5, 2.0, 1.5, 3.0, 0.0, 0.2, 0.1, 0.9, 0.9, 0.3]
     )
     var all_peaks = find_peaks(x)
-    assert_equal(len(all_peaks), 5)
+    assert_equal(all_peaks.size(), 5)
     var expected_all: List[Int] = [1, 3, 5, 7, 9]
     for i in range(5):
-        assert_equal(all_peaks[i], expected_all[i])
+        assert_equal(Int(all_peaks[i]), expected_all[i])
     var tall = find_peaks(x, height=1.0)
-    assert_equal(len(tall), 3)
-    assert_equal(tall[0], 1)
-    assert_equal(tall[1], 3)
-    assert_equal(tall[2], 5)
+    assert_equal(tall.size(), 3)
+    assert_equal(Int(tall[0]), 1)
+    assert_equal(Int(tall[1]), 3)
+    assert_equal(Int(tall[2]), 5)
     var spaced = find_peaks(x, distance=3)
-    assert_equal(len(spaced), 3)
-    assert_equal(spaced[0], 1)
-    assert_equal(spaced[1], 5)
-    assert_equal(spaced[2], 9)
+    assert_equal(spaced.size(), 3)
+    assert_equal(Int(spaced[0]), 1)
+    assert_equal(Int(spaced[1]), 5)
+    assert_equal(Int(spaced[2]), 9)
     var sharp = find_peaks(x, threshold=0.4)
-    assert_equal(len(sharp), 3)
-    assert_equal(sharp[0], 1)
-    assert_equal(sharp[1], 3)
-    assert_equal(sharp[2], 5)
+    assert_equal(sharp.size(), 3)
+    assert_equal(Int(sharp[0]), 1)
+    assert_equal(Int(sharp[1]), 3)
+    assert_equal(Int(sharp[2]), 5)
+    var prominent = peak_prominences(x, all_peaks)
+    var listed: List[Int] = [1, 3, 5, 7, 9]
+    var from_list = peak_prominences(x, listed)
+    for i in range(5):
+        assert_almost_equal(Float64(prominent[i]), from_list[i], atol=1e-12)
 
 
 def test_butter_matches_scipy() raises:
