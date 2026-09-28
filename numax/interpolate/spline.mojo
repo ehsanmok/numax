@@ -39,7 +39,7 @@ per slope formula, and for `CubicSpline` one launch assembling the band
 and a cyclic-reduction solve (`numax.linalg.banded._tridiagonal_device`).
 That solve does not pivot, so the not-a-knot boundary rows -- the one
 place SciPy's system is not diagonally dominant -- are folded into their
-neighbours first: row 1 minus row 0 no longer names `d_0`, which leaves
+neighbors first: row 1 minus row 0 no longer names `d_0`, which leaves
 rows `1 .. n-2` a dominant system on their own, and `d_0` and `d_{n-1}`
 are read back from the boundary rows after it. Akima's "the weights
 vanish" threshold is relative to the largest weight, which is one
@@ -684,7 +684,7 @@ struct PchipInterpolator[dtype: DType, n: Int](Movable):
     Monotone data give a monotone interpolant and there is no overshoot
     between knots, at the cost of only one continuous derivative where
     `CubicSpline` has two. The knot slope is the weighted harmonic mean of
-    the neighbouring secants -- `w1 = 2h_i + h_{i-1}`, `w2 = h_i + 2h_{i-1}`,
+    the neighboring secants -- `w1 = 2h_i + h_{i-1}`, `w2 = h_i + 2h_{i-1}`,
     `d_i = (w1 + w2) / (w1/D_{i-1} + w2/D_i)` -- and zero wherever the
     secants change sign or vanish, which is what stops the overshoot. The
     end slopes are SciPy's one-sided three-point estimate with its two
@@ -927,7 +927,7 @@ def _akima_slopes_device[
 
 
 struct Akima1DInterpolator[dtype: DType, n: Int](Movable):
-    """Akima's piecewise cubic, whose knot slopes weight the neighbouring
+    """Akima's piecewise cubic, whose knot slopes weight the neighboring
     secants by how much the secants on the *other* side change.
     `scipy.interpolate.Akima1DInterpolator(x, y)`, SciPy's `"akima"`
     method.

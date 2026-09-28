@@ -337,7 +337,7 @@ def test_pack_block_transposed_copies_a_ragged_width() raises:
 
     Here so that widening the untransposed launch cannot silently widen
     this one too: a strided gather read a vector at a time would return
-    neighbouring rows instead of the column, and the assertion below is
+    neighboring rows instead of the column, and the assertion below is
     what catches it.
     """
     comptime n = 16

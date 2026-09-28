@@ -291,8 +291,8 @@ def map[
     than either result alone, since it says the conclusion is about the
     access pattern rather than about one vendor's memory controller. The
     reason is that this kernel is already at ~78-82% of the device's memory
-    bandwidth with scalar per-thread accesses: neighbouring threads in a
-    warp read neighbouring addresses, which the hardware coalesces into
+    bandwidth with scalar per-thread accesses: neighboring threads in a
+    warp read neighboring addresses, which the hardware coalesces into
     wide transactions anyway, so widening each thread's own access has
     nothing left to recover. The parameter is honored rather than ignored
     because it is genuinely a per-target question -- it was silently

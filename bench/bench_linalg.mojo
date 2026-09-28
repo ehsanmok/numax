@@ -38,7 +38,7 @@ Three tables, because three different things limit them:
    the device's GEMM. That is the measurement the vector-accumulating
    paths' `ponytail:` notes ask for.
 4. **Block size** -- each factorization at its default block against its
-   neighbours, at two sizes, because the best block is not the same at
+   neighbors, at two sizes, because the best block is not the same at
    both: `cholesky` and `lu_factor` hold their defaults (32 and 16) at
    n = 512 and n = 1024, while `qr_factor`'s best block *shrinks* with n,
    so its default of 16 is right at n = 512 and leaves about 2x on the

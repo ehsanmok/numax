@@ -34,7 +34,7 @@ _ncpu="$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null) || echo 2 )"
 [ "$_ncpu" -gt 4 ] 2>/dev/null && _ncpu=4
 JOBS="${AGG_JOBS:-$_ncpu}"
 
-# Tests that cannot share a process with their neighbours. Empty by
+# Tests that cannot share a process with their neighbors. Empty by
 # design -- see the note on EXCLUDE in tools/gen_test_aggregates.py, which
 # records why the two candidates (the `/tmp` paths in tests/io, the global
 # RNG seed) turned out to be safe. Keep this list matching that one.

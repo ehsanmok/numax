@@ -9,7 +9,7 @@ in place; nothing else is ordered. The selection is `_select_pair` here
 rather than `std.builtin.sort.partition`, whose two-way split goes
 quadratic on a near-constant sample -- the reason is in its docstring. The values arrive at
 `dtype` rather than widened to `Float64`, and only the final blend between
-the two neighbours is evaluated at `Float64`, which is where NumPy
+the two neighbors is evaluated at `Float64`, which is where NumPy
 evaluates it too.
 
 MAX-first: there is no partition, selection or quantile kernel in `linalg`,
@@ -28,7 +28,7 @@ What it does not give is a value sort or a selection.)
 NumPy's `method` names, all thirteen, in two families. The continuous ones
 are Hyndman and Fan's `(alpha, beta)` family: a virtual index `q (n - alpha
 - beta + 1) + alpha - 1` into the sorted sample, linearly interpolated
-between its neighbours -- `"linear"` (NumPy's default, `alpha = beta =
+between its neighbors -- `"linear"` (NumPy's default, `alpha = beta =
 1`), `"interpolated_inverted_cdf"` `(0, 1)`, `"hazen"` `(1/2, 1/2)`,
 `"weibull"` `(0, 0)`, `"median_unbiased"` `(1/3, 1/3)`,
 `"normal_unbiased"` `(3/8, 3/8)`. The discontinuous ones pick a sample:
@@ -66,7 +66,7 @@ def _virtual_index(
     return index
 
 
-def _neighbours(index: Float64) -> Tuple[Int, Int, Float64]:
+def _neighbors(index: Float64) -> Tuple[Int, Int, Float64]:
     """The two order statistics a continuous method interpolates between,
     and the weight on the upper one."""
     var lo = Int(_floor(index))
@@ -106,17 +106,17 @@ def _positions(
     if q < 0 or q > 1:
         raise Error("quantile: q must lie in [0, 1]")
     if method == "linear":
-        return _neighbours(_virtual_index(q, n, 1.0, 1.0))
+        return _neighbors(_virtual_index(q, n, 1.0, 1.0))
     if method == "interpolated_inverted_cdf":
-        return _neighbours(_virtual_index(q, n, 0.0, 1.0))
+        return _neighbors(_virtual_index(q, n, 0.0, 1.0))
     if method == "hazen":
-        return _neighbours(_virtual_index(q, n, 0.5, 0.5))
+        return _neighbors(_virtual_index(q, n, 0.5, 0.5))
     if method == "weibull":
-        return _neighbours(_virtual_index(q, n, 0.0, 0.0))
+        return _neighbors(_virtual_index(q, n, 0.0, 0.0))
     if method == "median_unbiased":
-        return _neighbours(_virtual_index(q, n, 1.0 / 3.0, 1.0 / 3.0))
+        return _neighbors(_virtual_index(q, n, 1.0 / 3.0, 1.0 / 3.0))
     if method == "normal_unbiased":
-        return _neighbours(_virtual_index(q, n, 0.375, 0.375))
+        return _neighbors(_virtual_index(q, n, 0.375, 0.375))
     var linear = _virtual_index(q, n, 1.0, 1.0)
     if method == "lower":
         return _single(Int(_floor(linear)))
@@ -188,9 +188,9 @@ def _select_pair[
     even an adversarial pivot sequence costs `O(n log n)` rather than
     `O(n^2)`.
 
-    The upper neighbour comes out of the same walk: when `lo` lands inside
-    the equal block with room to spare it *is* the neighbour, and otherwise
-    the neighbour is the smallest of the strictly-greater side, which is
+    The upper neighbor comes out of the same walk: when `lo` lands inside
+    the equal block with room to spare it *is* the neighbor, and otherwise
+    the neighbor is the smallest of the strictly-greater side, which is
     the last round's right stripe rather than the whole tail.
     """
     var n = len(values)
@@ -291,7 +291,7 @@ def _select_route(m: Int, n: Int) -> Bool:
     one sort.
 
     A `partition` touches about `2 n` elements and the scan for the upper
-    neighbour another `n`, so `m` selections cost about `3 m n`; one sort
+    neighbor another `n`, so `m` selections cost about `3 m n`; one sort
     costs about `n log2 n`. Selection wins while `3 m < log2 n` -- six
     quantiles of a million values, one of a thousand, none of sixteen.
     Above the threshold the overload sorts once and reads `m` pairs of

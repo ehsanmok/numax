@@ -160,7 +160,7 @@ def test_quantile_at_one_and_two_samples() raises:
     """`n = 1` and `n = 2` against `numpy.quantile`, all thirteen methods.
 
     The degenerate sizes are where a selection differs from a sort if the
-    index bookkeeping is wrong: at `n = 1` the upper neighbour is the lower
+    index bookkeeping is wrong: at `n = 1` the upper neighbor is the lower
     one, and at `n = 2` every method that interpolates reaches both ends.
     """
     _check_one("linear")

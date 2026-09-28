@@ -694,7 +694,7 @@ def broadcast_binary[
     """`op` over two shapes NumPy would broadcast.
 
     One element per thread (`simd_width=1`): a stretched axis has stride 0,
-    so neighbouring result elements are not neighbouring operand elements
+    so neighboring result elements are not neighboring operand elements
     and a vector load would read the wrong thing. The body rebuilds each
     operand's flat offset from the result's extents and the stretched
     strides, in `Int` arithmetic only -- Metal has no `double`, and a

@@ -484,7 +484,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def stride_at(self, axis: Int) -> Int:
         """The stride of `axis` in elements, chosen at run time.
 
-        The distance in memory between neighbours along `axis`. Row-major
+        The distance in memory between neighbors along `axis`. Row-major
         for every tensor this module builds, but read from the layout
         rather than assumed, so it stays correct for a layout that is not.
         """

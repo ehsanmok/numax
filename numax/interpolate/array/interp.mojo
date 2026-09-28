@@ -52,7 +52,7 @@ def horner[T: FloatLike, n: Int](coefficients: Array[T, n], x: T) -> T:
 
     Horner's rule rather than summing `c_i * x^i`: `n-1` multiply-adds
     instead of `n` powers, and better conditioned, since it never forms the
-    large intermediate `x^i` that then has to cancel against its neighbours.
+    large intermediate `x^i` that then has to cancel against its neighbors.
     """
     var total = coefficients[n - 1].copy()
     for step in range(1, n):

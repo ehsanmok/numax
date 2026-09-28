@@ -896,7 +896,7 @@ def test_the_engine_runs_several_lanes_through_the_fused_block() raises:
     """Three lanes at `n = 128` and at `n = 8`: a transform that spans two
     fused blocks and the radix-2 tail, and one that is smaller than a fused
     block so the launch is one thread per lane. A lane reading its
-    neighbour's block would show up here and nowhere in the 1-D tests."""
+    neighbor's block would show up here and nowhere in the 1-D tests."""
     _check_lanes[3, 128]()
     _check_lanes[3, 8]()
 

@@ -214,7 +214,7 @@ def _block_roots[
 def _subdiagonal_indicator[
     T: FloatLike, n: Int
 ](h: Array[T, n * n], k: Int, tol: Float64) -> T:
-    """`1` where `h[k+1, k]` is large enough relative to its neighbouring
+    """`1` where `h[k+1, k]` is large enough relative to its neighboring
     diagonal entries to be a 2x2 block rather than a converged zero."""
     var scale = (
         h[k * n + k].abs()
@@ -263,7 +263,7 @@ def eigvals[
     are the two identities to check against if it matters.
 
     `tol` decides which subdiagonal entries survived as a 2x2 block rather
-    than converging to zero, relative to the neighbouring diagonal entries.
+    than converging to zero, relative to the neighboring diagonal entries.
     It has to be a parameter and not a machine epsilon because `T` is any
     `FloatLike`, and a `Dual` or an `Interval` has no epsilon to consult.
 

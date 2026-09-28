@@ -146,10 +146,10 @@ def find_peaks[
     SciPy's conditions. `scipy.signal.find_peaks(x, height, threshold,
     distance)`, first return value.
 
-    A local maximum is a sample strictly greater than both neighbours; a
+    A local maximum is a sample strictly greater than both neighbors; a
     flat top counts once, at its midpoint, as SciPy counts it, and the two
     end samples never do. `height` keeps peaks at least that high,
-    `threshold` those that stand at least that far above *both* neighbours,
+    `threshold` those that stand at least that far above *both* neighbors,
     and `distance` thins peaks closer than that many samples, keeping the
     higher one first -- SciPy's greedy order, so the same peaks survive.
     `prominence`, `width` and `plateau_size` are not provided.

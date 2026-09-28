@@ -12,7 +12,7 @@ answer numax already had.
 
 The one device path is the tridiagonal case, `solve_banded[l=1, u=1,
 gpu=True]`: parallel cyclic reduction, `ceil(log2 n)` launches that each
-eliminate every equation's neighbours at once. It does not pivot, so it
+eliminate every equation's neighbors at once. It does not pivot, so it
 is for the systems that need none -- diagonally dominant, as a spline's
 or a second-difference operator's is -- and `numax.interpolate` builds
 its splines on it. Every other bandwidth at `gpu=True` runs the host
@@ -93,7 +93,7 @@ def _tridiagonal_device[
     """The tridiagonal system `sub[i] x[i-1] + diag[i] x[i] + sup[i] x[i+1]
     = rhs[i]` on the device, by parallel cyclic reduction.
 
-    Each of `ceil(log2(n))` launches eliminates the neighbours `s` places
+    Each of `ceil(log2(n))` launches eliminates the neighbors `s` places
     away from every equation at once (`s = 1, 2, 4, ...`), between two sets
     of buffers, until every equation stands alone and `x = rhs / diag`.
     `O(n log n)` work, every step parallel. **No pivoting**, so it wants a

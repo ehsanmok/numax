@@ -251,7 +251,7 @@ def test_windowing_suppresses_spectral_leakage() raises:
     A tone whose frequency sits *between* two bins leaks across the whole
     spectrum when transformed rectangularly, because the finite record
     looks like a discontinuous signal. A Hann window tapers the ends to
-    zero and confines the leakage to the neighbouring bins.
+    zero and confines the leakage to the neighboring bins.
     """
     comptime log2n = 5
     comptime n = 1 << log2n

@@ -49,7 +49,7 @@ import sys
 
 ROOTS = ("tests", "tests_gpu")
 
-# Tests that cannot share a process with their neighbours.
+# Tests that cannot share a process with their neighbors.
 #
 # Empty, and that is a finding rather than an oversight. The two candidates
 # were checked: the `/tmp` paths in `tests/io/` are distinct per file and

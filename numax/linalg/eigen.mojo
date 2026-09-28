@@ -1815,7 +1815,7 @@ def _hqr[
 
             # Two consecutive small subdiagonals let the sweep start below
             # `l`: the first column of the shift polynomial, and where it is
-            # negligible against its neighbours.
+            # negligible against its neighbors.
             var m = en - 2
             while m >= l:
                 zz = h[m * n + m]
