@@ -2223,6 +2223,326 @@ def sosfreqz[
     return FrequencyResponse[dtype, worN](grid^, real^, imag^)
 
 
+def _notch_peak[
+    dtype: DType
+](
+    w0: Float64,
+    q: Float64,
+    fs: Float64,
+    peak: Bool,
+    who: StaticString,
+    ctx: Optional[DeviceContext],
+) raises -> TransferFunction[dtype, 2] where dtype.is_floating_point():
+    """`scipy.signal._design_notch_peak_filter`: the second-order notch or
+    peak at `w0` with quality `q`."""
+    var w = 2.0 * w0 / fs
+    if w >= 1.0 or w <= 0.0:
+        raise Error(who, ": w0 must lie strictly between 0 and fs / 2")
+    if q <= 0:
+        raise Error(who, ": Q must be positive")
+    var bw = w / q * _PI
+    var wr = w * _PI
+    var beta = _tan(bw / 2.0)
+    var gain = 1.0 / (1.0 + beta)
+    var b: List[Float64]
+    if peak:
+        b = [1.0 - gain, 0.0, -(1.0 - gain)]
+    else:
+        b = [gain, -2.0 * gain * _cos(wr), gain]
+    var a: List[Float64] = [1.0, -2.0 * gain * _cos(wr), 2.0 * gain - 1.0]
+    return _to_transfer_function[dtype=dtype, order=2]((b^, a^), ctx)
+
+
+def iirnotch[
+    dtype: DType
+](
+    w0: Float64,
+    q: Float64,
+    fs: Float64 = 2.0,
+    ctx: Optional[DeviceContext] = None,
+) raises -> TransferFunction[dtype, 2] where dtype.is_floating_point():
+    """A second-order IIR notch: unit gain everywhere but a null at `w0`,
+    `w0 / Q` wide. `scipy.signal.iirnotch(w0, Q, fs)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+
+    Args:
+        w0: The frequency to remove, in the units of `fs`, strictly inside
+            `(0, fs / 2)`.
+        q: The quality factor: the notch's center over its -3 dB width.
+        fs: The sampling frequency; `2` (the default) makes `w0` a fraction
+            of Nyquist, SciPy's convention.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` of order 2.
+
+    Raises:
+        If `w0` is outside `(0, fs / 2)`, `Q` is not positive, or the upload
+        fails.
+    """
+    return _notch_peak[dtype](w0, q, fs, False, "iirnotch", ctx)
+
+
+def iirpeak[
+    dtype: DType
+](
+    w0: Float64,
+    q: Float64,
+    fs: Float64 = 2.0,
+    ctx: Optional[DeviceContext] = None,
+) raises -> TransferFunction[dtype, 2] where dtype.is_floating_point():
+    """A second-order IIR peak (resonator): unit gain at `w0`, falling off
+    over a band `w0 / Q` wide. `scipy.signal.iirpeak(w0, Q, fs)`.
+
+    Parameters:
+        dtype: The floating-point dtype of the returned coefficients.
+
+    Args:
+        w0: The frequency to keep, in the units of `fs`, strictly inside
+            `(0, fs / 2)`.
+        q: The quality factor: the peak's center over its -3 dB width.
+        fs: The sampling frequency; `2` (the default) makes `w0` a fraction
+            of Nyquist.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` of order 2.
+
+    Raises:
+        If `w0` is outside `(0, fs / 2)`, `Q` is not positive, or the upload
+        fails.
+    """
+    return _notch_peak[dtype](w0, q, fs, True, "iirpeak", ctx)
+
+
+def _bilinear_expand(
+    c: List[Float64], order: Int, zp1: List[Float64], zm1: List[Float64]
+) -> List[Float64]:
+    """`sum_q c_q zp1^(N-q) zm1^q` in ascending powers of `z`, `c_q` the
+    analog coefficient of `s^q`: the bilinear transform's expansion."""
+    var total = List[Float64](length=order + 1, fill=0.0)
+    for q in range(len(c)):
+        var term: List[Float64] = [c[q]]
+        for _ in range(order - q):
+            term = _poly_mul(term, zp1)
+        for _ in range(q):
+            term = _poly_mul(term, zm1)
+        for i in range(len(term)):
+            total[i] += term[i]
+    return total^
+
+
+def bilinear[
+    A: TensorLike, B: TensorLike
+](
+    b: A, a: B, fs: Float64 = 1.0, ctx: Optional[DeviceContext] = None
+) raises -> TransferFunction[
+    A.dtype, (dim[A, 0] if dim[A, 0] > dim[B, 0] else dim[B, 0]) - 1
+] where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+):
+    """The digital filter the bilinear transform `s = 2 fs (z - 1)/(z + 1)`
+    makes of the analog filter `(b, a)`. `scipy.signal.bilinear(b, a, fs)`.
+
+    SciPy's expansion: with `N` the order, the numerator is
+    `sum_q b_q ((z + 1)/sqrt(2 fs))^(N-q) ((z - 1) sqrt(2 fs))^q` over the
+    analog coefficients `b_q` of `s^q`, the denominator likewise, and both
+    are divided by the denominator's leading coefficient. Host-side, on
+    the coefficients.
+
+    Parameters:
+        A: The tensor type of the analog numerator `b`, rank 1.
+        B: The tensor type of the analog denominator `a`, rank 1.
+
+    Args:
+        b: The analog numerator, descending in powers of `s`.
+        a: The analog denominator, descending, `a[0]` nonzero.
+        fs: The sampling frequency.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` of order `max(len(b), len(a)) - 1`.
+
+    Raises:
+        If `a[0]` is zero, if `b` has leading zeros that lower the order
+        below the one its length names, or if the upload fails.
+    """
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
+    comptime order = (nb if nb > na else na) - 1
+    var bh = b.to_host()
+    var ah = a.to_host()
+    if ah[0] == 0:
+        raise Error("bilinear: a[0] must be nonzero")
+    var bs = 0
+    while bs < nb - 1 and bh[bs] == 0:
+        bs += 1
+    if max(na, nb - bs) - 1 != order:
+        raise Error("bilinear: b's leading zeros lower the order below ", order)
+    var fac = _sqrt(2.0 * fs)
+    # Ascending-coefficient polynomials in `z`.
+    var zp1: List[Float64] = [1.0 / fac, 1.0 / fac]
+    var zm1: List[Float64] = [-fac, fac]
+
+    var b_rev = List[Float64]()
+    for i in range(nb - 1, bs - 1, -1):
+        b_rev.append(Float64(bh[i]))
+    var a_rev = List[Float64]()
+    for i in range(na - 1, -1, -1):
+        a_rev.append(Float64(ah[i]))
+    var num = _bilinear_expand(b_rev, order, zp1, zm1)
+    var den = _bilinear_expand(a_rev, order, zp1, zm1)
+    var lead = den[order]
+    var bd = List[Float64](capacity=order + 1)
+    var ad = List[Float64](capacity=order + 1)
+    for i in range(order, -1, -1):
+        bd.append(num[i] / lead)
+        ad.append(den[i] / lead)
+    return _to_transfer_function[dtype=A.dtype, order=order]((bd^, ad^), ctx)
+
+
+struct GroupDelay[dtype: DType, n: Int](Movable):
+    """What `group_delay` returns: the frequencies and the group delay in
+    samples at each, SciPy's `(w, gd)`."""
+
+    var w: Static[Self.dtype, Self.n]
+    """The frequencies, in the units of `fs`."""
+    var gd: Static[Self.dtype, Self.n]
+    """The group delay at each frequency, in samples."""
+
+    def __init__(
+        out self,
+        var w: Static[Self.dtype, Self.n],
+        var gd: Static[Self.dtype, Self.n],
+    ):
+        """Build from the grid and the delays.
+
+        Args:
+            w: The frequencies.
+            gd: The group delay at each.
+        """
+        self.w = w^
+        self.gd = gd^
+
+
+def group_delay[
+    A: TensorLike,
+    B: TensorLike,
+    worN: Int = 512,
+    whole: Bool = False,
+    gpu: Bool = False,
+](b: A, a: B, fs: Float64 = 2.0 * _PI) raises -> GroupDelay[
+    A.dtype, worN
+] where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and worN > 0
+):
+    """The group delay `-d(phase)/dw` of the filter `(b, a)` at `worN`
+    frequencies over `[0, pi)` (or `[0, 2 pi)` when `whole`).
+    `scipy.signal.group_delay((b, a), worN, whole, fs)`.
+
+    SciPy's method: `c = b * reversed(a)` (a convolution, on the host) and
+    `gd = Re(C'(z) / C(z)) - (len(a) - 1)` at `z = e^{-jw}`, `C'` the
+    polynomial with coefficients `k c_k`; one lane per frequency. A
+    frequency where the delay is singular reads `0`, as SciPy sets it.
+
+    Parameters:
+        A: The tensor type of `b`, rank 1, floating-point.
+        B: The tensor type of `a`, rank 1, same dtype.
+        worN: The number of frequencies, default 512.
+        whole: Span the whole circle rather than the upper half.
+        gpu: Whether the per-frequency launch targets the GPU; `b` must live
+            on the matching device.
+
+    Args:
+        b: The numerator coefficients.
+        a: The denominator coefficients.
+        fs: The sampling frequency the returned `w` is in; `2 pi` (the
+            default) gives radians per sample.
+
+    Returns:
+        A `GroupDelay` on `b`'s device: the frequencies and the delays.
+
+    Raises:
+        If allocating the result or launching the kernel fails.
+    """
+    comptime dtype = A.dtype
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
+    comptime nc = nb + na - 1
+    var ctx = b.context()
+    var bh = b.to_host()
+    var ah = a.to_host[dtype]()
+    var c = List[Scalar[dtype]](length=nc, fill=0)
+    for i in range(nb):
+        for j in range(na):
+            c[i + j] += bh[i] * ah[na - 1 - j]
+    var coeffs = Static[dtype, nc](c^, ctx)
+    var span = 2.0 * _PI if whole else _PI
+    var w = List[Scalar[dtype]](capacity=worN)
+    var scaled = List[Scalar[dtype]](capacity=worN)
+    for k in range(worN):
+        var wk = span * Float64(k) / Float64(worN)
+        w.append(Scalar[dtype](wk))
+        scaled.append(Scalar[dtype](wk * fs / (2.0 * _PI)))
+    var grid = Static[dtype, worN](w^, ctx)
+    var gd = Static[dtype, worN]._uninitialized(ctx)
+    var ws = grid.tile()
+    var cs = coeffs.tile()
+    var gs = gd.tile()
+    var offset = Scalar[dtype](na - 1)
+
+    @always_inline
+    def lane[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var ws, var cs, var gs, var offset}:
+        var k = coord_to_index_list(coord)[0]
+        var angle = ws[Coord(k)]
+        var zr = _cos(angle)
+        var zi = -_sin(angle)
+        # Horner in `z` from the top coefficient: `C(z)` and `C'(z) z`.
+        var dr = Scalar[dtype](0)
+        var di = Scalar[dtype](0)
+        var nr = Scalar[dtype](0)
+        var ni = Scalar[dtype](0)
+        for step in range(nc):
+            var j = nc - 1 - step
+            var cj = cs[Coord(j)]
+            var tr = dr * zr - di * zi + cj
+            di = dr * zi + di * zr
+            dr = tr
+            var ur = nr * zr - ni * zi + Scalar[dtype](j) * cj
+            ni = nr * zi + ni * zr
+            nr = ur
+        var mag = dr * dr + di * di
+        var value = (nr * dr + ni * di) / mag - offset
+        if not (value == value) or mag == 0:
+            value = Scalar[dtype](0)
+        gs.store[1](Coord(k), value)
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        lane, Coord(worN), ctx
+    )
+    ctx.synchronize()
+    _ = coeffs^
+    return GroupDelay[dtype, worN](Static[dtype, worN](scaled^, ctx), gd^)
+
+
 def zpk2tf[
     dtype: DType, nz: Int, np: Int
 ](

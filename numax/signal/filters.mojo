@@ -47,9 +47,7 @@ these. **Extend** throughout.
 
 ## What is not here
 
-`lfilter`'s `zi`/`zf` state is used internally by `filtfilt` and not
-exposed; `sosfiltfilt`, `lfiltic`, `deconvolve` and `resample_poly` wait
-on a caller. `decimate` is here, in SciPy's `ftype="fir"` form. IIR *design* -- `butter`, `cheby1`,
+`deconvolve` and `resample_poly` wait on a caller. `decimate` is here, in SciPy's `ftype="fir"` form. IIR *design* -- `butter`, `cheby1`,
 `iirfilter` -- is `design.mojo`'s, one module over.
 """
 
@@ -559,6 +557,178 @@ def lfilter[
     return out^
 
 
+struct LfilterResult[dtype: DType, n: Int, k: Int](Movable):
+    """What `lfilter` returns when given an initial state: the filtered
+    signal and the state it ends in, SciPy's `(y, zf)`."""
+
+    var y: Static[Self.dtype, Self.n]
+    """The filtered signal."""
+    var zf: Static[Self.dtype, Self.k]
+    """The final state, to pass as `zi` to filter the next block."""
+
+    def __init__(
+        out self,
+        var y: Static[Self.dtype, Self.n],
+        var zf: Static[Self.dtype, Self.k],
+    ):
+        """Build from the signal and its final state.
+
+        Args:
+            y: The filtered signal.
+            zf: The final state.
+        """
+        self.y = y^
+        self.zf = zf^
+
+
+def lfilter[
+    A: TensorLike,
+    B: TensorLike,
+    C: TensorLike,
+    D: TensorLike,
+    gpu: Bool = False,
+](b: A, a: B, x: C, zi: D) raises -> LfilterResult[
+    A.dtype,
+    dim[C, 0],
+    (dim[A, 0] if dim[A, 0] > dim[B, 0] else dim[B, 0]) - 1,
+] where (
+    (
+        A.dtype.is_floating_point()
+        and dim[A, 0] > 0
+        and dim[B, 0] > 0
+        and dim[C, 0] > 0
+        and (dim[A, 0] > 1 or dim[B, 0] > 1)
+    )
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and C.dtype == A.dtype
+    and C.LayoutType.rank == 1
+    and C.LayoutType.all_dims_known
+    and D.dtype == A.dtype
+    and D.LayoutType.rank == 1
+):
+    """`lfilter` from the initial state `zi`, returning the final state as
+    well. `scipy.signal.lfilter(b, a, x, zi=zi)`, which returns `(y, zf)`.
+
+    `zi` is `max(len(a), len(b)) - 1` long -- what `lfilter_zi` and
+    `lfiltic` produce, or a previous call's `zf` -- and a signal processed
+    in blocks, each started from the last one's `zf`, comes out the same
+    as in one call. On the device the recurrence runs from `zi` and the
+    final state is rebuilt from the last few inputs and outputs by
+    `lfiltic`'s formula, which is exact for this filter form, so only
+    order-many samples come back.
+
+    Parameters:
+        A: The tensor type of `b`, rank 1.
+        B: The tensor type of `a`, rank 1, same dtype.
+        C: The tensor type of `x`, rank 1 with a static length.
+        D: The tensor type of `zi`, rank 1, same dtype.
+        gpu: Run the block-parallel device recurrence when `True` and `x`
+            is on a device; a residency mismatch falls back to the host
+            with a notice.
+
+    Args:
+        b: The numerator coefficients.
+        a: The denominator coefficients; `a[0]` must be nonzero.
+        x: The signal to filter.
+        zi: The initial state, `max(len(a), len(b)) - 1` long.
+
+    Returns:
+        An `LfilterResult` with the filtered signal `y` and final state
+        `zf`.
+
+    Raises:
+        If `a[0]` is zero, `zi` has the wrong length, the fallback policy is
+        `"raise"` on a residency mismatch, or a device operation fails.
+    """
+    comptime dtype = A.dtype
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
+    comptime n = dim[C, 0]
+    comptime k = (nb if nb > na else na) - 1
+    var norm = _normalized(b.to_host(), a.to_host[dtype]())
+    var state = zi.to_host[dtype]()
+    if len(state) != k:
+        raise Error("lfilter: zi must have ", k, " elements, not ", len(state))
+    if _check_device[C, gpu](x):
+        comptime if gpu:
+            _require_contiguous(x)
+            var result = Static[dtype, n]._uninitialized(x.context())
+            _iir_device(
+                norm[0],
+                norm[1],
+                _device_ptr[dtype](x),
+                _device_ptr[dtype](result),
+                n,
+                state,
+                False,
+                False,
+                x.context(),
+            )
+            # The state after the last sample, from the last `k` outputs and
+            # inputs: two `k`-element windows come back, not the signal. A
+            # signal shorter than the state is order-sized anyway, and there
+            # the host recurrence gives the state directly.
+            if n >= k:
+                var tail_y = _axis_gather["offset"](
+                    result, Static[dtype, k]._static_layout(), 0, n - k
+                ).to_host()
+                var tail_x = _axis_gather["offset"](
+                    x, Static[dtype, k]._static_layout(), 0, n - k
+                ).to_host[dtype]()
+                var past_y = List[Scalar[dtype]](capacity=k)
+                var past_x = List[Scalar[dtype]](capacity=k)
+                for i in range(k):
+                    past_y.append(tail_y[k - 1 - i])
+                    past_x.append(tail_x[k - 1 - i])
+                var zf = _state_from_history(norm[0], norm[1], past_y, past_x)
+                return LfilterResult(
+                    result^, Static[dtype, k](zf^, x.context())
+                )
+            var hx = x.to_host[dtype]()
+            var scratch = List[Scalar[dtype]](length=n, fill=0)
+            _recurrence(
+                norm[0],
+                norm[1],
+                state,
+                _loose(hx.unsafe_ptr()),
+                _loose(scratch.unsafe_ptr()),
+                n,
+            )
+            return LfilterResult(result^, Static[dtype, k](state^, x.context()))
+    else:
+        _notice[gpu]("lfilter")
+    var out = Static[dtype, n]._uninitialized(x.context())
+    var staged = List[Scalar[dtype]]()
+    var src = _read_ptr[dtype](x, staged)
+    with out._buffer.map_to_host() as dst:
+        _recurrence(norm[0], norm[1], state, src, _loose(dst.unsafe_ptr()), n)
+    return LfilterResult(out^, Static[dtype, k](state^, x.context()))
+
+
+def _state_from_history[
+    dtype: DType
+](
+    b: List[Scalar[dtype]],
+    a: List[Scalar[dtype]],
+    y: List[Scalar[dtype]],
+    x: List[Scalar[dtype]],
+) -> List[Scalar[dtype]]:
+    """The transposed direct form II state implied by the last outputs `y`
+    and inputs `x`, most recent first, for normalized equal-length `b` and
+    `a`: `zi[m] = sum_{j>m} (b[j] x[j-m-1] - a[j] y[j-m-1])`, `lfiltic`'s
+    formula."""
+    var taps = len(b)
+    var zi = List[Scalar[dtype]](length=taps - 1, fill=0)
+    for m in range(taps - 1):
+        for j in range(m + 1, taps):
+            zi[m] += b[j] * x[j - m - 1] - a[j] * y[j - m - 1]
+    return zi^
+
+
 def lfilter_zi[
     A: TensorLike,
     B: TensorLike,
@@ -594,6 +764,126 @@ def lfilter_zi[
     var norm = _normalized(b.to_host(), a.to_host[A.dtype]())
     var zi = _zi_host(norm[0], norm[1])
     return Static[A.dtype, (nb if nb > na else na) - 1](zi^, b.context())
+
+
+def lfiltic[
+    A: TensorLike, B: TensorLike, C: TensorLike
+](b: A, a: B, y: C) raises -> Static[
+    A.dtype, (dim[A, 0] if dim[A, 0] > dim[B, 0] else dim[B, 0]) - 1
+] where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and C.dtype == A.dtype
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and C.LayoutType.rank == 1
+    and (dim[A, 0] > 1 or dim[B, 0] > 1)
+):
+    """The `lfilter` state that continues a filter whose past outputs were
+    `y` and whose past inputs were zero. `scipy.signal.lfiltic(b, a, y)`.
+
+    `y[0]` is the most recent output, `y[1]` the one before, as SciPy
+    orders them; a `y` shorter than `len(a) - 1` is zero-padded. The
+    overload taking `x` adds the past inputs.
+
+    Parameters:
+        A: The tensor type of `b`, rank 1.
+        B: The tensor type of `a`, rank 1, same dtype.
+        C: The tensor type of `y`, rank 1, same dtype.
+
+    Args:
+        b: The numerator coefficients.
+        a: The denominator coefficients, `a[0]` nonzero.
+        y: The past outputs, most recent first.
+
+    Returns:
+        The `max(len(a), len(b)) - 1` initial states on `b`'s device.
+
+    Raises:
+        If `a[0]` is zero.
+    """
+    return _lfiltic(b, a, y.to_host(), List[Scalar[A.dtype]]())
+
+
+def lfiltic[
+    A: TensorLike, B: TensorLike, C: TensorLike, D: TensorLike
+](b: A, a: B, y: C, x: D) raises -> Static[
+    A.dtype, (dim[A, 0] if dim[A, 0] > dim[B, 0] else dim[B, 0]) - 1
+] where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and C.dtype == A.dtype
+    and D.dtype == A.dtype
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.LayoutType.rank == 1
+    and B.LayoutType.all_dims_known
+    and C.LayoutType.rank == 1
+    and D.LayoutType.rank == 1
+    and (dim[A, 0] > 1 or dim[B, 0] > 1)
+):
+    """`lfiltic` with the past inputs `x` as well, most recent first.
+    `scipy.signal.lfiltic(b, a, y, x)`.
+
+    Parameters:
+        A: The tensor type of `b`, rank 1.
+        B: The tensor type of `a`, rank 1, same dtype.
+        C: The tensor type of `y`, rank 1, same dtype.
+        D: The tensor type of `x`, rank 1, same dtype.
+
+    Args:
+        b: The numerator coefficients.
+        a: The denominator coefficients, `a[0]` nonzero.
+        y: The past outputs, most recent first.
+        x: The past inputs, most recent first.
+
+    Returns:
+        The `max(len(a), len(b)) - 1` initial states on `b`'s device.
+
+    Raises:
+        If `a[0]` is zero.
+    """
+    return _lfiltic(b, a, y.to_host(), x.to_host[A.dtype]())
+
+
+def _lfiltic[
+    A: TensorLike, B: TensorLike, C: DType
+](
+    b: A, a: B, y_in: List[Scalar[C]], x_in: List[Scalar[A.dtype]]
+) raises -> Static[
+    A.dtype, (dim[A, 0] if dim[A, 0] > dim[B, 0] else dim[B, 0]) - 1
+]:
+    """SciPy's loops: `zi[m] = sum(b[m+1:] x[:M-m]) - sum(a[m+1:] y[:N-m])`,
+    over `a[0]`."""
+    comptime dtype = A.dtype
+    comptime nb = dim[A, 0]
+    comptime na = dim[B, 0]
+    comptime k = (nb if nb > na else na) - 1
+    var bh = b.to_host()
+    var ah = a.to_host[dtype]()
+    if ah[0] == 0:
+        raise Error("lfiltic: a[0] must be nonzero")
+    var m_order = nb - 1
+    var n_order = na - 1
+    var x = List[Scalar[dtype]](length=m_order, fill=0)
+    for i in range(min(len(x_in), m_order)):
+        x[i] = x_in[i]
+    var y = List[Scalar[dtype]](length=n_order, fill=0)
+    for i in range(min(len(y_in), n_order)):
+        y[i] = rebind[Scalar[dtype]](y_in[i])
+    var zi = List[Scalar[dtype]](length=k, fill=0)
+    for m in range(m_order):
+        for j in range(m + 1, nb):
+            zi[m] += bh[j] * x[j - m - 1]
+    for m in range(n_order):
+        for j in range(m + 1, na):
+            zi[m] -= ah[j] * y[j - m - 1]
+    if ah[0] != 1:
+        for m in range(k):
+            zi[m] /= ah[0]
+    return Static[dtype, k](zi^, b.context())
 
 
 def _device_ptr[
