@@ -22,18 +22,32 @@ evaluation kernel, one `integrate`, and one place the derivative order is
 handled; `scipy.interpolate` is arranged the same way, with `PPoly` under
 all of them.
 
-## Construction is host work
+## Construction follows the knots
 
 Building a spline is `O(n)` arithmetic on the knots plus, for
-`CubicSpline`, one banded solve through `numax.linalg.solve_banded` -- the
-slope-form tridiagonal system SciPy's `_cubic.py` assembles, boundary rows
-and all, so every `bc_type` here is SciPy's to the digit. It is host-side
-because it is sequential and tiny against the evaluation it enables; the
-coefficients are uploaded once and every query after that is
-device-resident. (`solveh_banded` is not used, though the natural spline's
-*moment* system is symmetric positive definite: SciPy states its boundary
-conditions in slopes, and one formulation that matches SciPy's rows beats
-two that would have to be reconciled.)
+`CubicSpline`, one tridiagonal solve -- the slope-form system SciPy's
+`_cubic.py` assembles, boundary rows and all, so every `bc_type` here is
+SciPy's to the digit. (`solveh_banded` is not used, though the natural
+spline's *moment* system is symmetric positive definite: SciPy states its
+boundary conditions in slopes, and one formulation that matches SciPy's
+rows beats two that would have to be reconciled.)
+
+Knots on the host build on the host, in `Float64`, the solve through
+`solve_banded`'s pivoted path. Knots on a device build there, with
+nothing downloaded: one launch for the interval widths and secants, one
+per slope formula, and for `CubicSpline` one launch assembling the band
+and a cyclic-reduction solve (`numax.linalg.banded._tridiagonal_device`).
+That solve does not pivot, so the not-a-knot boundary rows -- the one
+place SciPy's system is not diagonally dominant -- are folded into their
+neighbours first: row 1 minus row 0 no longer names `d_0`, which leaves
+rows `1 .. n-2` a dominant system on their own, and `d_0` and `d_{n-1}`
+are read back from the boundary rows after it. Akima's "the weights
+vanish" threshold is relative to the largest weight, which is one
+`reduce_all` on the device. The two- and three-knot not-a-knot splines,
+SciPy's special cases, stay on the host: they are three numbers. Like the
+operators, the device path sits under `comptime if has_accelerator()` and
+is not taken at `float64`, which Metal cannot compile; there the
+construction downloads, as before.
 
 ## Evaluation
 
@@ -56,12 +70,15 @@ at arbitrary points, only fixed-grid image resizes. An **extend**.
 
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
+from algorithm.rowwise_types import RowCoord
 from max.gpu.host import DeviceContext
+from std.sys import has_accelerator
 from std.utils.numerics import nan as _nan
 
+from ..core.rowwise import reduce_all
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Static
-from ..linalg.banded import solve_banded
+from ..core.tensor import Static, copy
+from ..linalg.banded import _tridiagonal_device, solve_banded
 from .interp import _interval
 
 
@@ -101,7 +118,12 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
         extrapolate: Bool = True,
     ) raises where Self.dtype.is_floating_point() and Self.n >= 2:
         """The spline through `(x, y)` with slope `dydx` at every knot.
-        `x` must be strictly ascending, which is not checked."""
+        `x` must be strictly ascending, which is not checked. Built where
+        the knots live; see the module docstring."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not x.on_host():
+                self = Self._from_device(copy(x), y, dydx, extrapolate)
+                return
         self = Self._from_host(
             x.context(),
             _as_float64(x.to_host()),
@@ -149,6 +171,44 @@ struct CubicHermiteSpline[dtype: DType, n: Int](Movable):
             Static[Self.dtype, 4, pieces](ctx, coefficients^),
             extrapolate,
         )
+
+    @staticmethod
+    def _from_device(
+        var x: Static[Self.dtype, Self.n],
+        mut y: Static[Self.dtype, Self.n],
+        mut d: Static[Self.dtype, Self.n],
+        extrapolate: Bool,
+    ) raises -> Self where Self.dtype.is_floating_point() and Self.n >= 2:
+        """`_from_host`'s coefficients, computed on the knots' device: one
+        lane per interval, the same four formulas, at `dtype`. Takes the
+        knots it keeps."""
+        comptime pieces = Self.n - 1
+        var ctx = x.context()
+        var c = Static[Self.dtype, 4, pieces]._uninitialized(ctx)
+        var xv = x.tile()
+        var yv = y.tile()
+        var dv = d.tile()
+        var cv = c.tile()
+
+        @always_inline
+        def coefficients[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var xv, var yv, var dv, var cv}:
+            var i = coord_to_index_list(coord)[0]
+            var h = xv[Coord(i + 1)][0] - xv[Coord(i)][0]
+            var secant = (yv[Coord(i + 1)][0] - yv[Coord(i)][0]) / h
+            var d0 = dv[Coord(i)][0]
+            var d1 = dv[Coord(i + 1)][0]
+            cv.store[1](Coord(0, i), yv[Coord(i)][0])
+            cv.store[1](Coord(1, i), d0)
+            cv.store[1](Coord(2, i), (3 * secant - 2 * d0 - d1) / h)
+            cv.store[1](Coord(3, i), (d0 + d1 - 2 * secant) / (h * h))
+
+        elementwise[simd_width=1, target="gpu"](
+            coefficients, Coord(pieces), ctx
+        )
+        ctx.synchronize()
+        return Self(x^, c^, extrapolate)
 
     def __call__[
         T: TensorLike,
@@ -281,8 +341,36 @@ def _as_float64[dtype: DType](values: List[Scalar[dtype]]) -> List[Float64]:
     return out^
 
 
-def _sign(v: Float64) -> Float64:
-    return 1.0 if v > 0 else (-1.0 if v < 0 else 0.0)
+def _sign[dtype: DType](v: Scalar[dtype]) -> Scalar[dtype]:
+    return Scalar[dtype](1) if v > 0 else (
+        Scalar[dtype](-1) if v < 0 else Scalar[dtype](0)
+    )
+
+
+def _secants_device[
+    dtype: DType, n: Int
+](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
+    dtype, 2, n - 1
+] where (n >= 2):
+    """Interval widths (row 0) and secants (row 1) of the knots, on their
+    device: one launch, one lane per interval."""
+    var ctx = x.context()
+    var out = Static[dtype, 2, n - 1]._uninitialized(ctx)
+    var xv = x.tile()
+    var yv = y.tile()
+    var ov = out.tile()
+
+    @always_inline
+    def secant[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var xv, var yv, var ov}:
+        var i = coord_to_index_list(coord)[0]
+        var h = xv[Coord(i + 1)][0] - xv[Coord(i)][0]
+        ov.store[1](Coord(0, i), h)
+        ov.store[1](Coord(1, i), (yv[Coord(i + 1)][0] - yv[Coord(i)][0]) / h)
+
+    elementwise[simd_width=1, target="gpu"](secant, Coord(n - 1), ctx)
+    return out^
 
 
 struct CubicSpline[dtype: DType, n: Int](Movable):
@@ -336,6 +424,19 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
                 bc_type,
                 "'; expected 'not-a-knot', 'natural' or 'clamped'",
             )
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not x.on_host() and not (
+                bc_type == "not-a-knot" and Self.n <= 3
+            ):
+                var code = Int32(
+                    0 if bc_type
+                    == "not-a-knot" else (1 if bc_type == "natural" else 2)
+                )
+                var d = _spline_slopes_device(x, y, code)
+                self.spline = CubicHermiteSpline[
+                    Self.dtype, Self.n
+                ]._from_device(copy(x), y, d, extrapolate)
+                return
         var ctx = x.context()
         var xs = _as_float64(x.to_host())
         var ys = _as_float64(y.to_host())
@@ -464,6 +565,118 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
         return self.spline.integrate(a, b)
 
 
+def _spline_slopes_device[
+    dtype: DType, n: Int
+](mut x: Static[dtype, n], mut y: Static[dtype, n], bc: Int32) raises -> Static[
+    dtype, n
+] where (dtype.is_floating_point() and n >= 2):
+    """`CubicSpline`'s knot slopes on the knots' device, for `bc` 0
+    (not-a-knot, `n >= 4`), 1 (natural) or 2 (clamped).
+
+    One launch assembles the three diagonals and the right-hand side of
+    SciPy's slope-form system, with the not-a-knot boundary rows folded
+    into rows 1 and `n - 2` and replaced by `d = 0` placeholders; the
+    cyclic-reduction solve follows, then one two-lane launch recovers
+    `d_0` and `d_{n-1}` from the boundary rows. The module docstring says
+    why the fold is needed.
+    """
+    var ctx = x.context()
+    var hs = _secants_device(x, y)
+    var sub = Static[dtype, n]._uninitialized(ctx)
+    var diag = Static[dtype, n]._uninitialized(ctx)
+    var sup = Static[dtype, n]._uninitialized(ctx)
+    var rhs = Static[dtype, n]._uninitialized(ctx)
+    var hv = hs.tile()
+    var av = sub.tile()
+    var bv = diag.tile()
+    var cv = sup.tile()
+    var rv = rhs.tile()
+    comptime last = n - 1
+
+    @always_inline
+    def assemble[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var hv, var av, var bv, var cv, var rv, var bc}:
+        var i = coord_to_index_list(coord)[0]
+        var zero = Scalar[dtype](0)
+        var a = zero
+        var b = Scalar[dtype](1)
+        var c = zero
+        var r = zero
+        if i == 0:
+            if bc == 1:
+                var h0 = hv[Coord(0, 0)][0]
+                b = 2 * h0
+                c = h0
+                r = 3 * h0 * hv[Coord(1, 0)][0]
+        elif i == last:
+            if bc == 1:
+                var h = hv[Coord(0, last - 1)][0]
+                a = h
+                b = 2 * h
+                r = 3 * h * hv[Coord(1, last - 1)][0]
+        else:
+            var hl = hv[Coord(0, i - 1)][0]
+            var hr = hv[Coord(0, i)][0]
+            var sl = hv[Coord(1, i - 1)][0]
+            var sr = hv[Coord(1, i)][0]
+            a = hr
+            b = 2 * (hl + hr)
+            c = hl
+            r = 3 * (hr * sl + hl * sr)
+            if bc == 0 and i == 1:
+                # Row 1 minus the not-a-knot row 0: `d_0` drops out.
+                var span = hl + hr
+                a = zero
+                b = span
+                r -= ((hl + 2 * span) * hr * sl + hl * hl * sr) / span
+            if bc == 0 and i == last - 1:
+                # Row n-2 minus the not-a-knot row n-1: `d_{n-1}` drops out.
+                var h2 = hv[Coord(0, last - 2)][0]
+                var h1 = hv[Coord(0, last - 1)][0]
+                var s2 = hv[Coord(1, last - 2)][0]
+                var s1 = hv[Coord(1, last - 1)][0]
+                var span = h2 + h1
+                b = span
+                c = zero
+                r -= (h1 * h1 * s2 + (2 * span + h1) * h2 * s1) / span
+        av.store[1](coord, a)
+        bv.store[1](coord, b)
+        cv.store[1](coord, c)
+        rv.store[1](coord, r)
+
+    elementwise[simd_width=1, target="gpu"](assemble, Coord(n), ctx)
+    var d = _tridiagonal_device[dtype, n](sub^, diag^, sup^, rhs^, ctx)
+    if bc == 0:
+        var dv = d.tile()
+
+        @always_inline
+        def ends[w: Int, alignment: Int = 1](coord: Coord) {var hv, var dv}:
+            var k = coord_to_index_list(coord)[0]
+            if k == 0:
+                var h0 = hv[Coord(0, 0)][0]
+                var h1 = hv[Coord(0, 1)][0]
+                var s0 = hv[Coord(1, 0)][0]
+                var s1 = hv[Coord(1, 1)][0]
+                var span = h0 + h1
+                var r0 = ((h0 + 2 * span) * h1 * s0 + h0 * h0 * s1) / span
+                dv.store[1](Coord(0), (r0 - span * dv[Coord(1)][0]) / h1)
+            else:
+                var h2 = hv[Coord(0, last - 2)][0]
+                var h1 = hv[Coord(0, last - 1)][0]
+                var s2 = hv[Coord(1, last - 2)][0]
+                var s1 = hv[Coord(1, last - 1)][0]
+                var span = h2 + h1
+                var r = (h1 * h1 * s2 + (2 * span + h1) * h2 * s1) / span
+                dv.store[1](
+                    Coord(last), (r - span * dv[Coord(last - 1)][0]) / h2
+                )
+
+        elementwise[simd_width=1, target="gpu"](ends, Coord(2), ctx)
+        ctx.synchronize()
+    return d^
+
+
 struct PchipInterpolator[dtype: DType, n: Int](Movable):
     """The shape-preserving piecewise cubic of Fritsch and Butland.
     `scipy.interpolate.PchipInterpolator(x, y)`.
@@ -486,6 +699,13 @@ struct PchipInterpolator[dtype: DType, n: Int](Movable):
         mut y: Static[Self.dtype, Self.n],
         extrapolate: Bool = True,
     ) raises where Self.dtype.is_floating_point() and Self.n >= 2:
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not x.on_host():
+                var d = _pchip_slopes_device(x, y)
+                self.spline = CubicHermiteSpline[
+                    Self.dtype, Self.n
+                ]._from_device(copy(x), y, d, extrapolate)
+                return
         var ctx = x.context()
         var xs = _as_float64(x.to_host())
         var ys = _as_float64(y.to_host())
@@ -548,16 +768,162 @@ struct PchipInterpolator[dtype: DType, n: Int](Movable):
         return self.spline.integrate(a, b)
 
 
-def _pchip_edge(h0: Float64, h1: Float64, m0: Float64, m1: Float64) -> Float64:
+def _pchip_edge[
+    dtype: DType
+](
+    h0: Scalar[dtype], h1: Scalar[dtype], m0: Scalar[dtype], m1: Scalar[dtype]
+) -> Scalar[dtype]:
     """SciPy's `_edge_case`: the one-sided three-point slope estimate,
     zeroed if it disagrees in sign with the first secant and capped at
     three times that secant when the two secants disagree."""
-    var d = ((2.0 * h0 + h1) * m0 - h0 * m1) / (h0 + h1)
+    var d = ((2 * h0 + h1) * m0 - h0 * m1) / (h0 + h1)
     if _sign(d) != _sign(m0):
-        return 0.0
-    if _sign(m0) != _sign(m1) and abs(d) > 3.0 * abs(m0):
-        return 3.0 * m0
+        return Scalar[dtype](0)
+    if _sign(m0) != _sign(m1) and abs(d) > 3 * abs(m0):
+        return 3 * m0
     return d
+
+
+def _pchip_slopes_device[
+    dtype: DType, n: Int
+](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
+    dtype, n
+] where (dtype.is_floating_point() and n >= 2):
+    """`PchipInterpolator`'s knot slopes on the knots' device: one lane
+    per knot, the host loop's formulas."""
+    var ctx = x.context()
+    var hs = _secants_device(x, y)
+    var d = Static[dtype, n]._uninitialized(ctx)
+    var hv = hs.tile()
+    var dv = d.tile()
+    comptime pieces = n - 1
+
+    @always_inline
+    def slope[w: Int, alignment: Int = 1](coord: Coord) {var hv, var dv}:
+        var i = coord_to_index_list(coord)[0]
+        var zero = Scalar[dtype](0)
+        var out: Scalar[dtype]
+        comptime if n == 2:
+            out = hv[Coord(1, 0)][0]
+        else:
+            if i == 0:
+                out = _pchip_edge(
+                    hv[Coord(0, 0)][0],
+                    hv[Coord(0, 1)][0],
+                    hv[Coord(1, 0)][0],
+                    hv[Coord(1, 1)][0],
+                )
+            elif i == n - 1:
+                out = _pchip_edge(
+                    hv[Coord(0, pieces - 1)][0],
+                    hv[Coord(0, pieces - 2)][0],
+                    hv[Coord(1, pieces - 1)][0],
+                    hv[Coord(1, pieces - 2)][0],
+                )
+            else:
+                var m0 = hv[Coord(1, i - 1)][0]
+                var m1 = hv[Coord(1, i)][0]
+                if _sign(m0) != _sign(m1) or m0 == zero or m1 == zero:
+                    out = zero
+                else:
+                    var h0 = hv[Coord(0, i - 1)][0]
+                    var h1 = hv[Coord(0, i)][0]
+                    var w1 = 2 * h1 + h0
+                    var w2 = h1 + 2 * h0
+                    out = (w1 + w2) / (w1 / m0 + w2 / m1)
+        dv.store[1](coord, out)
+
+    elementwise[simd_width=1, target="gpu"](slope, Coord(n), ctx)
+    return d^
+
+
+def _akima_slopes_device[
+    dtype: DType, n: Int
+](mut x: Static[dtype, n], mut y: Static[dtype, n]) raises -> Static[
+    dtype, n
+] where (dtype.is_floating_point() and n >= 3 and n >= 2):
+    """`Akima1DInterpolator`'s knot slopes on the knots' device.
+
+    One launch for the `n + 3` extended secants (the virtual ones by the
+    host's linear extension, written out in closed form), one for each
+    knot's weight sum, one `reduce_all` max for the threshold, and one for
+    the slopes.
+    """
+    var ctx = x.context()
+    var hs = _secants_device(x, y)
+    var m = Static[dtype, n + 3]._uninitialized(ctx)
+    var f = Static[dtype, n]._uninitialized(ctx)
+    var largest = Static[dtype, 1]._uninitialized(ctx)
+    var d = Static[dtype, n]._uninitialized(ctx)
+    var hv = hs.tile()
+    var mv = m.tile()
+    var fv = f.tile()
+    var lv = largest.tile()
+    var dv = d.tile()
+    comptime pieces = n - 1
+
+    @always_inline
+    def extend[w: Int, alignment: Int = 1](coord: Coord) {var hv, var mv}:
+        var k = coord_to_index_list(coord)[0]
+        var value: Scalar[dtype]
+        if k == 0:
+            value = 3 * hv[Coord(1, 0)][0] - 2 * hv[Coord(1, 1)][0]
+        elif k == 1:
+            value = 2 * hv[Coord(1, 0)][0] - hv[Coord(1, 1)][0]
+        elif k == n + 1:
+            value = (
+                2 * hv[Coord(1, pieces - 1)][0] - hv[Coord(1, pieces - 2)][0]
+            )
+        elif k == n + 2:
+            value = (
+                3 * hv[Coord(1, pieces - 1)][0]
+                - 2 * hv[Coord(1, pieces - 2)][0]
+            )
+        else:
+            value = hv[Coord(1, k - 2)][0]
+        mv.store[1](coord, value)
+
+    elementwise[simd_width=1, target="gpu"](extend, Coord(n + 3), ctx)
+
+    @always_inline
+    def weigh[w: Int, alignment: Int = 1](coord: Coord) {var mv, var fv}:
+        var i = coord_to_index_list(coord)[0]
+        var f1 = abs(mv[Coord(i + 3)][0] - mv[Coord(i + 2)][0])
+        var f2 = abs(mv[Coord(i + 1)][0] - mv[Coord(i)][0])
+        fv.store[1](coord, f1 + f2)
+
+    elementwise[simd_width=1, target="gpu"](weigh, Coord(n), ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+        return tile
+
+    reduce_all[monoid="max", target="gpu"](
+        fv, lv.as_unsafe_any_origin(), identity, n, Optional(ctx)
+    )
+
+    @always_inline
+    def slope[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var mv, var fv, var lv, var dv}:
+        var i = coord_to_index_list(coord)[0]
+        var f1 = abs(mv[Coord(i + 3)][0] - mv[Coord(i + 2)][0])
+        var f2 = abs(mv[Coord(i + 1)][0] - mv[Coord(i)][0])
+        var f12 = fv[coord][0]
+        var out: Scalar[dtype]
+        if f12 > Scalar[dtype](1e-9) * lv[Coord(0)][0]:
+            out = (f1 * mv[Coord(i + 1)][0] + f2 * mv[Coord(i + 2)][0]) / f12
+        else:
+            out = Scalar[dtype](0.5) * (
+                mv[Coord(i + 1)][0] + mv[Coord(i + 2)][0]
+            )
+        dv.store[1](coord, out)
+
+    elementwise[simd_width=1, target="gpu"](slope, Coord(n), ctx)
+    ctx.synchronize()
+    return d^
 
 
 struct Akima1DInterpolator[dtype: DType, n: Int](Movable):
@@ -588,6 +954,13 @@ struct Akima1DInterpolator[dtype: DType, n: Int](Movable):
     ) raises where (
         Self.dtype.is_floating_point() and Self.n >= 3 and Self.n >= 2
     ):
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not x.on_host():
+                var d = _akima_slopes_device(x, y)
+                self.spline = CubicHermiteSpline[
+                    Self.dtype, Self.n
+                ]._from_device(copy(x), y, d, extrapolate)
+                return
         var ctx = x.context()
         var xs = _as_float64(x.to_host())
         var ys = _as_float64(y.to_host())
