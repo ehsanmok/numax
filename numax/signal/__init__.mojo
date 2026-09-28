@@ -71,14 +71,22 @@ from .spectral import (
 )
 from .peaks import find_peaks, peak_prominences
 from .design import (
+    OUTPUT_BA,
+    OUTPUT_SOS,
+    OUTPUT_ZPK,
     FrequencyResponse,
     TransferFunction,
+    ZerosPolesGain,
     butter,
     cheby1,
     cheby2,
     ellip,
     freqz,
     iirfilter,
+    sos2tf,
+    tf2sos,
+    tf2zpk,
+    zpk2sos,
     zpk2tf,
 )
 from ._array import (

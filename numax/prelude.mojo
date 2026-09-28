@@ -538,7 +538,22 @@ from .signal.filters import (
 )
 from .signal.spectral import periodogram, spectrogram, stft, welch
 from .signal.peaks import find_peaks
-from .signal.design import butter, cheby1, cheby2, ellip, freqz, iirfilter
+from .signal.design import (
+    OUTPUT_BA,
+    OUTPUT_SOS,
+    OUTPUT_ZPK,
+    ZerosPolesGain,
+    butter,
+    cheby1,
+    cheby2,
+    ellip,
+    freqz,
+    iirfilter,
+    sos2tf,
+    tf2sos,
+    tf2zpk,
+    zpk2sos,
+)
 
 # I/O.
 from .io.io import nmx

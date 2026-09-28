@@ -607,14 +607,22 @@ from .signal.spectral import (
 )
 from .signal.peaks import find_peaks
 from .signal.design import (
+    OUTPUT_BA,
+    OUTPUT_SOS,
+    OUTPUT_ZPK,
     FrequencyResponse,
     TransferFunction,
+    ZerosPolesGain,
     butter,
     cheby1,
     cheby2,
     ellip,
     freqz,
     iirfilter,
+    sos2tf,
+    tf2sos,
+    tf2zpk,
+    zpk2sos,
 )
 
 # Statistics, distributions, sampling -- `numax.stats`. The nine

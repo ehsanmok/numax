@@ -1,6 +1,15 @@
 """IIR filter design and frequency response over
 `numax.core.tensor.Tensor`: `butter`, `cheby1`, `cheby2`, `ellip`, the
-`iirfilter` front door they share, and `freqz`.
+`iirfilter` front door they share, and `freqz`; and the conversions
+between the three forms a filter takes -- `(b, a)`, zeros-poles-gain and
+second-order sections -- `zpk2tf`, `tf2zpk`, `zpk2sos`, `tf2sos` and
+`sos2tf`.
+
+Every design takes `output=`, SciPy's argument as an Int selector:
+`OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`. The sections are
+paired straight from the design's own roots, never from expanded
+polynomials, so they are SciPy's to rounding; a `StaticString` cannot
+steer a return type, which is why the selector is an Int.
 
 **Tier 2.** A design is a few dozen complex numbers on the host --
 prototype poles, a frequency warp, the bilinear transform, a polynomial
@@ -733,9 +742,10 @@ def _check_band(
 
 def _design(
     var proto: _Zpk, wn_lo: Float64, wn_hi: Float64, btype: StaticString
-) raises -> Tuple[List[Float64], List[Float64]]:
+) raises -> _Zpk:
     """The route every family shares: warp the edges, move the prototype,
-    bilinear at `fs = 2`, expand."""
+    bilinear at `fs = 2`. The digital zeros, poles and gain, which
+    `_deliver` expands, keeps or pairs into sections."""
     var w_lo = 4.0 * _tan(_PI * wn_lo / 2.0)
     if btype == "lowpass":
         proto = _lp2lp_zpk(proto^, w_lo)
@@ -749,7 +759,7 @@ def _design(
             proto = _lp2bp_zpk(proto^, wo, bw)
         else:
             proto = _lp2bs_zpk(proto^, wo, bw)
-    return _zpk2tf(_bilinear_zpk(proto^, 2.0))
+    return _bilinear_zpk(proto^, 2.0)
 
 
 def _to_transfer_function[
@@ -776,12 +786,12 @@ def _to_transfer_function[
 
 
 def butter[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     wn: Float64,
     btype: StaticString = "lowpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, order] where (
+) raises -> _Designed[dtype, order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Butterworth filter of the given `order`, lowpass or
@@ -794,15 +804,17 @@ def butter[
 
     `"lowpass"` or `"highpass"`; pass a `(low, high)` tuple for `"bandpass"`
     or `"bandstop"`, which doubles the order and so is a separate overload.
-    For an order above about eight, prefer running the design through
-    second-order sections -- SciPy's `output="sos"` -- which this does not
-    produce; the `(b, a)` of a long polynomial lose digits a cascade keeps.
+    For an order above about eight, ask for second-order sections --
+    `output=OUTPUT_SOS`, SciPy's `output="sos"` -- since the `(b, a)` of a
+    long polynomial lose digits a cascade keeps.
     `wn` must lie in `(0, 1)`.
 
     Parameters:
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the filter, at least 1; `b` and `a` are each
             `order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         wn: The critical frequency as a fraction of Nyquist, strictly
@@ -812,25 +824,28 @@ def butter[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
         `(0, 1)`, or if the upload to `ctx` fails.
     """
     _check_edge("butter", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=order](
+    return _deliver[dtype, order, output](
         _design(_buttap(order), wn, 0.0, btype), ctx
     )
 
 
 def butter[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     wn: Tuple[Float64, Float64],
     btype: StaticString = "bandpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, 2 * order] where (
+) raises -> _Designed[dtype, 2 * order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Butterworth bandpass or bandstop filter across
@@ -845,6 +860,8 @@ def butter[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the lowpass prototype, at least 1; the result
             has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         wn: The `(low, high)` band edges as fractions of Nyquist, an
@@ -854,7 +871,10 @@ def butter[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
@@ -862,19 +882,19 @@ def butter[
         `ctx` fails.
     """
     _check_band("butter", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=2 * order](
+    return _deliver[dtype, 2 * order, output](
         _design(_buttap(order), wn[0], wn[1], btype), ctx
     )
 
 
 def cheby1[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     rp: Float64,
     wn: Float64,
     btype: StaticString = "lowpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, order] where (
+) raises -> _Designed[dtype, order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Chebyshev type I filter: `rp` dB of equiripple in the
@@ -889,6 +909,8 @@ def cheby1[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the filter, at least 1; `b` and `a` are each
             `order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         rp: The maximum passband ripple in dB, positive.
@@ -899,26 +921,29 @@ def cheby1[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
         `(0, 1)`, or if the upload to `ctx` fails.
     """
     _check_edge("cheby1", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=order](
+    return _deliver[dtype, order, output](
         _design(_cheb1ap(order, rp), wn, 0.0, btype), ctx
     )
 
 
 def cheby1[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     rp: Float64,
     wn: Tuple[Float64, Float64],
     btype: StaticString = "bandpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, 2 * order] where (
+) raises -> _Designed[dtype, 2 * order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Chebyshev type I bandpass or bandstop filter at order
@@ -928,6 +953,8 @@ def cheby1[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the lowpass prototype, at least 1; the result
             has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         rp: The maximum passband ripple in dB, positive.
@@ -938,7 +965,10 @@ def cheby1[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
@@ -946,19 +976,19 @@ def cheby1[
         `ctx` fails.
     """
     _check_band("cheby1", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=2 * order](
+    return _deliver[dtype, 2 * order, output](
         _design(_cheb1ap(order, rp), wn[0], wn[1], btype), ctx
     )
 
 
 def cheby2[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     rs: Float64,
     wn: Float64,
     btype: StaticString = "lowpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, order] where (
+) raises -> _Designed[dtype, order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Chebyshev type II filter: flat passband, `rs` dB of
@@ -973,6 +1003,8 @@ def cheby2[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the filter, at least 1; `b` and `a` are each
             `order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         rs: The minimum stopband attenuation in dB, positive.
@@ -983,26 +1015,29 @@ def cheby2[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
         `(0, 1)`, or if the upload to `ctx` fails.
     """
     _check_edge("cheby2", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=order](
+    return _deliver[dtype, order, output](
         _design(_cheb2ap(order, rs), wn, 0.0, btype), ctx
     )
 
 
 def cheby2[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     rs: Float64,
     wn: Tuple[Float64, Float64],
     btype: StaticString = "bandpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, 2 * order] where (
+) raises -> _Designed[dtype, 2 * order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital Chebyshev type II bandpass or bandstop filter at order
@@ -1012,6 +1047,8 @@ def cheby2[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the lowpass prototype, at least 1; the result
             has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         rs: The minimum stopband attenuation in dB, positive.
@@ -1022,7 +1059,10 @@ def cheby2[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
@@ -1030,20 +1070,20 @@ def cheby2[
         `ctx` fails.
     """
     _check_band("cheby2", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=2 * order](
+    return _deliver[dtype, 2 * order, output](
         _design(_cheb2ap(order, rs), wn[0], wn[1], btype), ctx
     )
 
 
 def ellip[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     rp: Float64,
     rs: Float64,
     wn: Float64,
     btype: StaticString = "lowpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, order] where (
+) raises -> _Designed[dtype, order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital elliptic (Cauer) filter: `rp` dB of passband ripple and
@@ -1058,6 +1098,8 @@ def ellip[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the filter, at least 1; `b` and `a` are each
             `order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         rp: The maximum passband ripple in dB, positive.
@@ -1069,7 +1111,10 @@ def ellip[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
@@ -1077,20 +1122,20 @@ def ellip[
         if the upload to `ctx` fails.
     """
     _check_edge("ellip", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=order](
+    return _deliver[dtype, order, output](
         _design(_ellipap(order, rp, rs), wn, 0.0, btype), ctx
     )
 
 
 def ellip[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     rp: Float64,
     rs: Float64,
     wn: Tuple[Float64, Float64],
     btype: StaticString = "bandpass",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, 2 * order] where (
+) raises -> _Designed[dtype, 2 * order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """A digital elliptic bandpass or bandstop filter at order
@@ -1100,6 +1145,8 @@ def ellip[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the lowpass prototype, at least 1; the result
             has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         rp: The maximum passband ripple in dB, positive.
@@ -1111,7 +1158,10 @@ def ellip[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
@@ -1119,13 +1169,13 @@ def ellip[
         `rs`, or if the upload to `ctx` fails.
     """
     _check_band("ellip", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=2 * order](
+    return _deliver[dtype, 2 * order, output](
         _design(_ellipap(order, rp, rs), wn[0], wn[1], btype), ctx
     )
 
 
 def iirfilter[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     wn: Float64,
     rp: Float64 = 1.0,
@@ -1133,7 +1183,7 @@ def iirfilter[
     btype: StaticString = "lowpass",
     ftype: StaticString = "butter",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, order] where (
+) raises -> _Designed[dtype, order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """The family named rather than called: `scipy.signal.iirfilter(order,
@@ -1153,6 +1203,8 @@ def iirfilter[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the filter, at least 1; `b` and `a` are each
             `order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         wn: The critical frequency as a fraction of Nyquist, strictly
@@ -1168,7 +1220,10 @@ def iirfilter[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"lowpass"` or `"highpass"`, if `wn` is outside
@@ -1176,13 +1231,13 @@ def iirfilter[
         both `rp` and `rs`, or if the upload to `ctx` fails.
     """
     _check_edge("iirfilter", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=order](
+    return _deliver[dtype, order, output](
         _design(_prototype(ftype, order, rp, rs), wn, 0.0, btype), ctx
     )
 
 
 def iirfilter[
-    dtype: DType, order: Int
+    dtype: DType, order: Int, output: Int = OUTPUT_BA
 ](
     wn: Tuple[Float64, Float64],
     rp: Float64 = 1.0,
@@ -1190,7 +1245,7 @@ def iirfilter[
     btype: StaticString = "bandpass",
     ftype: StaticString = "butter",
     ctx: Optional[DeviceContext] = None,
-) raises -> TransferFunction[dtype, 2 * order] where (
+) raises -> _Designed[dtype, 2 * order, output] where (
     dtype.is_floating_point() and order >= 1
 ):
     """The named-`ftype` front door for the band forms, at order
@@ -1201,6 +1256,8 @@ def iirfilter[
         dtype: The floating-point dtype of the returned coefficients.
         order: The order of the lowpass prototype, at least 1; the result
             has order `2 * order`, so `b` and `a` are `2 * order + 1` long.
+        output: `OUTPUT_BA` (the default), `OUTPUT_ZPK` or `OUTPUT_SOS`,
+            SciPy's `output=`.
 
     Args:
         wn: The `(low, high)` band edges as fractions of Nyquist, an
@@ -1216,7 +1273,10 @@ def iirfilter[
             host memory.
 
     Returns:
-        A `TransferFunction` holding the numerator `b` and denominator `a`.
+        The design in the form `output` selects: a `TransferFunction` of
+        `b` and `a` (`OUTPUT_BA`), a `ZerosPolesGain` (`OUTPUT_ZPK`), or the
+        second-order sections as a `(sections, 6)` tensor (`OUTPUT_SOS`),
+        paired as `zpk2sos` pairs them.
 
     Raises:
         If `btype` is not `"bandpass"` or `"bandstop"`, if `wn` is not an
@@ -1225,9 +1285,756 @@ def iirfilter[
         to `ctx` fails.
     """
     _check_band("iirfilter", btype, wn)
-    return _to_transfer_function[dtype=dtype, order=2 * order](
+    return _deliver[dtype, 2 * order, output](
         _design(_prototype(ftype, order, rp, rs), wn[0], wn[1], btype), ctx
     )
+
+
+# --------------------------------------------------------------------------
+# Zeros, poles and gain; second-order sections
+# --------------------------------------------------------------------------
+
+comptime OUTPUT_BA = 0
+"""`output=` selector for the design routines: `(b, a)` as a
+`TransferFunction`, SciPy's `output="ba"` and the default."""
+comptime OUTPUT_ZPK = 1
+"""`output=` selector: the zeros, poles and gain as a `ZerosPolesGain`,
+SciPy's `output="zpk"`."""
+comptime OUTPUT_SOS = 2
+"""`output=` selector: second-order sections, a `(sections, 6)` tensor,
+SciPy's `output="sos"` -- the form to run a filter above order eight in."""
+
+
+struct ZerosPolesGain(Movable):
+    """A filter as its zeros, poles and gain, SciPy's `(z, p, k)`.
+
+    The roots are host lists with real and imaginary parts apart, the split
+    `zpk2tf` already takes: a `Tensor` is `dtype`-monomorphic and holds no
+    complex value, and a zero-pole-gain form is a few dozen numbers the
+    design arithmetic produces on the host anyway.
+    """
+
+    var zeros_re: List[Float64]
+    """Real parts of the zeros."""
+    var zeros_im: List[Float64]
+    """Imaginary parts of the zeros; a conjugate pair is two entries."""
+    var poles_re: List[Float64]
+    """Real parts of the poles."""
+    var poles_im: List[Float64]
+    """Imaginary parts of the poles; a conjugate pair is two entries."""
+    var gain: Float64
+    """The system gain `k`."""
+
+    def __init__(
+        out self,
+        var zeros_re: List[Float64],
+        var zeros_im: List[Float64],
+        var poles_re: List[Float64],
+        var poles_im: List[Float64],
+        gain: Float64,
+    ):
+        """Build from the four root lists and the gain.
+
+        Args:
+            zeros_re: Real parts of the zeros.
+            zeros_im: Imaginary parts of the zeros, as many as `zeros_re`.
+            poles_re: Real parts of the poles.
+            poles_im: Imaginary parts of the poles, as many as `poles_re`.
+            gain: The system gain.
+        """
+        self.zeros_re = zeros_re^
+        self.zeros_im = zeros_im^
+        self.poles_re = poles_re^
+        self.poles_im = poles_im^
+        self.gain = gain
+
+
+comptime _Designed[dtype: DType, order: Int, output: Int] = (
+    TransferFunction[dtype, order] if output
+    == OUTPUT_BA else (
+        ZerosPolesGain if output
+        == OUTPUT_ZPK else Static[dtype, (order + 1) // 2, 6]
+    )
+)
+"""What a design of `order` returns under each `output` selector."""
+
+
+def _deliver[
+    dtype: DType, order: Int, output: Int
+](var f: _Zpk, ctx: Optional[DeviceContext]) raises -> _Designed[
+    dtype, order, output
+] where dtype.is_floating_point():
+    """A digital design's zeros, poles and gain in the form `output` asks
+    for. The sections come straight from the roots, never through the
+    expanded polynomials, which is the point of asking for them."""
+    comptime assert (
+        output == OUTPUT_BA or output == OUTPUT_ZPK or output == OUTPUT_SOS
+    ), "output is OUTPUT_BA, OUTPUT_ZPK or OUTPUT_SOS"
+    comptime if output == OUTPUT_BA:
+        return rebind_var[_Designed[dtype, order, output]](
+            _to_transfer_function[dtype=dtype, order=order](_zpk2tf(f^), ctx)
+        )
+    elif output == OUTPUT_ZPK:
+        return rebind_var[_Designed[dtype, order, output]](
+            ZerosPolesGain(
+                f.zr.copy(), f.zi.copy(), f.pr.copy(), f.pi.copy(), f.gain
+            )
+        )
+    else:
+        comptime sections = (order + 1) // 2
+        return rebind_var[_Designed[dtype, order, output]](
+            _sos_tensor[dtype, sections](_zpk2sos_rows(f), "design", ctx)
+        )
+
+
+def _sos_tensor[
+    dtype: DType, sections: Int
+](
+    rows: List[Float64], who: StaticString, ctx: Optional[DeviceContext]
+) raises -> Static[dtype, sections, 6]:
+    """`sections` rows of six coefficients uploaded as a `(sections, 6)`
+    tensor, raising when the pairing produced a different count."""
+    if len(rows) != sections * 6:
+        raise Error(
+            who,
+            ": the zeros and poles pair into ",
+            len(rows) // 6,
+            " sections, not ",
+            sections,
+        )
+    var values = List[Scalar[dtype]](capacity=sections * 6)
+    for i in range(sections * 6):
+        values.append(Scalar[dtype](rows[i]))
+    var device = ctx.value() if ctx else DeviceContext(api="cpu")
+    return Static[dtype, sections, 6](values^, device)
+
+
+@fieldwise_init
+struct _Cx(Copyable, ImplicitlyCopyable, Movable):
+    """A host complex number for the pairing arithmetic."""
+
+    var re: Float64
+    var im: Float64
+
+    def is_real(self) -> Bool:
+        return self.im == 0.0
+
+    def conj(self) -> _Cx:
+        return _Cx(self.re, -self.im)
+
+    def abs(self) -> Float64:
+        return _hypot(self.re, self.im)
+
+
+def _distance(a: _Cx, b: _Cx) -> Float64:
+    return _hypot(a.re - b.re, a.im - b.im)
+
+
+def _cplxreal(z: List[_Cx]) raises -> List[_Cx]:
+    """`scipy.signal._filter_design._cplxreal`, concatenated: one member of
+    each conjugate pair (the one with positive imaginary part, averaged
+    with its partner's conjugate), then the real roots, each group sorted
+    by real part and then by the size of the imaginary part."""
+    var tol = 100.0 * _EPS
+    var sorted = z.copy()
+    # Lexicographic by (real, |imag|); an insertion sort, the lists being
+    # a filter's worth of roots.
+    for i in range(1, len(sorted)):
+        var j = i
+        while j > 0 and (
+            sorted[j].re < sorted[j - 1].re
+            or (
+                sorted[j].re == sorted[j - 1].re
+                and abs(sorted[j].im) < abs(sorted[j - 1].im)
+            )
+        ):
+            var t = sorted[j]
+            sorted[j] = sorted[j - 1]
+            sorted[j - 1] = t
+            j -= 1
+    var reals = List[_Cx]()
+    var positive = List[_Cx]()
+    var negative = List[_Cx]()
+    for i in range(len(sorted)):
+        var x = sorted[i]
+        if abs(x.im) <= tol * x.abs():
+            reals.append(_Cx(x.re, 0.0))
+        elif x.im > 0:
+            positive.append(x)
+        else:
+            negative.append(x)
+    if len(positive) != len(negative):
+        raise Error("zpk2sos: a complex root has no matching conjugate")
+    var out = List[_Cx](capacity=len(positive) + len(reals))
+    for i in range(len(positive)):
+        var p = positive[i]
+        var n = negative[i]
+        if _distance(p, n.conj()) > tol * n.abs():
+            raise Error("zpk2sos: a complex root has no matching conjugate")
+        out.append(_Cx((p.re + n.re) / 2.0, (p.im - n.im) / 2.0))
+    for i in range(len(reals)):
+        out.append(reals[i])
+    return out^
+
+
+def _worst_pole(p: List[_Cx]) -> Int:
+    """The pole nearest the unit circle: `argmin |1 - |p||`, first on a
+    tie, as `numpy.argmin` breaks it."""
+    var best = 0
+    for i in range(1, len(p)):
+        if abs(1.0 - p[i].abs()) < abs(1.0 - p[best].abs()):
+            best = i
+    return best
+
+
+def _nearest(fro: List[_Cx], to: _Cx, which: StaticString) raises -> Int:
+    """`_nearest_real_complex_idx`: the closest element of `fro` to `to`
+    that is real, complex, or either."""
+    var best = -1
+    for i in range(len(fro)):
+        var ok = which == "any" or (
+            fro[i].is_real() if which == "real" else not fro[i].is_real()
+        )
+        if not ok:
+            continue
+        if best < 0 or _distance(fro[i], to) < _distance(fro[best], to):
+            best = i
+    if best < 0:
+        raise Error("zpk2sos: no ", which, " root left to pair")
+    return best
+
+
+def _section(z: List[_Cx], p: List[_Cx]) -> List[Float64]:
+    """`_single_zpksos`: up to two zeros and two poles as one row
+    `[b0, b1, b2, a0, a1, a2]`, each polynomial right-aligned so a missing
+    root leaves a leading zero."""
+    var zr = List[Float64]()
+    var zi = List[Float64]()
+    for i in range(len(z)):
+        zr.append(z[i].re)
+        zi.append(z[i].im)
+    var pr = List[Float64]()
+    var pi = List[Float64]()
+    for i in range(len(p)):
+        pr.append(p[i].re)
+        pi.append(p[i].im)
+    var b = _poly_from_roots(zr, zi)[0].copy()
+    var a = _poly_from_roots(pr, pi)[0].copy()
+    var row = List[Float64](length=6, fill=0.0)
+    for j in range(len(b)):
+        row[3 - len(b) + j] = b[j]
+    for j in range(len(a)):
+        row[6 - len(a) + j] = a[j]
+    return row^
+
+
+def _pop(mut xs: List[_Cx], i: Int) -> _Cx:
+    var x = xs[i]
+    _ = xs.pop(i)
+    return x
+
+
+def _count_real(xs: List[_Cx]) -> Int:
+    var count = 0
+    for i in range(len(xs)):
+        if xs[i].is_real():
+            count += 1
+    return count
+
+
+def _zpk2sos_rows(f: _Zpk) raises -> List[Float64]:
+    """`scipy.signal.zpk2sos(z, p, k)` with its default digital
+    `pairing="nearest"`, as flat rows of six: the poles nearest the unit
+    circle go last, each paired with the zeros nearest them, and the gain
+    rides on the first section. Transcribed branch for branch, so the
+    sections and their order are SciPy's."""
+    var z = List[_Cx]()
+    for i in range(len(f.zr)):
+        z.append(_Cx(f.zr[i], f.zi[i]))
+    var p = List[_Cx]()
+    for i in range(len(f.pr)):
+        p.append(_Cx(f.pr[i], f.pi[i]))
+    if len(z) == 0 and len(p) == 0:
+        return [f.gain, 0.0, 0.0, 1.0, 0.0, 0.0]
+    while len(p) < len(z):
+        p.append(_Cx(0.0, 0.0))
+    while len(z) < len(p):
+        z.append(_Cx(0.0, 0.0))
+    var sections = (len(p) + 1) // 2
+    if len(p) % 2 == 1:
+        p.append(_Cx(0.0, 0.0))
+        z.append(_Cx(0.0, 0.0))
+    z = _cplxreal(z)
+    p = _cplxreal(p)
+    var rows = List[List[Float64]]()
+    for _ in range(sections):
+        rows.append(List[Float64]())
+    for si in range(sections - 1, -1, -1):
+        var p1 = _pop(p, _worst_pole(p))
+        if p1.is_real() and _count_real(p) == 0:
+            var z1 = _pop(z, _nearest(z, p1, "real"))
+            rows[si] = _section([z1, _Cx(0.0, 0.0)], [p1, _Cx(0.0, 0.0)])
+        elif (
+            len(p) + 1 == len(z)
+            and not p1.is_real()
+            and _count_real(p) == 1
+            and _count_real(z) == 1
+        ):
+            var z1 = _pop(z, _nearest(z, p1, "complex"))
+            rows[si] = _section([z1, z1.conj()], [p1, p1.conj()])
+        else:
+            var p2: _Cx
+            if p1.is_real():
+                var best = -1
+                for i in range(len(p)):
+                    if p[i].is_real() and (
+                        best < 0
+                        or abs(1.0 - p[i].abs()) < abs(1.0 - p[best].abs())
+                    ):
+                        best = i
+                p2 = _pop(p, best)
+            else:
+                p2 = p1.conj()
+            if len(z) > 0:
+                var z1 = _pop(z, _nearest(z, p1, "any"))
+                if not z1.is_real():
+                    rows[si] = _section([z1, z1.conj()], [p1, p2])
+                elif len(z) > 0:
+                    var z2 = _pop(z, _nearest(z, p1, "real"))
+                    rows[si] = _section([z1, z2], [p1, p2])
+                else:
+                    rows[si] = _section([z1], [p1, p2])
+            else:
+                rows[si] = _section(List[_Cx](), [p1, p2])
+    var flat = List[Float64](capacity=sections * 6)
+    for si in range(sections):
+        for j in range(6):
+            flat.append(rows[si][j] * (f.gain if si == 0 and j < 3 else 1.0))
+    return flat^
+
+
+def _poly_roots(c: List[Float64]) raises -> List[_Cx]:
+    """The roots of the descending polynomial `c`, `numpy.roots`' contract
+    and algorithm: leading zeros dropped, trailing zeros returned as roots
+    at the origin, and the rest the eigenvalues of the companion matrix --
+    balanced, then Francis double-shift QR on the host. That route is
+    backward stable, so the roots are those of a polynomial a rounding
+    away from `c` even where a root is multiple and each copy of it is
+    only good to `eps^(1/m)`, and every complex root comes with its exact
+    conjugate. **Host, tier 2.**
+    """
+    var start = 0
+    while start < len(c) and c[start] == 0.0:
+        start += 1
+    var stop = len(c)
+    var at_zero = 0
+    while stop > start + 1 and c[stop - 1] == 0.0:
+        stop -= 1
+        at_zero += 1
+    var roots = List[_Cx]()
+    var degree = stop - start - 1
+    if degree >= 1:
+        var h = List[Float64](length=degree * degree, fill=0.0)
+        for j in range(degree):
+            h[j] = -c[start + 1 + j] / c[start]
+        for i in range(1, degree):
+            h[i * degree + i - 1] = 1.0
+        _balance(h, degree)
+        roots = _hqr(h, degree)
+    for _ in range(at_zero):
+        roots.append(_Cx(0.0, 0.0))
+    return roots^
+
+
+def _balance(mut h: List[Float64], n: Int):
+    """EISPACK `balanc` without permutations: scale rows and columns by
+    powers of two until each row and its column have comparable norms,
+    which is what makes the companion matrix's eigenvalues accurate."""
+    var radix = 2.0
+    var sqrdx = radix * radix
+    var done = False
+    while not done:
+        done = True
+        for i in range(n):
+            var r = 0.0
+            var c = 0.0
+            for j in range(n):
+                if j != i:
+                    c += abs(h[j * n + i])
+                    r += abs(h[i * n + j])
+            if c != 0.0 and r != 0.0:
+                var g = r / radix
+                var f = 1.0
+                var s = c + r
+                while c < g:
+                    f *= radix
+                    c *= sqrdx
+                while c > g * sqrdx:
+                    f /= radix
+                    c /= sqrdx
+                if (c + r) / f < 0.95 * s:
+                    done = False
+                    g = 1.0 / f
+                    for j in range(n):
+                        h[i * n + j] *= g
+                    for j in range(n):
+                        h[j * n + i] *= f
+
+
+def _hqr(mut a: List[Float64], n: Int) raises -> List[_Cx]:
+    """The eigenvalues of the upper Hessenberg `a` (row-major `n x n`,
+    destroyed): Francis double-shift QR with exceptional shifts, the
+    EISPACK `hqr` iteration. Host, tier 2."""
+    var wr = List[Float64](length=n, fill=0.0)
+    var wi = List[Float64](length=n, fill=0.0)
+    var anorm = 0.0
+    for i in range(n):
+        for j in range(max(i - 1, 0), n):
+            anorm += abs(a[i * n + j])
+    var nn = n - 1
+    var t = 0.0
+    var p = 0.0
+    var q = 0.0
+    var r = 0.0
+    var s: Float64
+    var w: Float64
+    var x: Float64
+    var y: Float64
+    var z: Float64
+    while nn >= 0:
+        var its = 0
+        var l: Int
+        while True:
+            l = nn
+            while l >= 1:
+                s = abs(a[(l - 1) * n + l - 1]) + abs(a[l * n + l])
+                if s == 0.0:
+                    s = anorm
+                if abs(a[l * n + l - 1]) + s == s:
+                    a[l * n + l - 1] = 0.0
+                    break
+                l -= 1
+            x = a[nn * n + nn]
+            if l == nn:
+                wr[nn] = x + t
+                wi[nn] = 0.0
+                nn -= 1
+                break
+            y = a[(nn - 1) * n + nn - 1]
+            w = a[nn * n + nn - 1] * a[(nn - 1) * n + nn]
+            if l == nn - 1:
+                p = 0.5 * (y - x)
+                q = p * p + w
+                z = _sqrt(abs(q))
+                x += t
+                if q >= 0.0:
+                    z = p + (z if p >= 0 else -z)
+                    wr[nn - 1] = x + z
+                    wr[nn] = wr[nn - 1]
+                    if z != 0.0:
+                        wr[nn] = x - w / z
+                    wi[nn - 1] = 0.0
+                    wi[nn] = 0.0
+                else:
+                    wr[nn - 1] = x + p
+                    wr[nn] = x + p
+                    wi[nn - 1] = -z
+                    wi[nn] = z
+                nn -= 2
+                break
+            if its == 60:
+                raise Error("roots: the QR iteration did not converge")
+            if its == 10 or its == 20:
+                t += x
+                for i in range(nn + 1):
+                    a[i * n + i] -= x
+                s = abs(a[nn * n + nn - 1]) + abs(a[(nn - 1) * n + nn - 2])
+                x = 0.75 * s
+                y = x
+                w = -0.4375 * s * s
+            its += 1
+            var m = nn - 2
+            while m >= l:
+                z = a[m * n + m]
+                r = x - z
+                s = y - z
+                p = (r * s - w) / a[(m + 1) * n + m] + a[m * n + m + 1]
+                q = a[(m + 1) * n + m + 1] - z - r - s
+                r = a[(m + 2) * n + m + 1]
+                s = abs(p) + abs(q) + abs(r)
+                p /= s
+                q /= s
+                r /= s
+                if m == l:
+                    break
+                var u = abs(a[m * n + m - 1]) * (abs(q) + abs(r))
+                var v = abs(p) * (
+                    abs(a[(m - 1) * n + m - 1])
+                    + abs(z)
+                    + abs(a[(m + 1) * n + m + 1])
+                )
+                if u + v == v:
+                    break
+                m -= 1
+            for i in range(m + 2, nn + 1):
+                a[i * n + i - 2] = 0.0
+                if i != m + 2:
+                    a[i * n + i - 3] = 0.0
+            var k = m
+            while k <= nn - 1:
+                if k != m:
+                    p = a[k * n + k - 1]
+                    q = a[(k + 1) * n + k - 1]
+                    r = 0.0
+                    if k != nn - 1:
+                        r = a[(k + 2) * n + k - 1]
+                    x = abs(p) + abs(q) + abs(r)
+                    if x != 0.0:
+                        p /= x
+                        q /= x
+                        r /= x
+                var mag = _sqrt(p * p + q * q + r * r)
+                s = mag if p >= 0 else -mag
+                if s != 0.0:
+                    if k == m:
+                        if l != m:
+                            a[k * n + k - 1] = -a[k * n + k - 1]
+                    else:
+                        a[k * n + k - 1] = -s * x
+                    p += s
+                    x = p / s
+                    y = q / s
+                    z = r / s
+                    q /= p
+                    r /= p
+                    for j in range(k, nn + 1):
+                        p = a[k * n + j] + q * a[(k + 1) * n + j]
+                        if k != nn - 1:
+                            p += r * a[(k + 2) * n + j]
+                            a[(k + 2) * n + j] -= p * z
+                        a[(k + 1) * n + j] -= p * y
+                        a[k * n + j] -= p * x
+                    var mmin = nn if nn < k + 3 else k + 3
+                    for i in range(l, mmin + 1):
+                        p = x * a[i * n + k] + y * a[i * n + k + 1]
+                        if k != nn - 1:
+                            p += z * a[i * n + k + 2]
+                            a[i * n + k + 2] -= p * r
+                        a[i * n + k + 1] -= p * q
+                        a[i * n + k] -= p
+                k += 1
+            if l >= nn - 1:
+                break
+    var out = List[_Cx](capacity=n)
+    for i in range(n):
+        out.append(_Cx(wr[i], wi[i]))
+    return out^
+
+
+def tf2zpk[
+    A: TensorLike, B: TensorLike
+](b: A, a: B) raises -> ZerosPolesGain where (
+    A.dtype.is_floating_point()
+    and B.dtype == A.dtype
+    and A.LayoutType.rank == 1
+    and B.LayoutType.rank == 1
+):
+    """The zeros, poles and gain of the transfer function `(b, a)`.
+    `scipy.signal.tf2zpk(b, a)`.
+
+    `scipy.signal.normalize` first -- leading zeros of `a` dropped, both
+    divided by `a[0]`, and leading numerator coefficients at or below
+    `1e-14` dropped -- then the gain is the leading numerator coefficient
+    and the roots are `numpy.roots` of each polynomial: the balanced
+    companion matrix's eigenvalues by Francis QR, on the host. The
+    inverse is `zpk2tf`. A multiple root, such as the `n` zeros a
+    Butterworth design puts at `-1`, is recovered only to about
+    `eps^(1/m)`, as it is from NumPy; the design routines' `OUTPUT_ZPK` and
+    `OUTPUT_SOS` never go through this, and are exact.
+
+    Parameters:
+        A: The tensor type of `b`, rank 1, floating-point.
+        B: The tensor type of `a`, rank 1, with `b`'s dtype.
+
+    Args:
+        b: The numerator, descending in powers of the delay.
+        a: The denominator, descending, not all zero.
+
+    Returns:
+        A `ZerosPolesGain` with the zeros, poles and gain.
+
+    Raises:
+        If `a` is all zeros, or the root iteration fails to pair its roots.
+    """
+    var bh = b.to_host()
+    var ah = a.to_host()
+    var start = 0
+    while start < len(ah) and ah[start] == 0:
+        start += 1
+    if start == len(ah):
+        raise Error("tf2zpk: the denominator is all zeros")
+    var lead = Float64(ah[start])
+    var den = List[Float64](capacity=len(ah) - start)
+    for i in range(start, len(ah)):
+        den.append(Float64(ah[i]) / lead)
+    var num = List[Float64](capacity=len(bh))
+    var nstart = 0
+    while nstart < len(bh) - 1 and abs(Float64(bh[nstart]) / lead) <= 1e-14:
+        nstart += 1
+    for i in range(nstart, len(bh)):
+        num.append(Float64(bh[i]) / lead)
+    var gain = num[0]
+    var zeros = _poly_roots(num) if gain != 0.0 else List[_Cx]()
+    var poles = _poly_roots(den)
+    var zr = List[Float64]()
+    var zi = List[Float64]()
+    for i in range(len(zeros)):
+        zr.append(zeros[i].re)
+        zi.append(zeros[i].im)
+    var pr = List[Float64]()
+    var pi = List[Float64]()
+    for i in range(len(poles)):
+        pr.append(poles[i].re)
+        pi.append(poles[i].im)
+    return ZerosPolesGain(zr^, zi^, pr^, pi^, gain)
+
+
+def zpk2sos[
+    dtype: DType, sections: Int
+](zpk: ZerosPolesGain, ctx: Optional[DeviceContext] = None) raises -> Static[
+    dtype, sections, 6
+] where (dtype.is_floating_point() and sections >= 1):
+    """Second-order sections from zeros, poles and a gain.
+    `scipy.signal.zpk2sos(z, p, k)` with its default digital pairing,
+    `"nearest"`.
+
+    SciPy's algorithm transcribed branch for branch: the pole nearest the
+    unit circle goes in the last section with the zeros nearest it, and so
+    on inward, and the gain rides on the first section's numerator. So the
+    sections, their order and their coefficients are SciPy's. `sections`
+    is `ceil(max(len(z), len(p)) / 2)`, SciPy's count; a different one
+    raises, since it is a compile-time shape the roots cannot be checked
+    against until they are read.
+
+    Parameters:
+        dtype: The floating-point dtype of the sections.
+        sections: The number of sections, `(max(len(z), len(p)) + 1) // 2`.
+
+    Args:
+        zpk: The zeros, poles and gain, conjugate pairs complete.
+        ctx: The device the sections are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `(sections, 6)` tensor, one `[b0, b1, b2, a0, a1, a2]` row per
+        section, the form `sosfilt` takes.
+
+    Raises:
+        If a complex root has no conjugate, if the roots pair into a
+        different number of sections, or if the upload fails.
+    """
+    var f = _Zpk(
+        zpk.zeros_re.copy(),
+        zpk.zeros_im.copy(),
+        zpk.poles_re.copy(),
+        zpk.poles_im.copy(),
+        zpk.gain,
+    )
+    return _sos_tensor[dtype, sections](_zpk2sos_rows(f), "zpk2sos", ctx)
+
+
+def tf2sos[
+    dtype: DType, order: Int
+](
+    tf: TransferFunction[dtype, order], ctx: Optional[DeviceContext] = None
+) raises -> Static[dtype, (order + 1) // 2, 6] where (
+    dtype.is_floating_point() and order >= 1
+):
+    """Second-order sections from a transfer function.
+    `scipy.signal.tf2sos(b, a)`: `tf2zpk` then `zpk2sos`.
+
+    The roots come from `tf2zpk`'s iteration, so a design's own
+    `OUTPUT_SOS` is the better route when there is one: it pairs the exact
+    roots and never forms the long polynomials whose coefficients a high
+    order loses digits in.
+
+    Parameters:
+        dtype: The floating-point dtype of the coefficients.
+        order: The filter order; there are `(order + 1) // 2` sections.
+
+    Args:
+        tf: The transfer function `(b, a)`.
+        ctx: The device the sections are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `((order + 1) // 2, 6)` tensor of sections.
+
+    Raises:
+        As `tf2zpk` and `zpk2sos` do.
+    """
+    var zpk = tf2zpk(tf.b, tf.a)
+    var f = _Zpk(
+        zpk.zeros_re.copy(),
+        zpk.zeros_im.copy(),
+        zpk.poles_re.copy(),
+        zpk.poles_im.copy(),
+        zpk.gain,
+    )
+    return _sos_tensor[dtype, (order + 1) // 2](_zpk2sos_rows(f), "tf2sos", ctx)
+
+
+def sos2tf[
+    T: TensorLike
+](sos: T, ctx: Optional[DeviceContext] = None) raises -> TransferFunction[
+    T.dtype, 2 * dim[T, 0]
+] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == 6
+):
+    """The transfer function of a cascade of second-order sections.
+    `scipy.signal.sos2tf(sos)`: the sections' numerators multiplied
+    together, and their denominators.
+
+    Parameters:
+        T: The tensor type of `sos`, `(sections, 6)`.
+
+    Args:
+        sos: The sections, one `[b0, b1, b2, a0, a1, a2]` row each.
+        ctx: The device `b` and `a` are uploaded to; `None` puts them in
+            host memory.
+
+    Returns:
+        A `TransferFunction` of order `2 * sections`.
+
+    Raises:
+        If reading `sos` or the upload fails.
+    """
+    comptime sections = dim[T, 0]
+    var table = sos.to_host()
+    var b: List[Float64] = [1.0]
+    var a: List[Float64] = [1.0]
+    for s in range(sections):
+        var bs = List[Float64]()
+        var as_ = List[Float64]()
+        for k in range(3):
+            bs.append(Float64(table[s * 6 + k]))
+            as_.append(Float64(table[s * 6 + 3 + k]))
+        b = _poly_mul(b, bs)
+        a = _poly_mul(a, as_)
+    return _to_transfer_function[dtype=T.dtype, order=2 * sections](
+        (b^, a^), ctx
+    )
+
+
+def _poly_mul(p: List[Float64], q: List[Float64]) -> List[Float64]:
+    var out = List[Float64](length=len(p) + len(q) - 1, fill=0.0)
+    for i in range(len(p)):
+        for j in range(len(q)):
+            out[i + j] += p[i] * q[j]
+    return out^
 
 
 def freqz[
