@@ -1,6 +1,7 @@
 """Hypothesis tests over `numax.core.tensor.Tensor`: the three `t` tests,
-`chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, each returning
-SciPy's statistic and p-value.
+`chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, and the `k`-group
+`kruskal`, `levene` and `bartlett`, each returning SciPy's statistic and
+p-value.
 
 **Tier 2**: a test statistic is a few sums (or, for the rank tests, a
 sort) and its p-value is one tail of a distribution `numax.stats`
@@ -43,7 +44,9 @@ Nothing: MAX has no statistical tests. **Extend.**
 """
 
 from std.builtin.sort import sort as _sort
-from std.math import exp as _exp, sqrt as _sqrt
+from std.math import exp as _exp, log as _log, sqrt as _sqrt
+
+from max.gpu.host import DeviceContext
 
 from layout.tile_layout import TensorLayout
 
@@ -68,7 +71,8 @@ from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
 from ..core.plain import Plain
 from .distributions import chi2, f, norm, t
-from .statistics import sum as _tsum
+from .statistics import median as _tmedian, sum as _tsum
+from ..core.elementwise import abs as _tabs
 
 comptime _P = Plain[DType.float64]
 
@@ -1434,3 +1438,320 @@ def wilcoxon[
         if positive[i]:
             w_plus += ranks[i]
     return _wilcoxon_finish(w_plus, tie_term, n, alternative, use_continuity)
+
+
+def _chi2_tail(statistic: Float64, df: Float64) -> Float64:
+    return Float64(chi2.sf[_P](_P(statistic), _P(df)).v)
+
+
+def _mark_device[
+    dtype: DType
+](ctx: DeviceContext, n: Int, start: Int, stop: Int) raises -> Dynamic[
+    dtype, 1
+]:
+    """A length-`n` device vector, one on `[start, stop)` and zero elsewhere:
+    the membership flags `_rank_sum_device` sums ranks under."""
+    var flags = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var fv = _flat_out(flags)
+
+    @always_inline
+    def mark[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var fv, var start, var stop}:
+        var i = coord_to_index_list(coord)[0]
+        fv.store[1](
+            coord,
+            Scalar[dtype](1) if i >= start and i < stop else Scalar[dtype](0),
+        )
+
+    elementwise[simd_width=1, target="gpu"](mark, Coord(n), ctx)
+    return flags^
+
+
+def kruskal[
+    T: TensorLike, gpu: Bool = False
+](*groups: T) raises -> TestResult where (
+    T.dtype.is_floating_point() and is_row_major[T]
+):
+    """The Kruskal-Wallis `H` test that the groups share a median: the
+    rank-sum analogue of the one-way ANOVA. `scipy.stats.kruskal(*samples)`.
+
+    `H = 12 / (N (N+1)) sum R_i^2 / n_i - 3 (N+1)` over the ranks of the
+    pooled sample, divided by SciPy's tie correction `1 - sum (t^3 - t) /
+    (N^3 - N)`, against `chi2` on `k - 1` degrees of freedom. At
+    `gpu=True` the pooled sample is ranked on the device, one rank sum per
+    group (`_rank_sum_device`), and only those sums come back.
+
+    Parameters:
+        T: The tensor type of every group, row-major and floating-point.
+        gpu: Whether the ranking runs on the groups' device.
+
+    Args:
+        groups: The `k` samples, each read flat.
+
+    Returns:
+        A `TestResult` with `H`, its upper-tail p-value and `df = k - 1`.
+
+    Raises:
+        If fewer than two groups are given, if every value is equal, or on a
+        fallback under the `"raise"` policy.
+    """
+    var k = len(groups)
+    if k < 2:
+        raise Error("kruskal: at least two groups are needed")
+    var sizes = List[Int](capacity=k)
+    var total = 0
+    for g in range(k):
+        sizes.append(groups[g].size())
+        total += groups[g].size()
+    var rank_sums = List[Float64](capacity=k)
+    var tie_term = 0.0
+    var on_device = True
+    comptime if gpu:
+        for g in range(k):
+            on_device = on_device and _check_device[T, gpu](groups[g])
+        if on_device:
+            var ctx = groups[0].context()
+            var pooled = Dynamic[T.dtype, 1]._uninitialized(
+                ctx, row_major(_dyn_shape[1](total))
+            )
+            var pv = _flat_out(pooled)
+            var at = 0
+            for g in range(k):
+                var src = _flat_unchecked(groups[g])
+                var base = at
+
+                @always_inline
+                def copy[
+                    width: Int, alignment: Int = 1
+                ](coord: Coord) {var src, var pv, var base}:
+                    var i = coord_to_index_list(coord)[0]
+                    pv.store[1](Coord(i + base), src[coord][0])
+
+                elementwise[simd_width=1, target="gpu"](
+                    copy, Coord(sizes[g]), ctx
+                )
+                at += sizes[g]
+            ctx.synchronize()
+            var offset = 0
+            for g in range(k):
+                var flags = _mark_device[T.dtype](
+                    pooled.context(), total, offset, offset + sizes[g]
+                )
+                var sums = _rank_sum_device(pooled, flags)
+                rank_sums.append(sums[0])
+                tie_term = sums[1]
+                offset += sizes[g]
+            return _kruskal_finish(rank_sums, sizes, total, tie_term)
+        _notice[gpu]("kruskal")
+    var pooled = List[Float64](capacity=total)
+    var owner = List[Int](capacity=total)
+    for g in range(k):
+        var values = _values(groups[g])
+        for i in range(len(values)):
+            pooled.append(values[i])
+            owner.append(g)
+    var order = List[Int](capacity=total)
+    for i in range(total):
+        order.append(i)
+
+    def by_value(i: Int, j: Int) {imm} -> Bool:
+        return pooled[i] < pooled[j] or (pooled[i] == pooled[j] and i < j)
+
+    _sort(order, by_value)
+    for _ in range(k):
+        rank_sums.append(0.0)
+    var i = 0
+    while i < total:
+        var j = i
+        while j + 1 < total and pooled[order[j + 1]] == pooled[order[i]]:
+            j += 1
+        var size = Float64(j - i + 1)
+        tie_term += size * size * size - size
+        var rank = Float64(i + j + 2) / 2.0
+        for m in range(i, j + 1):
+            rank_sums[owner[order[m]]] += rank
+        i = j + 1
+    return _kruskal_finish(rank_sums, sizes, total, tie_term)
+
+
+def _kruskal_finish(
+    rank_sums: List[Float64], sizes: List[Int], total: Int, tie_term: Float64
+) raises -> TestResult:
+    var n = Float64(total)
+    var h = 0.0
+    for g in range(len(sizes)):
+        h += rank_sums[g] * rank_sums[g] / Float64(sizes[g])
+    h = 12.0 / (n * (n + 1.0)) * h - 3.0 * (n + 1.0)
+    var correction = 1.0 - tie_term / (n * n * n - n)
+    if correction == 0.0:
+        raise Error("kruskal: all numbers are identical")
+    h /= correction
+    var df = Float64(len(sizes) - 1)
+    return TestResult(h, _chi2_tail(h, df), df)
+
+
+def levene[
+    T: TensorLike, center: StaticString = "median", gpu: Bool = False
+](*groups: T) raises -> TestResult where (
+    T.dtype.is_floating_point() and is_row_major[T]
+):
+    """Levene's test that the groups share a variance, in the
+    Brown-Forsythe form by default. `scipy.stats.levene(*samples, center)`.
+
+    The one-way ANOVA `F` of the absolute deviations `|y - c_i|` from each
+    group's `center` -- `"median"` (the default, Brown-Forsythe, robust to
+    non-normality) or `"mean"` (Levene's original) -- against `f` on
+    `k - 1` and `N - k` degrees of freedom. At `gpu=True` the centers, the
+    deviations and the ANOVA sums are all device work.
+
+    Parameters:
+        T: The tensor type of every group, row-major and floating-point.
+        center: `"median"` or `"mean"`.
+        gpu: Whether to compute on the groups' device.
+
+    Args:
+        groups: The `k` samples, each read flat.
+
+    Returns:
+        A `TestResult` with the `W` statistic, its upper-tail p-value and
+        the numerator degrees of freedom `k - 1`.
+
+    Raises:
+        If fewer than two groups are given, or on a fallback under the
+        `"raise"` policy.
+    """
+    comptime assert (
+        center == "median" or center == "mean"
+    ), 'levene: center is "median" or "mean"'
+    var k = len(groups)
+    if k < 2:
+        raise Error("levene: at least two groups are needed")
+    var means = List[Float64](capacity=k)
+    var sizes = List[Int](capacity=k)
+    var grand = 0.0
+    var total_n = 0
+    var within = 0.0
+    var on_device = True
+    comptime if gpu:
+        for g in range(k):
+            on_device = on_device and _check_device[T, gpu](groups[g])
+        if on_device:
+            for g in range(k):
+                var c: Scalar[T.dtype]
+                comptime if center == "median":
+                    c = _tmedian[gpu=True](groups[g])
+                else:
+                    c = Scalar[T.dtype](
+                        _tsum[gpu=True](groups[g])
+                        / Scalar[T.dtype](groups[g].size())
+                    )
+                var z = _tabs[gpu=True](_tsubtract[gpu=True](groups[g], c))
+                var m = _moments_device(z)
+                sizes.append(m[0])
+                means.append(m[1])
+                grand += m[1] * Float64(m[0])
+                within += m[2]
+                total_n += m[0]
+            return _f_oneway_finish(means, sizes, grand, total_n, within)
+        _notice[gpu]("levene")
+    for g in range(k):
+        var values = _values(groups[g])
+        var c: Float64
+        comptime if center == "median":
+            c = _host_median(values)
+        else:
+            c = _mean(values)
+        var z = List[Float64](capacity=len(values))
+        for i in range(len(values)):
+            z.append(abs(values[i] - c))
+        var m = _mean(z)
+        means.append(m)
+        sizes.append(len(z))
+        for i in range(len(z)):
+            grand += z[i]
+            within += (z[i] - m) * (z[i] - m)
+        total_n += len(z)
+    return _f_oneway_finish(means, sizes, grand, total_n, within)
+
+
+def _host_median(values: List[Float64]) -> Float64:
+    var sorted = values.copy()
+    _sort(sorted)
+    var n = len(sorted)
+    if n % 2 == 1:
+        return sorted[n // 2]
+    return 0.5 * (sorted[n // 2 - 1] + sorted[n // 2])
+
+
+def bartlett[
+    T: TensorLike, gpu: Bool = False
+](*groups: T) raises -> TestResult where (
+    T.dtype.is_floating_point() and is_row_major[T]
+):
+    """Bartlett's test that normal groups share a variance.
+    `scipy.stats.bartlett(*samples)`.
+
+    `((N - k) ln s_p^2 - sum (n_i - 1) ln s_i^2) / C` with `s_p^2` the
+    pooled variance and `C = 1 + (sum 1/(n_i - 1) - 1/(N - k)) / (3 (k-1))`,
+    against `chi2` on `k - 1` degrees of freedom. Sensitive to
+    non-normality, which is what `levene` is for. At `gpu=True` each
+    group's variance is a device sum (`_moments_device`).
+
+    Parameters:
+        T: The tensor type of every group, row-major and floating-point.
+        gpu: Whether the per-group sums run on the groups' device.
+
+    Args:
+        groups: The `k` samples, each read flat, each at least two long.
+
+    Returns:
+        A `TestResult` with the statistic, its upper-tail p-value and
+        `df = k - 1`.
+
+    Raises:
+        If fewer than two groups are given, or on a fallback under the
+        `"raise"` policy.
+    """
+    var k = len(groups)
+    if k < 2:
+        raise Error("bartlett: at least two groups are needed")
+    var sizes = List[Int](capacity=k)
+    var variances = List[Float64](capacity=k)
+    var on_device = True
+    comptime if gpu:
+        for g in range(k):
+            on_device = on_device and _check_device[T, gpu](groups[g])
+    if gpu and on_device:
+        comptime if gpu:
+            for g in range(k):
+                var m = _moments_device(groups[g])
+                sizes.append(m[0])
+                variances.append(m[2] / Float64(m[0] - 1))
+    else:
+        comptime if gpu:
+            _notice[gpu]("bartlett")
+        for g in range(k):
+            var values = _values(groups[g])
+            sizes.append(len(values))
+            variances.append(_variance(values, 1))
+    var total = 0
+    for g in range(k):
+        total += sizes[g]
+    var pooled = 0.0
+    var log_sum = 0.0
+    var inverse_sum = 0.0
+    for g in range(k):
+        var dof = Float64(sizes[g] - 1)
+        pooled += dof * variances[g]
+        log_sum += dof * _log(variances[g])
+        inverse_sum += 1.0 / dof
+    var nk = Float64(total - k)
+    pooled /= nk
+    var numer = nk * _log(pooled) - log_sum
+    var denom = 1.0 + (inverse_sum - 1.0 / nk) / (3.0 * Float64(k - 1))
+    var statistic = numer / denom
+    var df = Float64(k - 1)
+    return TestResult(statistic, _chi2_tail(statistic, df), df)
