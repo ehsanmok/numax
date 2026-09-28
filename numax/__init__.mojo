@@ -200,6 +200,7 @@ from .core.tensor import (
     zeros_dyn,
     zeros_like,
 )
+from .core._drive import fallback_policy, set_fallback
 from .core.compensated import Compensated
 from .core.complex import Complex
 from .core.constants import e, e_at, pi, pi_at

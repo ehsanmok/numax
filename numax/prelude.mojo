@@ -72,6 +72,7 @@ from .core.dtypes import (
 )
 from .core.dual import Dual
 from .core.gradient import Gradient
+from .core._drive import fallback_policy, set_fallback
 from .core.compensated import Compensated
 from .core.decimal import Decimal
 from .core.complex import Complex

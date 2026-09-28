@@ -50,6 +50,7 @@ No driver calls `ctx.synchronize()`. The launches are stream-ordered and
 `Tensor.to_host` maps, which orders against them.
 """
 
+from std.os import getenv, setenv
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major, TensorLayout
 from layout.tile_tensor import DefaultEngine
@@ -261,34 +262,83 @@ def _check_device[T: TensorLike, gpu: Bool](a: T) -> Bool:
     return gpu != a.on_host()
 
 
-def _notice[gpu: Bool](name: StaticString):
-    """One line on `stderr` saying the call fell back to the host walk.
+comptime _FALLBACK_VARIABLE = "NUMAX_FALLBACK"
+"""The environment variable `set_fallback` writes and `_notice` reads:
+Mojo has no mutable module-level state, and the process environment is
+the one place a policy set in one call is visible to every later one."""
 
-    Not a raise: the answer is still correct, only slow, and a NumPy-named
-    routine that stops working because its tensor moved to a device would be
-    worse than one that says so.
+
+def set_fallback(policy: StaticString) raises:
+    """What a residency mismatch does: `"warn"` (the default), `"raise"`
+    or `"silent"`.
+
+    A mismatch is a routine asked for `gpu=True` on a host tensor, or left
+    at `gpu=False` on a device one, or a device-following operator at
+    `float64`. The routine still answers, on the host; the policy decides
+    what else happens. `"warn"` prints the one-line `stderr` notice naming
+    the fast spelling, which is the library's standing rule that a slow
+    path is never silent. `"raise"` turns the notice into an `Error` with
+    the same text, so a test or an agent can assert that nothing fell back.
+    `"silent"` drops the notice, for a caller who knows the path is slow
+    and has decided it does not matter.
+
+    The policy is process-wide and lives in the `NUMAX_FALLBACK`
+    environment variable, so it can also be set before the program starts.
+    Any other value raises here.
     """
+    if not (policy == "warn" or policy == "raise" or policy == "silent"):
+        raise Error(
+            "set_fallback: policy must be 'warn', 'raise' or 'silent', not '",
+            policy,
+            "'",
+        )
+    if not setenv(_FALLBACK_VARIABLE, policy, overwrite=True):
+        raise Error("set_fallback: could not set ", _FALLBACK_VARIABLE)
+
+
+def fallback_policy() -> String:
+    """The residency-mismatch policy in force: `"warn"`, `"raise"` or
+    `"silent"`. `"warn"` when `NUMAX_FALLBACK` is unset or holds anything
+    else, so a typo in the environment degrades to the safe default."""
+    var policy = getenv(_FALLBACK_VARIABLE, "warn")
+    if policy == "raise" or policy == "silent":
+        return policy
+    return "warn"
+
+
+def _notice[gpu: Bool](name: StaticString) raises:
+    """Report that the call fell back to the host walk, under the policy
+    `set_fallback` sets: one `stderr` line by default, an `Error` carrying
+    the same text under `"raise"`, nothing under `"silent"`.
+
+    Not a raise by default: the answer is still correct, only slow, and a
+    NumPy-named routine that stops working because its tensor moved to a
+    device would be worse than one that says so.
+    """
+    var policy = fallback_policy()
+    if policy == "silent":
+        return
+    var message: String
     comptime if gpu:
-        print(
+        message = String(
             "numax: ",
             name,
             (
                 " ran on the host because gpu=True was asked of a tensor on a"
                 " CPU context; build the tensor on a GPU context"
             ),
-            sep="",
-            file=FileDescriptor(2),
         )
     else:
-        print(
+        message = String(
             "numax: ",
             name,
             " ran on the host because the tensor lives on a GPU context; call ",
             name,
             "[gpu=True]",
-            sep="",
-            file=FileDescriptor(2),
         )
+    if policy == "raise":
+        raise Error(message)
+    print(message, file=FileDescriptor(2))
 
 
 # The retained host walks. These are what every routine in the surface

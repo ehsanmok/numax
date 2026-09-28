@@ -17,7 +17,7 @@ from numax.core.functional import map, reduce, reduce_axis   # the engine
 | `tensorlike` | `TensorLike`, the bound every routine below takes its tensors through, with `Tensor` (owned) and `TensorView` (a borrowed `TileTensor` plus its device) as the conformers; `dim[T, i]` and `is_row_major[T]` for signatures |
 | `tensor` | `Tensor`, the creation surface (`zeros`/`ones`/`full`/`eye`/`linspace`/..., each taking its `DeviceContext` last and optional), manipulation (`reshape`/`transpose`/`stack`/`split`/...), and `to_array`/`to_tensor`, the seam to the `Array[T, n]` half of the library |
 | `ops`, `elementwise`, `logic`, `sorting` | Arithmetic and operators over any `TensorLike`, the elementwise math surface, comparisons returning `Static[DType.bool]`, and sort/search/mask |
-| `_drive` | Private: the one launch policy behind `ops`, `elementwise` and `logic` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements |
+| `_drive` | Private: the one launch policy behind `ops`, `elementwise` and `logic` -- flatten, pick a target from `gpu: Bool`, and either launch `max.algorithm.elementwise` or walk serially below `1 << 16` elements. Its two public names, `set_fallback` and `fallback_policy`, set and read what a residency mismatch does (`"warn"`, `"raise"`, `"silent"`) |
 | `constants` | `pi` and `e` at any conformer |
 
 The conformers and `functional` are tier 1: fixed iteration counts, no
@@ -106,6 +106,7 @@ from .tensor import (
     zeros_dyn,
     zeros_like,
 )
+from ._drive import fallback_policy, set_fallback
 from .compensated import Compensated
 from .complex import Complex
 from .constants import e, e_at, pi, pi_at
