@@ -10,7 +10,7 @@ block be filtered from a zero state independently, a short sequential
 carry fixes up the block boundaries, and a correction launch adds each
 block's true initial state back, so the `O(n)` work is on the device and
 only an `O(n / 128)` carry of `K x K` products is sequential.
-`numax.signal.array.lfilter` is the tier-1 sibling: the same recurrence
+`numax.signal.lfilter` is the tier-1 sibling: the same recurrence
 per SIMD lane over a register-resident frame.
 
 On the host, host-side is not the same as off-tensor, and the difference
@@ -80,6 +80,9 @@ from ..fft.fft import Spectrum, fft, ifft
 from ..linalg.blas import dot
 from ..stats.statistics import mean
 from .windows import get_window
+from ..core.numeric import FloatLike
+from ._array.signal import firwin as _array_firwin
+from ._array.signal import lfilter as _array_lfilter
 
 comptime _PI = 3.141592653589793
 
@@ -493,7 +496,7 @@ def lfilter[
     `numax.core.tensor`'s own `to_host`/`copy_from_host` use, so nothing is
     copied into a `List` on the way in or out. Arithmetic is at `A.dtype`,
     which is also where SciPy computes it.
-    `numax.signal.array.lfilter` is the tier-1 form that runs per SIMD lane
+    `numax.signal.lfilter` is the tier-1 form that runs per SIMD lane
     inside a kernel.
     """
     comptime na = dim[B, 0]
@@ -1482,3 +1485,19 @@ def decimate[
     for i in range(out_n):
         values.append(host[i * q])
     return Static[T.dtype, out_n](values^, ctx)
+
+
+def firwin[T: FloatLike, n: Int](cutoff: T) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.firwin`."""
+    return _array_firwin[T=T, n=n](cutoff)
+
+
+def lfilter[
+    T: FloatLike, n: Int, nb: Int, na: Int
+](b: Array[T, nb], a: Array[T, na], x: Array[T, n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.lfilter`."""
+    return _array_lfilter[T=T, n=n, nb=nb, na=na](b, a, x)

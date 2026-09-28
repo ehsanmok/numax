@@ -5,15 +5,17 @@ estimation.
 from numax.signal import convolve, fftconvolve, get_window, filtfilt, savgol_filter
 ```
 
-Two tiers, one import each, the same split `numax.linalg`, `numax.fft`,
-`numax.optimize`, `numax.integrate` and `numax.interpolate` make:
+Two tiers under one import. A name the two tiers share is one function
+with two overloads, picked by the argument -- a `Tensor` takes the device
+tier, an `Array[T, n]` of `FloatLike` values the register tier -- and the
+register tier's own names are exported here too:
 
-| Import | Holds | Good for |
+| Tier | Holds | Good for |
 | --- | --- | --- |
-| `numax.signal` | `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `MODE_FULL`/`MODE_SAME`/`MODE_VALID` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt` (host recurrences at `dtype`, in place over the tensor's own host mapping), `medfilt`, `detrend`, `savgol_filter`, `resample` and the multiband `firwin`; the spectral estimators `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, and the IIR design family -- `butter`/`cheby1`/`cheby2`/`ellip` in all four band shapes behind one `iirfilter` front door -- with `freqz` |
-| `numax.signal.array` | `Array[T, n]` and `FloatLike`, tier 1 | a frame inside a kernel: the direct `convolve`/`correlate`, `lfilter`, the lowpass `firwin`, and the cosine windows as compile-time tables, all differentiating at `Dual` |
+| `Tensor`, `Plain`-only, tier 2 | a recording: `convolve`/`correlate` in `MODE_FULL`/`MODE_SAME`/`MODE_VALID` as one launch of dot products, `fftconvolve` through `numax.fft`, and the window factories `boxcar`/`hann`/`hamming`/`blackman`/`bartlett`/`kaiser`/`get_window` in SciPy's symmetric and periodic forms; the filters `lfilter`/`lfilter_zi`/`filtfilt`/`sosfilt` (host recurrences at `dtype`, in place over the tensor's own host mapping), `medfilt`, `detrend`, `savgol_filter`, `resample` and the multiband `firwin`; the spectral estimators `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert`, `find_peaks`, and the IIR design family -- `butter`/`cheby1`/`cheby2`/`ellip` in all four band shapes behind one `iirfilter` front door -- with `freqz` |
+| `Array[T, n]` and `FloatLike`, tier 1 | a frame inside a kernel: the direct `convolve`/`correlate`, `lfilter`, the lowpass `firwin`, and the cosine windows as compile-time tables, all differentiating at `Dual` |
 
-This surface is the `Tensor` one. `apply_window` has no `Tensor` spelling
+`apply_window` has no `Tensor` spelling
 because `numax.core.ops.multiply` already is one.
 
 MAX ships the neural-network convolution (`nn.conv`, NHWC, channels and
@@ -78,4 +80,7 @@ from .design import (
     freqz,
     iirfilter,
     zpk2tf,
+)
+from ._array import (
+    apply_window,
 )

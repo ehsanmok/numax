@@ -8,7 +8,7 @@ device context it evaluates the same formula at the tensor's dtype in one
 `elementwise` launch, so nothing is uploaded -- `numax.core.tensor`'s
 factories do the same, under the same gate (`_DEVICE_FILL`: an
 accelerator build, not `float64`, which Metal cannot compile).
-`numax.signal.array` has the same three cosine windows as compile-time
+`numax.signal`'s `Array` tier has the same three cosine windows as compile-time
 tables inside a kernel body.
 
 ## Symmetric and periodic
@@ -35,6 +35,11 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.tensor import _DEVICE_FILL, Static
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.signal import blackman as _array_blackman
+from ._array.signal import hamming as _array_hamming
+from ._array.signal import hann as _array_hann
 
 comptime _TWO_PI = 6.283185307179586
 
@@ -295,3 +300,24 @@ def get_window[
         name,
         "'; expected boxcar, hann, hamming, blackman, bartlett or kaiser",
     )
+
+
+def blackman[T: FloatLike, n: Int]() -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.blackman`."""
+    return _array_blackman[T=T, n=n]()
+
+
+def hamming[T: FloatLike, n: Int]() -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.hamming`."""
+    return _array_hamming[T=T, n=n]()
+
+
+def hann[T: FloatLike, n: Int]() -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.hann`."""
+    return _array_hann[T=T, n=n]()

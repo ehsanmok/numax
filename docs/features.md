@@ -101,7 +101,7 @@ siblings rather than replacements.
 
 | Tier | Rule | Who |
 |---|---|---|
-| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate`'s `Array` tier, `fft.array`, `signal.array`, `optimize.array`'s fixed-iteration `newton`/`halley`/`bisection`, `integrate.array`'s fixed-node quadrature and fixed-step ODE steps |
+| **Tier 1** | Fixed iteration count, no per-lane branching — therefore launchable inside a GPU thread and usable at every conformer | The conformers, the tensor engine, `special`, and the `Array` tiers `linalg.array`, `interpolate`'s `Array` tier, `fft.array`, `signal`'s `Array` tier, `optimize.array`'s fixed-iteration `newton`/`halley`/`bisection`, `integrate.array`'s fixed-node quadrature and fixed-step ODE steps |
 | **Tier 2** | Free to loop or branch on data; `Plain`-only, host-side unless the row says otherwise | `ops`, `logic`, `sorting`, `io`, `stats`'s order statistics and scans, the `Tensor` tiers of `linalg`, `interpolate`, `fft` and `signal` (host-orchestrated; `gpu=True` still runs MAX's kernels), `optimize`'s converge-to-tolerance minimizers, `integrate`'s adaptive `quad`/`solve_ivp`. `ops`, `elementwise`, `logic`, `rowwise` and `stats`'s monoid reductions are tier 2 in shape only: `Plain`-only, but one body on both targets |
 
 ## `numax.core` — the tensor engine
@@ -523,11 +523,11 @@ Tier 2: host-driven, device-resident; the windows fill on the device for a
 device `ctx`. `apply_window` has no `Tensor` spelling because `multiply` already is
 one.
 
-| Surface — over `Array[T, n]`, from `numax.signal.array` | Where |
+| Surface — over `Array[T, n]`, from `numax.signal`'s `Array` tier | Where |
 |---|---|
-| `convolve` (`mode=MODE_FULL`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
-| `hann`, `hamming`, `blackman`, `apply_window` — compile-time tables, so they work inside a GPU kernel body | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
-| `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/array/signal.mojo`](../numax/signal/array/signal.mojo) |
+| `convolve` (`mode=MODE_FULL`, the default, or `same`), `correlate` — direct sums over comptime-sized `Array`s | [`signal/_array/signal.mojo`](../numax/signal/_array/signal.mojo) |
+| `hann`, `hamming`, `blackman`, `apply_window` — compile-time tables, so they work inside a GPU kernel body | [`signal/_array/signal.mojo`](../numax/signal/_array/signal.mojo) |
+| `lfilter` — the recursive difference equation a convolution cannot express; `firwin` — lowpass taps by the window method | [`signal/_array/signal.mojo`](../numax/signal/_array/signal.mojo) |
 
 Tier 1; `numax.fft.array.circular_convolve` is that tier's transform-domain
 route.

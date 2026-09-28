@@ -31,7 +31,7 @@ from numax.linalg.array import (
     pinv,
     sqrtm,
 )
-from numax.signal.array import firwin, hann
+from numax.signal import firwin, hann
 
 comptime f32 = DType.float32
 comptime P = Plain[f32, 1]

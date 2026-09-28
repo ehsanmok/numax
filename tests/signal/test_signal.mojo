@@ -13,16 +13,16 @@ from std.testing import TestSuite, assert_almost_equal, assert_true
 
 from numax import Complex, Dual, FloatLike, Plain
 from numax.fft.array import circular_convolve, fft, ifft
-from numax.signal.array import (
-    firwin,
-    lfilter,
+from numax.signal import (
+    MODE_SAME,
     apply_window,
     blackman,
     convolve,
-    MODE_SAME,
     correlate,
+    firwin,
     hamming,
     hann,
+    lfilter,
 )
 
 comptime dtype = DType.float64

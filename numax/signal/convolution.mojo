@@ -2,7 +2,7 @@
 `convolve`, `correlate` and `fftconvolve`, in NumPy's three modes.
 
 **This module is tier 2**, like the rest of `numax.signal` over `Tensor`:
-host-driven, device-resident, `Plain`-only. `numax.signal.array` has the
+host-driven, device-resident, `Plain`-only. `numax.signal`'s `Array` tier has the
 `FloatLike` tier that differentiates at `Dual` and runs per SIMD lane, for
 the register-resident sizes; this one is for a recording against a filter.
 
@@ -33,7 +33,7 @@ and with its lengths: `m + k - 1`, `max(m, k)` centred, and `max(m, k) -
 min(m, k) + 1`. `mode` is a compile-time parameter because the length is
 part of the return type. `correlate` is `convolve` with the second
 argument read backwards, in the same loop, so its modes and offsets are
-`numpy.correlate`'s exactly -- including the offset convention `numax.signal.array`
+`numpy.correlate`'s exactly -- including the offset convention `numax.signal`'s `Array` tier
 documents.
 
 ## When to reach for `fftconvolve`
@@ -58,6 +58,11 @@ from max.algorithm.functional import elementwise
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import Static
 from ..fft.fft import Spectrum, _rfft, irfft, next_fast_len
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.signal import _convolve_len
+from ._array.signal import convolve as _array_convolve
+from ._array.signal import correlate as _array_correlate
 
 comptime MODE_FULL = 0
 """`mode`: every overlap, `m + k - 1` outputs. The default."""
@@ -365,3 +370,23 @@ def oaconvolve[
     comptime m = dim[A, 0]
     comptime k = dim[B, 0]
     return fftconvolve[mode=mode, gpu=gpu](a, b)
+
+
+def convolve[
+    T: FloatLike, m: Int, k: Int, mode: Int = MODE_FULL
+](a: Array[T, m], b: Array[T, k]) -> Array[
+    T, _convolve_len[m, k, mode]()
+] where (mode == MODE_FULL or mode == MODE_SAME):
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.convolve`."""
+    return _array_convolve[T=T, m=m, k=k, mode=mode](a, b)
+
+
+def correlate[
+    T: FloatLike, m: Int, k: Int
+](a: Array[T, m], b: Array[T, k]) -> Array[T, m + k - 1]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.signal._array.signal.correlate`."""
+    return _array_correlate[T=T, m=m, k=k](a, b)
