@@ -45,7 +45,18 @@ from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Dynamic, Static, zeros, zeros_dyn
+from ..core.tensor import (
+    Dynamic,
+    Static,
+    _same_order,
+    copy as _copy,
+    transpose,
+    zeros,
+    zeros_dyn,
+)
+from ..core.ops import add, multiply
+from .cholesky import cholesky
+from .triangular import solve_triangular
 from .blas import _target, dot, inner, matmul, matvec
 from .common import _mut_view, _mut_view_as, _Dense, _device_identity
 from .panel import (
@@ -1231,6 +1242,148 @@ def eigh[
     var q = reduced.q()
     var vectors = inner[gpu=gpu](q, zt_sorted)
     return Eigh[T.dtype, n](values^, vectors^)
+
+
+def _standard_form[
+    dtype: DType, n: Int, gpu: Bool
+](a: Static[dtype, n, n], b: Static[dtype, n, n]) raises -> Tuple[
+    Static[dtype, n, n], Static[dtype, n, n]
+] where dtype.is_floating_point():
+    """`(C, L)` with `b = L L^T` and `C = L^-1 a L^-T`, the standard form
+    of the pencil `(a, b)`: Cholesky, then two triangular solves, then the
+    average of `C` and its transpose, since the two solves leave it
+    symmetric only to rounding and `sytrd` reads one triangle."""
+    var l = cholesky[gpu=gpu](b)
+    var y = solve_triangular[gpu=gpu](l, a)
+    var c = solve_triangular[gpu=gpu](l, transpose[gpu=gpu](y))
+    var sym = multiply[gpu=gpu](
+        add[gpu=gpu](c, transpose[gpu=gpu](c)), Scalar[dtype](0.5)
+    )
+    return (sym^, l^)
+
+
+def _pencil[
+    A: TensorLike, B: TensorLike
+](a: A, b: B) raises -> Tuple[
+    Static[A.dtype, dim[A, 0], dim[A, 0]], Static[A.dtype, dim[A, 0], dim[A, 0]]
+] where (
+    A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+):
+    """`a` and `b` copied to one concrete square type on their device, so
+    the solves between them see a single `dtype` and extent -- the layout
+    prover does not carry `B.dtype == A.dtype` through a callee's result."""
+    comptime n = dim[A, 0]
+    var ac = _same_order(a, Static[A.dtype, n, n]._static_layout())
+    var bc = rebind_var[Static[A.dtype, n, n]](
+        _same_order(b, Static[B.dtype, n, n]._static_layout())
+    )
+    return (ac^, bc^)
+
+
+def eigvalsh[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: A, b: B) raises -> Static[A.dtype, dim[A, 0]] where (
+    (A.dtype.is_floating_point() and block >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.dtype.is_floating_point()
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and dim[B, 1] == dim[A, 0]
+    and dim[B, 1] == dim[B, 0]
+):
+    """**Tier 2.** The eigenvalues of the symmetric-definite pencil `a x =
+    lambda b x`, ascending. `scipy.linalg.eigvalsh(a, b)`.
+
+    `eigvalsh` of the standard form `L^-1 a L^-T`, `b = L L^T`, as
+    `eigh(a, b)` computes it; `gpu=True` runs all of it on the device.
+
+    Parameters:
+        A: The tensor type of `a`, square.
+        B: The tensor type of `b`, the same shape and `dtype`.
+        gpu: Whether to run on the inputs' device.
+        block: The reduction's panel width, as `eigvalsh`'s.
+
+    Args:
+        a: The symmetric matrix.
+        b: The symmetric positive definite matrix.
+
+    Returns:
+        The generalized eigenvalues, ascending.
+
+    Raises:
+        If `b` is not positive definite, or a device operation fails.
+    """
+    var pair = _pencil(a, b)
+    var standard = _standard_form[gpu=gpu](pair[0], pair[1])
+    return eigvalsh[gpu=gpu, block=block](standard[0])
+
+
+def eigh[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: A, b: B) raises -> Eigh[A.dtype, dim[A, 0]] where (
+    (A.dtype.is_floating_point() and block >= 1)
+    and A.LayoutType.rank == 2
+    and A.LayoutType.all_dims_known
+    and dim[A, 1] == dim[A, 0]
+    and B.dtype == A.dtype
+    and B.dtype.is_floating_point()
+    and B.LayoutType.rank == 2
+    and B.LayoutType.all_dims_known
+    and dim[B, 0] == dim[A, 0]
+    and dim[B, 1] == dim[A, 0]
+    and dim[B, 1] == dim[B, 0]
+):
+    """**Tier 2.** The eigendecomposition of the symmetric-definite pencil
+    `a x = lambda b x`: eigenvalues ascending and eigenvectors as columns,
+    normalized so `X^T b X = I`. `scipy.linalg.eigh(a, b)`.
+
+    The standard reduction, LAPACK's `sygv` with `itype = 1`: `b = L L^T`
+    by `cholesky`, `C = L^-1 a L^-T` by two `solve_triangular`s, `C = V
+    Lambda V^T` by `eigh`, and `X = L^-T V` by a third, transposed, solve.
+    Each step has its device path, so `gpu=True` keeps everything on the
+    device. The eigenvalues are `C`'s, so they carry `eigh`'s accuracy
+    times `b`'s conditioning, the bound `sygv` has too; eigenvectors are
+    determined up to sign, as `eigh`'s are.
+
+    Parameters:
+        A: The tensor type of `a`, square.
+        B: The tensor type of `b`, the same shape and `dtype`.
+        gpu: Whether to run on the inputs' device.
+        block: The reduction's panel width, as `eigh`'s.
+
+    Args:
+        a: The symmetric matrix.
+        b: The symmetric positive definite matrix.
+
+    Returns:
+        An `Eigh` with the generalized eigenvalues and `b`-orthonormal
+        eigenvectors.
+
+    Raises:
+        If `b` is not positive definite, or a device operation fails.
+    """
+    comptime n = dim[A, 0]
+    var pair = _pencil(a, b)
+    var standard = _standard_form[gpu=gpu](pair[0], pair[1])
+    var decomposed = eigh[gpu=gpu, block=block](standard[0])
+    var vectors = solve_triangular[trans=True, gpu=gpu](
+        standard[1], decomposed.vectors
+    )
+    return Eigh[A.dtype, n](_copy(decomposed.values), vectors^)
 
 
 # --------------------------------------------------- Hessenberg and Schur
