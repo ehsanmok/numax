@@ -1,6 +1,6 @@
 """NaN-ignoring reductions over `numax.core.tensor.Tensor`: `nansum`,
-`nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax`, and the
-counts they rest on. `nanmedian` and `nanquantile` are in `quantiles.mojo`
+`nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax`,
+`nanargmin`, `nanargmax`, and the counts they rest on. `nanmedian` and `nanquantile` are in `quantiles.mojo`
 with the other order statistics.
 
 **Tier 2, by composition.** None of these has a kernel of its own: each
@@ -37,7 +37,13 @@ from ..core.elementwise import sqrt as _sqrt
 from ..core.logic import isnan
 from ..core.ops import multiply, subtract
 from ..core.sorting import count_nonzero, select
-from .statistics import max as _max, min as _min, sum as _sum
+from .statistics import (
+    argmax as _argmax,
+    argmin as _argmin,
+    max as _max,
+    min as _min,
+    sum as _sum,
+)
 
 
 def _filled[
@@ -269,3 +275,73 @@ def nanmax[
     if _nan_count[gpu=gpu](xs) == xs.size():
         raise Error("nanmax: every element is NaN")
     return _max[gpu=gpu](_filled[gpu=gpu](xs, -_inf[dtype]()))
+
+
+def nanargmax[
+    T: TensorLike, gpu: Bool = False
+](xs: T) raises -> Int where is_row_major[T] and T.dtype.is_floating_point():
+    """The flat index of the largest non-NaN element. `numpy.nanargmax`.
+    Raises when every element is NaN, where NumPy raises too.
+
+    `argmax` over `xs` with its NaNs filled with `-inf`, so the first index
+    wins a tie as it does there. One case needs a second pass: when every
+    non-NaN element is itself `-inf`, a filled NaN ahead of the first one
+    would tie with it, so the answer is instead `argmin` over the `+inf`
+    fill, whose first `-inf` is a real element.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to search, walked flat over all its elements.
+
+    Returns:
+        The flat row-major index of the first largest non-NaN element.
+
+    Raises:
+        If every element of `xs` is NaN.
+    """
+    comptime dtype = T.dtype
+    if _nan_count[gpu=gpu](xs) == xs.size():
+        raise Error("nanargmax: every element is NaN")
+    var low = _filled[gpu=gpu](xs, -_inf[dtype]())
+    var at = _argmax[gpu=gpu](low)
+    # One element read: `ReduceMax` of nothing but `-inf` is not `-inf`,
+    # so the extreme is checked where `argmax` put it.
+    if low[at] == -_inf[dtype]():
+        return _argmin[gpu=gpu](_filled[gpu=gpu](xs, _inf[dtype]()))
+    return at
+
+
+def nanargmin[
+    T: TensorLike, gpu: Bool = False
+](xs: T) raises -> Int where is_row_major[T] and T.dtype.is_floating_point():
+    """The flat index of the smallest non-NaN element. `numpy.nanargmin`,
+    `nanargmax`'s mirror: NaNs filled with `+inf`, and the all-`+inf` case
+    answered by `argmax` over the `-inf` fill. Raises when every element is
+    NaN.
+
+    Parameters:
+        T: The tensor type of `xs`, row-major with a floating-point dtype.
+        gpu: Run the mask, fill and reduction on the tensor's device; a
+            residency mismatch falls back to the host with a notice.
+
+    Args:
+        xs: The tensor to search, walked flat over all its elements.
+
+    Returns:
+        The flat row-major index of the first smallest non-NaN element.
+
+    Raises:
+        If every element of `xs` is NaN.
+    """
+    comptime dtype = T.dtype
+    if _nan_count[gpu=gpu](xs) == xs.size():
+        raise Error("nanargmin: every element is NaN")
+    var high = _filled[gpu=gpu](xs, _inf[dtype]())
+    var at = _argmin[gpu=gpu](high)
+    if high[at] == _inf[dtype]():
+        return _argmax[gpu=gpu](_filled[gpu=gpu](xs, -_inf[dtype]()))
+    return at

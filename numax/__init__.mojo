@@ -669,6 +669,8 @@ from .stats.hypothesis import (
     wilcoxon,
 )
 from .stats.nanfunctions import (
+    nanargmax,
+    nanargmin,
     nanmax,
     nanmean,
     nanmin,
