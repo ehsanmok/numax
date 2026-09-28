@@ -70,6 +70,21 @@ def between_poles(first: int, last: int, margin: float = 0.06) -> list[float]:
     return sorted(pts[:N])
 
 
+def _bisect_log(cdf, y, lo=-400, hi=6, steps=220):
+    """The `x` with `cdf(x) = y` for an increasing `cdf`, by bisection in
+    `log x` on `log cdf - log y`: slow, but no tolerance to miss, and a
+    root far down a tail is found to full relative precision."""
+    lo, hi = mp.mpf(lo), mp.mpf(hi)
+    target = mp.log(y)
+    for _ in range(steps):
+        mid = (lo + hi) / 2
+        if mp.log(cdf(mp.exp(mid))) < target:
+            lo = mid
+        else:
+            hi = mid
+    return mp.exp((lo + hi) / 2)
+
+
 class Case:
     """One function over one domain, with its reference values."""
 
@@ -356,6 +371,22 @@ def build() -> list[Case]:
                 f"gammainc(a={a}, x), x in [1e-3, 30]",
                 logarithmic(1e-3, 30.0),
                 lambda x, a=a: mp.gammainc(a, 0, x, regularized=True),
+            )
+        )
+
+    # `gammaincinv`'s reference is a bracketed root in `log x` of
+    # `log P - log y`, so a `y` far down the lower tail is found to full
+    # relative precision.
+    for a in (0.5, 2.5, 10.0):
+        tag = str(a).replace(".", "p")
+        cases.append(
+            Case(
+                f"gammaincinv_a{tag}",
+                f"gammaincinv(a={a}, y), y in [1e-12, 0.99]",
+                logarithmic(1e-12, 0.99),
+                lambda y, a=a: _bisect_log(
+                    lambda x: mp.gammainc(a, 0, x, regularized=True), y
+                ),
             )
         )
 

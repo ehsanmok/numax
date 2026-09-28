@@ -1,8 +1,10 @@
-"""The gamma family: `gamma`, `lgamma`, and the incomplete gamma functions.
+"""The gamma family: `gamma`, `lgamma`, the incomplete gamma functions and
+`gammainc`'s inverse.
 
 **This module is tier 1.** Reflection across `x = 0.5` is a `0`/`1`
 indicator built from `copysign`, and `gammainc`'s series runs a fixed 100
-terms with no convergence test.
+terms with no convergence test, and `gammaincinv` runs twelve Halley
+steps against it.
 
 Every kernel here uses a **fixed** number of terms or iterations rather than
 a data-dependent convergence check: a GPU thread can't branch per-lane on
@@ -36,7 +38,7 @@ CPU-only the moment a caller's `T` happens to be `Plain` inside a
 from std.collections import Array
 
 from ..core.dual import Dual
-from ..core.numeric import FloatLike, ge_indicator, max_of
+from ..core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
 
 
 def _lgamma_positive[T: FloatLike](x: T) -> T:
@@ -203,6 +205,97 @@ def gammaincc[T: FloatLike](a: T, x: T) -> T:
     """The regularized upper incomplete gamma function, `Q(a,x) = 1 - P(a,x)`.
     """
     return T.one() - gammainc(a, x)
+
+
+def gammaincinv[T: FloatLike](a: T, y: T) -> T:
+    """The inverse of `gammainc` in its second argument: the `x` with
+    `gammainc(a, x) == y`, for `a > 0` and `y` in `[0, 1]`.
+    `scipy.special.gammaincinv(a, y)`.
+
+    Tier 1. Numerical Recipes' starting guess (*Numerical Recipes*, 3rd
+    ed., 6.2.1) -- Wilson-Hilferty's cube-root normal approximation for
+    `a > 1`, raised to the inverted leading term `(y Gamma(a + 1))^(1/a)`
+    where that is larger, and for `a <= 1` the power law `(y / t)^(1/a)` of the
+    series' leading term below `t = 1 - a (0.253 + 0.12 a)` and an
+    exponential tail above -- then twelve Halley steps against `gammainc`
+    itself, with `dP/dx = x^(a-1) e^-x / Gamma(a)`. A step that would
+    leave `x <= 0` halves `x` instead, NR's safeguard. Each guess is
+    evaluated at an `a` and a `y` clamped into its own region, so both are
+    finite on every lane and the choice between them is a blend.
+
+    The result is as accurate as `gammainc` is at it: to about `1e-15`
+    relative through the lower tail, and in the upper tail the absolute
+    error of `gammainc` near 1 divided by the density there --
+    `pixi run accuracy` reads `7e-14` relative at `y = 0.99`, `a = 10` --
+    since `gammaincc` is `1 - gammainc` and carries no more digits. `gammainc`'s fixed 100-term series converges
+    for `x` up to about `a + 30` at moderate `a`, which bounds how far
+    into the upper tail the inverse is meaningful at large `a`. `gammaincinv(a, 0)` is `0`
+    and `gammaincinv(a, 1)` is `inf`, as SciPy's.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        a: The shape, `a > 0`.
+        y: The target probability, in `[0, 1]`.
+
+    Returns:
+        The `x >= 0` with `gammainc(a, x) == y`.
+    """
+    var zero = T.constant(0.0)
+    var one = T.one()
+    var half = T.constant(0.5)
+    # The edges: `y = 0` is answered by multiplying by zero and `y = 1` by
+    # dividing by it, with the iteration run at a stand-in `y` so every
+    # intermediate stays finite on those lanes.
+    var at_zero = ge_indicator(zero, y.abs())
+    var at_one = ge_indicator(y, one)
+    var p = y + at_zero * T.constant(0.25) - at_one * half
+
+    # `a > 1`: Wilson-Hilferty, from a normal quantile of the tail mass.
+    var big = one - ge_indicator(one, a)
+    var ab = max_of(a, one)
+    var pp = min_of(p, one - p)
+    var t = (-T.constant(2.0) * pp.ln()).sqrt()
+    var z = (T.constant(2.30753) + t * T.constant(0.27061)) / (
+        one + t * (T.constant(0.99229) + t * T.constant(0.04481))
+    ) - t
+    z = blend(ge_indicator(p, half), z, -z)
+    var cube = (
+        one - one / (T.constant(9.0) * ab) - z / (T.constant(3.0) * ab.sqrt())
+    )
+    var guess_wh = ab * cube * cube * cube
+    # Deep in the lower tail Wilson-Hilferty's cube goes negative; there
+    # the series' leading term, `P ~ x^a / Gamma(a + 1)`, inverts
+    # directly. It never overshoots the root -- `P(a, x) <= x^a / Gamma(a
+    # + 1)`, since the rest of the series is Kummer's `M(a, a + 1, -x) <= 1`
+    # -- so the larger of the two is the better guess.
+    var guess_lead = ((p.ln() + lgamma(ab + one)) / ab).exp()
+    var guess_big = max_of(guess_wh, guess_lead)
+
+    # `a <= 1`: the series' leading term below `ts`, an exponential tail
+    # above it, at `a` held in `(0, 1]`.
+    var asm = min_of(a, one)
+    var ts = one - asm * (T.constant(0.253) + asm * T.constant(0.12))
+    var low = one - ge_indicator(p, ts)
+    var ratio = min_of(p / ts, one)
+    var guess_head = (ratio.ln() / asm).exp()
+    var rest = max_of((p - ts) / (one - ts), zero)
+    var guess_tail = one - (max_of(one - rest, T.constant(1e-30))).ln()
+    var guess_small = blend(low, guess_head, guess_tail)
+
+    var x = blend(big, guess_big, guess_small)
+    var a1 = a - one
+    var log_gamma_a = lgamma(a)
+    comptime for _ in range(12):
+        var err = gammainc(a, x) - p
+        var density = (a1 * x.ln() - x - log_gamma_a).exp()
+        var u = err / density
+        var step = u / (one - half * min_of(one, u * (a1 / x - one)))
+        var next = x - step
+        var fallen = ge_indicator(zero, next)
+        x = blend(fallen, half * x, next)
+    return x * (one - at_zero) / (one - at_one)
 
 
 def gammasgn[T: FloatLike](x: T) -> T:

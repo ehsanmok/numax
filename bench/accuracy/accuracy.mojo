@@ -72,6 +72,7 @@ from numax import (
     factorial,
     gamma,
     gammainc,
+    gammaincinv,
     hermite_h,
     hyp1f1,
     hyp2f1,
@@ -627,6 +628,27 @@ def main():
     for i in range(GAMMAINC_A10P0_N):
         s.observe(xs[i], gammainc(p(10.0), p(xs[i])).v[0], refs[i])
     s.report("gammainc a=10.0, x in [1e-3,30]")
+
+    s = Stats()
+    xs = materialize[GAMMAINCINV_A0P5_X]()
+    refs = materialize[GAMMAINCINV_A0P5_REF]()
+    for i in range(GAMMAINCINV_A0P5_N):
+        s.observe(xs[i], gammaincinv(p(0.5), p(xs[i])).v[0], refs[i])
+    s.report("gammaincinv a=0.5 (NR guess + 12 Halley), y in [1e-12,0.99]")
+
+    s = Stats()
+    xs = materialize[GAMMAINCINV_A2P5_X]()
+    refs = materialize[GAMMAINCINV_A2P5_REF]()
+    for i in range(GAMMAINCINV_A2P5_N):
+        s.observe(xs[i], gammaincinv(p(2.5), p(xs[i])).v[0], refs[i])
+    s.report("gammaincinv a=2.5 (NR guess + 12 Halley), y in [1e-12,0.99]")
+
+    s = Stats()
+    xs = materialize[GAMMAINCINV_A10P0_X]()
+    refs = materialize[GAMMAINCINV_A10P0_REF]()
+    for i in range(GAMMAINCINV_A10P0_N):
+        s.observe(xs[i], gammaincinv(p(10.0), p(xs[i])).v[0], refs[i])
+    s.report("gammaincinv a=10.0 (NR guess + 12 Halley), y in [1e-12,0.99]")
 
     # --- Incomplete beta, at four parameter pairs ---------------------
     section("Incomplete beta")

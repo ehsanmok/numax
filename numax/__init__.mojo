@@ -395,6 +395,7 @@ from .special.gamma import (
     gamma,
     gammainc,
     gammaincc,
+    gammaincinv,
     gammasgn,
     lgamma,
     perm,
