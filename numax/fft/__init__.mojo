@@ -26,7 +26,8 @@ register tier's own names are exported here too:
 The `Tensor` tier carries `fft`/`ifft`,
 `rfft`/`irfft`, `fft2`/`ifft2`/`rfft2`/`irfft2` (rectangular, where the
 `Array` tier's is square), `fftn`/`ifftn` at any rank and `rfftn`/`irfftn`
-at ranks 1 to 3, `fftshift`/`ifftshift` at rank 1 and 2,
+at ranks 1 to 3, the Hermitian pair `hfft`/`ihfft`, each under NumPy's
+three `norm` modes, `fftshift`/`ifftshift` at rank 1 and 2,
 `fftfreq`/`rfftfreq`, `next_fast_len` -- the next power of two, the length
 this engine is fast at -- and the `Spectrum` pair they travel in; and, from
 `numax.fft.trig`, the real trigonometric transforms `dct`/`idct` and
@@ -42,10 +43,12 @@ from .fft import (
     fftfreq,
     fftn,
     fftshift,
+    hfft,
     ifft,
     ifft2,
     ifftn,
     ifftshift,
+    ihfft,
     irfft,
     irfft2,
     irfftn,

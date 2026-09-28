@@ -124,7 +124,7 @@ The `Array` tier stays power-of-two: Bluestein triples the register
 footprint, which is the one resource that tier is built around.
 """
 
-from std.math import cos as _cos, sin as _sin
+from std.math import cos as _cos, sin as _sin, sqrt as _sqrt
 
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
@@ -758,6 +758,74 @@ def _dft[
         )
 
 
+def _norm_factor[norm: StaticString, inverse: Bool](size: Int) -> Float64:
+    """What NumPy's `norm` asks for beyond the engine's own scaling, which
+    is none forward and `1/size` inverse: `"backward"` is the engine's,
+    `"ortho"` makes both directions `1/sqrt(size)`, and `"forward"` moves
+    the whole `1/size` onto the forward transform."""
+    comptime assert (
+        norm == "backward" or norm == "ortho" or norm == "forward"
+    ), 'numax.fft: norm is "backward", "ortho" or "forward"'
+    comptime if norm == "backward":
+        return 1.0
+    elif norm == "ortho":
+        return _sqrt(Float64(size)) if inverse else 1.0 / _sqrt(Float64(size))
+    else:
+        return Float64(size) if inverse else 1.0 / Float64(size)
+
+
+def _scale_in_place[
+    dtype: DType, L: TensorLayout, gpu: Bool
+](mut t: Tensor[dtype, L], factor: Float64) raises:
+    """`t *= factor`, one launch on `t`'s device."""
+    var ctx = t.context()
+    var ptr = t.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var f = Scalar[dtype](factor)
+
+    @always_inline
+    def scale[w: Int, alignment: Int = 1](coord: Coord) {var ptr, var f}:
+        var i = coord_to_index_list(coord)[0]
+        ptr[unsafe_offset=i] = ptr[unsafe_offset=i] * f
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        scale, Coord(t.size()), ctx
+    )
+    ctx.synchronize()
+
+
+def _normed[
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    norm: StaticString,
+    inverse: Bool,
+    gpu: Bool,
+](var x: Tuple[Tensor[dtype, L], Tensor[dtype, L]], size: Int) raises -> Tuple[
+    Tensor[dtype, L], Tensor[dtype, L]
+]:
+    """A transform's complex result under `norm`: returned as it is for
+    `"backward"`, and scaled in place, one launch per half, otherwise."""
+    comptime if norm != "backward":
+        var factor = _norm_factor[norm, inverse](size)
+        _scale_in_place[gpu=gpu](x[0], factor)
+        _scale_in_place[gpu=gpu](x[1], factor)
+    return x^
+
+
+def _normed[
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    norm: StaticString,
+    inverse: Bool,
+    gpu: Bool,
+](var x: Tensor[dtype, L], size: Int) raises -> Tensor[dtype, L]:
+    """`_normed` for a real result: `irfft` and its N-d forms."""
+    comptime if norm != "backward":
+        _scale_in_place[gpu=gpu](x, _norm_factor[norm, inverse](size))
+    return x^
+
+
 def _dft1[
     dtype: DType, n: Int, gpu: Bool, inverse: Bool
 ](var x: Spectrum[dtype, n]) raises -> Spectrum[dtype, n]:
@@ -807,7 +875,7 @@ def _dft2[
 
 
 def fft[
-    dtype: DType, n: Int, gpu: Bool = False
+    dtype: DType, n: Int, gpu: Bool = False, norm: StaticString = "backward"
 ](var x: Spectrum[dtype, n]) raises -> Spectrum[dtype, n] where (
     dtype.is_floating_point() and n > 0
 ):
@@ -829,6 +897,9 @@ def fft[
         n: The transform length, any `n > 0`.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The input sequence as a `(real, imaginary)` pair of length `n`.
@@ -840,11 +911,11 @@ def fft[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _dft1[gpu=gpu, inverse=False](x^)
+    return _normed[norm, False, gpu](_dft1[gpu=gpu, inverse=False](x^), n)
 
 
 def ifft[
-    dtype: DType, n: Int, gpu: Bool = False
+    dtype: DType, n: Int, gpu: Bool = False, norm: StaticString = "backward"
 ](var x: Spectrum[dtype, n]) raises -> Spectrum[dtype, n] where (
     dtype.is_floating_point() and n > 0
 ):
@@ -859,6 +930,9 @@ def ifft[
         n: The transform length, any `n > 0`.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The spectrum as a `(real, imaginary)` pair of length `n`.
@@ -871,11 +945,11 @@ def ifft[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _dft1[gpu=gpu, inverse=True](x^)
+    return _normed[norm, True, gpu](_dft1[gpu=gpu, inverse=True](x^), n)
 
 
 def rfft[
-    dtype: DType, n: Int, gpu: Bool = False
+    dtype: DType, n: Int, gpu: Bool = False, norm: StaticString = "backward"
 ](var x: Static[dtype, n]) raises -> Spectrum[dtype, n // 2 + 1] where (
     dtype.is_floating_point() and n > 0
 ):
@@ -898,6 +972,9 @@ def rfft[
         n: The length of the real input, any `n > 0`.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The real input sequence of length `n`.
@@ -910,7 +987,7 @@ def rfft[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _rfft[gpu=gpu](x^)
+    return _normed[norm, False, gpu](_rfft[gpu=gpu](x^), n)
 
 
 def _rfft[
@@ -956,7 +1033,11 @@ def _rfft[
 
 
 def irfft[
-    dtype: DType, keep: Int, gpu: Bool = False, n: Int = 2 * (keep - 1)
+    dtype: DType,
+    keep: Int,
+    gpu: Bool = False,
+    n: Int = 2 * (keep - 1),
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, keep]) raises -> Static[
     dtype, n
 ] where dtype.is_floating_point():
@@ -987,6 +1068,9 @@ def irfft[
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
         n: The output length, `2 * keep - 2` (the default) or `2 * keep - 1`.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The half spectrum as a `(real, imaginary)` pair of length `keep`.
@@ -1045,11 +1129,100 @@ def irfft[
     _ = full_re^
     _ = full_im^
     _ = im^
-    return re^
+    return _normed[norm, True, gpu](re^, n)
+
+
+comptime _MIRRORED_NORM[norm: StaticString]: StaticString = (
+    "forward" if norm
+    == "backward" else ("backward" if norm == "forward" else norm)
+)
+"""The `norm` that makes `irfft` into `hfft` (and `rfft` into `ihfft`): the
+Hermitian pair runs the transforms in the other direction, so what is
+unscaled on one side is scaled on the other."""
+
+
+def hfft[
+    dtype: DType,
+    keep: Int,
+    gpu: Bool = False,
+    n: Int = 2 * (keep - 1),
+    norm: StaticString = "backward",
+](var x: Spectrum[dtype, keep]) raises -> Static[
+    dtype, n
+] where dtype.is_floating_point():
+    """The FFT of a signal with Hermitian symmetry, given its first half:
+    a real spectrum of length `n`. `numpy.fft.hfft(x, n)`.
+
+    `irfft` of the conjugate with the normalization mirrored, NumPy's own
+    definition: under `"backward"` it is unscaled, as a forward transform
+    is. `n` is the output length, `2 * (keep - 1)` by default or
+    `2 * keep - 1` for an odd one.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        keep: The number of half-signal samples in `x`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        n: The output length, `2 * keep - 2` (the default) or `2 * keep - 1`.
+        norm: The scaling, NumPy's `"backward"` (the default: none here,
+            `1/n` on `ihfft`), `"ortho"` or `"forward"`.
+
+    Args:
+        x: The first half of the Hermitian signal as a `(real, imaginary)`
+            pair.
+
+    Returns:
+        The real length-`n` spectrum.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    _scale_in_place[gpu=gpu](x[1], -1.0)
+    return irfft[gpu=gpu, n=n, norm=_MIRRORED_NORM[norm]](x^)
+
+
+def ihfft[
+    dtype: DType, n: Int, gpu: Bool = False, norm: StaticString = "backward"
+](var x: Static[dtype, n]) raises -> Spectrum[dtype, n // 2 + 1] where (
+    dtype.is_floating_point() and n > 0
+):
+    """The inverse of `hfft`: the first half of the Hermitian signal whose
+    real spectrum is `x`. `numpy.fft.ihfft`.
+
+    The conjugate of `rfft` with the normalization mirrored, so under
+    `"backward"` it carries the `1/n` an inverse does and
+    `hfft(ihfft(x)) == x`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of the real spectrum.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: `1/n` here,
+            none on `hfft`), `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real spectrum.
+
+    Returns:
+        The half signal as a `(real, imaginary)` pair of length `n // 2 + 1`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    var out = rfft[gpu=gpu, norm=_MIRRORED_NORM[norm]](x^)
+    _scale_in_place[gpu=gpu](out[1], -1.0)
+    return out^
 
 
 def fft2[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+    dtype: DType,
+    rows: Int,
+    cols: Int,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols
 ] where (dtype.is_floating_point() and rows > 0 and cols > 0):
@@ -1071,6 +1244,9 @@ def fft2[
         cols: The number of columns, any `cols > 0`.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The `rows x cols` image as a `(real, imaginary)` pair.
@@ -1082,11 +1258,17 @@ def fft2[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _dft2[gpu=gpu, inverse=False](x^)
+    return _normed[norm, False, gpu](
+        _dft2[gpu=gpu, inverse=False](x^), rows * cols
+    )
 
 
 def ifft2[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+    dtype: DType,
+    rows: Int,
+    cols: Int,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols
 ] where (dtype.is_floating_point() and rows > 0 and cols > 0):
@@ -1103,6 +1285,9 @@ def ifft2[
         cols: The number of columns, any `cols > 0`.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The `rows x cols` spectrum as a `(real, imaginary)` pair.
@@ -1115,11 +1300,17 @@ def ifft2[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _dft2[gpu=gpu, inverse=True](x^)
+    return _normed[norm, True, gpu](
+        _dft2[gpu=gpu, inverse=True](x^), rows * cols
+    )
 
 
 def rfft2[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+    dtype: DType,
+    rows: Int,
+    cols: Int,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: Static[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols // 2 + 1
 ] where (dtype.is_floating_point() and rows > 0 and cols > 0):
@@ -1139,6 +1330,9 @@ def rfft2[
         cols: The number of columns, any `cols > 0`.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The real `rows x cols` image.
@@ -1201,7 +1395,7 @@ def rfft2[
     _ = full_im^
     _ = half_re^
     _ = half_im^
-    return (re^, im^)
+    return _normed[norm, False, gpu]((re^, im^), rows * cols)
 
 
 comptime _Pair[dtype: DType, L: TensorLayout] = Tuple[
@@ -1261,7 +1455,11 @@ def _dftn[
 
 
 def fftn[
-    dtype: DType, L: TensorLayout, //, gpu: Bool = False
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: _Pair[dtype, L]) raises -> _Pair[dtype, L] where (
     dtype.is_floating_point() and L.all_dims_known and L.static_product > 0
 ):
@@ -1280,6 +1478,9 @@ def fftn[
         L: The compile-time layout of both halves, inferred; any rank.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The complex array as a `(real, imaginary)` pair.
@@ -1291,11 +1492,17 @@ def fftn[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _dftn[dtype, L, gpu, False](x^)
+    return _normed[norm, False, gpu](
+        _dftn[dtype, L, gpu, False](x^), L.static_product
+    )
 
 
 def ifftn[
-    dtype: DType, L: TensorLayout, //, gpu: Bool = False
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: _Pair[dtype, L]) raises -> _Pair[dtype, L] where (
     dtype.is_floating_point() and L.all_dims_known and L.static_product > 0
 ):
@@ -1309,6 +1516,9 @@ def ifftn[
         L: The compile-time layout of both halves, inferred; any rank.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The N-d spectrum as a `(real, imaginary)` pair.
@@ -1321,7 +1531,9 @@ def ifftn[
         If allocating a buffer or launching a kernel on the input's device
         fails.
     """
-    return _dftn[dtype, L, gpu, True](x^)
+    return _normed[norm, True, gpu](
+        _dftn[dtype, L, gpu, True](x^), L.static_product
+    )
 
 
 def irfft2[
@@ -1330,6 +1542,7 @@ def irfft2[
     keep: Int,
     gpu: Bool = False,
     n: Int = 2 * (keep - 1),
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, rows, keep]) raises -> Static[dtype, rows, n] where (
     dtype.is_floating_point() and rows > 0
 ):
@@ -1352,6 +1565,9 @@ def irfft2[
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
         n: The output width, `2 * keep - 2` (the default) or `2 * keep - 1`.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The `rows x keep` half spectrum as a `(real, imaginary)` pair.
@@ -1396,7 +1612,7 @@ def irfft2[
     _ = full_re^
     _ = full_im^
     _ = im^
-    return re^
+    return _normed[norm, True, gpu](re^, rows * n)
 
 
 def _mirror_rows[
@@ -1440,7 +1656,7 @@ def _mirror_rows[
 
 
 def rfftn[
-    dtype: DType, n: Int, gpu: Bool = False
+    dtype: DType, n: Int, gpu: Bool = False, norm: StaticString = "backward"
 ](var x: Static[dtype, n]) raises -> Spectrum[dtype, n // 2 + 1] where (
     dtype.is_floating_point() and n > 0
 ):
@@ -1451,6 +1667,9 @@ def rfftn[
         n: The length of the real input.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The real input sequence.
@@ -1462,11 +1681,15 @@ def rfftn[
     Raises:
         If allocating a buffer or launching a kernel fails.
     """
-    return _rfft[gpu=gpu](x^)
+    return _normed[norm, False, gpu](_rfft[gpu=gpu](x^), n)
 
 
 def rfftn[
-    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+    dtype: DType,
+    rows: Int,
+    cols: Int,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: Static[dtype, rows, cols]) raises -> Spectrum[
     dtype, rows, cols // 2 + 1
 ] where (dtype.is_floating_point() and rows > 0 and cols > 0):
@@ -1478,6 +1701,9 @@ def rfftn[
         cols: The number of columns.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The real `rows x cols` image.
@@ -1489,11 +1715,16 @@ def rfftn[
     Raises:
         If allocating a buffer or launching a kernel fails.
     """
-    return rfft2[gpu=gpu](x^)
+    return rfft2[gpu=gpu, norm=norm](x^)
 
 
 def rfftn[
-    dtype: DType, d0: Int, d1: Int, d2: Int, gpu: Bool = False
+    dtype: DType,
+    d0: Int,
+    d1: Int,
+    d2: Int,
+    gpu: Bool = False,
+    norm: StaticString = "backward",
 ](var x: Static[dtype, d0, d1, d2]) raises -> Spectrum[
     dtype, d0, d1, d2 // 2 + 1
 ] where (dtype.is_floating_point() and d0 > 0 and d1 > 0 and d2 > 0):
@@ -1514,6 +1745,9 @@ def rfftn[
         d2: The last extent, the one halved.
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The real `d0 x d1 x d2` volume.
@@ -1587,11 +1821,15 @@ def rfftn[
     _ = rot_im^
     _ = mid_re^
     _ = mid_im^
-    return (re^, im^)
+    return _normed[norm, False, gpu]((re^, im^), d0 * d1 * d2)
 
 
 def irfftn[
-    dtype: DType, keep: Int, gpu: Bool = False, n: Int = 2 * (keep - 1)
+    dtype: DType,
+    keep: Int,
+    gpu: Bool = False,
+    n: Int = 2 * (keep - 1),
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, keep]) raises -> Static[
     dtype, n
 ] where dtype.is_floating_point():
@@ -1603,6 +1841,9 @@ def irfftn[
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
         n: The output length, `2 * keep - 2` (the default) or `2 * keep - 1`.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The half spectrum as a `(real, imaginary)` pair.
@@ -1613,7 +1854,7 @@ def irfftn[
     Raises:
         If allocating a buffer or launching a kernel fails.
     """
-    return irfft[gpu=gpu, n=n](x^)
+    return irfft[gpu=gpu, norm=norm, n=n](x^)
 
 
 def irfftn[
@@ -1622,6 +1863,7 @@ def irfftn[
     keep: Int,
     gpu: Bool = False,
     n: Int = 2 * (keep - 1),
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, rows, keep]) raises -> Static[dtype, rows, n] where (
     dtype.is_floating_point() and rows > 0
 ):
@@ -1634,6 +1876,9 @@ def irfftn[
         gpu: When `True`, every kernel launches with `target="gpu"` on the
             input's device; otherwise they run on the CPU.
         n: The output width, `2 * keep - 2` (the default) or `2 * keep - 1`.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The `rows x keep` half spectrum as a `(real, imaginary)` pair.
@@ -1644,7 +1889,7 @@ def irfftn[
     Raises:
         If allocating a buffer or launching a kernel fails.
     """
-    return irfft2[gpu=gpu, n=n](x^)
+    return irfft2[gpu=gpu, norm=norm, n=n](x^)
 
 
 def irfftn[
@@ -1654,6 +1899,7 @@ def irfftn[
     keep: Int,
     gpu: Bool = False,
     n: Int = 2 * (keep - 1),
+    norm: StaticString = "backward",
 ](var x: Spectrum[dtype, d0, d1, keep]) raises -> Static[
     dtype, d0, d1, n
 ] where (dtype.is_floating_point() and d0 > 0 and d1 > 0):
@@ -1676,6 +1922,9 @@ def irfftn[
             input's device; otherwise they run on the CPU.
         n: The output's last extent, `2 * keep - 2` (the default) or
             `2 * keep - 1`.
+        norm: The scaling, NumPy's `"backward"` (the default: none on the
+            forward transform, `1/n` on the inverse), `"ortho"` (`1/sqrt(n)`
+            both ways) or `"forward"` (`1/n` on the forward transform).
 
     Args:
         x: The `d0 x d1 x keep` half spectrum as a `(real, imaginary)` pair.
@@ -1732,7 +1981,7 @@ def irfftn[
     _ = full_re^
     _ = full_im^
     _ = im^
-    return re^
+    return _normed[norm, True, gpu](re^, d0 * d1 * n)
 
 
 def _rolled[
