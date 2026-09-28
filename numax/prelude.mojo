@@ -40,6 +40,22 @@ Import the subpackage instead when you want everything: `from numax import
 subsystem.
 """
 
+# Not exported here, and where each one is (so `grep` finds the answer):
+#   sum       from numax.stats import sum        (shadows the builtin)
+#   prod      from numax.stats import prod       (shadows the builtin)
+#   min       from numax.stats import min        (shadows the builtin)
+#   max       from numax.stats import max        (shadows the builtin)
+#   abs       from numax import abs              (shadows the builtin)
+#   all       from numax import all              (shadows the builtin)
+#   any       from numax import any              (shadows the builtin)
+#   round     from numax import round            (shadows the builtin)
+#   copysign  from numax import copysign         (shadows the builtin)
+#   norm, expon, gamma, chi2, beta, t, f, poisson, binom
+#             from numax.stats import norm, ...  (distribution namespaces)
+#   slice     from numax.core.tensor import slice  (Mojo's own slicing)
+#   hilbert   from numax.signal import hilbert   (the transform; the
+#             prelude's `hilbert` is the scipy.linalg matrix)
+
 # The trait and its conformers.
 from .core.numeric import FloatLike
 from .core.tensorlike import (

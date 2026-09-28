@@ -1,5 +1,5 @@
 """Helpers shared across `numax.optimize`'s `Tensor` tier, none of them
-public.
+public. **Tier 2**, like the drivers they serve.
 
 There is one, and it exists because of a defect rather than for tidiness.
 `Tensor.context()` hands back a handle that does not outlive the tensor it

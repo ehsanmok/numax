@@ -2,6 +2,8 @@
 
 Solve `dy/dt = f(t, y)` from `t0` to `t1` given `y(t0) = y0`, for a scalar
 `y` (`rk4`, `dopri5`) or an `n`-component system (`rk4_system`).
+**Tier 1**: a fixed step count and no data-dependent branch, so every
+integrator here runs per SIMD lane inside a kernel.
 
 Two things fall out of writing these against `FloatLike` rather than a
 concrete float type.

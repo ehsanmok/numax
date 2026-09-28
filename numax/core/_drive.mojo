@@ -4,7 +4,9 @@ The surface modules -- `numax.core.elementwise`, `numax.core.ops` and
 `numax.core.logic` -- name the operations. This module owns the single
 question they all have to answer: given a tensor, a per-element `op` and a
 `gpu: Bool`, where does the work run and how is it driven. It is private
-because no *caller* of numax should have to know the answer.
+because no *caller* of numax should have to know the answer. **Tier 2**:
+it branches on residency and size at run time, and hands tier-1 `op`s to
+the device or to a host walk.
 
 Four of its pieces are shared past `numax.core`, and deliberately:
 `numax.stats.statistics` takes `_check_device`, `_notice`, `_flat` and

@@ -3,6 +3,7 @@
 Three ways to turn a set of samples (or a function you'd rather not call
 repeatedly) into something cheap to evaluate, all `FloatLike`-generic so
 the result differentiates and runs on GPU like everything else here.
+**Tier 1** throughout, at the cost the next section states.
 
 ## No search, and what that costs
 
