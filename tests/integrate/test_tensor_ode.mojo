@@ -1,7 +1,7 @@
 """Tests for `numax.integrate`'s initial-value solvers over a `Tensor` state.
 
 The `Tensor` forms share the Dormand-Prince tableau and the stage structure
-with `numax.integrate.array`, so the strongest check is agreement between
+with `numax.integrate`'s `Array` tier, so the strongest check is agreement between
 the two on the same problem, component by component -- a divergence there
 is a wrong stage weight on one side. The rest are the properties every
 integrator has to satisfy: the order of accuracy, exactness on a
@@ -25,7 +25,7 @@ from max.gpu.host import DeviceContext
 from numax import FloatLike, Plain
 from numax.core.tensor import Static
 from numax.integrate import dopri5, rk4_system, solve_ivp
-from numax.integrate.array import rk4_system as array_rk4_system
+from numax.integrate import rk4_system
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype, 1]
@@ -82,7 +82,7 @@ def test_rk4_system_agrees_with_the_array_tier_component_by_component() raises:
 
     var start = Array[P, 2](fill=P.constant(0.0))
     start[0] = P.constant(1.0)
-    var there = array_rk4_system[P, 2, array_oscillator, 50](
+    var there = rk4_system[P, 2, array_oscillator, 50](
         P.constant(0.0), start, P.constant(1.5)
     )
     for i in range(2):

@@ -19,8 +19,8 @@ from numax.integrate import (
     solve_ivp,
     solve_ivp_stiff,
 )
-from numax.integrate.array import dopri5
-from numax.integrate.array import gauss_legendre
+from numax.integrate import dopri5
+from numax.integrate import gauss_legendre
 
 comptime P = Plain[DType.float64, 1]
 

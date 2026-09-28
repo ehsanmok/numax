@@ -20,7 +20,7 @@ from max.gpu.host import DeviceContext
 from numax.core.numeric import FloatLike
 from numax.core.plain import Plain
 from numax.core.tensor import Static
-from numax.integrate.array import dopri5_step, rk4
+from numax.integrate import dopri5_step, rk4
 from numax.linalg.array import (
     eigh,
     eigvals,

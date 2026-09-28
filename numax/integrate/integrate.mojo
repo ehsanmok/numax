@@ -50,7 +50,7 @@ from std.collections import Array
 from ..core.dual import Dual
 from ..core.numeric import FloatLike
 from ..core.plain import Plain
-from .array.ode import dopri5_step
+from ._array.ode import dopri5_step
 from .ode import dopri5_step as _tensor_dopri5_step
 from ..core.tensorlike import TensorLike, dim
 from ..core.tensor import _same_order, Static, copy
@@ -59,7 +59,7 @@ from algorithm.rowwise_types import RowCoord
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from ..core.rowwise import reduce_all
-from .array.quadrature import (
+from ._array.quadrature import (
     _gauss_legendre_nodes,
     _gauss_legendre_weights,
     gauss_legendre,
@@ -673,7 +673,7 @@ def fixed_quad[
     flag -- which is why it returns a bare `Float64` where `quad` returns
     a `QuadResult`.
 
-    `numax.integrate.array.gauss_legendre` is the same rule at any
+    `numax.integrate.gauss_legendre` is the same rule at any
     `FloatLike`, so it differentiates and runs in a kernel; this is its
     `Float64` front door under SciPy's name.
     """

@@ -12,7 +12,7 @@ owning module.
 
 This is the method-of-lines case the `Array` tier cannot reach: a PDE
 discretized to ten thousand unknowns is a `Tensor` state, and
-`numax.integrate.array.rk4_system`'s `Array[T, n]` lives in registers. The
+`numax.integrate.rk4_system`'s `Array[T, n]` lives in registers. The
 two tiers share the Dormand-Prince tableau and the same stage structure,
 and the tests pin the `Tensor` forms against the `Array` ones component by
 component on the same problem.
@@ -37,7 +37,7 @@ from std.sys.info import simd_width_of
 from ..core.tensorlike import TensorLike, dim
 from ..core.tensor import _same_order, Static, copy
 
-from .array.ode import (
+from ._array.ode import (
     _A21,
     _A31,
     _A32,
@@ -69,6 +69,11 @@ from .array.ode import (
     _C4,
     _C5,
 )
+from ..core.numeric import FloatLike
+from ._array.ode import dopri5 as _array_dopri5
+from ._array.ode import dopri5_step as _array_dopri5_step
+from std.collections import Array
+from ._array.ode import rk4_system as _array_rk4_system
 
 
 @always_inline
@@ -121,7 +126,7 @@ def rk4_system[
 ):
     """Integrate the `n`-component system `dy/dt = f(t, y)` from `t0` to
     `t1` in `num_steps` classical fourth-order Runge-Kutta steps, the
-    state a `Tensor`. The `Tensor` form of `numax.integrate.array.rk4_system`.
+    state a `Tensor`. The `Tensor` form of `numax.integrate.rk4_system`.
 
     `t1 < t0` integrates backwards; the step is `(t1 - t0) / num_steps` and
     nothing here assumes its sign.
@@ -198,7 +203,7 @@ def dopri5_step[
 ):
     """One Dormand-Prince 5(4) step of the system, returning both
     embedded solutions. The `Tensor` form of
-    `numax.integrate.array.dopri5_step`, from the same tableau.
+    `numax.integrate.dopri5_step`, from the same tableau.
 
     Public but low-level: `dopri5` drives it at a fixed step and
     `solve_ivp` with adaptive control, so the tableau lives in one place.
@@ -274,7 +279,7 @@ def dopri5[
     and T.LayoutType.all_dims_known
 ):
     """Integrate the system with fixed-step Dormand-Prince 5(4). The
-    `Tensor` form of `numax.integrate.array.dopri5`: fifth order for seven
+    `Tensor` form of `numax.integrate.dopri5`: fifth order for seven
     stages per step, against `rk4_system`'s fourth for four."""
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
@@ -286,3 +291,36 @@ def dopri5[
         var stepped = dopri5_step[f=f, gpu=gpu](t, y, h)
         y = copy(stepped.y)
     return y^
+
+
+def dopri5[
+    T: FloatLike,
+    f: def[U: FloatLike](U, U) thin -> U,
+    num_steps: Int = 100,
+](t0: T, y0: T, t1: T) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.integrate._array.ode.dopri5`."""
+    return _array_dopri5[T=T, f=f, num_steps=num_steps](t0, y0, t1)
+
+
+def dopri5_step[
+    T: FloatLike,
+    f: def[U: FloatLike](U, U) thin -> U,
+](t: T, y: T, h: T) -> Tuple[T, T]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.integrate._array.ode.dopri5_step`."""
+    return _array_dopri5_step[T=T, f=f](t, y, h)
+
+
+def rk4_system[
+    T: FloatLike,
+    n: Int,
+    f: def[U: FloatLike](U, Array[U, n]) thin -> Array[U, n],
+    num_steps: Int = 100,
+](t0: T, y0: Array[T, n], t1: T) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.integrate._array.ode.rk4_system`."""
+    return _array_rk4_system[T=T, n=n, f=f, num_steps=num_steps](t0, y0, t1)

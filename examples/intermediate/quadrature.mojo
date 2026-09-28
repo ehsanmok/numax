@@ -32,7 +32,7 @@ from numax import (
     laguerre_l,
     legendre_p,
 )
-from numax.integrate.array import gauss_legendre, simpson, trapezoid
+from numax.integrate import gauss_legendre, simpson, trapezoid
 
 from numax.optimize.array import newton
 

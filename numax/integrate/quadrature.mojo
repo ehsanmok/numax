@@ -7,12 +7,12 @@ arithmetic is a fixed weighted sum, but the walk is not launched on a
 device. `ponytail:` a device path would be one reduction through the
 `rowwise` scaffolder `numax.stats.sum` already uses, and it waits on
 either an `integrate -> stats` edge or that reduction moving into `core`.
-The `Array` tier, `numax.integrate.array`, is the one that runs inside a
+The `Array` tier, `numax.integrate`'s `Array` tier, is the one that runs inside a
 kernel.
 
 These take *samples* -- a tensor `y` on a uniform grid of spacing `dx`, or
 at the points `x` -- which is what `scipy.integrate.trapezoid(y, x=None,
-dx=1.0)` takes. `numax.integrate.array.trapezoid[f](a, b)` samples a
+dx=1.0)` takes. `numax.integrate.trapezoid[f](a, b)` samples a
 function itself; that is the same rule under a different input and is
 recorded in `docs/parity.md` as the divergent spelling.
 
@@ -36,6 +36,9 @@ from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape, _scan_device
 from ..core._drive import _check_device, _notice, _require_contiguous
 from ..core.rowwise import reduce_all
+from ..core.numeric import FloatLike
+from ._array.quadrature import simpson as _array_simpson
+from ._array.quadrature import trapezoid as _array_trapezoid
 
 
 def _spacings[
@@ -380,3 +383,25 @@ def cumulative_trapezoid[
         running += h[i].cast[A.dtype]() * (ys[i] + ys[i + 1]) / 2
         out.append(running)
     return Static[A.dtype, m](out^, y.context())
+
+
+def simpson[
+    T: FloatLike,
+    f: def[U: FloatLike](U) thin -> U,
+    num_panels: Int = 64,
+](a: T, b: T) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.integrate._array.quadrature.simpson`."""
+    return _array_simpson[T=T, f=f, num_panels=num_panels](a, b)
+
+
+def trapezoid[
+    T: FloatLike,
+    f: def[U: FloatLike](U) thin -> U,
+    num_intervals: Int = 128,
+](a: T, b: T) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.integrate._array.quadrature.trapezoid`."""
+    return _array_trapezoid[T=T, f=f, num_intervals=num_intervals](a, b)
