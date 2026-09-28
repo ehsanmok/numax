@@ -6,13 +6,17 @@ SciPy's statistic and p-value.
 sort) and its p-value is one tail of a distribution `numax.stats`
 already has -- `t.sf`, `chi2.sf`, `f.sf`, `norm.sf` -- so each test is
 that arithmetic and that call. On the host all of it is `Float64`. The
-`t` tests, both `chisquare`s and `f_oneway` take `gpu: Bool = False`: at
-`gpu=True`, with the samples on a device, their sums are device
-reductions (`_moments_device`: count, mean and the sum of squared
-deviations) and only those scalars come back; the tail is host scalar
+`t` tests, both `chisquare`s, `f_oneway`, `mannwhitneyu`, `wilcoxon` and
+`ks_2samp` take `gpu: Bool = False`: at `gpu=True`, with the samples on
+a device, their sums are device reductions (`_moments_device`: count,
+mean and the sum of squared deviations), the rank tests rank on the
+device (`_rank_sum_device`) and `ks_2samp` counts its gaps there as
+exact integers (`_ks_gaps_device`), and only scalars come back; the tail is host scalar
 work either way, which the device-complete rule allows. The device sums
 are at the samples' dtype and reassociated, so a `float32` statistic
-agrees with the host's to `float32` precision.
+agrees with the host's to `float32` precision. `ks_1samp` is the one
+host-only test: its `cdf` is a `Float64` function parameter, and a
+`Float64` kernel does not compile on Metal.
 
 ## SciPy's conventions, and the one place they are not met
 
@@ -43,7 +47,7 @@ from std.math import exp as _exp, sqrt as _sqrt
 
 from layout.tile_layout import TensorLayout
 
-from layout import Coord
+from layout import Coord, coord_to_index_list
 from layout.tile_layout import row_major
 from max.algorithm.functional import elementwise
 
@@ -57,6 +61,9 @@ from ..core.ops import (
     multiply as _tmultiply,
     subtract as _tsubtract,
 )
+from algorithm.rowwise_types import RowCoord
+from ..core.rowwise import reduce_all
+from ..core.sorting import _pack_device, _sort_device, argsort, take
 from ..core.tensorlike import TensorLike, dim, is_row_major
 from ..core.tensor import Dynamic, Static, Tensor, _dyn_shape
 from ..core.plain import Plain
@@ -589,9 +596,156 @@ def _f_oneway_finish(
     )
 
 
+def _rank_sum_device[
+    dtype: DType
+](values: Dynamic[dtype, 1], flags: Dynamic[dtype, 1]) raises -> Tuple[
+    Float64, Float64
+] where dtype.is_floating_point():
+    """On `values`' device: the sum of the average ranks of the elements
+    whose `flags` entry is nonzero, and the tie term `sum (t^3 - t)` over
+    the groups of equal values.
+
+    The device `argsort` and a gather give the ascending values; one
+    launch over the sorted positions binary-searches each value's run,
+    `[first, last)`, whose average rank is `(first + 1 + last) / 2` and
+    whose size `t` contributes `t^2 - 1` per element, so `t^3 - t` per
+    group; two device sums finish. Two scalars come back.
+    """
+    var ctx = values.context()
+    var n = values.size()
+    var order = argsort[gpu=True](values)
+    var sorted = take[axis=0, gpu=True](values, order)
+    var ranked = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var ties = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var sv = _flat_unchecked(sorted)
+    var ov = _flat_unchecked(order)
+    var fv = _flat_unchecked(flags)
+    var rv = _flat_out(ranked)
+    var tv = _flat_out(ties)
+
+    @always_inline
+    def run[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var sv, var ov, var fv, var rv, var tv, var n}:
+        var i = coord_to_index_list(coord)[0]
+        var value = sv[coord][0]
+        var lo = 0
+        var hi = i
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if sv[Coord(mid)][0] < value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var first = lo
+        lo = i
+        hi = n
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if sv[Coord(mid)][0] <= value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var size = Scalar[dtype](lo - first)
+        var flagged = fv[Coord(Int(ov[coord][0]))][0] != 0
+        rv.store[1](
+            coord,
+            Scalar[dtype](first + 1 + lo) / 2 if flagged else Scalar[dtype](0),
+        )
+        tv.store[1](coord, size * size - 1)
+
+    elementwise[simd_width=1, target="gpu"](run, Coord(n), ctx)
+    return (
+        Float64(_tsum[gpu=True](ranked)),
+        Float64(_tsum[gpu=True](ties)),
+    )
+
+
+def _pooled_device[
+    A: TensorLike, B: TensorLike
+](xs: A, ys: B) raises -> Tuple[
+    Dynamic[A.dtype, 1], Dynamic[A.dtype, 1]
+] where (B.dtype == A.dtype):
+    """`xs` then `ys` in one flat device vector, and a flag vector that is
+    one over the `xs` part: one launch."""
+    comptime dtype = A.dtype
+    var ctx = xs.context()
+    var n1 = xs.size()
+    var n = n1 + ys.size()
+    var pooled = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var flags = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var av = _flat_unchecked(xs)
+    var bv = _flat_unchecked(ys)
+    var pv = _flat_out(pooled)
+    var fv = _flat_out(flags)
+
+    @always_inline
+    def join[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var av, var bv, var pv, var fv, var n1}:
+        var i = coord_to_index_list(coord)[0]
+        if i < n1:
+            pv.store[1](coord, av[coord][0])
+            fv.store[1](coord, Scalar[dtype](1))
+        else:
+            pv.store[1](coord, rebind[Scalar[dtype]](bv[Coord(i - n1)][0]))
+            fv.store[1](coord, Scalar[dtype](0))
+
+    elementwise[simd_width=1, target="gpu"](join, Coord(n), ctx)
+    return (pooled^, flags^)
+
+
+def _mannwhitneyu_finish(
+    r1: Float64,
+    tie_term: Float64,
+    n1: Int,
+    n2: Int,
+    alternative: StaticString,
+    use_continuity: Bool,
+) -> TestResult:
+    """`U1`, and the tie- and continuity-corrected normal p-value, from
+    the first sample's rank sum and the pooled tie term."""
+    var n = n1 + n2
+    var u1 = r1 - Float64(n1) * Float64(n1 + 1) / 2.0
+    var u2 = Float64(n1) * Float64(n2) - u1
+
+    var u: Float64
+    var factor: Float64
+    if alternative == "greater":
+        u = u1
+        factor = 1.0
+    elif alternative == "less":
+        u = u2
+        factor = 1.0
+    else:
+        u = max(u1, u2)
+        factor = 2.0
+    var mu = Float64(n1) * Float64(n2) / 2.0
+    var nf = Float64(n)
+    var sigma = _sqrt(
+        Float64(n1)
+        * Float64(n2)
+        / 12.0
+        * ((nf + 1.0) - tie_term / (nf * (nf - 1.0)))
+    )
+    var numerator = u - mu - (0.5 if use_continuity else 0.0)
+    var z = numerator / sigma
+    var p = factor * Float64(norm.sf[_P](_P(z), _P(0.0), _P(1.0)).v)
+    return TestResult(u1, min(1.0, max(0.0, p)), 0.0)
+
+
 def mannwhitneyu[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](
     xs: A,
     ys: B,
@@ -612,8 +766,26 @@ def mannwhitneyu[
     with SciPy's tie correction and, by default, its continuity correction,
     taken on `U1`, `U2` or their maximum by `alternative`. Always
     asymptotic, where SciPy enumerates exactly for a small untied sample.
+
+    At `gpu=True`, with both samples on a device, the pooled sample is
+    ranked there (`_rank_sum_device`) and only the first sample's rank sum
+    and the tie term come back.
     """
     _check_alternative(alternative)
+    if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
+        comptime if gpu:
+            var joined = _pooled_device(xs, ys)
+            var sums = _rank_sum_device(joined[0], joined[1])
+            return _mannwhitneyu_finish(
+                sums[0],
+                sums[1],
+                xs.size(),
+                ys.size(),
+                alternative,
+                use_continuity,
+            )
+    else:
+        _notice[gpu]("mannwhitneyu")
     var a = _values(xs)
     var b = _values(ys)
     var n1 = len(a)
@@ -649,37 +821,117 @@ def mannwhitneyu[
     var r1 = 0.0
     for k in range(n1):
         r1 += ranks[k]
-    var u1 = r1 - Float64(n1) * Float64(n1 + 1) / 2.0
-    var u2 = Float64(n1) * Float64(n2) - u1
-
-    var u: Float64
-    var factor: Float64
-    if alternative == "greater":
-        u = u1
-        factor = 1.0
-    elif alternative == "less":
-        u = u2
-        factor = 1.0
-    else:
-        u = max(u1, u2)
-        factor = 2.0
-    var mu = Float64(n1) * Float64(n2) / 2.0
-    var nf = Float64(n)
-    var sigma = _sqrt(
-        Float64(n1)
-        * Float64(n2)
-        / 12.0
-        * ((nf + 1.0) - tie_term / (nf * (nf - 1.0)))
+    return _mannwhitneyu_finish(
+        r1, tie_term, n1, n2, alternative, use_continuity
     )
-    var numerator = u - mu - (0.5 if use_continuity else 0.0)
-    var z = numerator / sigma
-    var p = factor * Float64(norm.sf[_P](_P(z), _P(0.0), _P(1.0)).v)
-    return TestResult(u1, min(1.0, max(0.0, p)), 0.0)
+
+
+def _ks_gaps_device[
+    A: TensorLike, B: TensorLike
+](xs: A, ys: B) raises -> Tuple[Int, Int] where B.dtype == A.dtype:
+    """The two-sample KS gaps as exact integers: over every sample value
+    `v`, the largest and the most negative `n2 F1(v) - n1 F2(v)`.
+
+    Both samples sort on the device; one launch over all `n1 + n2`
+    values reads each empirical distribution at the value by a binary
+    search for its upper bound -- the value after every equal element
+    in both samples, which is the host walk's tie rule -- and two
+    device `max` reductions finish. Two integers come back.
+    """
+    var ctx = xs.context()
+    var n1 = xs.size()
+    var n2 = ys.size()
+    var sa = _sort_device(xs)
+    var sb = _sort_device(ys)
+    var gaps = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n1 + n2))
+    )
+    var flipped = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n1 + n2))
+    )
+    var av = _flat_unchecked(sa)
+    var bv = _flat_unchecked(sb)
+    var gv = _flat_out(gaps)
+    var hv = _flat_out(flipped)
+
+    @always_inline
+    def gap[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var av, var bv, var gv, var hv, var n1, var n2}:
+        var i = coord_to_index_list(coord)[0]
+        var value = av[coord][0] if i < n1 else rebind[Scalar[A.dtype]](
+            bv[Coord(i - n1)][0]
+        )
+        var lo = 0
+        var hi = n1
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if av[Coord(mid)][0] <= value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var in_a = lo
+        lo = 0
+        hi = n2
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if rebind[Scalar[A.dtype]](bv[Coord(mid)][0]) <= value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var d = Int64(in_a) * Int64(n2) - Int64(lo) * Int64(n1)
+        gv.store[1](coord, d)
+        hv.store[1](coord, -d)
+
+    elementwise[simd_width=1, target="gpu"](gap, Coord(n1 + n2), ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[DType.int64, w], idx: RowCoord[1]) {} -> SIMD[DType.int64, w]:
+        return tile
+
+    var top = Static[DType.int64, 2](ctx)
+    var tv = top.tile()
+    reduce_all[monoid="max", target="gpu"](
+        _flat_unchecked(gaps),
+        tv.slice[0:1]().as_unsafe_any_origin(),
+        identity,
+        n1 + n2,
+        Optional(ctx),
+    )
+    reduce_all[monoid="max", target="gpu"](
+        _flat_unchecked(flipped),
+        tv.slice[1:2]().as_unsafe_any_origin(),
+        identity,
+        n1 + n2,
+        Optional(ctx),
+    )
+    var raw = top.to_host()
+    return (Int(raw[0]), Int(raw[1]))
+
+
+def _ks_2samp_finish(
+    d_plus: Float64,
+    d_minus: Float64,
+    n1: Int,
+    n2: Int,
+    alternative: StaticString,
+) -> TestResult:
+    """The statistic and asymptotic tail from the two one-sided gaps."""
+    var effective = Float64(n1 * n2) / Float64(n1 + n2)
+    if alternative == "greater":
+        return TestResult(d_plus, _ks_hodges(n1, n2, d_plus), effective)
+    if alternative == "less":
+        return TestResult(d_minus, _ks_hodges(n1, n2, d_minus), effective)
+    var d = max(d_plus, d_minus)
+    return TestResult(d, _kolmogorov_sf(_sqrt(effective) * d), effective)
 
 
 def ks_2samp[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](
     xs: A, ys: B, alternative: StaticString = "two-sided"
 ) raises -> TestResult where (
@@ -707,8 +959,29 @@ def ks_2samp[
 
     `df` carries the effective sample size rather than a degrees of
     freedom, since this test has none.
+
+    At `gpu=True`, with both samples on a device, both sort there and the
+    gaps are exact integer numerators (`_ks_gaps_device`); two integers
+    come back.
     """
     _check_alternative(alternative)
+    if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
+        comptime if gpu:
+            var m1 = xs.size()
+            var m2 = ys.size()
+            if m1 < 1 or m2 < 1:
+                raise Error("ks_2samp: both samples must be non-empty")
+            var g = _ks_gaps_device(xs, ys)
+            var scale = Float64(m1) * Float64(m2)
+            return _ks_2samp_finish(
+                max(0.0, Float64(g[0]) / scale),
+                max(0.0, Float64(g[1]) / scale),
+                m1,
+                m2,
+                alternative,
+            )
+    else:
+        _notice[gpu]("ks_2samp")
     var a = _values(xs)
     var b = _values(ys)
     var n1 = len(a)
@@ -736,14 +1009,7 @@ def ks_2samp[
         var fb = Float64(j) / Float64(n2)
         d_plus = max(d_plus, fa - fb)
         d_minus = max(d_minus, fb - fa)
-
-    var effective = Float64(n1 * n2) / Float64(n1 + n2)
-    if alternative == "greater":
-        return TestResult(d_plus, _ks_hodges(n1, n2, d_plus), effective)
-    if alternative == "less":
-        return TestResult(d_minus, _ks_hodges(n1, n2, d_minus), effective)
-    var d = max(d_plus, d_minus)
-    return TestResult(d, _kolmogorov_sf(_sqrt(effective) * d), effective)
+    return _ks_2samp_finish(d_plus, d_minus, n1, n2, alternative)
 
 
 def _ks_hodges(n1: Int, n2: Int, d: Float64) -> Float64:
@@ -766,9 +1032,93 @@ def _ks_hodges(n1: Int, n2: Int, d: Float64) -> Float64:
     return min(1.0, max(0.0, _exp(-2.0 * z * z - correction)))
 
 
+def _signed_magnitudes_device[
+    A: TensorLike, B: TensorLike
+](xs: A, ys: B) raises -> Tuple[
+    Dynamic[A.dtype, 1], Dynamic[A.dtype, 1]
+] where (B.dtype == A.dtype):
+    """The nonzero paired differences' magnitudes and a positive-sign
+    flag for each, packed on the device: one launch for `d = x - y`,
+    `|d|` and the sign, and two compactions by `d`."""
+    comptime dtype = A.dtype
+    var ctx = xs.context()
+    var n = xs.size()
+    var diffs = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var mags = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var signs = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var av = _flat_unchecked(xs)
+    var bv = _flat_unchecked(ys)
+    var dv = _flat_out(diffs)
+    var mv = _flat_out(mags)
+    var sv = _flat_out(signs)
+
+    @always_inline
+    def split[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var av, var bv, var dv, var mv, var sv}:
+        var d = av[coord][0] - rebind[Scalar[dtype]](bv[coord][0])
+        dv.store[1](coord, d)
+        mv.store[1](coord, abs(d))
+        sv.store[1](coord, Scalar[dtype](1) if d > 0 else Scalar[dtype](0))
+
+    elementwise[simd_width=1, target="gpu"](split, Coord(n), ctx)
+    return (
+        _pack_device[indices=False](diffs, mags, n),
+        _pack_device[indices=False](diffs, signs, n),
+    )
+
+
+def _wilcoxon_finish(
+    w_plus: Float64,
+    tie_term: Float64,
+    n: Int,
+    alternative: StaticString,
+    use_continuity: Bool,
+) raises -> TestResult:
+    """`W` and the tie- and continuity-corrected normal p-value from the
+    positive rank sum over the `n` nonzero differences."""
+    var total = Float64(n) * Float64(n + 1) / 2.0
+    var w_minus = total - w_plus
+
+    var mean = total / 2.0
+    var variance = (
+        Float64(n) * Float64(n + 1) * Float64(2 * n + 1) / 24.0
+        - tie_term / 48.0
+    )
+    if variance <= 0.0:
+        raise Error("wilcoxon: every difference is tied, so W has no spread")
+    var spread = _sqrt(variance)
+
+    var statistic = w_plus
+    if alternative == "two-sided":
+        statistic = min(w_plus, w_minus)
+
+    var correction = 0.5 if use_continuity else 0.0
+    if alternative == "greater":
+        var z = (w_plus - mean - correction) / spread
+        return TestResult(
+            statistic, norm.sf(_P(z), _P(0.0), _P(1.0)).v[0], Float64(n)
+        )
+    if alternative == "less":
+        var z = (w_plus - mean + correction) / spread
+        return TestResult(
+            statistic, norm.cdf(_P(z), _P(0.0), _P(1.0)).v[0], Float64(n)
+        )
+    var z = ((w_plus - mean).__abs__() - correction) / spread
+    var tail = norm.sf(_P(z), _P(0.0), _P(1.0)).v[0]
+    return TestResult(statistic, min(1.0, 2.0 * tail), Float64(n))
+
+
 def wilcoxon[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](
     xs: A,
     ys: B,
@@ -802,8 +1152,32 @@ def wilcoxon[
 
     `df` carries the number of pairs that survived the zero-dropping,
     which is what the approximation was taken at.
+
+    At `gpu=True`, with both samples on a device, the differences, the
+    zero-dropping (a compaction) and the ranking all run there, and only
+    the positive rank sum, the tie term and the count come back.
     """
     _check_alternative(alternative)
+    if _check_device[A, gpu](xs) and _check_device[B, gpu](ys):
+        comptime if gpu:
+            if xs.size() != ys.size():
+                raise Error(
+                    "wilcoxon: ",
+                    xs.size(),
+                    " and ",
+                    ys.size(),
+                    " are not paired lengths",
+                )
+            var packed = _signed_magnitudes_device(xs, ys)
+            var kept = packed[0].size()
+            if kept < 1:
+                raise Error("wilcoxon: every pair is a zero difference")
+            var sums = _rank_sum_device(packed[0], packed[1])
+            return _wilcoxon_finish(
+                sums[0], sums[1], kept, alternative, use_continuity
+            )
+    else:
+        _notice[gpu]("wilcoxon")
     var a = _values(xs)
     var b = _values(ys)
     if len(a) != len(b):
@@ -854,33 +1228,4 @@ def wilcoxon[
     for i in range(n):
         if positive[i]:
             w_plus += ranks[i]
-    var total = Float64(n) * Float64(n + 1) / 2.0
-    var w_minus = total - w_plus
-
-    var mean = total / 2.0
-    var variance = (
-        Float64(n) * Float64(n + 1) * Float64(2 * n + 1) / 24.0
-        - tie_term / 48.0
-    )
-    if variance <= 0.0:
-        raise Error("wilcoxon: every difference is tied, so W has no spread")
-    var spread = _sqrt(variance)
-
-    var statistic = w_plus
-    if alternative == "two-sided":
-        statistic = min(w_plus, w_minus)
-
-    var correction = 0.5 if use_continuity else 0.0
-    if alternative == "greater":
-        var z = (w_plus - mean - correction) / spread
-        return TestResult(
-            statistic, norm.sf(_P(z), _P(0.0), _P(1.0)).v[0], Float64(n)
-        )
-    if alternative == "less":
-        var z = (w_plus - mean + correction) / spread
-        return TestResult(
-            statistic, norm.cdf(_P(z), _P(0.0), _P(1.0)).v[0], Float64(n)
-        )
-    var z = ((w_plus - mean).__abs__() - correction) / spread
-    var tail = norm.sf(_P(z), _P(0.0), _P(1.0)).v[0]
-    return TestResult(statistic, min(1.0, 2.0 * tail), Float64(n))
+    return _wilcoxon_finish(w_plus, tie_term, n, alternative, use_continuity)
