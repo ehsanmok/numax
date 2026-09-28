@@ -848,6 +848,18 @@ from test_libm import (
 from test_libm import (
     test_width_four_matches_width_one_and_plain_uses_libm as test_libm__test_width_four_matches_width_one_and_plain_uses_libm,
 )
+from test_libm import (
+    test_log1p_is_within_two_ulps_including_near_zero as test_libm__test_log1p_is_within_two_ulps_including_near_zero,
+)
+from test_libm import (
+    test_log2_is_within_one_ulp_and_exact_at_powers_of_two as test_libm__test_log2_is_within_one_ulp_and_exact_at_powers_of_two,
+)
+from test_libm import (
+    test_exp2_is_within_one_ulp_and_exact_at_the_integers as test_libm__test_exp2_is_within_one_ulp_and_exact_at_the_integers,
+)
+from test_libm import (
+    test_cosh_is_within_two_ulps_to_the_overflow as test_libm__test_cosh_is_within_two_ulps_to_the_overflow,
+)
 from test_logic import (
     test_equal_and_not_equal_are_complements as test_logic__test_equal_and_not_equal_are_complements,
 )
@@ -2034,6 +2046,14 @@ def main() raises:
     suite.test[
         test_libm__test_width_four_matches_width_one_and_plain_uses_libm
     ]()
+    suite.test[test_libm__test_log1p_is_within_two_ulps_including_near_zero]()
+    suite.test[
+        test_libm__test_log2_is_within_one_ulp_and_exact_at_powers_of_two
+    ]()
+    suite.test[
+        test_libm__test_exp2_is_within_one_ulp_and_exact_at_the_integers
+    ]()
+    suite.test[test_libm__test_cosh_is_within_two_ulps_to_the_overflow]()
     # tests/core/test_logic.mojo
     suite.test[test_logic__test_equal_and_not_equal_are_complements]()
     suite.test[

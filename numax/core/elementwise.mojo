@@ -63,15 +63,11 @@ from std.math import (
     ceil as _std_ceil,
     copysign as _std_copysign,
     cos as _std_cos,
-    cosh as _std_cosh,
-    exp2 as _std_exp2,
     expm1 as _std_expm1,
     floor as _std_floor,
     hypot as _std_hypot,
     isnan as _std_isnan,
     log10 as _std_log10,
-    log1p as _std_log1p,
-    log2 as _std_log2,
     remainder as _std_remainder,
     round as _std_round,
     rsqrt as _std_rsqrt,
@@ -86,10 +82,15 @@ from std.math import (
 from layout import Coord, coord_to_index_list
 from layout.tile_layout import TensorLayout
 
-# `exp` and `log` at float64 are numax's own one-ulp versions; `std.math`'s
-# are `1e5` and `9e6` ulp off there (`numax/core/libm.mojo`).
+# `exp`, `log`, `log1p`, `log2`, `exp2` and `cosh` at float64 are numax's
+# own (`numax/core/libm.mojo`); `std.math`'s are from `1e4` to `1e9` ulp
+# off there.
 from .libm import exp as _std_exp
 from .libm import log as _std_log
+from .libm import cosh as _std_cosh
+from .libm import exp2 as _std_exp2
+from .libm import log1p as _std_log1p
+from .libm import log2 as _std_log2
 from .tensorlike import TensorLike, dim, is_row_major
 from .tensor import Dynamic, Static, Tensor
 from ._drive import (
@@ -1792,20 +1793,6 @@ def gradient[
     return out^
 
 
-def _log1p_small[
-    dtype: DType, w: Int
-](x: SIMD[dtype, w]) -> SIMD[dtype, w] where dtype.is_floating_point():
-    """`log(1 + x)` for `x` in `[0, 1]`, accurate to a few ulp at every
-    dtype: Goldberg's `log(u) * x / (u - 1)` with `u = 1 + x`, over numax's
-    own `log`. `std.math.log1p` is only about `float32`-accurate at
-    `float64`. Where `u` rounds to `1`, `x` is the answer."""
-    var u = SIMD[dtype, w](1) + x
-    var d = u - SIMD[dtype, w](1)
-    var exact = d.eq(SIMD[dtype, w](0))
-    var safe = exact.select(SIMD[dtype, w](1), d)
-    return exact.select(x, _std_log(u) * x / safe)
-
-
 def _logaddexp_op[
     dtype: DType, w: Int
 ](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[
@@ -1816,7 +1803,7 @@ def _logaddexp_op[
     # and `logaddexp(inf, inf) == inf` rather than the `inf - inf` NaN; a
     # NaN on either side is carried by `a + b`.
     var big = max(a, b)
-    var r = big + _log1p_small(_std_exp(min(a, b) - big))
+    var r = big + _std_log1p(_std_exp(min(a, b) - big))
     var same = a.eq(b).select(a + SIMD[dtype, w](_LN2), r)
     return (_std_isnan(a) | _std_isnan(b)).select(a + b, same)
 
@@ -1867,8 +1854,9 @@ def _logaddexp2_op[
     # `logaddexp` in base 2: `max + log2(1 + 2**(min - max))`, with the same
     # equal-operand and NaN branches (`a + 1` is `log2(2 * 2**a)`).
     var big = max(a, b)
-    var t = (min(a, b) - big) * SIMD[dtype, w](_LN2)
-    var r = big + _log1p_small(_std_exp(t)) * SIMD[dtype, w](_LOG2E)
+    var r = big + _std_log1p(_std_exp2(min(a, b) - big)) * SIMD[dtype, w](
+        _LOG2E
+    )
     var same = a.eq(b).select(a + SIMD[dtype, w](1), r)
     return (_std_isnan(a) | _std_isnan(b)).select(a + b, same)
 

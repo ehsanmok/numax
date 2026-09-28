@@ -34,15 +34,11 @@ from std.math import (
     ceil as _std_ceil,
     copysign as _std_copysign,
     cos as _std_cos,
-    cosh as _std_cosh,
-    exp2 as _std_exp2,
     expm1 as _std_expm1,
     floor as _std_floor,
     hypot as _std_hypot,
     isnan,
     log10 as _std_log10,
-    log1p as _std_log1p,
-    log2 as _std_log2,
     nan,
     remainder as _std_remainder,
     round as _std_round,
@@ -66,6 +62,10 @@ from max.gpu.host import DeviceContext
 from numax.core import Dynamic, Static, Tensor, tanh, zeros_dyn
 from numax.core.libm import exp as _std_exp
 from numax.core.libm import log as _std_log
+from numax.core.libm import cosh as _std_cosh
+from numax.core.libm import exp2 as _std_exp2
+from numax.core.libm import log1p as _std_log1p
+from numax.core.libm import log2 as _std_log2
 from numax.core._drive import (
     _THREADED_FROM,
     binary_scalar,

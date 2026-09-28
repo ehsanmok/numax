@@ -1,9 +1,12 @@
-"""Tests for `numax.core.libm`'s float64 `exp`, `log` and `erf`: within one
-ulp of mpmath at points spanning each domain (including the ranges where
-`std.math`'s versions are off by `1e5` to `1e8` ulp), the special values,
+"""Tests for `numax.core.libm`'s float64 `exp`, `log`, `erf`, `log1p`,
+`log2`, `exp2` and `cosh`: within one or two ulp of mpmath at points
+spanning each domain (including the ranges where `std.math`'s versions
+are off by `1e4` to `1e9` ulp), exactness at the powers of two where it
+is claimed, the special values,
 the odd symmetry of `erf`, and the same answers at SIMD width four as at
 width one."""
 
+from std.memory import bitcast
 from std.utils.numerics import inf, nan
 from std.testing import (
     TestSuite,
@@ -13,7 +16,7 @@ from std.testing import (
 )
 
 from numax import Plain
-from numax.core.libm import erf, exp, log
+from numax.core.libm import cosh, erf, exp, exp2, log, log1p, log2
 
 comptime F = Float64
 comptime ULP = 2.3e-16  # one ulp relative, generously: |x| * 2^-52
@@ -161,6 +164,130 @@ def test_width_four_matches_width_one_and_plain_uses_libm() raises:
     assert_almost_equal(
         Float64(P32.constant(1.0).exp().v), 2.718281828459045, rtol=2e-7
     )
+
+
+def test_log1p_is_within_two_ulps_including_near_zero() raises:
+    # mpmath at 200 bits. `std.math.log1p` is 5e-7 relative off at float64.
+    var xs: List[Float64] = [
+        -0.9999999,
+        -0.5,
+        -1e-300,
+        1e-18,
+        1e-10,
+        0.3678794411714423,
+        0.7,
+        2.5,
+        100000.0,
+        1e300,
+    ]
+    var want: List[Float64] = [
+        -16.118095651484676,
+        -0.6931471805599453,
+        -1e-300,
+        1e-18,
+        9.999999999500001e-11,
+        0.3132616875182228,
+        0.5306282510621704,
+        1.252762968495368,
+        11.51293546492023,
+        690.7755278982137,
+    ]
+    for i in range(len(xs)):
+        within_ulps(log1p(xs[i]), want[i], 2.0)
+    assert_equal(log1p(F(-1.0)), -inf[DType.float64]())
+    assert_equal(log1p(inf[DType.float64]()), inf[DType.float64]())
+    var below = log1p(F(-2.0))
+    assert_true(below != below)
+
+
+def test_log2_is_within_one_ulp_and_exact_at_powers_of_two() raises:
+    # mpmath at 200 bits. `std.math.log2` is 2.5e-9 relative off at float64.
+    var xs: List[Float64] = [
+        5e-324,
+        1e-310,
+        1e-05,
+        0.3678794411714423,
+        0.7,
+        1.0000001,
+        3.0,
+        10000000000.0,
+        1.7e308,
+    ]
+    var want: List[Float64] = [
+        -1074.0,
+        -1029.7977094150824,
+        -16.609640474436812,
+        -1.4426950408889636,
+        -0.5145731728297583,
+        1.4426949695965583e-07,
+        1.584962500721156,
+        33.219280948873624,
+        1023.9193879716706,
+    ]
+    for i in range(len(xs)):
+        within_ulps(log2(xs[i]), want[i], 1.0)
+    for k in range(-1022, 1024, 7):
+        var power = bitcast[DType.float64](Int64(k + 1023) << 52)
+        assert_equal(log2(power), F(k))
+    assert_equal(log2(F(0.0)), -inf[DType.float64]())
+    assert_equal(log2(inf[DType.float64]()), inf[DType.float64]())
+
+
+def test_exp2_is_within_one_ulp_and_exact_at_the_integers() raises:
+    # mpmath at 200 bits. `std.math.exp2` is 4.8e-12 relative off at float64.
+    var xs: List[Float64] = [
+        -30.7,
+        -0.4,
+        0.3678794411714423,
+        0.7,
+        17.25,
+        1023.5,
+    ]
+    var want: List[Float64] = [
+        5.732962923799255e-10,
+        0.757858283255199,
+        1.2904546490875854,
+        1.624504792712471,
+        155871.75497763665,
+        1.2711610061536464e308,
+    ]
+    for i in range(len(xs)):
+        within_ulps(exp2(xs[i]), want[i], 1.0)
+    for k in range(-1022, 1024, 7):
+        var power = bitcast[DType.float64](Int64(k + 1023) << 52)
+        assert_equal(exp2(F(k)), power)
+    # Into the denormals, the answer has fewer bits; hold it absolutely.
+    assert_equal(exp2(F(-1074.0)), 5e-324)
+    assert_almost_equal(exp2(F(-1022.5)), 1.5733648139913585e-308, atol=5e-324)
+    assert_equal(exp2(F(1024.0)), inf[DType.float64]())
+    assert_equal(exp2(F(-1076.0)), 0.0)
+
+
+def test_cosh_is_within_two_ulps_to_the_overflow() raises:
+    # mpmath at 200 bits. `std.math.cosh` is 7e-12 relative off at float64.
+    var xs: List[Float64] = [
+        0.0,
+        1e-09,
+        0.3678794411714423,
+        -2.5,
+        17.25,
+        300.0,
+        -709.5,
+        710.4,
+    ]
+    var want: List[Float64] = [
+        1.0,
+        1.0,
+        1.0684342442825563,
+        6.132289479663686,
+        15507786.63724113,
+        9.712131976206279e129,
+        6.774931596573164e307,
+        1.6663642832806496e308,
+    ]
+    for i in range(len(xs)):
+        within_ulps(cosh(xs[i]), want[i], 2.0)
+    assert_equal(cosh(F(711.0)), inf[DType.float64]())
 
 
 def main() raises:

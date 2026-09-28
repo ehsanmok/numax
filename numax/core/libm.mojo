@@ -1,5 +1,6 @@
 """`exp`, `log` and `erf` at float64 to within one unit in the last place,
-for `Plain` to stand on.
+for `Plain` to stand on, and `log1p`, `log2`, `exp2` and `cosh` built on
+them for `numax.core.elementwise`.
 
 **This module is tier 1**: straight-line SIMD arithmetic and bit
 manipulation, no data-dependent loops, launchable inside a GPU thread.
@@ -14,6 +15,10 @@ they come out at
 | `log`, [1e-6, 1e3] | 9,300,000 | 1.6e-9 | an absolute floor of `2e-10`, which is `8e-10` relative on `ln 0.8` |
 | `erf`, [-6, 6] | 196,000,000 | 2.3e-8 | float32 polynomial coefficients |
 | `erfc`, `sin`, `cos` | 3 | 5e-16 | fine, and used as they are |
+| `log1p`, six points in [-0.4, 17.25] | 2,400,000,000 | 5.3e-7 | float32-accurate |
+| `log2`, the same six | 11,000,000 | 2.5e-9 | |
+| `cosh`, the same six | 32,000 | 7.1e-12 | |
+| `exp2`, the same six | 22,000 | 4.8e-12 | |
 
 Every tier-1 kernel in numax is built on these three, and every row in
 `bench/accuracy/README.md` above `1e-13` was one of them seen through an
@@ -38,6 +43,13 @@ are adequate for float32.
   `|x| = 0.84375`, and `1 - erfc(|x|)` with the sign restored above it,
   where `erfc` is small enough that the standard library's three ulp on
   it are below one ulp of the result.
+
+The last four are compositions over `exp` and `log`, each checked against
+mpmath at 1,000 random points across its domain: `log1p` (Goldberg's
+`ln(u) x / (u - 1)`) within 1.5 ulp, `log2` (`log`'s bit split plus
+`ln(m) / ln 2`) within 0.5, `exp2` (nearest-integer split, `exp` of the
+fraction) within 0.9, `cosh` (`E + 1/(4E)`) within 1.1. `log2` and
+`exp2` are exact at the powers of two and the integers.
 """
 
 from std.math import erf as _std_erf
@@ -45,6 +57,10 @@ from std.math import erfc as _std_erfc
 from std.math import exp as _std_exp
 from std.math import floor, isnan
 from std.math import log as _std_log
+from std.math import cosh as _std_cosh
+from std.math import exp2 as _std_exp2
+from std.math import log1p as _std_log1p
+from std.math import log2 as _std_log2
 from std.memory import bitcast
 from std.utils.numerics import inf, nan
 
@@ -224,3 +240,170 @@ def erf[
         var far = 1.0 - _std_erfc(ax)
         var far_signed = x.lt(0.0).select(-far, far)
         return small.select(near, far_signed)
+
+
+comptime _LN2 = 6.93147180559945309417e-01
+comptime _HALF_E = 1.35914091422952261768e00
+
+
+def log1p[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    """`ln(1 + x)`, to within two ulp at float64; `std.math.log1p` at
+    every other dtype.
+
+    Goldberg's `ln(u) * x / (u - 1)` with `u = 1 + x`, over `log` above:
+    the rounding of `u` cancels between the two factors, so the result is
+    as accurate as `log` is. Where `u` rounds to `1`, `x` itself is the
+    answer (and keeps the sign of `-0.0`).
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The argument, per lane, at least `-1` for a real answer.
+
+    Returns:
+        `ln(1 + x)` per lane: `-inf` at `-1`, `inf` at `inf`, NaN below `-1`
+        and for NaN.
+    """
+    comptime if dtype != DType.float64:
+        return _std_log1p(x)
+    else:
+        var u = 1.0 + x
+        var d = u - 1.0
+        var tiny = d.eq(0.0)
+        var ratio = x / tiny.select(SIMD[dtype, width](1.0), d)
+        var result = tiny.select(x, log(u) * ratio)
+        return x.eq(inf[dtype]()).select(x, result)
+
+
+def log2[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    """`log2 x`, to within one ulp at float64 and exact at the powers of
+    two; `std.math.log2` at every other dtype.
+
+    `x = 2^k m` read off the bits with `m` in `[sqrt2/2, sqrt2)`, as `log`
+    splits it, and `k + ln(m) / ln 2`: the integer part is exact, so a
+    power of two gives its exponent exactly and the only rounding is in
+    the small `ln m` term.
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The argument, per lane.
+
+    Returns:
+        `log2 x` per lane, with `log`'s special values: `-inf` at `0`, `inf`
+        at `inf`, NaN below zero and for NaN.
+    """
+    comptime if dtype != DType.float64:
+        return _std_log2(x)
+    else:
+        var regular = x.gt(0.0) & x.lt(inf[dtype]())
+        var safe = regular.select(x, SIMD[dtype, width](1.0))
+        var denormal = safe.lt(_MIN_NORMAL)
+        var scaled = denormal.select(safe * _TWO54, safe)
+        var bits = bitcast[DType.int64, width](scaled)
+        var exponent = ((bits >> 52) & 0x7FF) - 1023
+        var mantissa = bitcast[DType.float64, width](
+            (bits & 0x000FFFFFFFFFFFFF) | (SIMD[DType.int64, width](1023) << 52)
+        ).cast[dtype]()
+        var high = mantissa.gt(_SQRT2)
+        var m = high.select(mantissa * 0.5, mantissa)
+        var k_int = (
+            exponent
+            + high.select(
+                SIMD[DType.int64, width](1), SIMD[DType.int64, width](0)
+            )
+            + denormal.select(
+                SIMD[DType.int64, width](-54), SIMD[DType.int64, width](0)
+            )
+        )
+        var result = k_int.cast[dtype]() + log(m) * _INV_LN2
+        # Every special value is `log`'s, and `log` of the original `x`
+        # produces them.
+        return regular.select(result, log(x))
+
+
+def exp2[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    """`2^x`, to within one ulp at float64 and exact at the integers;
+    `std.math.exp2` at every other dtype.
+
+    `x = k + f` with `k` the nearest integer and `|f| <= 1/2` exact, `2^f`
+    as `exp(f ln 2)` -- whose argument is small enough that rounding it
+    costs under half an ulp -- and `2^k` applied as the two half-powers
+    `exp` uses, so the gradual-underflow range is reached without an
+    invalid exponent.
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The exponent, per lane.
+
+    Returns:
+        `2^x` per lane: `inf` at `1024` and above, `0` below `-1075`, NaN for
+        NaN.
+    """
+    comptime if dtype != DType.float64:
+        return _std_exp2(x)
+    else:
+        var is_nan = isnan(x)
+        var over = x.ge(1024.0)
+        var under = x.lt(-1075.0)
+        var xs = is_nan.select(SIMD[dtype, width](0.0), x).clamp(
+            -1075.0, 1024.0
+        )
+        var k = floor(xs + 0.5)
+        var y = exp((xs - k) * _LN2)
+        var k_int = k.cast[DType.int64]()
+        var a = k_int >> 1
+        var two_a = bitcast[DType.float64, width]((a + 1023) << 52).cast[
+            dtype
+        ]()
+        var two_b = bitcast[DType.float64, width](
+            (k_int - a + 1023) << 52
+        ).cast[dtype]()
+        var result = (y * two_a) * two_b
+        result = over.select(SIMD[dtype, width](inf[dtype]()), result)
+        result = under.select(SIMD[dtype, width](0.0), result)
+        return is_nan.select(x, result)
+
+
+def cosh[
+    dtype: DType, width: SIMDLength, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width] where dtype.is_floating_point():
+    """`cosh x`, to within two ulp at float64; `std.math.cosh` at every
+    other dtype.
+
+    `E + 1 / (4 E)` with `E = e^|x| / 2` from `exp` above -- halved after
+    the exponential below `|x| = 709`, where that is exact, and as
+    `e^(|x| - 1) * (e / 2)` above it, where `e^|x|` alone would overflow
+    while `cosh` is still finite (up to `710.47`). Subtracting `1` there
+    is exact, where subtracting `ln 2` would round the argument and cost
+    `|x|` ulp.
+
+    Parameters:
+        dtype: The floating-point element type, inferred from `x`.
+        width: The SIMD width, inferred from `x`.
+
+    Args:
+        x: The argument, per lane, any sign.
+
+    Returns:
+        `cosh x` per lane: at least `1`, `inf` past `710.47`, NaN for NaN.
+    """
+    comptime if dtype != DType.float64:
+        return _std_cosh(x)
+    else:
+        var ax = abs(x)
+        var half = ax.lt(709.0).select(exp(ax) * 0.5, exp(ax - 1.0) * _HALF_E)
+        return half + 0.25 / half
