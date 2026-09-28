@@ -770,6 +770,26 @@ implementation cost. Language-side asks are ranked separately in
    matvecs, and their names cost a reader real time when they are looking
    for sparse support (2.8).
 
+## 3.11 `ReduceMax`/`ReduceMin` start from a finite identity, so an all-infinite input folds to a finite answer
+
+`algorithm.reduce_op.ReduceMax.__init__` sets `acc = min_finite[dtype]()`
+and pads partial tiles with the same value; `ReduceMin` uses
+`max_finite`. The identity of `max` over floats is `-inf`, not the most
+negative finite number, so a tensor of nothing but `-inf` reduces to
+`-1.7976931348623157e+308` (and an all-`+inf` one to `+1.797e308` under
+`ReduceMin`), on CPU and GPU alike. NumPy, and IEEE `maxNum` folded from
+the true identity, return the infinity.
+
+Repro (numax at `db4d189`): `numax.stats.max` of a `Static[float64, 3]` of
+three `-inf` printed `-1.7976931348623157e+308` before the workaround.
+
+numax's workaround (`numax/stats/statistics.mojo`, `_restore_infinity`
+and `_restore_infinity_axis`): an answer at the finite edge costs one
+count (whole tensor) or one launch over the result (axis form) to tell a
+real edge value from an all-infinite slice. The fix upstream is one line
+per monoid: `neg_inf` / `inf` for floating-point dtypes, keeping
+`min_finite` / `max_finite` for integers.
+
 ## Filing notes
 
 Two entries need hardware this project does not have, and say so in their

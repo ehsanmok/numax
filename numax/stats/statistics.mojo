@@ -107,7 +107,7 @@ tier-2 terms `docs/architecture.md` sets out.
 """
 
 from std.math import sqrt as _sqrt
-from std.utils.numerics import nan as _nan
+from std.utils.numerics import inf as _inf, nan as _nan, neg_inf as _neg_inf
 
 from std.utils import IndexList
 
@@ -141,7 +141,8 @@ from ..core._drive import (
     _notice,
     _require_contiguous,
 )
-from ..core.sorting import argsort, take
+from ..core.logic import equal
+from ..core.sorting import any_nonzero, argsort, take
 from ..core.ops import (
     multiply as _multiply,
     power as _power,
@@ -230,6 +231,88 @@ def _host_fold_axis[
     var result = _axis_dst[axis=axis](xs)
     result.copy_from_host(out)
     return result^
+
+
+def _edge[dtype: DType, largest: Bool]() -> Scalar[dtype]:
+    """The identity MAX's `ReduceMax` (`largest`) or `ReduceMin` starts
+    from: the most negative or the largest finite value, not an infinity."""
+    comptime if largest:
+        return Scalar[dtype].MIN_FINITE
+    else:
+        return Scalar[dtype].MAX_FINITE
+
+
+def _infinity[dtype: DType, largest: Bool]() -> Scalar[dtype]:
+    """What a maximum of nothing but `-inf` (or a minimum of nothing but
+    `+inf`) is: that infinity."""
+    comptime if largest:
+        return _neg_inf[dtype]()
+    else:
+        return _inf[dtype]()
+
+
+def _restore_infinity[
+    T: TensorLike, largest: Bool, gpu: Bool
+](xs: T, r: Scalar[T.dtype]) raises -> Scalar[T.dtype] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """`r`, the monoid's whole-tensor answer, with the edge case put right.
+
+    `ReduceMax` starts from `min_finite`, so a tensor of nothing but `-inf`
+    folds to `-1.797e308` where NumPy says `-inf` (and `ReduceMin` the same
+    way up). The answer can only be the edge when every element is at or
+    beyond it, so only then is one count taken: if the edge value itself
+    is absent, every element was the infinity.
+    """
+    comptime dtype = T.dtype
+    if r != _edge[dtype, largest]() or xs.size() == 0:
+        return r
+    if any_nonzero[gpu=gpu](equal[gpu=gpu](xs, _edge[dtype, largest]())):
+        return r
+    return _infinity[dtype, largest]()
+
+
+def _restore_infinity_axis[
+    T: TensorLike, //, axis: Int, largest: Bool, gpu: Bool
+](
+    xs: T, mut out: Dynamic[T.dtype, T.LayoutType.rank - 1]
+) raises where T.dtype.is_floating_point():
+    """`_restore_infinity` for an axis reduction already written to `out`.
+
+    One launch over `out`, one lane per slot: a slot that is not at the
+    edge returns at once, and one that is scans its own slice for the edge
+    value itself and writes the infinity where it is absent. So the usual
+    cost is one read per output element.
+    """
+    comptime dtype = T.dtype
+    var edge = _edge[dtype, largest]()
+    var split = _axis_split[axis=axis](xs)
+    var length = split[1]
+    var inner = split[2]
+    var src = _flat_unchecked(xs)
+    var dst = _flat_out(out)
+    var fill = _infinity[dtype, largest]()
+
+    @always_inline
+    def mend[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var src, var dst, var length, var inner, var edge, var fill
+    }:
+        var j = coord_to_index_list(coord)[0]
+        if dst[coord][0] != edge:
+            return
+        var o = j // inner
+        var i = j % inner
+        for k in range(length):
+            if src[Coord((o * length + k) * inner + i)][0] == edge:
+                return
+        dst.store[1](coord, SIMD[dtype, 1](fill))
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        mend, Coord(out.size()), xs.context()
+    )
+    xs.context().synchronize()
 
 
 def _add[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
@@ -328,20 +411,23 @@ def min[
 ):
     """The smallest element along `axis`. `numpy.min(a, axis=k)`.
 
-    MAX's `ReduceMin` monoid, whose identity is positive infinity, so an
-    axis of length zero yields infinity rather than reading an element
-    that is not there. Exact whatever order it folds in.
+    MAX's `ReduceMin` monoid, exact whatever order it folds in. Its
+    identity is the largest finite value rather than infinity, so a slice
+    of nothing but `+inf` would come back finite; `_restore_infinity_axis`
+    puts that right in one launch over the result, scanning only the
+    slices whose slot came back at the edge.
     """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("min")
         return _host_fold_axis[axis=axis, combine=_smaller[dtype]](
-            xs, Scalar[dtype].MAX_FINITE
+            xs, _inf[dtype]()
         )
     var out = _axis_dst[axis=axis](xs)
     min_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
+    _restore_infinity_axis[axis=axis, largest=False, gpu=gpu](xs, out)
     return out^
 
 
@@ -360,17 +446,19 @@ def max[
     ].is_row_major
 ):
     """The largest element along `axis`. `numpy.max(a, axis=k)`. MAX's
-    `ReduceMax` monoid, `min`'s mirror and exact for the same reason."""
+    `ReduceMax` monoid, `min`'s mirror and exact for the same reason, with
+    the same repair for a slice of nothing but `-inf`."""
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("max")
         return _host_fold_axis[axis=axis, combine=_larger[dtype]](
-            xs, Scalar[dtype].MIN_FINITE
+            xs, _neg_inf[dtype]()
         )
     var out = _axis_dst[axis=axis](xs)
     max_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
+    _restore_infinity_axis[axis=axis, largest=True, gpu=gpu](xs, out)
     return out^
 
 
@@ -557,7 +645,9 @@ def min[
 ):
     """The smallest element of `xs`. `numpy.min(a)`, through MAX's
     `ReduceMin` monoid; exact whatever order it folds in. `xs` must have at
-    least one element."""
+    least one element. The monoid starts from the largest finite value, so
+    an answer at that edge costs one count to tell it from an all-`+inf`
+    input (`_restore_infinity`)."""
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("min")
         var n = xs.size()
@@ -567,7 +657,9 @@ def min[
             if values[i] < best:
                 best = values[i]
         return best
-    return _reduce_whole[monoid="min", gpu=gpu](xs)
+    return _restore_infinity[largest=False, gpu=gpu](
+        xs, _reduce_whole[monoid="min", gpu=gpu](xs)
+    )
 
 
 def max[
@@ -576,7 +668,8 @@ def max[
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The largest element of `xs`. `numpy.max(a)`, `min`'s mirror through
-    `ReduceMax`. `xs` must have at least one element."""
+    `ReduceMax`, with the same repair for an all-`-inf` input. `xs` must
+    have at least one element."""
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("max")
         var n = xs.size()
@@ -586,7 +679,9 @@ def max[
             if values[i] > best:
                 best = values[i]
         return best
-    return _reduce_whole[monoid="max", gpu=gpu](xs)
+    return _restore_infinity[largest=True, gpu=gpu](
+        xs, _reduce_whole[monoid="max", gpu=gpu](xs)
+    )
 
 
 def _welford[
