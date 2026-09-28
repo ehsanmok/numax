@@ -543,15 +543,20 @@ from .fft.fft import (
     fft,
     fft2,
     fftfreq,
+    fftn,
     fftshift,
     ifft,
     ifft2,
+    ifftn,
     ifftshift,
     irfft,
+    irfft2,
+    irfftn,
     next_fast_len,
     rfft,
     rfft2,
     rfftfreq,
+    rfftn,
 )
 from .fft.trig import dct, dst, idct, idst
 

@@ -470,6 +470,7 @@ not.
 | `fft`, `ifft` — complex forward and inverse, travelling as a `Spectrum` real/imaginary pair, since a `dtype`-monomorphic tensor cannot hold a `Complex` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `rfft`, `irfft` — real input, half spectrum, and back (`irfft[n=...]`, since `n` cannot be read off the half) | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fft2`, `ifft2`, `rfft2` — rectangular 2-D transforms: the same lane engine along the rows, then along the columns through a zero-copy transposed view | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
+| `fftn`, `ifftn` at any rank; `rfftn`, `irfftn` at ranks 1 to 3; `irfft2` — one engine pass per axis, each writing through a transposed view so the next axis is last, with no transpose pass | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fftshift`, `ifftshift` — centring, at rank 1 and over both axes of a matrix; the two differ for odd `n` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `fftfreq`, `rfftfreq` — frequency grids, filled on the device when `ctx` is one | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `next_fast_len` — the next power of two, the length this engine is fast at; a non-power-of-two `n` costs three transforms of `next_fast_len(2n - 1)` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |

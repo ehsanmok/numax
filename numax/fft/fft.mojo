@@ -39,6 +39,16 @@ of kernels. The rank-2 view is built over the tensor's own pointer with a
 runtime `map` uses to flatten, run the other way -- so no `Tensor` is ever
 reshaped or copied to get there.
 
+The N-d transforms reuse the same trick one level up. `fftn` transforms
+the current **last** axis and writes through the transpose of an
+`n x batch` view of the destination, so the axis just done becomes the
+first and the next one is last; after one pass per axis the order is back
+where it started. The transpose rides on the transform's own stores, so
+an N-d transform is exactly `rank` engine runs. `rfftn` and `irfftn` do
+the same around the real-input half, writing the kept half bin-major so
+the complex passes and the conjugate-symmetric mirror read it where it
+lies.
+
 ## The algorithm, and the launch count
 
 Cooley-Tukey, decimation in time, in three kinds of launch:
@@ -1192,6 +1202,537 @@ def rfft2[
     _ = half_re^
     _ = half_im^
     return (re^, im^)
+
+
+comptime _Pair[dtype: DType, L: TensorLayout] = Tuple[
+    Tensor[dtype, L], Tensor[dtype, L]
+]
+"""`Spectrum` spelled over a layout rather than a shape, so a routine of
+any rank can infer the shape from its argument: a variadic `*dims` does
+not infer through `Static`. `Spectrum[dtype, *dims]` is this type at
+`Static`'s layout."""
+
+
+def _dftn[
+    dtype: DType, L: TensorLayout, gpu: Bool, inverse: Bool
+](var x: _Pair[dtype, L]) raises -> _Pair[dtype, L]:
+    """The transform along every axis of a rank-`L.rank` array.
+
+    One engine pass per axis, always along the last axis of the current
+    layout: pass `s` reads the buffer as `batch x n` rows, `n` the extent
+    being transformed, and writes through the transpose of an `n x batch`
+    view of the other buffer. That write rotates the axes -- the one just
+    transformed becomes the first -- so the next pass finds the next axis
+    last, and after one pass per axis the order is the original again. No
+    pass moves data without transforming it."""
+    comptime rank = L.rank
+    comptime total = L.static_product
+    var ctx = x[0].context()
+    var layout = x[0].tile().layout
+    var a_re = Tensor[dtype, L]._uninitialized(ctx, layout)
+    var a_im = Tensor[dtype, L]._uninitialized(ctx, layout)
+    var b_re = Tensor[dtype, L]._uninitialized(ctx, layout)
+    var b_im = Tensor[dtype, L]._uninitialized(ctx, layout)
+    comptime for s in range(rank):
+        comptime n = L.static_shape[rank - 1 - s]
+        comptime batch = total // n
+        comptime if s == 0:
+            _dft[dtype=dtype, batch=batch, n=n, gpu=gpu, inverse=inverse](
+                _as_matrix[rows=batch, cols=n](x[0]),
+                _as_matrix[rows=batch, cols=n](x[1]),
+                _as_matrix[rows=n, cols=batch](a_re).transpose(),
+                _as_matrix[rows=n, cols=batch](a_im).transpose(),
+                ctx,
+            )
+        else:
+            _dft[dtype=dtype, batch=batch, n=n, gpu=gpu, inverse=inverse](
+                _as_matrix[rows=batch, cols=n](a_re),
+                _as_matrix[rows=batch, cols=n](a_im),
+                _as_matrix[rows=n, cols=batch](b_re).transpose(),
+                _as_matrix[rows=n, cols=batch](b_im).transpose(),
+                ctx,
+            )
+            swap(a_re, b_re)
+            swap(a_im, b_im)
+    _ = x^
+    _ = b_re^
+    _ = b_im^
+    return (a_re^, a_im^)
+
+
+def fftn[
+    dtype: DType, L: TensorLayout, //, gpu: Bool = False
+](var x: _Pair[dtype, L]) raises -> _Pair[dtype, L] where (
+    dtype.is_floating_point() and L.all_dims_known and L.static_product > 0
+):
+    """The transform along every axis of a complex array of any rank,
+    unnormalized. `numpy.fft.fftn`.
+
+    The N-d DFT separates, so it is one 1-D transform per axis in turn; each
+    axis picks radix-2 or Bluestein by its own extent. At rank 2 this is
+    `fft2`, and at rank 1 `fft`. Every pass reads the current last axis and
+    writes through a transposed view, which rotates the axes so the next
+    one is last -- the transpose rides on the transform's own stores, so
+    there are exactly `rank` engine runs and no copy between them.
+
+    Parameters:
+        dtype: The floating-point element type of `x`, inferred.
+        L: The compile-time layout of both halves, inferred; any rank.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The complex array as a `(real, imaginary)` pair.
+
+    Returns:
+        The N-d spectrum at `x`'s shape as a `(real, imaginary)` pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    return _dftn[dtype, L, gpu, False](x^)
+
+
+def ifftn[
+    dtype: DType, L: TensorLayout, //, gpu: Bool = False
+](var x: _Pair[dtype, L]) raises -> _Pair[dtype, L] where (
+    dtype.is_floating_point() and L.all_dims_known and L.static_product > 0
+):
+    """The inverse of `fftn`, normalized by `1 / size`. `numpy.fft.ifftn`.
+
+    The inverse engine along every axis, each pass contributing its own
+    `1/extent`, so `ifftn(fftn(x))` returns `x` to rounding.
+
+    Parameters:
+        dtype: The floating-point element type of `x`, inferred.
+        L: The compile-time layout of both halves, inferred; any rank.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The N-d spectrum as a `(real, imaginary)` pair.
+
+    Returns:
+        The array at `x`'s shape, scaled by `1 / size`, as a
+        `(real, imaginary)` pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    return _dftn[dtype, L, gpu, True](x^)
+
+
+def irfft2[
+    dtype: DType,
+    rows: Int,
+    keep: Int,
+    gpu: Bool = False,
+    n: Int = 2 * (keep - 1),
+](var x: Spectrum[dtype, rows, keep]) raises -> Static[dtype, rows, n] where (
+    dtype.is_floating_point() and rows > 0
+):
+    """The inverse of `rfft2`: the real `rows x n` image whose half
+    spectrum is `x`. `numpy.fft.irfft2(x, s=(rows, n))`.
+
+    The column transforms come first, as the inverse of `rfft2`'s last
+    pass: one inverse pass down every column of the half spectrum, written
+    through a row-major view so it lands transposed. The mirror that
+    rebuilds each row's missing half by conjugate symmetry reads that
+    transposed layout directly, and the inverse engine along the rows ends
+    it; so there is no transpose pass. `n` is the output width, NumPy's
+    even default `2 * (keep - 1)` or `2 * keep - 1` for an odd one, as in
+    `irfft`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        rows: The number of rows, any `rows > 0`.
+        keep: The number of half-spectrum columns in `x`.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        n: The output width, `2 * keep - 2` (the default) or `2 * keep - 1`.
+
+    Args:
+        x: The `rows x keep` half spectrum as a `(real, imaginary)` pair.
+
+    Returns:
+        The real `rows x n` image, scaled by `1 / (rows * n)`.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    comptime assert n == 2 * keep - 2 or n == 2 * keep - 1, (
+        "irfft2: a half spectrum of `keep` columns comes from an image"
+        " 2 * keep - 2 or 2 * keep - 1 wide"
+    )
+    var ctx = x[0].context()
+    # Columns first, landing as `keep x rows`.
+    var col_re = Static[dtype, keep, rows]._uninitialized(ctx)
+    var col_im = Static[dtype, keep, rows]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=keep, n=rows, gpu=gpu, inverse=True](
+        _as_matrix[rows=rows, cols=keep](x[0]).transpose(),
+        _as_matrix[rows=rows, cols=keep](x[1]).transpose(),
+        _as_matrix[rows=keep, cols=rows](col_re),
+        _as_matrix[rows=keep, cols=rows](col_im),
+        ctx,
+    )
+    var full_re = Static[dtype, rows, n]._uninitialized(ctx)
+    var full_im = Static[dtype, rows, n]._uninitialized(ctx)
+    _mirror_rows[dtype, rows, keep, n, gpu](col_re, col_im, full_re, full_im)
+    var re = Static[dtype, rows, n]._uninitialized(ctx)
+    var im = Static[dtype, rows, n]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=rows, n=n, gpu=gpu, inverse=True](
+        _as_matrix[rows=rows, cols=n](full_re),
+        _as_matrix[rows=rows, cols=n](full_im),
+        _as_matrix[rows=rows, cols=n](re),
+        _as_matrix[rows=rows, cols=n](im),
+        ctx,
+    )
+    _ = x^
+    _ = col_re^
+    _ = col_im^
+    _ = full_re^
+    _ = full_im^
+    _ = im^
+    return re^
+
+
+def _mirror_rows[
+    dtype: DType,
+    lanes: Int,
+    keep: Int,
+    n: Int,
+    gpu: Bool,
+    H: TensorLike,
+    F: TensorLike,
+](half_re: H, half_im: H, mut full_re: F, mut full_im: F) raises:
+    """Every lane's full length-`n` spectrum rebuilt from its `keep`-bin
+    half by conjugate symmetry, `X[n-k] = conj(X[k])`, reading the half
+    **bin-major** -- bin `k` of lane `b` at `k * lanes + b`, the layout a
+    transposing pass leaves -- and writing the full one lane-major."""
+    var ctx = full_re.context()
+    var hre = half_re.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var him = half_im.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var fre = full_re.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var fim = full_im.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def mirror[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var hre, var him, var fre, var fim}:
+        var f = coord_to_index_list(coord)[0]
+        var b = f // n
+        var i = f % n
+        var src = i if i < keep else n - i
+        var at = src * lanes + b
+        var sign = Scalar[dtype](1) if i < keep else Scalar[dtype](-1)
+        fre[unsafe_offset=f] = rebind[Scalar[F.dtype]](hre[unsafe_offset=at])
+        fim[unsafe_offset=f] = rebind[Scalar[F.dtype]](
+            sign * rebind[Scalar[dtype]](him[unsafe_offset=at])
+        )
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        mirror, Coord(lanes * n), ctx
+    )
+    ctx.synchronize()
+
+
+def rfftn[
+    dtype: DType, n: Int, gpu: Bool = False
+](var x: Static[dtype, n]) raises -> Spectrum[dtype, n // 2 + 1] where (
+    dtype.is_floating_point() and n > 0
+):
+    """`rfftn` at rank 1, which is `rfft`. `numpy.fft.rfftn`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        n: The length of the real input.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The real input sequence.
+
+    Returns:
+        The half spectrum as a `(real, imaginary)` pair of length
+        `n // 2 + 1`.
+
+    Raises:
+        If allocating a buffer or launching a kernel fails.
+    """
+    return _rfft[gpu=gpu](x^)
+
+
+def rfftn[
+    dtype: DType, rows: Int, cols: Int, gpu: Bool = False
+](var x: Static[dtype, rows, cols]) raises -> Spectrum[
+    dtype, rows, cols // 2 + 1
+] where (dtype.is_floating_point() and rows > 0 and cols > 0):
+    """`rfftn` at rank 2, which is `rfft2`. `numpy.fft.rfftn`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        rows: The number of rows.
+        cols: The number of columns.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The real `rows x cols` image.
+
+    Returns:
+        The `rows x (cols // 2 + 1)` half spectrum as a `(real, imaginary)`
+        pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel fails.
+    """
+    return rfft2[gpu=gpu](x^)
+
+
+def rfftn[
+    dtype: DType, d0: Int, d1: Int, d2: Int, gpu: Bool = False
+](var x: Static[dtype, d0, d1, d2]) raises -> Spectrum[
+    dtype, d0, d1, d2 // 2 + 1
+] where (dtype.is_floating_point() and d0 > 0 and d1 > 0 and d2 > 0):
+    """The 3-D transform of a real volume, keeping the half spectrum along
+    the last axis. `numpy.fft.rfftn`.
+
+    The real-input pass along the last axis, then the complex passes over
+    the other two, as `rfft2` orders it. The truncation to the kept half
+    writes its result axis-rotated -- `(keep, d0, d1)` -- and each complex
+    pass writes through a transposed view, so the two passes find their
+    axis last and the result arrives as `(d0, d1, keep)` with no transpose
+    pass.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        d0: The first extent.
+        d1: The second extent.
+        d2: The last extent, the one halved.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+
+    Args:
+        x: The real `d0 x d1 x d2` volume.
+
+    Returns:
+        The `d0 x d1 x (d2 // 2 + 1)` half spectrum as a `(real, imaginary)`
+        pair.
+
+    Raises:
+        If allocating a buffer or launching a kernel fails.
+    """
+    comptime keep = d2 // 2 + 1
+    comptime lanes = d0 * d1
+    var ctx = x.context()
+    var imag = zeros[dtype, d0, d1, d2](ctx)
+    var full_re = Static[dtype, d0, d1, d2]._uninitialized(ctx)
+    var full_im = Static[dtype, d0, d1, d2]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=lanes, n=d2, gpu=gpu, inverse=False](
+        _as_matrix[rows=lanes, cols=d2](x),
+        _as_matrix[rows=lanes, cols=d2](imag),
+        _as_matrix[rows=lanes, cols=d2](full_re),
+        _as_matrix[rows=lanes, cols=d2](full_im),
+        ctx,
+    )
+    # The kept half, bin-major: `(keep, d0, d1)`.
+    var rot_re = Static[dtype, keep, d0, d1]._uninitialized(ctx)
+    var rot_im = Static[dtype, keep, d0, d1]._uninitialized(ctx)
+    var fre = full_re.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var fim = full_im.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var rre = rot_re.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var rim = rot_im.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def keep_half[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var fre, var fim, var rre, var rim}:
+        var f = coord_to_index_list(coord)[0]
+        var b = f // keep
+        var k = f % keep
+        rre[unsafe_offset=k * lanes + b] = fre[unsafe_offset=b * d2 + k]
+        rim[unsafe_offset=k * lanes + b] = fim[unsafe_offset=b * d2 + k]
+
+    elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
+        keep_half, Coord(lanes * keep), ctx
+    )
+    # Axis `d1`, last of `(keep, d0, d1)`, landing as `(d1, keep, d0)`.
+    var mid_re = Static[dtype, d1, keep, d0]._uninitialized(ctx)
+    var mid_im = Static[dtype, d1, keep, d0]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=keep * d0, n=d1, gpu=gpu, inverse=False](
+        _as_matrix[rows=keep * d0, cols=d1](rot_re),
+        _as_matrix[rows=keep * d0, cols=d1](rot_im),
+        _as_matrix[rows=d1, cols=keep * d0](mid_re).transpose(),
+        _as_matrix[rows=d1, cols=keep * d0](mid_im).transpose(),
+        ctx,
+    )
+    # Axis `d0`, last of `(d1, keep, d0)`, landing as `(d0, d1, keep)`.
+    var re = Static[dtype, d0, d1, keep]._uninitialized(ctx)
+    var im = Static[dtype, d0, d1, keep]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=d1 * keep, n=d0, gpu=gpu, inverse=False](
+        _as_matrix[rows=d1 * keep, cols=d0](mid_re),
+        _as_matrix[rows=d1 * keep, cols=d0](mid_im),
+        _as_matrix[rows=d0, cols=d1 * keep](re).transpose(),
+        _as_matrix[rows=d0, cols=d1 * keep](im).transpose(),
+        ctx,
+    )
+    _ = x^
+    _ = imag^
+    _ = full_re^
+    _ = full_im^
+    _ = rot_re^
+    _ = rot_im^
+    _ = mid_re^
+    _ = mid_im^
+    return (re^, im^)
+
+
+def irfftn[
+    dtype: DType, keep: Int, gpu: Bool = False, n: Int = 2 * (keep - 1)
+](var x: Spectrum[dtype, keep]) raises -> Static[
+    dtype, n
+] where dtype.is_floating_point():
+    """`irfftn` at rank 1, which is `irfft`. `numpy.fft.irfftn`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        keep: The number of half-spectrum bins.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        n: The output length, `2 * keep - 2` (the default) or `2 * keep - 1`.
+
+    Args:
+        x: The half spectrum as a `(real, imaginary)` pair.
+
+    Returns:
+        The real length-`n` sequence, scaled by `1/n`.
+
+    Raises:
+        If allocating a buffer or launching a kernel fails.
+    """
+    return irfft[gpu=gpu, n=n](x^)
+
+
+def irfftn[
+    dtype: DType,
+    rows: Int,
+    keep: Int,
+    gpu: Bool = False,
+    n: Int = 2 * (keep - 1),
+](var x: Spectrum[dtype, rows, keep]) raises -> Static[dtype, rows, n] where (
+    dtype.is_floating_point() and rows > 0
+):
+    """`irfftn` at rank 2, which is `irfft2`. `numpy.fft.irfftn`.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        rows: The number of rows.
+        keep: The number of half-spectrum columns.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        n: The output width, `2 * keep - 2` (the default) or `2 * keep - 1`.
+
+    Args:
+        x: The `rows x keep` half spectrum as a `(real, imaginary)` pair.
+
+    Returns:
+        The real `rows x n` image, scaled by `1 / (rows * n)`.
+
+    Raises:
+        If allocating a buffer or launching a kernel fails.
+    """
+    return irfft2[gpu=gpu, n=n](x^)
+
+
+def irfftn[
+    dtype: DType,
+    d0: Int,
+    d1: Int,
+    keep: Int,
+    gpu: Bool = False,
+    n: Int = 2 * (keep - 1),
+](var x: Spectrum[dtype, d0, d1, keep]) raises -> Static[
+    dtype, d0, d1, n
+] where (dtype.is_floating_point() and d0 > 0 and d1 > 0):
+    """The inverse of the 3-D `rfftn`: the real `d0 x d1 x n` volume whose
+    half spectrum is `x`. `numpy.fft.irfftn(x, s=(d0, d1, n))`.
+
+    `rfftn` run backwards: the inverse complex passes over the first two
+    axes, then the conjugate-symmetric mirror of the last axis and its
+    inverse. The first pass reads axis `d0` as the columns of a
+    `d0 x (d1 keep)` matrix and the second reads `d1` the same way, each
+    writing row-major so the layout rotates to `(keep, d0, d1)`; the mirror
+    reads that bin-major layout directly. So there is no transpose pass.
+
+    Parameters:
+        dtype: The floating-point element type of `x`.
+        d0: The first extent.
+        d1: The second extent.
+        keep: The number of half-spectrum bins along the last axis.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        n: The output's last extent, `2 * keep - 2` (the default) or
+            `2 * keep - 1`.
+
+    Args:
+        x: The `d0 x d1 x keep` half spectrum as a `(real, imaginary)` pair.
+
+    Returns:
+        The real `d0 x d1 x n` volume, scaled by `1 / (d0 * d1 * n)`.
+
+    Raises:
+        If allocating a buffer or launching a kernel fails.
+    """
+    comptime assert n == 2 * keep - 2 or n == 2 * keep - 1, (
+        "irfftn: a half spectrum of `keep` bins comes from a last axis of"
+        " 2 * keep - 2 or 2 * keep - 1"
+    )
+    comptime lanes = d0 * d1
+    var ctx = x[0].context()
+    # Axis `d0`: columns of `d0 x (d1 keep)`, landing as `(d1, keep, d0)`.
+    var mid_re = Static[dtype, d1, keep, d0]._uninitialized(ctx)
+    var mid_im = Static[dtype, d1, keep, d0]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=d1 * keep, n=d0, gpu=gpu, inverse=True](
+        _as_matrix[rows=d0, cols=d1 * keep](x[0]).transpose(),
+        _as_matrix[rows=d0, cols=d1 * keep](x[1]).transpose(),
+        _as_matrix[rows=d1 * keep, cols=d0](mid_re),
+        _as_matrix[rows=d1 * keep, cols=d0](mid_im),
+        ctx,
+    )
+    # Axis `d1`: columns of `d1 x (keep d0)`, landing as `(keep, d0, d1)`.
+    var rot_re = Static[dtype, keep, d0, d1]._uninitialized(ctx)
+    var rot_im = Static[dtype, keep, d0, d1]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=keep * d0, n=d1, gpu=gpu, inverse=True](
+        _as_matrix[rows=d1, cols=keep * d0](mid_re).transpose(),
+        _as_matrix[rows=d1, cols=keep * d0](mid_im).transpose(),
+        _as_matrix[rows=keep * d0, cols=d1](rot_re),
+        _as_matrix[rows=keep * d0, cols=d1](rot_im),
+        ctx,
+    )
+    var full_re = Static[dtype, d0, d1, n]._uninitialized(ctx)
+    var full_im = Static[dtype, d0, d1, n]._uninitialized(ctx)
+    _mirror_rows[dtype, lanes, keep, n, gpu](rot_re, rot_im, full_re, full_im)
+    var re = Static[dtype, d0, d1, n]._uninitialized(ctx)
+    var im = Static[dtype, d0, d1, n]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=lanes, n=n, gpu=gpu, inverse=True](
+        _as_matrix[rows=lanes, cols=n](full_re),
+        _as_matrix[rows=lanes, cols=n](full_im),
+        _as_matrix[rows=lanes, cols=n](re),
+        _as_matrix[rows=lanes, cols=n](im),
+        ctx,
+    )
+    _ = x^
+    _ = mid_re^
+    _ = mid_im^
+    _ = rot_re^
+    _ = rot_im^
+    _ = full_re^
+    _ = full_im^
+    _ = im^
+    return re^
 
 
 def _rolled[

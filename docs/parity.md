@@ -525,7 +525,7 @@ reporting.
 | Name | Disposition |
 |---|---|
 | `einsum` | **Out.** The subscript string is a parser plus a contraction planner, and every case a caller actually writes is already a name: `matmul`, `inner`, `outer`, `tensordot`, `trace`, `transpose`, `kron`. Revisit when a caller needs a contraction none of those spell. |
-| `fftn`, `hfft` | **Deferred.** `fft`, `fft2`, `rfft`, `rfft2` and their inverses cover rank 1 and 2, which is what `numax.signal` consumes. `fftn` at arbitrary rank needs the transform applied along a run-time axis list, so the lane engine would take its axis as an argument rather than a parameter. `hfft` is `irfft` of a conjugate, one line, and waits with it. |
+| `hfft` | **Deferred.** `hfft` is `irfft` of a conjugate, one line; it lands with `norm=`. `fftn`/`ifftn` (any rank) and `rfftn`/`irfftn` (ranks 1-3) shipped in 0.3: each pass transforms the current last axis and writes through a transposed view, rotating the axes, so there is one engine run per axis and no transpose pass. `rfftn` stops at rank 3 because its half-length output layout has to be named at compile time, and a layout-generic signature cannot rebuild one with the last extent changed. |
 | `resize` | **Out.** NumPy's repeats-or-truncates semantics on a flat view; `reshape_dyn` plus `tile` says the same thing without the surprise that `resize` changes length. |
 | `savetxt`, `loadtxt` | **Out.** Text I/O is a parser and a formatter, not numerics. `numax.io.numpy` reads and writes `.npy`, which is the interchange format that round-trips exactly; text does not. |
 | `savez`, `.npz` | **Out**, recorded above: an archive of named arrays needs a zip container. |

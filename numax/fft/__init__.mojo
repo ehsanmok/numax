@@ -1,7 +1,7 @@
 """numax.fft: discrete Fourier transforms.
 
 ```mojo
-from numax.fft import fft, ifft, rfft, irfft, fft2, rfft2, fftfreq, fftshift
+from numax.fft import fft, ifft, rfft, irfft, fft2, fftn, fftfreq, fftshift
 ```
 
 Radix-2 and radix-4 Cooley-Tukey at a power of two, Bluestein's chirp-z at
@@ -24,8 +24,9 @@ register tier's own names are exported here too:
 | `Array[Complex[T], n]`, `FloatLike`-generic, tier 1 | the small one: register-resident, differentiates at `Dual`, runs per SIMD lane inside a kernel body |
 
 The `Tensor` tier carries `fft`/`ifft`,
-`rfft`/`irfft`, `fft2`/`ifft2`/`rfft2` (rectangular, where the `Array`
-tier's is square), `fftshift`/`ifftshift` at rank 1 and 2,
+`rfft`/`irfft`, `fft2`/`ifft2`/`rfft2`/`irfft2` (rectangular, where the
+`Array` tier's is square), `fftn`/`ifftn` at any rank and `rfftn`/`irfftn`
+at ranks 1 to 3, `fftshift`/`ifftshift` at rank 1 and 2,
 `fftfreq`/`rfftfreq`, `next_fast_len` -- the next power of two, the length
 this engine is fast at -- and the `Spectrum` pair they travel in; and, from
 `numax.fft.trig`, the real trigonometric transforms `dct`/`idct` and
@@ -39,15 +40,20 @@ from .fft import (
     fft,
     fft2,
     fftfreq,
+    fftn,
     fftshift,
     ifft,
     ifft2,
+    ifftn,
     ifftshift,
     irfft,
+    irfft2,
+    irfftn,
     next_fast_len,
     rfft,
     rfft2,
     rfftfreq,
+    rfftn,
 )
 from .trig import dct, dst, idct, idst
 from ._array import (
