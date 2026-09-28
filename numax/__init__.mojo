@@ -285,14 +285,21 @@ from .core.tensorlike import (
 )
 from .core.ops import (
     add,
-    invert,
     astype,
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
     divide,
     floor_divide,
+    gcd,
+    invert,
+    lcm,
+    left_shift,
     mod,
     multiply,
     negative,
     power,
+    right_shift,
     subtract,
 )
 from .core.plain import Plain

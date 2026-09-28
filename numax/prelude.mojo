@@ -171,13 +171,20 @@ from .core.tensor import (
 from .core.ops import (
     add,
     astype,
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
     divide,
     floor_divide,
+    gcd,
     invert,
+    lcm,
+    left_shift,
     mod,
     multiply,
     negative,
     power,
+    right_shift,
     subtract,
 )
 from .core.elementwise import (
