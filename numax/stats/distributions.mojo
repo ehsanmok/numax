@@ -5,8 +5,11 @@
 Newton loop against the analytic density rather than iterating to a
 tolerance.
 
-Nine namespaces, spelled the way `scipy.stats` spells them -- `norm`,
-`expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom` -- each
+Seventeen namespaces, spelled the way `scipy.stats` spells them --
+`norm`, `expon`, `gamma`, `chi2`, `beta`, `t`, `f`, `poisson`, `binom`,
+and since 0.3 `lognorm`, `weibull_min`, `cauchy`, `laplace`, `rayleigh`,
+`logistic`, `pareto` and `uniform_dist` (SciPy's `uniform`, renamed
+because `numax.stats.uniform` is NumPy's sampler) -- each
 carrying the eight methods a `scipy.stats` distribution carries: `.pdf`
 (or `.pmf`) and `.logpdf` (`.logpmf`), `.cdf` and `.logcdf`, `.sf` and
 `.logsf`, `.ppf` and `.isf`:
@@ -623,6 +626,83 @@ def _binom_entropy(n: Float64, p: Float64) -> Float64:
         if logp > -700.0:
             total -= _v(_p(logp).exp()) * logp
     return total
+
+
+# ------------------------------------------------ tier-1 helpers for 0.3
+#
+# `FloatLike` carries no `atan`, `pow`, `expm1` or `log1p`, and growing the
+# trait for one module's closed forms is the cost `numeric.mojo` warns
+# about, so they are written here from what it does carry: fixed work,
+# branchless, both sides of every blend safe.
+
+comptime _EULER = 0.5772156649015329
+comptime _PI = 3.141592653589793
+
+
+def _pow[T: FloatLike](x: T, y: T) -> T:
+    """`x^y` for `x > 0`, as `exp(y ln x)`; `x` floored away from zero."""
+    return (y * _safe_ln(x)).exp()
+
+
+def _expm1[T: FloatLike](u: T) -> T:
+    """`e^u - 1`, with the cubic Taylor polynomial below `|u| = 1e-5`, where
+    `exp(u) - 1` would cancel, and the direct form above."""
+    var small = T.one() - ge_indicator(u.abs(), T.constant(1e-5))
+    var series = u.copy() * (
+        T.one() + u.copy() * (T.constant(0.5) + u.copy() / T.constant(6.0))
+    )
+    return blend(small, series, u.exp() - T.one())
+
+
+def _log1p[T: FloatLike](u: T) -> T:
+    """`ln(1 + u)` for `u > -1`, with the cubic Taylor polynomial below
+    `|u| = 1e-5` and the direct form, clamped, above."""
+    var small = T.one() - ge_indicator(u.abs(), T.constant(1e-5))
+    var series = u.copy() * (
+        T.one() - u.copy() * (T.constant(0.5) - u.copy() / T.constant(3.0))
+    )
+    return blend(small, series, _safe_ln(T.one() + u))
+
+
+def _atan[T: FloatLike](x: T) -> T:
+    """`atan(x)`: `pi/2 - atan(1/|x|)` above `|x| = 1`, two half-angle steps
+    `t -> t / (1 + sqrt(1 + t^2))` bringing the argument under `tan(pi/16)`,
+    and the alternating series to `t^23`, whose tail there is below
+    `1e-17`; the sign restored at the end."""
+    var a = x.abs()
+    var big = ge_indicator(a.copy(), T.one())
+    var t = blend(big.copy(), T.one() / max_of(a.copy(), T.constant(_TINY)), a)
+    for _ in range(2):
+        t = t.copy() / (T.one() + (T.one() + t.copy() * t.copy()).sqrt())
+    var t2 = t.copy() * t.copy()
+    var term = t.copy()
+    var total = t.copy()
+    comptime for k in range(1, 12):
+        term = -(term * t2.copy())
+        total = total + term.copy() / T.constant(Float64(2 * k + 1))
+    var r = T.constant(4.0) * total
+    var magnitude = blend(big, T.constant(_PI / 2.0) - r.copy(), r)
+    return magnitude.copysign(x)
+
+
+def _exp64(x: Float64) -> Float64:
+    return _v(_p(x).exp())
+
+
+def _gamma64(x: Float64) -> Float64:
+    return _exp64(_v(lgamma(_p(x))))
+
+
+def _ln_scalar[
+    dtype: DType
+](x: Scalar[dtype]) -> Scalar[dtype] where dtype.is_floating_point():
+    return _log64_scalar(x)
+
+
+def _log64_scalar[
+    dtype: DType
+](x: Scalar[dtype]) -> Scalar[dtype] where dtype.is_floating_point():
+    return Scalar[dtype](_log64(Float64(x)))
 
 
 # ---------------------------------------------------------------- normal
@@ -2593,3 +2673,1960 @@ struct binom:
             The entropy.
         """
         return _binom_entropy(n, p)
+
+
+struct uniform_dist:
+    """The continuous uniform distribution on `[loc, loc + scale]`. `scipy.stats.uniform`,
+    named `uniform_dist` because `numax.stats.uniform` is NumPy's sampler."""
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The density. `scipy.stats.uniform.pdf`."""
+        var z = (x - loc) / scale
+        return (
+            ge_indicator(z.copy(), T.constant(0.0))
+            * ge_indicator(T.one() - z, T.constant(0.0))
+            / scale
+        )
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.uniform.logpdf`.
+        """
+        var z = (x - loc) / scale
+        var inside = ge_indicator(z.copy(), T.constant(0.0)) * ge_indicator(
+            T.one() - z, T.constant(0.0)
+        )
+        return blend(inside, -_safe_ln(scale), T.constant(_LOG_ZERO))
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The CDF. `scipy.stats.uniform.cdf`."""
+        return min_of(max_of((x - loc) / scale, T.constant(0.0)), T.one())
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.uniform.logcdf`."""
+        return _safe_ln(uniform_dist.cdf(x, loc, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.uniform.sf`."""
+        return min_of(
+            max_of(T.one() - (x - loc) / scale, T.constant(0.0)), T.one()
+        )
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.uniform.logsf`."""
+        return _safe_ln(uniform_dist.sf(x, loc, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.uniform.ppf`."""
+        return loc + p * scale
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.uniform.isf`.
+        """
+        return loc + (T.one() - p) * scale
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_uniform_dist_pdf_step[dtype, _],
+            gpu=gpu,
+            name="uniform_dist.pdf",
+        ](x, loc, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_uniform_dist_cdf_step[dtype, _],
+            gpu=gpu,
+            name="uniform_dist.cdf",
+        ](x, loc, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_uniform_dist_ppf_step[dtype, _],
+            gpu=gpu,
+            name="uniform_dist.ppf",
+        ](p, loc, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        loc: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by `Generator`'s own sampler. `scipy.stats.uniform.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.uniform[dtype, *dims, gpu=gpu](loc, loc + scale, ctx)
+
+    @staticmethod
+    def mean(loc: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.uniform.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return loc + scale / 2.0
+
+    @staticmethod
+    def var(loc: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.uniform.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return scale * scale / 12.0
+
+    @staticmethod
+    def std(loc: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(uniform_dist.var(loc, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, loc: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.uniform.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = uniform_dist.ppf(
+            _p((1.0 - confidence) / 2.0), _p(loc), _p(scale)
+        )
+        var hi = uniform_dist.ppf(
+            _p((1.0 + confidence) / 2.0), _p(loc), _p(scale)
+        )
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(loc: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.uniform.entropy`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return _log64(scale)
+
+
+def _uniform_dist_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return uniform_dist.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _uniform_dist_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return uniform_dist.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _uniform_dist_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return uniform_dist.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct lognorm:
+    """The log-normal distribution: `ln(X)` normal with standard deviation `s` and mean `ln(scale)`. `scipy.stats.lognorm`.
+    """
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, s: T, scale: T) -> T:
+        """The density. `scipy.stats.lognorm.pdf`."""
+        var xs = max_of(x.copy(), T.constant(_TINY))
+        var y = (xs / scale).ln() / s
+        var inside = (-(y * y) / T.constant(2.0)).exp() / (
+            xs * s * T.constant(_SQRT_2PI)
+        )
+        return inside * ge_indicator(x, T.constant(_TINY))
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, s: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.lognorm.logpdf`.
+        """
+        var xs = max_of(x.copy(), T.constant(_TINY))
+        var y = (xs / scale).ln() / s
+        var inside = (
+            -(y * y) / T.constant(2.0)
+            - xs.ln()
+            - _safe_ln(s)
+            - T.constant(0.5 * _LN_2PI)
+        )
+        return blend(
+            ge_indicator(x, T.constant(_TINY)), inside, T.constant(_LOG_ZERO)
+        )
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, s: T, scale: T) -> T:
+        """The CDF. `scipy.stats.lognorm.cdf`."""
+        var y = (max_of(x.copy(), T.constant(_TINY)) / scale).ln() / s
+        return (
+            T.constant(0.5)
+            * (-(y / T.constant(_SQRT_2))).erfc()
+            * ge_indicator(x, T.constant(_TINY))
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, s: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.lognorm.logcdf`."""
+        return _safe_ln(lognorm.cdf(x, s, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, s: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.lognorm.sf`."""
+        var y = (max_of(x.copy(), T.constant(_TINY)) / scale).ln() / s
+        return blend(
+            ge_indicator(x, T.constant(_TINY)),
+            T.constant(0.5) * (y / T.constant(_SQRT_2)).erfc(),
+            T.one(),
+        )
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, s: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.lognorm.logsf`."""
+        return _safe_ln(lognorm.sf(x, s, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, s: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.lognorm.ppf`."""
+        return scale * (s * _standard_normal_quantile(p)).exp()
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, s: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.lognorm.isf`.
+        """
+        return scale * (-(s * _standard_normal_quantile(p))).exp()
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, s: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_lognorm_pdf_step[dtype, _], gpu=gpu, name="lognorm.pdf"
+        ](x, s, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, s: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_lognorm_cdf_step[dtype, _], gpu=gpu, name="lognorm.cdf"
+        ](x, s, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, s: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_lognorm_ppf_step[dtype, _], gpu=gpu, name="lognorm.ppf"
+        ](p, s, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        s: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by `Generator`'s own sampler. `scipy.stats.lognorm.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            s: The distribution's `s`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        return rng.lognormal[dtype, *dims, gpu=gpu](_ln_scalar(scale), s, ctx)
+
+    @staticmethod
+    def mean(s: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.lognorm.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            s: The distribution's `s`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return scale * _exp64(s * s / 2.0)
+
+    @staticmethod
+    def var(s: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.lognorm.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            s: The distribution's `s`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return scale * scale * _exp64(s * s) * (_exp64(s * s) - 1.0)
+
+    @staticmethod
+    def std(s: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            s: The distribution's `s`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(lognorm.var(s, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, s: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.lognorm.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            s: The distribution's `s`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = lognorm.ppf(_p((1.0 - confidence) / 2.0), _p(s), _p(scale))
+        var hi = lognorm.ppf(_p((1.0 + confidence) / 2.0), _p(s), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(s: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.lognorm.entropy`.
+
+        Args:
+            s: The distribution's `s`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return 0.5 + 0.5 * _LN_2PI + _log64(s) + _log64(scale)
+
+
+def _lognorm_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], s: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return lognorm.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](s[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _lognorm_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], s: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return lognorm.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](s[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _lognorm_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], s: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return lognorm.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](s[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct weibull_min:
+    """The Weibull minimum-extreme-value distribution with shape `c`. `scipy.stats.weibull_min`.
+    """
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, c: T, scale: T) -> T:
+        """The density. `scipy.stats.weibull_min.pdf`."""
+        var z = max_of(x.copy(), T.constant(0.0)) / scale
+        var u = _pow(z.copy(), c.copy())
+        var inside = c / scale * _pow(z, c - T.one()) * (-u).exp()
+        return inside * ge_indicator(x, T.constant(0.0))
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, c: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.weibull_min.logpdf`.
+        """
+        var z = max_of(x.copy(), T.constant(0.0)) / scale
+        var inside = (
+            _safe_ln(c / scale)
+            + (c - T.one()) * _safe_ln(z.copy())
+            - _pow(z, c.copy())
+        )
+        return blend(
+            ge_indicator(x, T.constant(0.0)), inside, T.constant(_LOG_ZERO)
+        )
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, c: T, scale: T) -> T:
+        """The CDF. `scipy.stats.weibull_min.cdf`."""
+        var z = max_of(x, T.constant(0.0)) / scale
+        return -_expm1(-_pow(z, c.copy()))
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, c: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.weibull_min.logcdf`."""
+        return _safe_ln(weibull_min.cdf(x, c, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, c: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.weibull_min.sf`."""
+        var z = max_of(x, T.constant(0.0)) / scale
+        return (-_pow(z, c.copy())).exp()
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, c: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.weibull_min.logsf`."""
+        return _safe_ln(weibull_min.sf(x, c, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, c: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.weibull_min.ppf`."""
+        return scale * _pow(-_log1p(-p), T.one() / c)
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, c: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.weibull_min.isf`.
+        """
+        return scale * _pow(-_safe_ln(p), T.one() / c)
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, c: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_weibull_min_pdf_step[dtype, _],
+            gpu=gpu,
+            name="weibull_min.pdf",
+        ](x, c, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, c: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_weibull_min_cdf_step[dtype, _],
+            gpu=gpu,
+            name="weibull_min.cdf",
+        ](x, c, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, c: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_weibull_min_ppf_step[dtype, _],
+            gpu=gpu,
+            name="weibull_min.ppf",
+        ](p, c, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        c: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.weibull_min.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            c: The distribution's `c`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = weibull_min.ppf[gpu=gpu](u, c, scale)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(c: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.weibull_min.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            c: The distribution's `c`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return scale * _gamma64(1.0 + 1.0 / c)
+
+    @staticmethod
+    def var(c: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.weibull_min.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            c: The distribution's `c`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return (
+            scale
+            * scale
+            * (_gamma64(1.0 + 2.0 / c) - _gamma64(1.0 + 1.0 / c) ** 2)
+        )
+
+    @staticmethod
+    def std(c: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            c: The distribution's `c`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(weibull_min.var(c, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, c: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.weibull_min.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            c: The distribution's `c`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = weibull_min.ppf(_p((1.0 - confidence) / 2.0), _p(c), _p(scale))
+        var hi = weibull_min.ppf(_p((1.0 + confidence) / 2.0), _p(c), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(c: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.weibull_min.entropy`.
+
+        Args:
+            c: The distribution's `c`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return _EULER * (1.0 - 1.0 / c) - _log64(c) + 1.0 + _log64(scale)
+
+
+def _weibull_min_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], c: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return weibull_min.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](c[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _weibull_min_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], c: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return weibull_min.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](c[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _weibull_min_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], c: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return weibull_min.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](c[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct cauchy:
+    """The Cauchy (Lorentz) distribution. `scipy.stats.cauchy`."""
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The density. `scipy.stats.cauchy.pdf`."""
+        var z = (x - loc) / scale
+        return T.one() / (T.constant(_PI) * scale * (T.one() + z * z))
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.cauchy.logpdf`.
+        """
+        var z = (x - loc) / scale
+        return -_safe_ln(T.constant(_PI) * scale) - (T.one() + z * z).ln()
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The CDF. `scipy.stats.cauchy.cdf`."""
+        return T.constant(0.5) + _atan((x - loc) / scale) / T.constant(_PI)
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.cauchy.logcdf`."""
+        return _safe_ln(cauchy.cdf(x, loc, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.cauchy.sf`."""
+        return T.constant(0.5) - _atan((x - loc) / scale) / T.constant(_PI)
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.cauchy.logsf`."""
+        return _safe_ln(cauchy.sf(x, loc, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.cauchy.ppf`."""
+        var angle = T.constant(_PI) * (p - T.constant(0.5))
+        return loc + scale * angle.sin() / angle.cos()
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.cauchy.isf`.
+        """
+        var angle = T.constant(_PI) * (p - T.constant(0.5))
+        return loc - scale * angle.sin() / angle.cos()
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_cauchy_pdf_step[dtype, _], gpu=gpu, name="cauchy.pdf"
+        ](x, loc, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_cauchy_cdf_step[dtype, _], gpu=gpu, name="cauchy.cdf"
+        ](x, loc, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_cauchy_ppf_step[dtype, _], gpu=gpu, name="cauchy.ppf"
+        ](p, loc, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        loc: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.cauchy.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = cauchy.ppf[gpu=gpu](u, loc, scale)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(loc: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.cauchy.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return _nan64()
+
+    @staticmethod
+    def var(loc: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.cauchy.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return _nan64()
+
+    @staticmethod
+    def std(loc: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(cauchy.var(loc, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, loc: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.cauchy.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = cauchy.ppf(_p((1.0 - confidence) / 2.0), _p(loc), _p(scale))
+        var hi = cauchy.ppf(_p((1.0 + confidence) / 2.0), _p(loc), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(loc: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.cauchy.entropy`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return _log64(4.0 * _PI * scale)
+
+
+def _cauchy_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return cauchy.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _cauchy_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return cauchy.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _cauchy_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return cauchy.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct laplace:
+    """The Laplace (double exponential) distribution. `scipy.stats.laplace`."""
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The density. `scipy.stats.laplace.pdf`."""
+        var z = (x - loc) / scale
+        return (-(z.abs())).exp() / (T.constant(2.0) * scale)
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.laplace.logpdf`.
+        """
+        var z = (x - loc) / scale
+        return -_safe_ln(T.constant(2.0) * scale) - z.abs()
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The CDF. `scipy.stats.laplace.cdf`."""
+        var z = (x - loc) / scale
+        var half = T.constant(0.5) * (-(z.abs())).exp()
+        return blend(
+            ge_indicator(z, T.constant(0.0)), T.one() - half, half.copy()
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.laplace.logcdf`."""
+        return _safe_ln(laplace.cdf(x, loc, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.laplace.sf`."""
+        var z = (x - loc) / scale
+        var half = T.constant(0.5) * (-(z.abs())).exp()
+        return blend(
+            ge_indicator(z, T.constant(0.0)), half.copy(), T.one() - half
+        )
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.laplace.logsf`."""
+        return _safe_ln(laplace.sf(x, loc, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.laplace.ppf`."""
+        var low = loc + scale * _safe_ln(T.constant(2.0) * p)
+        var high = loc - scale * _safe_ln(T.constant(2.0) * (T.one() - p))
+        return blend(ge_indicator(p, T.constant(0.5)), high, low)
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.laplace.isf`.
+        """
+        return laplace.ppf(T.one() - p, loc, scale)
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_laplace_pdf_step[dtype, _], gpu=gpu, name="laplace.pdf"
+        ](x, loc, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_laplace_cdf_step[dtype, _], gpu=gpu, name="laplace.cdf"
+        ](x, loc, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_laplace_ppf_step[dtype, _], gpu=gpu, name="laplace.ppf"
+        ](p, loc, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        loc: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.laplace.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = laplace.ppf[gpu=gpu](u, loc, scale)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(loc: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.laplace.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return loc
+
+    @staticmethod
+    def var(loc: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.laplace.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return 2.0 * scale * scale
+
+    @staticmethod
+    def std(loc: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(laplace.var(loc, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, loc: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.laplace.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = laplace.ppf(_p((1.0 - confidence) / 2.0), _p(loc), _p(scale))
+        var hi = laplace.ppf(_p((1.0 + confidence) / 2.0), _p(loc), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(loc: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.laplace.entropy`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return 1.0 + _log64(2.0 * scale)
+
+
+def _laplace_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return laplace.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _laplace_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return laplace.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _laplace_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return laplace.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct rayleigh:
+    """The Rayleigh distribution: the length of a 2-D standard normal vector, times `scale`. `scipy.stats.rayleigh`.
+    """
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, scale: T) -> T:
+        """The density. `scipy.stats.rayleigh.pdf`."""
+        var z = max_of(x.copy(), T.constant(0.0)) / scale
+        return (
+            z.copy()
+            / scale
+            * (-(z * z) / T.constant(2.0)).exp()
+            * ge_indicator(x, T.constant(0.0))
+        )
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.rayleigh.logpdf`.
+        """
+        var z = max_of(x.copy(), T.constant(0.0)) / scale
+        var inside = (
+            _safe_ln(z.copy()) - _safe_ln(scale) - z * z / T.constant(2.0)
+        )
+        return blend(
+            ge_indicator(x, T.constant(_TINY)), inside, T.constant(_LOG_ZERO)
+        )
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, scale: T) -> T:
+        """The CDF. `scipy.stats.rayleigh.cdf`."""
+        var z = max_of(x, T.constant(0.0)) / scale
+        return -_expm1(-(z * z) / T.constant(2.0))
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.rayleigh.logcdf`."""
+        return _safe_ln(rayleigh.cdf(x, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.rayleigh.sf`."""
+        var z = max_of(x, T.constant(0.0)) / scale
+        return (-(z * z) / T.constant(2.0)).exp()
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.rayleigh.logsf`."""
+        return _safe_ln(rayleigh.sf(x, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.rayleigh.ppf`."""
+        return scale * (T.constant(-2.0) * _log1p(-p)).sqrt()
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.rayleigh.isf`.
+        """
+        return scale * (T.constant(-2.0) * _safe_ln(p)).sqrt()
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[
+            step=_rayleigh_pdf_step[dtype, _], gpu=gpu, name="rayleigh.pdf"
+        ](x, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[
+            step=_rayleigh_cdf_step[dtype, _], gpu=gpu, name="rayleigh.cdf"
+        ](x, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over1[
+            step=_rayleigh_ppf_step[dtype, _], gpu=gpu, name="rayleigh.ppf"
+        ](p, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.rayleigh.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = rayleigh.ppf[gpu=gpu](u, scale)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(scale: Float64) -> Float64:
+        """The mean. `scipy.stats.rayleigh.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return scale * _sqrt64(_PI / 2.0)
+
+    @staticmethod
+    def var(scale: Float64) -> Float64:
+        """The variance. `scipy.stats.rayleigh.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return (4.0 - _PI) / 2.0 * scale * scale
+
+    @staticmethod
+    def std(scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(rayleigh.var(scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.rayleigh.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = rayleigh.ppf(_p((1.0 - confidence) / 2.0), _p(scale))
+        var hi = rayleigh.ppf(_p((1.0 + confidence) / 2.0), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.rayleigh.entropy`.
+
+        Args:
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return 1.0 + _log64(scale / _SQRT_2) + _EULER / 2.0
+
+
+def _rayleigh_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return rayleigh.pdf(
+        Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](scale[0]))
+    ).v
+
+
+def _rayleigh_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return rayleigh.cdf(
+        Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](scale[0]))
+    ).v
+
+
+def _rayleigh_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return rayleigh.ppf(
+        Plain[dtype, w](x), Plain[dtype, w](SIMD[dtype, w](scale[0]))
+    ).v
+
+
+struct logistic:
+    """The logistic distribution. `scipy.stats.logistic`."""
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The density. `scipy.stats.logistic.pdf`."""
+        var z = (x - loc) / scale
+        var e = (-(z.abs())).exp()
+        return e.copy() / (scale * (T.one() + e.copy()) * (T.one() + e))
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.logistic.logpdf`.
+        """
+        var z = (x - loc) / scale
+        return (
+            -(z.abs())
+            - T.constant(2.0) * (T.one() + (-(z.abs())).exp()).ln()
+            - _safe_ln(scale)
+        )
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The CDF. `scipy.stats.logistic.cdf`."""
+        var z = (x - loc) / scale
+        var e = (-(z.abs())).exp()
+        return blend(
+            ge_indicator(z, T.constant(0.0)),
+            T.one() / (T.one() + e.copy()),
+            e.copy() / (T.one() + e),
+        )
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.logistic.logcdf`."""
+        return _safe_ln(logistic.cdf(x, loc, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.logistic.sf`."""
+        return logistic.cdf(-(x - loc) + loc, loc, scale)
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, loc: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.logistic.logsf`."""
+        return _safe_ln(logistic.sf(x, loc, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.logistic.ppf`."""
+        return loc + scale * (_safe_ln(p) - _log1p(-p))
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, loc: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.logistic.isf`.
+        """
+        return loc + scale * (_log1p(-p) - _safe_ln(p))
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_logistic_pdf_step[dtype, _], gpu=gpu, name="logistic.pdf"
+        ](x, loc, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_logistic_cdf_step[dtype, _], gpu=gpu, name="logistic.cdf"
+        ](x, loc, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, loc: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_logistic_ppf_step[dtype, _], gpu=gpu, name="logistic.ppf"
+        ](p, loc, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        loc: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.logistic.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = logistic.ppf[gpu=gpu](u, loc, scale)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(loc: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.logistic.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return loc
+
+    @staticmethod
+    def var(loc: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.logistic.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return _PI * _PI * scale * scale / 3.0
+
+    @staticmethod
+    def std(loc: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(logistic.var(loc, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, loc: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.logistic.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = logistic.ppf(_p((1.0 - confidence) / 2.0), _p(loc), _p(scale))
+        var hi = logistic.ppf(_p((1.0 + confidence) / 2.0), _p(loc), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(loc: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.logistic.entropy`.
+
+        Args:
+            loc: The distribution's `loc`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return 2.0 + _log64(scale)
+
+
+def _logistic_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return logistic.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _logistic_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return logistic.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _logistic_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], loc: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return logistic.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](loc[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+struct pareto:
+    """The Pareto distribution with shape `b`, supported on `x >= scale`. `scipy.stats.pareto`.
+    """
+
+    @staticmethod
+    def pdf[T: FloatLike](x: T, b: T, scale: T) -> T:
+        """The density. `scipy.stats.pareto.pdf`."""
+        var y = max_of(x.copy() / scale, T.one())
+        return (
+            b
+            / scale
+            * _pow(y, -(b + T.one()))
+            * ge_indicator(x / scale, T.one())
+        )
+
+    @staticmethod
+    def logpdf[T: FloatLike](x: T, b: T, scale: T) -> T:
+        """The log density, finite (`_LOG_ZERO`) outside the support. `scipy.stats.pareto.logpdf`.
+        """
+        var y = max_of(x.copy() / scale, T.one())
+        var inside = _safe_ln(b / scale) - (b + T.one()) * y.ln()
+        return blend(
+            ge_indicator(x / scale, T.one()), inside, T.constant(_LOG_ZERO)
+        )
+
+    @staticmethod
+    def cdf[T: FloatLike](x: T, b: T, scale: T) -> T:
+        """The CDF. `scipy.stats.pareto.cdf`."""
+        var y = max_of(x / scale, T.one())
+        return T.one() - _pow(y, -b)
+
+    @staticmethod
+    def logcdf[T: FloatLike](x: T, b: T, scale: T) -> T:
+        """`ln cdf`. `scipy.stats.pareto.logcdf`."""
+        return _safe_ln(pareto.cdf(x, b, scale))
+
+    @staticmethod
+    def sf[T: FloatLike](x: T, b: T, scale: T) -> T:
+        """The survival function `P(X > x)`. `scipy.stats.pareto.sf`."""
+        var y = max_of(x / scale, T.one())
+        return _pow(y, -b)
+
+    @staticmethod
+    def logsf[T: FloatLike](x: T, b: T, scale: T) -> T:
+        """`ln sf`. `scipy.stats.pareto.logsf`."""
+        return _safe_ln(pareto.sf(x, b, scale))
+
+    @staticmethod
+    def ppf[T: FloatLike](p: T, b: T, scale: T) -> T:
+        """The quantile, closed form. `scipy.stats.pareto.ppf`."""
+        return scale * _pow(T.one() - p, -(T.one() / b))
+
+    @staticmethod
+    def isf[T: FloatLike](p: T, b: T, scale: T) -> T:
+        """The inverse survival function, `ppf(1 - p)` without the `1 - p`. `scipy.stats.pareto.isf`.
+        """
+        return scale * _pow(p, -(T.one() / b))
+
+    @staticmethod
+    def pdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, b: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The density over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_pareto_pdf_step[dtype, _], gpu=gpu, name="pareto.pdf"
+        ](x, b, scale)
+
+    @staticmethod
+    def cdf[
+        T: TensorLike, gpu: Bool = False
+    ](x: T, b: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The CDF over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_pareto_cdf_step[dtype, _], gpu=gpu, name="pareto.cdf"
+        ](x, b, scale)
+
+    @staticmethod
+    def ppf[
+        T: TensorLike, gpu: Bool = False
+    ](p: T, b: Scalar[T.dtype], scale: Scalar[T.dtype]) raises -> Tensor[
+        T.dtype, T.LayoutType
+    ] where (is_row_major[T] and T.dtype.is_floating_point()):
+        """The quantile over a `Tensor`, parameters as scalars; see the module
+        docstring for the two paths `gpu` picks between."""
+        comptime dtype = T.dtype
+        return _over2[
+            step=_pareto_ppf_step[dtype, _], gpu=gpu, name="pareto.ppf"
+        ](p, b, scale)
+
+    @staticmethod
+    def rvs[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        b: Scalar[dtype],
+        scale: Scalar[dtype],
+        mut rng: Generator,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Random draws at the compile-time shape `dims`, from `rng`'s stream,
+        by inverting the closed-form `ppf` over uniforms in `(0, 1)`. `scipy.stats.pareto.rvs`.
+
+        Parameters:
+            dtype: The element type of the draws.
+            dims: The shape of the result.
+            gpu: Whether to draw one thread per element on `ctx`'s device.
+
+        Args:
+            b: The distribution's `b`.
+            scale: The distribution's `scale`.
+            rng: The generator; its seed advances.
+            ctx: The device to allocate and draw on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws.
+
+        Raises:
+            When allocation or the fill fails.
+        """
+        comptime count = _product[*dims]()
+        var u = rng.uniform[dtype, count, gpu=gpu](
+            Scalar[dtype](2.9802322387695312e-08), 1, ctx
+        )
+        var flat = pareto.ppf[gpu=gpu](u, b, scale)
+        return Static[dtype, *dims](
+            flat._buffer,
+            rebind[_LayoutOf[*dims]](row_major[*dims]()),
+            flat.host_addressable,
+        )
+
+    @staticmethod
+    def mean(b: Float64, scale: Float64) -> Float64:
+        """The mean. `scipy.stats.pareto.mean`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            b: The distribution's `b`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The mean.
+        """
+        return b * scale / (b - 1.0) if b > 1.0 else _inf64()
+
+    @staticmethod
+    def var(b: Float64, scale: Float64) -> Float64:
+        """The variance. `scipy.stats.pareto.var`; `inf` or NaN where SciPy gives them.
+
+        Args:
+            b: The distribution's `b`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The variance.
+        """
+        return (
+            scale * scale * b / ((b - 1.0) * (b - 1.0) * (b - 2.0)) if b
+            > 2.0 else _inf64()
+        )
+
+    @staticmethod
+    def std(b: Float64, scale: Float64) -> Float64:
+        """The standard deviation, `sqrt(var)`.
+
+        Args:
+            b: The distribution's `b`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The standard deviation.
+        """
+        return _sqrt64(pareto.var(b, scale))
+
+    @staticmethod
+    def interval(
+        confidence: Float64, b: Float64, scale: Float64
+    ) -> Tuple[Float64, Float64]:
+        """The central interval holding `confidence` of the probability.
+        `scipy.stats.pareto.interval`.
+
+        Args:
+            confidence: The probability inside the interval, in `[0, 1]`.
+            b: The distribution's `b`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The interval's lower and upper ends.
+        """
+        var lo = pareto.ppf(_p((1.0 - confidence) / 2.0), _p(b), _p(scale))
+        var hi = pareto.ppf(_p((1.0 + confidence) / 2.0), _p(b), _p(scale))
+        return (_v(lo), _v(hi))
+
+    @staticmethod
+    def entropy(b: Float64, scale: Float64) -> Float64:
+        """The differential entropy in nats. `scipy.stats.pareto.entropy`.
+
+        Args:
+            b: The distribution's `b`.
+            scale: The distribution's `scale`.
+
+        Returns:
+            The entropy.
+        """
+        return _log64(scale / b) + 1.0 / b + 1.0
+
+
+def _pareto_pdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], b: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return pareto.pdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](b[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _pareto_cdf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], b: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return pareto.cdf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](b[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v
+
+
+def _pareto_ppf_step[
+    dtype: DType, w: Int
+](x: SIMD[dtype, w], b: SIMD[dtype, 1], scale: SIMD[dtype, 1]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return pareto.ppf(
+        Plain[dtype, w](x),
+        Plain[dtype, w](SIMD[dtype, w](b[0])),
+        Plain[dtype, w](SIMD[dtype, w](scale[0])),
+    ).v

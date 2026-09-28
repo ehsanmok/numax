@@ -13,7 +13,7 @@ from numax.stats import mean, variance, norm, uniform, seed
 | `descriptive` | `skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `trim_mean`, `describe` -- SciPy's bias corrections and conventions, host-side |
 | `hypothesis` | `ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu` -- each a statistic and a tail of `t`/`chi2`/`f`/`norm`; all but `ks_1samp` run their sums, ranks and counts on the device at `gpu=True` |
 | `nanfunctions` | `nansum`, `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax`, `nanargmin`, `nanargmax` -- `isnan`, `select` and the plain reductions, composed |
-| `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
+| `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson`, `lognorm`, `weibull_min`, `cauchy`, `laplace`, `rayleigh`, `logistic`, `pareto`, `uniform_dist` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
 | `random` | `uniform`, `normal`, `exponential`, `randint`, `randbool`, `seed`, and `Generator` for a named reproducible stream |
 
 Every reduction takes a `Tensor` and covers every element.
@@ -36,15 +36,23 @@ are tier 1.
 """
 
 from .distributions import (
-    norm,
-    expon,
-    gamma,
-    chi2,
     beta,
-    t,
-    f,
-    poisson,
     binom,
+    cauchy,
+    chi2,
+    expon,
+    f,
+    gamma,
+    laplace,
+    logistic,
+    lognorm,
+    norm,
+    pareto,
+    poisson,
+    rayleigh,
+    t,
+    uniform_dist,
+    weibull_min,
 )
 from .random import (
     Generator,
