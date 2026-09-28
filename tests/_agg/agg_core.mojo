@@ -701,6 +701,9 @@ from test_indexing import (
 from test_indexing import (
     test_rank_three_indexing as test_indexing__test_rank_three_indexing,
 )
+from test_indexing import (
+    test_a_wrong_length_initializer_raises as test_indexing__test_a_wrong_length_initializer_raises,
+)
 from test_interval import (
     test_addition_adds_endpoints as test_interval__test_addition_adds_endpoints,
 )
@@ -1882,6 +1885,7 @@ def main() raises:
     suite.test[test_indexing__test_slices_reject_steps_and_bad_bounds]()
     suite.test[test_indexing__test_scalar_indices_are_bounds_checked]()
     suite.test[test_indexing__test_rank_three_indexing]()
+    suite.test[test_indexing__test_a_wrong_length_initializer_raises]()
     # tests/core/test_interval.mojo
     suite.test[test_interval__test_addition_adds_endpoints]()
     suite.test[test_interval__test_negation_flips_the_interval]()

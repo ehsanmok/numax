@@ -123,5 +123,20 @@ def test_rank_three_indexing() raises:
         _ = t[0, 0, 4]
 
 
+def test_a_wrong_length_initializer_raises() raises:
+    """The constructor and both `copy_from_host`s check the list's length
+    rather than reading or writing past it."""
+    with assert_raises(contains="5 values for 6 elements"):
+        _ = Static[f32, 2, 3](
+            DeviceContext(api="cpu"), [1.0, 2.0, 3.0, 4.0, 5.0]
+        )
+    var a = _grid()
+    with assert_raises(contains="3 values for 20 elements"):
+        a.copy_from_host([1.0, 2.0, 3.0])
+    var v = a[0:1]
+    with assert_raises(contains="2 values for 5 elements"):
+        v.copy_from_host([1.0, 2.0])
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

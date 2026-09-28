@@ -325,8 +325,16 @@ struct TensorView[
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from `values`, row-major over the logical
         shape; the write counterpart of `to_host`, with the same contiguity
-        rule over device memory."""
+        rule over device memory. A list of the wrong length raises."""
         var n = self.size()
+        if len(values) != n:
+            raise Error(
+                "TensorView.copy_from_host: ",
+                len(values),
+                " values for ",
+                n,
+                " elements",
+            )
         var ptr = self._tile.ptr.unsafe_mut_cast[True]()
         if self.host_addressable:
             for i in range(n):

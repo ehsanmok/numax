@@ -430,10 +430,20 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ) raises:
         """A tensor on `ctx`'s device holding `values`, row-major.
 
-        `values` must have exactly `layout.size()` entries; this is the
-        escape hatch the factory functions below fall back to on a host context
-        (and at `float64` or `bool`, where they cannot fill on the device).
+        `values` must have exactly `layout.size()` entries, and a list of
+        any other length raises rather than reading past its end; this is
+        the escape hatch the factory functions below fall back to on a host
+        context (and at `float64` or `bool`, where they cannot fill on the
+        device).
         """
+        if len(values) != layout.size():
+            raise Error(
+                "Tensor: ",
+                len(values),
+                " values for ",
+                layout.size(),
+                " elements",
+            )
         self.layout = layout
         self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
         self.host_addressable = ctx.api() == "cpu"
@@ -1538,11 +1548,19 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from a host buffer, row-major.
 
-        `values` must have exactly `size()` entries. On a GPU
-        context the write is flushed to the device when the mapping scope
-        exits, which is inside this call.
+        `values` must have exactly `size()` entries, or this raises. On a
+        GPU context the write is flushed to the device when the mapping
+        scope exits, which is inside this call.
         """
         var n = self.size()
+        if len(values) != n:
+            raise Error(
+                "Tensor.copy_from_host: ",
+                len(values),
+                " values for ",
+                n,
+                " elements",
+            )
         with self.buffer.map_to_host() as host:
             for i in range(n):
                 host[i] = values[i]
