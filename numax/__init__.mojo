@@ -408,6 +408,7 @@ from .special.gamma import (
     perm,
     poch,
 )
+from .special.faddeeva import wofz
 from .special.expint import exp1, expi, expn, fresnel, sici
 from .special.hyper import hyp1f1, hyp2f1
 from .special.zeta import polygamma, zeta

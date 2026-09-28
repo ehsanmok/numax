@@ -16,6 +16,7 @@ from numax.special import gamma, j0, erf, gaussian
 | `erf` | `erf`, `erfc`, `erfinv`, `erfcinv` |
 | `normal` | `ndtr`, `log_ndtr`, `ndtri` -- `erfc`, a three-region `log_ndtr`, and Wichura's AS 241 inverse, full precision in the tails |
 | `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc`, `gammaincinv`, `gammasgn`, `factorial`, `comb`, `perm`, `poch` |
+| `faddeeva` | `wofz` -- Weideman's `N = 40` rational form over `Complex[T]`, one function for the upper half-plane |
 | `expint` | `exp1`, `expi`, `expn`, `sici`, `fresnel` -- series against continued fractions, the complex ones over `Complex[T]` |
 | `zeta` | `zeta(s)`, `zeta(s, q)` -- one Euler-Maclaurin sum on both sides of the pole; `polygamma(n, x)` over integer powers, valid on the negative axis |
 | `hyper` | `hyp1f1`, `hyp2f1` -- the series, with Kummer's and Pfaff's transformations for the negative side |
@@ -83,6 +84,7 @@ from .gamma import (
     perm,
     poch,
 )
+from .faddeeva import wofz
 from .expint import exp1, expi, expn, fresnel, sici
 from .hyper import hyp1f1, hyp2f1
 from .information import (

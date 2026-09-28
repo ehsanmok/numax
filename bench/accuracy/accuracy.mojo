@@ -93,14 +93,17 @@ from numax import (
     kve,
     owens_t,
     struve,
+    wofz,
     yv,
 )
 from numax.special.lambertw import lambertw_m1
+from numax.core.complex import Complex
 from numax.core.numeric import default_erf_approx
 
 from reference_data import *
 
 comptime P = Plain[DType.float64, 1]
+comptime C = Complex[P]
 
 
 def p(x: Float64) -> P:
@@ -286,6 +289,42 @@ def main():
     for i in range(ERFINV_TAIL_N):
         s.observe(xs[i], erfinv(p(xs[i])).v[0], refs[i])
     s.report("erfinv (guess + 3 Newton), 1-[1e-12,1e-1]")
+
+    section("Faddeeva function")
+    s = Stats()
+    xs = materialize[WOFZ_RE_Y1_X]()
+    refs = materialize[WOFZ_RE_Y1_REF]()
+    for i in range(WOFZ_RE_Y1_N):
+        s.observe(xs[i], wofz(C(p(xs[i]), p(1.0))).re.v[0], refs[i])
+    s.report("Re wofz(x + i) (Weideman N=40), [-10,10]")
+
+    s = Stats()
+    xs = materialize[WOFZ_IM_Y1_X]()
+    refs = materialize[WOFZ_IM_Y1_REF]()
+    for i in range(WOFZ_IM_Y1_N):
+        s.observe(xs[i], wofz(C(p(xs[i]), p(1.0))).im.v[0], refs[i])
+    s.report("Im wofz(x + i) (Weideman N=40), [-10,10]")
+
+    s = Stats()
+    xs = materialize[WOFZ_ERFCX_X]()
+    refs = materialize[WOFZ_ERFCX_REF]()
+    for i in range(WOFZ_ERFCX_N):
+        s.observe(xs[i], wofz(C(p(0.0), p(xs[i]))).re.v[0], refs[i])
+    s.report("wofz(i y) = erfcx(y) (Weideman N=40), [1e-3,1e3]")
+
+    s = Stats()
+    xs = materialize[WOFZ_DAWSON_X]()
+    refs = materialize[WOFZ_DAWSON_REF]()
+    for i in range(WOFZ_DAWSON_N):
+        s.observe(xs[i], wofz(C(p(xs[i]), p(0.0))).im.v[0], refs[i])
+    s.report("Im wofz(x) (Weideman N=40), [1e-2,50]")
+
+    s = Stats()
+    xs = materialize[WOFZ_LOWER_X]()
+    refs = materialize[WOFZ_LOWER_REF]()
+    for i in range(WOFZ_LOWER_N):
+        s.observe(xs[i], wofz(C(p(xs[i]), p(-0.5))).re.v[0], refs[i])
+    s.report("Re wofz(x - 0.5i) (2 exp(-z^2) - w(-z)), [-4,4]")
 
     section("Normal distribution function and logistic")
     s = Stats()

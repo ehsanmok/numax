@@ -126,6 +126,31 @@ def build() -> list[Case]:
         )
     )
 
+    # --- the Faddeeva function, along lines of the plane ---------------
+    def _w(z):
+        return mp.exp(-z * z) * mp.erfc(-1j * z)
+
+    cases.append(
+        Case("wofz_re_y1", "Re wofz(x + i), x in [-10, 10]",
+             clustered(-10.0, 10.0), lambda x: mp.re(_w(mp.mpc(x, 1))))
+    )
+    cases.append(
+        Case("wofz_im_y1", "Im wofz(x + i), x in [-10, 10]",
+             clustered(-10.0, 10.0), lambda x: mp.im(_w(mp.mpc(x, 1))))
+    )
+    cases.append(
+        Case("wofz_erfcx", "wofz(i y) = erfcx(y), y in [1e-3, 1e3]",
+             logarithmic(1e-3, 1e3), lambda y: mp.re(_w(mp.mpc(0, y))))
+    )
+    cases.append(
+        Case("wofz_dawson", "Im wofz(x), x in [1e-2, 50]",
+             logarithmic(1e-2, 50.0), lambda x: mp.im(_w(mp.mpc(x, 0))))
+    )
+    cases.append(
+        Case("wofz_lower", "Re wofz(x - 0.5 i), x in [-4, 4]",
+             clustered(-4.0, 4.0), lambda x: mp.re(_w(mp.mpc(x, -0.5))))
+    )
+
     # --- the normal distribution function and the logistic pair --------
     cases.append(
         Case("ndtr_mid", "ndtr, [-30, 8]", clustered(-30.0, 8.0), mp.ncdf)
