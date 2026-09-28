@@ -429,11 +429,15 @@ one launch rather than two chained ones, so it does not address the chained
 case even where it compiles.
 
 `nn.tile` and `nn.repeat_interleave` were searched at the pin for `tile` and
-`repeat`, and both are **delegates**: `nn.tile` is the ONNX `Tile` operator and
-agrees with `numpy.tile` element for element, `nn.repeat_interleave` agrees with
-`numpy.repeat`. Each carries one limit worth recording. `nn.tile` asserts
-**rank 4 at most** and takes no `target` and no `DeviceContext`, so it is host
-only; `nn.repeat_interleave` does take a context and so has a device path. There
+`repeat`, and both are **delegates on the host**: `nn.tile` is the ONNX `Tile`
+operator and agrees with `numpy.tile` element for element, `nn.repeat_interleave`
+agrees with `numpy.repeat`. **Neither has a device path**, so both are
+**extend** at `gpu=True`: `nn.tile` asserts rank 4 at most and takes no `target`
+and no `DeviceContext`, and `nn.repeat_interleave` takes a context but builds
+its offset map in a host `List` and launches on the CPU target (re-read in
+0.3; an earlier record here said it had a device path). `tile`, `repeat`,
+`roll` and `flip` at `gpu=True` share one numax gather along an axis
+(`_axis_gather`, one launch over the result). There
 is no `nn.roll` and no `nn.expand_dims`, and no `nn.gather` spelling of a cyclic
 shift that avoids materializing the index tensor, so `roll` and `expand_dims`
 are numax's own -- the **Plain-only surface** outcome, since a cyclic shift at

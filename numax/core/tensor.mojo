@@ -120,17 +120,19 @@ owned copy, for a result that must outlive its source. `squeeze` and
 an `axis` and returning a `Dynamic`, since Mojo cannot build a new shape
 pack from an arbitrary subset of an existing one.
 
-Every manipulation here except `transpose`, `tril`, `triu` and
-constant-mode `pad` runs its element walk on the host, through `to_host`/`copy_from_host`. On a CPU context that is the
-memory itself and costs nothing; on a GPU context it stages a round trip,
-which is the wrong shape for a large device-resident tensor. `transpose`
-is the exception because a blocked factorization needs `L.T` on the device
-it factored on; `transpose[..., gpu=True]` is an `elementwise` gather and
-never touches the host.
-# ponytail: host-staged manipulation walks, correct on both devices but a
-# round trip on GPU -- give `stack`/`concatenate` device kernels (or route
-# them into `nn.concat`) if a profile ever shows one of them on a hot device
-# path. `transpose` already has one.
+**Where the element walks run.** The order-preserving routines
+(`reshape`, `ravel`, `squeeze`, `expand_dims`, the `atleast_*` family,
+`copy`) are one device-to-device copy on a GPU tensor, with no `gpu`
+parameter, since a copy is a driver call rather than a kernel. The
+reordering ones take `gpu: Bool = False` like the rest of numax, and at
+`gpu=True` are one gather launch each: `transpose`, `tril`, `triu`,
+constant-mode `pad`, `roll`, `flip`, `repeat`, `tile`, `concatenate`,
+`stack`, `split`, `array_split` and `slice`. A residency mismatch prints
+the one-line `stderr` notice and takes the host walk.
+# ponytail: the fixed-shape joins (`vstack`, `hstack`, `dstack`, the static
+# `concatenate`/`stack`/`split` and the `_dyn` forms), `broadcast_to`, the
+# `diag` family, `vander` and `meshgrid` still walk a host copy on a GPU
+# tensor; each is a gather, or a route to the general form, still to write.
 """
 
 from std.collections import Array
@@ -139,7 +141,7 @@ from max.gpu.host import DeviceBuffer, DeviceContext
 from max.gpu.host.device_context import DeviceTypeEncoder
 from std.builtin.device_passable import DevicePassable
 from std.memory import MutOpaquePointer
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.coord import DynamicCoord
 from layout.tile_layout import row_major, TensorLayout
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
@@ -166,7 +168,13 @@ from .tensorlike import (
     dim,
     is_row_major,
 )
-from ._drive import _require_contiguous
+from ._drive import (
+    _check_device,
+    _flat_out,
+    _flat_unchecked,
+    _notice,
+    _require_contiguous,
+)
 from .ops import (
     add as _add,
     divide as _divide,
@@ -994,6 +1002,113 @@ def _same_order[
     return result^
 
 
+def _axis_gather[
+    T: TensorLike, L: TensorLayout, //, kind: StaticString
+](a: T, layout: L, axis: Int, arg: Int) raises -> Tensor[T.dtype, L]:
+    """A device gather along one axis: the result laid out as `layout`,
+    each element read from `a` at the same position on every other axis.
+
+    The axis splits both tensors into `(outer, length, inner)`, and `kind`
+    says which source position along it a result position `t` reads:
+    `"roll"` reads `t - arg` cyclically, `"flip"` reads `length - 1 - t`,
+    `"repeat"` reads `t // arg`, `"offset"` reads `t + arg` (a window, for
+    `split` and `slice`) and `"tile"` reads `t % length`. One
+    `elementwise` launch over the result, one thread per element, and the
+    device path of `roll`, `flip`, `repeat`, `tile`, `split`,
+    `array_split` and `slice`; their host paths are unchanged. `a` must be contiguous and on a GPU context.
+    """
+    var ctx = a.context()
+    var src_len = a.dim_at(axis)
+    var outer = 1
+    for d in range(axis):
+        outer *= a.dim_at(d)
+    var inner = 1
+    for d in range(axis + 1, T.rank):
+        inner *= a.dim_at(d)
+    var result = Tensor[T.dtype, L]._uninitialized(ctx, layout)
+    var total = layout.size()
+    if total == 0:
+        return result^
+    var dst_len = total // (outer * inner)
+    var src = _flat_unchecked(a)
+    var dst = _flat_out(result)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var src, var dst, var src_len, var dst_len, var inner, var arg
+    }:
+        var f = coord_to_index_list(coord)[0]
+        var i = f % inner
+        var t = (f // inner) % dst_len
+        var o = f // (inner * dst_len)
+        var k: Int
+        comptime if kind == "roll":
+            k = ((t - arg) % src_len + src_len) % src_len
+        elif kind == "flip":
+            k = src_len - 1 - t
+        elif kind == "repeat":
+            k = t // arg
+        elif kind == "offset":
+            k = t + arg
+        else:
+            k = t % src_len
+        dst.store[1](coord, src[Coord((o * src_len + k) * inner + i)])
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def _join2[
+    A: TensorLike, B: TensorLike, L: TensorLayout, //
+](
+    a: A, b: B, layout: L, outer: Int, a_len: Int, b_len: Int, inner: Int
+) raises -> Tensor[A.dtype, L] where (A.dtype == B.dtype):
+    """`a` then `b` along one axis, on the device: the result split as
+    `(outer, a_len + b_len, inner)`, positions below `a_len` read from `a`
+    and the rest from `b`. The device path of `concatenate`, and of `stack`
+    with both lengths `1`. Both inputs contiguous and on a GPU context.
+    """
+    _require_contiguous(a)
+    _require_contiguous(b)
+    var ctx = a.context()
+    var result = Tensor[A.dtype, L]._uninitialized(ctx, layout)
+    var total = layout.size()
+    if total == 0:
+        return result^
+    var joined = a_len + b_len
+    var ap = a.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var bp = (
+        b.tile()
+        .ptr.unsafe_bitcast[Scalar[A.dtype]]()
+        .unsafe_origin_cast[ImmutAnyOrigin]()
+    )
+    var dst = _flat_out(result)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var ap, var bp, var dst, var joined, var a_len, var b_len, var inner
+    }:
+        var f = coord_to_index_list(coord)[0]
+        var i = f % inner
+        var t = (f // inner) % joined
+        var o = f // (inner * joined)
+        if t < a_len:
+            dst.store[1](coord, ap[unsafe_offset=(o * a_len + t) * inner + i])
+        else:
+            dst.store[1](
+                coord, bp[unsafe_offset=(o * b_len + t - a_len) * inner + i]
+            )
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
+    ctx.synchronize()
+    return result^
+
+
 def ones[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
@@ -1713,7 +1828,7 @@ def reshape_dyn[
 
 
 def slice[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](a: T, starts: List[Int], stops: List[Int]) raises -> Dynamic[
     T.dtype, T.LayoutType.rank
 ]:
@@ -1755,6 +1870,27 @@ def slice[
             )
         extents.append(stops[d] - starts[d])
         count *= extents[d]
+
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            # One window per axis that is actually cut; the first copy
+            # gives every step the same `Dynamic` type.
+            var cur_ext = List[Int](capacity=rank)
+            for d in range(rank):
+                cur_ext.append(a.dim_at(d))
+            var cur = _same_order(a, row_major(_dyn_shape_from[rank](cur_ext)))
+            for d in range(rank):
+                if extents[d] != cur_ext[d]:
+                    cur_ext[d] = extents[d]
+                    cur = _axis_gather["offset"](
+                        cur,
+                        row_major(_dyn_shape_from[rank](cur_ext)),
+                        d,
+                        starts[d],
+                    )
+            return cur^
+    else:
+        _notice[gpu]("slice")
 
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=count)
@@ -2116,7 +2252,7 @@ def split[
 
 
 def array_split[
-    T: TensorLike, axis: Int = 0
+    T: TensorLike, axis: Int = 0, gpu: Bool = False
 ](a: T, sections: Int) raises -> List[
     Dynamic[T.dtype, T.LayoutType.rank]
 ] where (axis >= 0 and axis < T.LayoutType.rank):
@@ -2152,6 +2288,28 @@ def array_split[
 
     var base = length // sections
     var remainder = length % sections
+
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var pieces = List[Dynamic[dtype, rank]](capacity=sections)
+            var first = 0
+            for s in range(sections):
+                var take = base + 1 if s < remainder else base
+                var piece_ext = List[Int](capacity=rank)
+                for d in range(rank):
+                    piece_ext.append(take if d == axis else a.dim_at(d))
+                pieces.append(
+                    _axis_gather["offset"](
+                        a,
+                        row_major(_dyn_shape_from[rank](piece_ext)),
+                        axis,
+                        first,
+                    )
+                )
+                first += take
+            return pieces^
+    else:
+        _notice[gpu]("array_split")
 
     var values = a.to_host()
     var ctx = a.context()
@@ -2567,7 +2725,7 @@ def _matching_extents[
 
 
 def concatenate[
-    A: TensorLike, B: TensorLike, axis: Int
+    A: TensorLike, B: TensorLike, axis: Int, gpu: Bool = False
 ](a: A, b: B) raises -> Dynamic[A.dtype, A.LayoutType.rank] where (
     A.dtype == B.dtype
     and axis >= 0
@@ -2600,6 +2758,25 @@ def concatenate[
     for d in range(axis + 1, rank):
         inner *= a.dim_at(d)
 
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            var joined_extents = List[Int](capacity=rank)
+            for d in range(rank):
+                joined_extents.append(
+                    a_len + b_len if d == axis else a.dim_at(d)
+                )
+            return _join2(
+                a,
+                b,
+                row_major(_dyn_shape_from[rank](joined_extents)),
+                outer,
+                a_len,
+                b_len,
+                inner,
+            )
+    else:
+        _notice[gpu]("concatenate")
+
     var a_values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     var joined = a_len + b_len
@@ -2625,7 +2802,7 @@ def concatenate[
 
 
 def stack[
-    A: TensorLike, B: TensorLike, axis: Int
+    A: TensorLike, B: TensorLike, axis: Int, gpu: Bool = False
 ](a: A, b: B) raises -> Dynamic[A.dtype, A.LayoutType.rank + 1] where (
     A.dtype == B.dtype
     and axis >= 0
@@ -2664,14 +2841,6 @@ def stack[
     for d in range(axis, rank):
         inner *= a.dim_at(d)
 
-    var a_values = a.to_host()
-    var b_values = b.to_host[A.dtype]()
-    var out = List[Scalar[dtype]](length=2 * outer * inner, fill=0)
-    for o in range(outer):
-        for i in range(inner):
-            out[(o * 2) * inner + i] = a_values[o * inner + i]
-            out[(o * 2 + 1) * inner + i] = b_values[o * inner + i]
-
     var extents = List[Int](capacity=rank + 1)
     for d in range(rank + 1):
         if d < axis:
@@ -2680,13 +2849,36 @@ def stack[
             extents.append(2)
         else:
             extents.append(a.dim_at(d - 1))
+
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                row_major(_dyn_shape_from[rank + 1](extents)),
+                outer,
+                1,
+                1,
+                inner,
+            )
+    else:
+        _notice[gpu]("stack")
+
+    var a_values = a.to_host()
+    var b_values = b.to_host[A.dtype]()
+    var out = List[Scalar[dtype]](length=2 * outer * inner, fill=0)
+    for o in range(outer):
+        for i in range(inner):
+            out[(o * 2) * inner + i] = a_values[o * inner + i]
+            out[(o * 2 + 1) * inner + i] = b_values[o * inner + i]
+
     return Dynamic[dtype, rank + 1](
         a.context(), row_major(_dyn_shape_from[rank + 1](extents)), out^
     )
 
 
 def split[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](a: T, at: Int) raises -> Tuple[
     Dynamic[T.dtype, T.LayoutType.rank], Dynamic[T.dtype, T.LayoutType.rank]
 ] where (axis >= 0 and axis < T.LayoutType.rank):
@@ -2715,6 +2907,24 @@ def split[
     var inner = 1
     for d in range(axis + 1, rank):
         inner *= a.dim_at(d)
+
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var head_ext = List[Int](capacity=rank)
+            var tail_ext = List[Int](capacity=rank)
+            for d in range(rank):
+                head_ext.append(at if d == axis else a.dim_at(d))
+                tail_ext.append(length - at if d == axis else a.dim_at(d))
+            return (
+                _axis_gather["offset"](
+                    a, row_major(_dyn_shape_from[rank](head_ext)), axis, 0
+                ),
+                _axis_gather["offset"](
+                    a, row_major(_dyn_shape_from[rank](tail_ext)), axis, at
+                ),
+            )
+    else:
+        _notice[gpu]("split")
 
     var values = a.to_host()
     var head = List[Scalar[dtype]](length=outer * at * inner, fill=0)
@@ -2779,7 +2989,7 @@ def expand_dims[
 
 
 def roll[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](a: T, shift: Int) raises -> Tensor[T.dtype, T.LayoutType] where (
     axis >= 0 and axis < T.LayoutType.rank
 ):
@@ -2809,6 +3019,11 @@ def roll[
     var by = shift % length if length > 0 else 0
     if by < 0:
         by += length
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _axis_gather["roll"](a, a.tile().layout, axis, by)
+    else:
+        _notice[gpu]("roll")
 
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=len(values), fill=0)
@@ -2823,7 +3038,7 @@ def roll[
 
 
 def tile[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](a: T, *reps: Int) raises -> Dynamic[T.dtype, T.LayoutType.rank]:
     """`a` repeated `reps[d]` times along each axis `d`. `numpy.tile`.
 
@@ -2831,12 +3046,13 @@ def tile[
     `(4, 3)` that is `a` above `a` -- as against `repeat`, which repeats
     each element in place.
 
-    Routed to `nn.tile`, which is the ONNX `Tile` operator and agrees with
-    `numpy.tile` element for element (checked at the pin). Two limits come
-    from that kernel rather than from here: **rank 4 at most**, which it
-    asserts, and **host only**, since it takes no `target` and no
-    `DeviceContext`. One limit is numax's: `reps` must give one count per
-    axis, where `numpy.tile` prepends 1s for a shorter tuple.
+    On the host, routed to `nn.tile`, the ONNX `Tile` operator, which
+    agrees with `numpy.tile` element for element (checked at the pin) and
+    asserts **rank 4 at most**. It takes no `target` and no `DeviceContext`,
+    so `gpu=True` is numax's own gather, one launch per axis with a count
+    above 1, and has no rank limit. One limit is numax's on both paths:
+    `reps` must give one count per axis, where `numpy.tile` prepends 1s for
+    a shorter tuple.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -2862,6 +3078,23 @@ def tile[
     for d in range(rank):
         in_extents.append(a.dim_at(d))
 
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            # One axis at a time, since `nn.tile` has no device path; the
+            # first copy gives every step the same `Dynamic` type.
+            var cur = _same_order(
+                a, row_major(_dyn_shape_from[rank](in_extents))
+            )
+            for d in range(rank):
+                if reps[d] > 1:
+                    in_extents[d] *= reps[d]
+                    cur = _axis_gather["tile"](
+                        cur, row_major(_dyn_shape_from[rank](in_extents)), d, 0
+                    )
+            return cur^
+    else:
+        _notice[gpu]("tile")
+
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=count, fill=0)
     _nn_tile(
@@ -2875,7 +3108,7 @@ def tile[
 
 
 def repeat[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](a: T, count: Int) raises -> Dynamic[T.dtype, T.LayoutType.rank] where (
     axis >= 0 and axis < T.LayoutType.rank
 ):
@@ -2886,8 +3119,10 @@ def repeat[
     `[[1, 1, 2, 2, 3, 3], ...]`, where tiling it gives
     `[[1, 2, 3, 1, 2, 3], ...]`.
 
-    Routed to `nn.repeat_interleave`, which takes a `DeviceContext` and so
-    has a device path -- unlike `nn.tile`. `numpy.repeat`'s per-element
+    On the host, routed to `nn.repeat_interleave`. That kernel takes a
+    `DeviceContext` but builds its offset map in a host `List` and launches
+    on the CPU target, so it has no device path; `gpu=True` is numax's own
+    gather along `axis` instead. `numpy.repeat`'s per-element
     counts are not exposed: the kernel accepts them, but the result's
     extent is then a sum over a tensor the caller would also have to build,
     and no caller in numax needs it yet.
@@ -2905,6 +3140,13 @@ def repeat[
         in_extents.append(a.dim_at(d))
         extents.append(a.dim_at(d) * count if d == axis else a.dim_at(d))
         total *= extents[d]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _axis_gather["repeat"](
+                a, row_major(_dyn_shape_from[rank](extents)), axis, count
+            )
+    else:
+        _notice[gpu]("repeat")
 
     var values = a.to_host()
     var counts = List[Scalar[DType.int64]](
@@ -2980,12 +3222,21 @@ def meshgrid[
 
 def flip[
     T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
     T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
 ):
-    """A rank-1 tensor reversed. `numpy.flip` at `axis=0`."""
+    """A rank-1 tensor reversed. `numpy.flip` at `axis=0`. `gpu=True`
+    reverses a device tensor on its device."""
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _axis_gather["flip"](
+                a, Static[dtype, n]._static_layout(), 0, 0
+            )
+    else:
+        _notice[gpu]("flip")
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
