@@ -815,6 +815,9 @@ from test_tensor_linalg import (
     test_solve_triangular_transposed_solves_against_the_transpose as test_tensor_linalg__test_solve_triangular_transposed_solves_against_the_transpose,
 )
 from test_tensor_linalg import (
+    test_solve_triangular_trans_matrix_matches_the_explicit_transpose as test_tensor_linalg__test_solve_triangular_trans_matrix_matches_the_explicit_transpose,
+)
+from test_tensor_linalg import (
     test_solve_triangular_matrix_agrees_with_the_vector_overload as test_tensor_linalg__test_solve_triangular_matrix_agrees_with_the_vector_overload,
 )
 from test_tensor_linalg import (
@@ -1484,6 +1487,9 @@ def main() raises:
     ]()
     suite.test[
         test_tensor_linalg__test_solve_triangular_transposed_solves_against_the_transpose
+    ]()
+    suite.test[
+        test_tensor_linalg__test_solve_triangular_trans_matrix_matches_the_explicit_transpose
     ]()
     suite.test[
         test_tensor_linalg__test_solve_triangular_matrix_agrees_with_the_vector_overload

@@ -33,6 +33,9 @@ from test_linalg_gpu import (
 from test_linalg_gpu import (
     test_rq_on_the_device_matches_the_host as test_linalg_gpu__test_rq_on_the_device_matches_the_host,
 )
+from test_linalg_gpu import (
+    test_transposed_triangular_solves_on_the_device_match_the_host as test_linalg_gpu__test_transposed_triangular_solves_on_the_device_match_the_host,
+)
 from test_lu_plu_gpu import (
     test_lu_on_the_device_matches_the_host as test_lu_plu_gpu__test_lu_on_the_device_matches_the_host,
 )
@@ -86,6 +89,9 @@ def main() raises:
         test_linalg_gpu__test_the_extremal_norms_on_the_device_match_the_host
     ]()
     suite.test[test_linalg_gpu__test_rq_on_the_device_matches_the_host]()
+    suite.test[
+        test_linalg_gpu__test_transposed_triangular_solves_on_the_device_match_the_host
+    ]()
     # tests_gpu/linalg/test_lu_plu_gpu.mojo
     suite.test[test_lu_plu_gpu__test_lu_on_the_device_matches_the_host]()
     # tests_gpu/linalg/test_spectral_gpu.mojo

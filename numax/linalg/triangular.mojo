@@ -259,9 +259,11 @@ def solve_triangular[
         A: The `TensorLike` type of `a`, a square `n x n` floating-point
             matrix with static extents.
         B: The `TensorLike` type of `b`, a length-`n` vector of `A.dtype`.
-        upper: Read the upper triangle of `a` rather than the lower one.
+        upper: Read the upper triangle of `a` rather than the lower one --
+            the stored triangle, whatever `trans` says, as SciPy's `lower`.
         unit: Treat the diagonal of `a` as all ones without reading it.
-        trans: Solve against `a^T` instead of `a`, without transposing it.
+        trans: Solve against `a^T` instead of `a`, without transposing it;
+            a stored lower `L` then solves `L^T x = b`, an upper system.
         gpu: Run the blocked substitution on the tensors' device rather
             than the host.
         block: The width of the diagonal blocks.
@@ -278,8 +280,10 @@ def solve_triangular[
         If a device allocation, copy or kernel launch fails; a zero on the
         diagonal does not raise and yields non-finite entries instead.
     """
+    # `upper` names the stored triangle, as SciPy's `lower` does; the
+    # substitution below takes the triangle it solves, which `trans` flips.
     return _solve_triangular_vector[
-        upper=upper, unit=unit, trans=trans, gpu=gpu, block=block
+        upper=(upper != trans), unit=unit, trans=trans, gpu=gpu, block=block
     ](a, b)
 
 
@@ -348,9 +352,11 @@ def solve_triangular[
         A: The `TensorLike` type of `a`, a square `n x n` floating-point
             matrix with static extents.
         B: The `TensorLike` type of `b`, an `n x k` matrix of `A.dtype`.
-        upper: Read the upper triangle of `a` rather than the lower one.
+        upper: Read the upper triangle of `a` rather than the lower one --
+            the stored triangle, whatever `trans` says, as SciPy's `lower`.
         unit: Treat the diagonal of `a` as all ones without reading it.
-        trans: Solve against `a^T` instead of `a`, without transposing it.
+        trans: Solve against `a^T` instead of `a`, without transposing it;
+            a stored lower `L` then solves `L^T x = b`, an upper system.
         gpu: Run the blocked substitution on the tensors' device rather
             than the host.
         block: The width of the diagonal blocks.
@@ -367,8 +373,10 @@ def solve_triangular[
         If a device allocation, copy or kernel launch fails; a zero on the
         diagonal does not raise and yields non-finite entries instead.
     """
+    # `upper` names the stored triangle, as SciPy's `lower` does; the
+    # substitution below takes the triangle it solves, which `trans` flips.
     return _solve_triangular_matrix[
-        upper=upper, unit=unit, trans=trans, gpu=gpu, block=block
+        upper=(upper != trans), unit=unit, trans=trans, gpu=gpu, block=block
     ](a, b)
 
 

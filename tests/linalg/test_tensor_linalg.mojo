@@ -970,8 +970,9 @@ def test_solve_triangular_agrees_with_forward_substitution() raises:
 
 
 def test_solve_triangular_transposed_solves_against_the_transpose() raises:
-    """`trans=True` reads the stored lower triangle as an upper one, so the
-    answer must match solving against the transpose written out."""
+    """`trans=True` with the stored triangle lower (`upper=False`, SciPy's
+    `lower=True`) solves `L^T x = b`, so the answer must match solving
+    against the transpose written out."""
     var ctx = _cpu()
     var entries: List[Float64] = [
         2.0,
@@ -989,7 +990,7 @@ def test_solve_triangular_transposed_solves_against_the_transpose() raises:
     var a = Static[DType.float64, 3, 3](entries.copy(), ctx)
     var b = Static[DType.float64, 3](rhs.copy(), ctx)
     var got = solve_triangular[
-        upper=True, unit=False, trans=True, gpu=False, block=2
+        upper=False, unit=False, trans=True, gpu=False, block=2
     ](a, b).to_host()
 
     var transposed = array_zeros[P, 9]()
@@ -1000,6 +1001,48 @@ def test_solve_triangular_transposed_solves_against_the_transpose() raises:
 
     for i in range(3):
         assert_almost_equal(Float64(got[i]), Float64(want[i].v), atol=1e-12)
+
+
+def test_solve_triangular_trans_matrix_matches_the_explicit_transpose() raises:
+    """The matrix overload at `trans=True`, from either stored triangle,
+    against an upper (or lower) solve of the transpose written out; before
+    `upper` named the stored triangle, the lower case read the empty half."""
+    var ctx = _cpu()
+    var l = Static[DType.float64, 4, 4](
+        [
+            1.4,
+            0.0,
+            0.0,
+            0.0,
+            0.2,
+            1.2,
+            0.0,
+            0.0,
+            0.0,
+            0.17,
+            1.7,
+            0.0,
+            0.07,
+            -0.01,
+            0.23,
+            1.07,
+        ],
+        ctx,
+    )
+    var v = Static[DType.float64, 4, 2](
+        [1.0, 2.0, 0.0, 1.0, 3.0, 0.0, -1.0, 4.0], ctx
+    )
+    var got = solve_triangular[trans=True, block=2](l, v).to_host()
+    var want = solve_triangular[upper=True, block=2](transpose(l), v).to_host()
+    for i in range(8):
+        assert_almost_equal(got[i], want[i], atol=1e-14)
+    var u = transpose(l)
+    var got_u = solve_triangular[upper=True, trans=True, block=2](
+        u, v
+    ).to_host()
+    var want_u = solve_triangular[block=2](l, v).to_host()
+    for i in range(8):
+        assert_almost_equal(got_u[i], want_u[i], atol=1e-14)
 
 
 def test_solve_triangular_matrix_agrees_with_the_vector_overload() raises:

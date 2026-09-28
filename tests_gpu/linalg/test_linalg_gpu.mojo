@@ -16,6 +16,7 @@ from numax.linalg import (
     norm,
     rq,
     solve,
+    solve_triangular,
 )
 
 comptime f32 = DType.float32
@@ -105,6 +106,26 @@ def test_rq_on_the_device_matches_the_host() raises:
     var h = rq(_spd(cpu))
     _assert_close(d.r.to_host(), h.r.to_host(), atol=1e-2)
     _assert_close(d.q.to_host(), h.q.to_host(), atol=1e-4)
+
+
+def test_transposed_triangular_solves_on_the_device_match_the_host() raises:
+    """`solve_triangular[trans=True]` against the Cholesky factor, stored
+    lower, with a vector and a matrix right-hand side: `L^T x = b` on both
+    targets."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var dl = cholesky[gpu=True](_spd(gpu))
+    var hl = cholesky(_spd(cpu))
+    _assert_close(
+        solve_triangular[trans=True, gpu=True](dl, _rhs(gpu)).to_host(),
+        solve_triangular[trans=True](hl, _rhs(cpu)).to_host(),
+        1e-4,
+    )
+    _assert_close(
+        solve_triangular[trans=True, gpu=True](dl, _spd(gpu)).to_host(),
+        solve_triangular[trans=True](hl, _spd(cpu)).to_host(),
+        1e-3,
+    )
 
 
 def main() raises:
