@@ -1393,6 +1393,8 @@ struct Generator(Copyable):
         var lower = cholesky[gpu=gpu](cov)
         var upper = transpose[gpu=gpu](lower)
         var out = rebind_var[Static[dtype, count, d]](matmul[gpu=gpu](z, upper))
+        # The shift below reads the product from its own launch.
+        ctx.synchronize()
         var mp = mean.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
         var op = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
 
@@ -1407,6 +1409,9 @@ struct Generator(Copyable):
             shift, Coord(count * d), ctx
         )
         ctx.synchronize()
+        _ = z^
+        _ = upper^
+        _ = lower^
         return out^
 
     def negative_binomial[
