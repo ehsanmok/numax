@@ -188,7 +188,7 @@ from max.gpu import block_idx, global_idx, thread_idx
 from std.memory import stack_allocation
 
 from ._drive import _target, _width
-from .tensor import Static
+from .tensor import Static, Tensor
 from .numeric import FloatLike, max_of
 from .plain import Plain
 
@@ -1910,3 +1910,205 @@ def reduce_strided[
             xs_off += c * Int(xs.layout.stride[d]().value())
         total = combine(total, xs_ptr[unsafe_offset=xs_off])
     return total
+
+
+def _erased[
+    dtype: DType, LayoutType: TensorLayout
+](x: Tensor[dtype, LayoutType]) -> TileTensor[
+    dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+]:
+    """`x`'s tile at the erased `MutAnyOrigin` the tile forms of `map` take,
+    for an input `map` only reads or an output it writes through."""
+    var t = x.tile()
+    return TileTensor[
+        dtype, LayoutType, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ](
+        ptr=t.ptr.unsafe_mut_cast[True]()
+        .unsafe_origin_cast[MutAnyOrigin]()
+        .unsafe_bitcast[Scalar[dtype]](),
+        layout=rebind[LayoutType](t.layout),
+    )
+
+
+# `map` over `Tensor`s: the same walks without `tile()` at the call site.
+# The device path is one `elementwise` launch rather than a launch of the
+# tile form, which inside a generic function cannot be named unambiguously.
+# The dtype and layout are infer-only under private names, so a caller's
+# kernel reference such as `map[LayoutType=L, step=s, gpu=True]` still
+# binds exactly one (tile) overload.
+
+
+def map[
+    _dt: DType,
+    _Lt: TensorLayout,
+    //,
+    step: def[w: Int](SIMD[_dt, w]) thin -> SIMD[_dt, w],
+    width: Int = 1,
+    gpu: Bool = False,
+](xs: Tensor[_dt, _Lt], mut ys: Tensor[_dt, _Lt]) raises where (
+    TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].is_row_major
+):
+    """`ys[i] = step(xs[i])` over `Tensor`s, on the host at `width`, or at
+    `gpu=True` as one `elementwise` launch on the tensors' device, one
+    element per thread, the grid sized here. The tile overloads above are
+    the kernel-author form, for a caller writing its own launch; this one
+    reads the dtype and layout from the tensors' types."""
+    comptime if gpu:
+        var ctx = xs.context()
+        var n = xs.size()
+        var xs_flat = _erased(xs).coalesce()
+        var ys_flat = _erased(ys).coalesce()
+
+        @always_inline
+        def body[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var xs_flat, var ys_flat}:
+            ys_flat.store[1](coord, step[1](xs_flat.load[1](coord)))
+
+        elementwise[simd_width=1, target="gpu"](body, Coord(n), ctx)
+        ctx.synchronize()
+    else:
+        map[dtype=_dt, LayoutType=_Lt, step=step, width=width, gpu=False](
+            _erased(xs), _erased(ys)
+        )
+
+
+def map[
+    _dt: DType,
+    _Lt: TensorLayout,
+    //,
+    step: def[w: Int](SIMD[_dt, w], SIMD[_dt, w]) thin -> SIMD[_dt, w],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    lhs: Tensor[_dt, _Lt],
+    rhs: Tensor[_dt, _Lt],
+    mut out_tensor: Tensor[_dt, _Lt],
+) raises where (
+    TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].is_row_major
+):
+    """`out[i] = step(lhs[i], rhs[i])` over `Tensor`s, on the host at `width`, or at `gpu=True`
+    as one `elementwise` launch on the tensors' device. See the unary form."""
+    comptime if gpu:
+        var ctx = lhs.context()
+        var n = lhs.size()
+        var lhs_flat = _erased(lhs).coalesce()
+        var rhs_flat = _erased(rhs).coalesce()
+        var out_tensor_flat = _erased(out_tensor).coalesce()
+
+        @always_inline
+        def body[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var lhs_flat, var rhs_flat, var out_tensor_flat}:
+            out_tensor_flat.store[1](
+                coord, step[1](lhs_flat.load[1](coord), rhs_flat.load[1](coord))
+            )
+
+        elementwise[simd_width=1, target="gpu"](body, Coord(n), ctx)
+        ctx.synchronize()
+    else:
+        map[dtype=_dt, LayoutType=_Lt, step=step, width=width, gpu=False](
+            _erased(lhs), _erased(rhs), _erased(out_tensor)
+        )
+
+
+def map[
+    _dt: DType,
+    _Lt: TensorLayout,
+    //,
+    step: def[w: Int](SIMD[_dt, w], SIMD[_dt, 1]) thin -> SIMD[_dt, w],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    xs: Tensor[_dt, _Lt],
+    mut ys: Tensor[_dt, _Lt],
+    p0: Scalar[_dt],
+) raises where (
+    TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].is_row_major
+):
+    """`ys[i] = step(xs[i], p0)` over `Tensor`s, on the host at `width`, or at `gpu=True`
+    as one `elementwise` launch on the tensors' device. See the unary form."""
+    comptime if gpu:
+        var ctx = xs.context()
+        var n = xs.size()
+        var xs_flat = _erased(xs).coalesce()
+        var ys_flat = _erased(ys).coalesce()
+
+        @always_inline
+        def body[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var xs_flat, var ys_flat, var p0}:
+            ys_flat.store[1](
+                coord, step[1](xs_flat.load[1](coord), SIMD[_dt, 1](p0))
+            )
+
+        elementwise[simd_width=1, target="gpu"](body, Coord(n), ctx)
+        ctx.synchronize()
+    else:
+        map[dtype=_dt, LayoutType=_Lt, step=step, width=width, gpu=False](
+            _erased(xs), _erased(ys), p0
+        )
+
+
+def map[
+    _dt: DType,
+    _Lt: TensorLayout,
+    //,
+    step: def[w: Int](SIMD[_dt, w], SIMD[_dt, 1], SIMD[_dt, 1]) thin -> SIMD[
+        _dt, w
+    ],
+    width: Int = 1,
+    gpu: Bool = False,
+](
+    xs: Tensor[_dt, _Lt],
+    mut ys: Tensor[_dt, _Lt],
+    p0: Scalar[_dt],
+    p1: Scalar[_dt],
+) raises where (
+    TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].all_dims_known
+    and TileTensor[
+        _dt, _Lt, MutAnyOrigin, Engine=DefaultEngine[element_width=1]
+    ].is_row_major
+):
+    """`ys[i] = step(xs[i], p0, p1)` over `Tensor`s, on the host at `width`, or at `gpu=True`
+    as one `elementwise` launch on the tensors' device. See the unary form."""
+    comptime if gpu:
+        var ctx = xs.context()
+        var n = xs.size()
+        var xs_flat = _erased(xs).coalesce()
+        var ys_flat = _erased(ys).coalesce()
+
+        @always_inline
+        def body[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var xs_flat, var ys_flat, var p0, var p1}:
+            ys_flat.store[1](
+                coord,
+                step[1](
+                    xs_flat.load[1](coord), SIMD[_dt, 1](p0), SIMD[_dt, 1](p1)
+                ),
+            )
+
+        elementwise[simd_width=1, target="gpu"](body, Coord(n), ctx)
+        ctx.synchronize()
+    else:
+        map[dtype=_dt, LayoutType=_Lt, step=step, width=width, gpu=False](
+            _erased(xs), _erased(ys), p0, p1
+        )

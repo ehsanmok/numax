@@ -8,8 +8,8 @@ parallelizes the obvious way -- one thread, one trajectory, integrated to
 completion independently.
 
 The same `step` function runs on both paths here. Storage is a `Tensor` on
-either device, and `.tile()` is what the kernel takes: the CPU version walks
-that view at native SIMD width, so each vector lane is a separate
+either device, and the tensors are what the walk takes: the CPU version walks
+them at native SIMD width, so each vector lane is a separate
 trajectory; the GPU version launches one thread per element. Neither needed
 anything written twice, and the two agree to within float32 rounding.
 
@@ -88,21 +88,21 @@ def main() raises:
             step=trajectory_step,
             gpu=True,
         ]
-    ](y0.tile(), yt.tile(), grid_dim=num_blocks, block_dim=block_size)
+    ](y0, yt, grid_dim=num_blocks, block_dim=block_size)
     ctx.enqueue_function[
         map[
             LayoutType=Ensemble.LayoutType,
             step=sensitivity_step,
             gpu=True,
         ]
-    ](y0.tile(), dydy0.tile(), grid_dim=num_blocks, block_dim=block_size)
+    ](y0, dydy0, grid_dim=num_blocks, block_dim=block_size)
     ctx.synchronize()
 
     # The same kernel on CPU, at native SIMD width.
     var cpu = DeviceContext(api="cpu")
     var cpu_in = Ensemble(host_y0.copy(), cpu)
     var cpu_out = Ensemble(cpu)
-    map[step=trajectory_step](cpu_in.tile(), cpu_out.tile())
+    map[step=trajectory_step](cpu_in, cpu_out)
 
     var gpu_yt = yt.to_host()
     var gpu_s = dydy0.to_host()

@@ -598,6 +598,9 @@ from test_functional import (
 from test_functional import (
     test_map_with_scalars_coalesces_a_multidimensional_tensor as test_functional__test_map_with_scalars_coalesces_a_multidimensional_tensor,
 )
+from test_functional import (
+    test_the_tensor_spellings_of_map_agree_with_the_tile_ones as test_functional__test_the_tensor_spellings_of_map_agree_with_the_tile_ones,
+)
 from test_functional_reduce import (
     test_reduce_sums_a_1d_tensor as test_functional_reduce__test_reduce_sums_a_1d_tensor,
 )
@@ -1826,6 +1829,9 @@ def main() raises:
     ]()
     suite.test[
         test_functional__test_map_with_scalars_coalesces_a_multidimensional_tensor
+    ]()
+    suite.test[
+        test_functional__test_the_tensor_spellings_of_map_agree_with_the_tile_ones
     ]()
     # tests/core/test_functional_reduce.mojo
     suite.test[test_functional_reduce__test_reduce_sums_a_1d_tensor]()

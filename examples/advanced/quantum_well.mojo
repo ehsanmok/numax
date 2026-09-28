@@ -146,19 +146,19 @@ def main() raises:
 
     comptime Layout = Sweep.LayoutType
     gpu.enqueue_function[map[LayoutType=Layout, step=energy_step, gpu=True]](
-        device_ws.tile(), device_es.tile(), grid_dim=4, block_dim=64
+        device_ws, device_es, grid_dim=4, block_dim=64
     )
     gpu.enqueue_function[
         map[LayoutType=Layout, step=sensitivity_step, gpu=True]
-    ](device_ws.tile(), device_slopes.tile(), grid_dim=4, block_dim=64)
+    ](device_ws, device_slopes, grid_dim=4, block_dim=64)
     gpu.enqueue_function[map[LayoutType=Layout, step=inversion_step, gpu=True]](
-        device_guesses.tile(), device_roots.tile(), grid_dim=4, block_dim=64
+        device_guesses, device_roots, grid_dim=4, block_dim=64
     )
     gpu.synchronize()
 
-    map[step=energy_step](host_ws.tile(), host_es.tile())
-    map[step=sensitivity_step](host_ws.tile(), host_slopes.tile())
-    map[step=inversion_step](host_guesses.tile(), host_roots.tile())
+    map[step=energy_step](host_ws, host_es)
+    map[step=sensitivity_step](host_ws, host_slopes)
+    map[step=inversion_step](host_guesses, host_roots)
 
     var gpu_es = device_es.to_host()
     var gpu_slopes = device_slopes.to_host()

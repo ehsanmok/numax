@@ -468,5 +468,39 @@ def test_map_with_scalars_coalesces_a_multidimensional_tensor() raises:
             assert_almost_equal(out[r, c], (xs[r, c] - 0.5) / 2.0, atol=1e-6)
 
 
+def test_the_tensor_spellings_of_map_agree_with_the_tile_ones() raises:
+    """`map` over `Tensor`s -- unary, binary and with one or two scalars --
+    writes what the tile forms write, at a size that leaves a tail."""
+    from numax.core.tensor import Static
+
+    comptime m = n + 3
+    var values = List[Scalar[dtype]](capacity=m)
+    var other = List[Scalar[dtype]](capacity=m)
+    for i in range(m):
+        values.append(Scalar[dtype](i) * 0.25 - 1.0)
+        other.append(Scalar[dtype](i) * -0.5 + 2.0)
+    var xs = Static[dtype, m](values.copy())
+    var zs = Static[dtype, m](other.copy())
+    var a = Static[dtype, m]()
+    map[width=width, step=gaussian_step](xs, a)
+    var b = Static[dtype, m]()
+    map[width=width, step=add_step[dtype, _]](xs, zs, b)
+    var c = Static[dtype, m]()
+    map[width=width, step=_scaled](xs, c, Scalar[dtype](3.0))
+    var d = Static[dtype, m]()
+    map[width=width, step=_standardize](
+        xs, d, Scalar[dtype](0.5), Scalar[dtype](2.0)
+    )
+    var ga = a.to_host()
+    var gb = b.to_host()
+    var gc = c.to_host()
+    var gd = d.to_host()
+    for i in range(m):
+        assert_almost_equal(ga[i], gaussian(Plain[dtype](values[i])).v)
+        assert_almost_equal(gb[i], values[i] + other[i])
+        assert_almost_equal(gc[i], values[i] * 3.0)
+        assert_almost_equal(gd[i], (values[i] - 0.5) / 2.0)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

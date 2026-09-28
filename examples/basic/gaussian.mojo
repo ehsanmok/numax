@@ -11,10 +11,10 @@ plain `float32` SIMD, the value plus its derivative (`Dual`), and the value
 carried to roughly double precision (`Compensated`).
 
 The 4096 points live in a `Tensor`, which owns its storage. The walk is
-`numax.core.functional.map`, and what it takes is `.tile()`: the `TileTensor`
-MAX kernels speak, here driven at the CPU's native SIMD width with a scalar
-tail for whatever doesn't divide evenly. `examples/gaussian_gpu.mojo` hands
-the same view to the same `map` on a GPU.
+`numax.core.functional.map` over two tensors, here driven at the CPU's
+native SIMD width with a scalar tail for whatever doesn't divide evenly.
+`examples/gaussian_gpu.mojo` hands the same tensors to the same `map` on a
+GPU.
 """
 
 from std.math import exp
@@ -61,18 +61,14 @@ def main() raises:
     var precise_errors = zeros[dtype, n]()
 
     # 1. Plain SIMD, at the CPU's native width.
-    map[width=width, step=gaussian_step](xs.tile(), ys.tile())
+    map[width=width, step=gaussian_step](xs, ys)
 
     # 2. The same function, differentiated.
-    map[width=width, step=gaussian_deriv_step](xs.tile(), dydx.tile())
+    map[width=width, step=gaussian_deriv_step](xs, dydx)
 
     # 3. The same function again, at extra precision.
-    map[width=width, step=gaussian_compensated_value_step](
-        xs.tile(), precise_values.tile()
-    )
-    map[width=width, step=gaussian_compensated_error_step](
-        xs.tile(), precise_errors.tile()
-    )
+    map[width=width, step=gaussian_compensated_value_step](xs, precise_values)
+    map[width=width, step=gaussian_compensated_error_step](xs, precise_errors)
 
     for idx in [0, n // 4, n // 2, n - 1]:
         var x0 = Float64(xs[idx])

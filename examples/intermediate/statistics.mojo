@@ -42,12 +42,11 @@ def main() raises:
     var ctx = DeviceContext(api="cpu")
     print("--- Plain-only, over Tensor ---")
     var xs = full[dtype, 6](0, ctx=ctx)
-    var v = xs.tile()
     var vals = [3.0, 1.0, 9.0, 2.0, 7.0, 2.0]
     for i in range(6):
-        v[i] = Scalar[dtype](vals[i])
+        xs[i] = Scalar[dtype](vals[i])
 
-    print("xs:", v[0], v[1], v[2], v[3], v[4], v[5])
+    print("xs:", xs[0], xs[1], xs[2], xs[3], xs[4], xs[5])
     print("sum:", sum(xs))
     print("prod:", prod(xs))
     print("min:", min(xs))

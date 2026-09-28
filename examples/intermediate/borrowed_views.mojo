@@ -34,16 +34,16 @@ def largest_row_mean[
 ):
     """The largest row mean of a matrix, written once for any conformer.
 
-    `dim[T, i]` is the compile-time extent, `a.tile()` the tile; on a
-    `Tensor` the tile borrows the tensor, on a `TensorView` it is the borrowed
-    tile itself.
+    `dim[T, i]` is the compile-time extent and `to_host` reads either
+    conformer's elements in row-major order -- a `TensorView` of a strided
+    block included.
     """
-    var v = a.tile()
+    var v = a.to_host()
     var best = Float64(0)
     for r in range(dim[T, 0]):
         var acc = Float64(0)
         for c in range(dim[T, 1]):
-            acc += Float64(v[Coord(r, c)])
+            acc += Float64(v[r * dim[T, 1] + c])
         var row_mean = acc / Float64(dim[T, 1])
         if r == 0 or row_mean > best:
             best = row_mean
@@ -82,7 +82,8 @@ def main() raises:
     var row1 = m[1:2]
     print("--- stats on one row of a 3x4, through a TensorView ---")
     print("sum(row 1):", sum(row1), " mean(row 1):", mean(row1))
-    print("exp(row 1):", exp(TensorView(m.tile())).to_host()[4])
+    var whole = m.block[3, 4](0, 0)
+    print("exp(row 1):", exp(whole).to_host()[4])
 
     # 4. Writing through a TensorView lands in the parent.
     var corner = big.block[2, 2](1, 1)
@@ -92,4 +93,4 @@ def main() raises:
 
     # 5. One generic routine, both conformers.
     print("--- largest row mean: Tensor", largest_row_mean(m), end="")
-    print(", TensorView", largest_row_mean(TensorView(m.tile())))
+    print(", TensorView", largest_row_mean(whole))

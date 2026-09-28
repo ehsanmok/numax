@@ -47,20 +47,19 @@ def main() raises:
     print("full[3](7, ctx=ctx):", f[0], f[1], f[2])
 
     var identity = eye[3, dtype](ctx)
-    var iv = identity.tile()
     print(
         "eye[3]: [",
-        iv[0, 0],
-        iv[0, 1],
-        iv[0, 2],
+        identity[0, 0],
+        identity[0, 1],
+        identity[0, 2],
         "] [",
-        iv[1, 0],
-        iv[1, 1],
-        iv[1, 2],
+        identity[1, 0],
+        identity[1, 1],
+        identity[1, 2],
         "] [",
-        iv[2, 0],
-        iv[2, 1],
-        iv[2, 2],
+        identity[2, 0],
+        identity[2, 1],
+        identity[2, 2],
         "]",
     )
 
@@ -69,52 +68,48 @@ def main() raises:
 
     print("--- manipulation ---")
     var m = full[dtype, 2, 3](0, ctx=ctx)
-    var mv = m.tile()
     var counter: Scalar[dtype] = 0
     for r in range(2):
         for c in range(3):
-            mv[r, c] = counter
+            m[r, c] = counter
             counter += 1
     print(
         "m (2x3): [",
-        mv[0, 0],
-        mv[0, 1],
-        mv[0, 2],
+        m[0, 0],
+        m[0, 1],
+        m[0, 2],
         "] [",
-        mv[1, 0],
-        mv[1, 1],
-        mv[1, 2],
+        m[1, 0],
+        m[1, 1],
+        m[1, 2],
         "]",
     )
 
     var mt = transpose(m)
-    var mtv = mt.tile()
     print(
         "transpose(m) (3x2): [",
-        mtv[0, 0],
-        mtv[0, 1],
+        mt[0, 0],
+        mt[0, 1],
         "] [",
-        mtv[1, 0],
-        mtv[1, 1],
+        mt[1, 0],
+        mt[1, 1],
         "] [",
-        mtv[2, 0],
-        mtv[2, 1],
+        mt[2, 0],
+        mt[2, 1],
         "]",
     )
 
     var row = full[dtype, 1, 4](0, ctx=ctx)
-    var rv = row.tile()
     for i in range(4):
-        rv[0, i] = Scalar[dtype](i)
+        row[0, i] = Scalar[dtype](i)
     var sq = squeeze(row)
     print("squeeze((1, 4)):", sq[0], sq[1], sq[2], sq[3])
 
     var a = linspace[3, dtype](0, 2, ctx=ctx)
     var b = linspace[3, dtype](10, 12, ctx=ctx)
     var st = stack(a, b)
-    var sv = st.tile()
-    print("stack(a, b) row 0:", sv[0, 0], sv[0, 1], sv[0, 2])
-    print("stack(a, b) row 1:", sv[1, 0], sv[1, 1], sv[1, 2])
+    print("stack(a, b) row 0:", st[0, 0], st[0, 1], st[0, 2])
+    print("stack(a, b) row 1:", st[1, 0], st[1, 1], st[1, 2])
 
     # Shape manipulation: arange_n -> reshape -> ravel round-trips, and
     # concatenate/split are inverses of each other.
@@ -122,16 +117,15 @@ def main() raises:
     print("arange_n(6):", r[0], r[1], r[2], r[3], r[4], r[5])
 
     var grid = reshape[rows=2, cols=3](r)
-    var gv = grid.tile()
     print(
         "reshape(6 -> 2x3): [",
-        gv[0, 0],
-        gv[0, 1],
-        gv[0, 2],
+        grid[0, 0],
+        grid[0, 1],
+        grid[0, 2],
         "] [",
-        gv[1, 0],
-        gv[1, 1],
-        gv[1, 2],
+        grid[1, 0],
+        grid[1, 1],
+        grid[1, 2],
         "]",
     )
 

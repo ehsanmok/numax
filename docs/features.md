@@ -118,7 +118,7 @@ on the device. There is no second owning tensor type — both are `TileTensor`.
 
 | Surface | Where |
 |---|---|
-| `map[step, width, gpu]` — walk one tensor into another at native SIMD width; `gpu=True` is the same source launched per element | [`gaussian.mojo`](../examples/basic/gaussian.mojo), [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo) |
+| `map[step, width, gpu]` — walk one tensor into another at native SIMD width; `gpu=True` is the same source launched per element. Over tiles it is the kernel a caller launches with `enqueue_function`; over `Static` tensors (unary, binary, and with one or two scalars) it is the whole call, `map[step=s, gpu=True](xs, ys)`, the launch sized in numax | [`gaussian.mojo`](../examples/basic/gaussian.mojo), [`gaussian_gpu.mojo`](../examples/advanced/gaussian_gpu.mojo) |
 | `map_to`, `zip_to` — write into a caller-supplied output, and elementwise combine of two inputs | [`test_functional.mojo`](../tests/core/test_functional.mojo) |
 | `map_threaded` — the same `step` spread across cores via `max.algorithm.elementwise` | [`bench_elementwise.mojo`](../bench/bench_elementwise.mojo) |
 | `map_blocks[k_in, k_out, batch, step, gpu]` — over two tiles and a context, or over two `Static` tensors with the device read from the input (`map_blocks[step=solve, gpu=True](problems, answers)`) — one *small problem* per lane rather than one scalar: `step` takes a lane's whole block as an `Array` of raw `SIMD` and returns its whole answer, so an `Array`-tier factorization runs inside the thread. Structure-of-arrays `(k, batch)`; an AoS caller `transpose`s once | [`batched_solve.mojo`](../examples/advanced/batched_solve.mojo), [`test_map_blocks.mojo`](../tests/core/test_map_blocks.mojo) |

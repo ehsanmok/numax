@@ -68,7 +68,7 @@ def main() raises:
 
     comptime Ensemble = Static[dtype, n]
     var yt_cpu = Ensemble(cpu)
-    map[step=trajectory_step](y0_cpu.tile(), yt_cpu.tile())
+    map[step=trajectory_step](y0_cpu, yt_cpu)
 
     print("CPU ensemble:", n, "trajectories, initial conditions ~ U(-2, 2)")
     print("  sample mean of y0:  ", sample_mean(y0_cpu.to_host()))
@@ -87,7 +87,7 @@ def main() raises:
     comptime num_blocks = (n + block_size - 1) // block_size
     ctx.enqueue_function[
         map[LayoutType=Ensemble.LayoutType, step=trajectory_step, gpu=True]
-    ](y0_gpu.tile(), yt_gpu.tile(), grid_dim=num_blocks, block_dim=block_size)
+    ](y0_gpu, yt_gpu, grid_dim=num_blocks, block_dim=block_size)
     ctx.synchronize()
 
     var y0_gpu_host = y0_gpu.to_host()

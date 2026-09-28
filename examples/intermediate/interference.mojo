@@ -80,10 +80,7 @@ def main() raises:
     var grid = meshgrid(axis_x, axis_y)
 
     var field = Static[dtype, rows, cols](ctx)
-    var xs = grid[0].tile()
-    var ys = grid[1].tile()
-    var out = field.tile()
-    map[step=two_source_field[dtype, _], width=4](xs, ys, out)
+    map[step=two_source_field[dtype, _], width=4](grid[0], grid[1], field)
 
     var values = field.to_host()
     var axis = axis_y.to_host()
