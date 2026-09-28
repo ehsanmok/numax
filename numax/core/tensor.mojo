@@ -128,10 +128,9 @@ reordering ones take `gpu: Bool = False` like the rest of numax, and at
 `gpu=True` are one gather launch each: `transpose`, `tril`, `triu`,
 constant-mode `pad`, `roll`, `flip`, `repeat`, `tile`, `slice`, and every
 join and split (`concatenate`, `stack`, `split`, `array_split`, `vstack`,
-`hstack`, `dstack` and the `_dyn` forms). A residency mismatch prints
+`hstack`, `dstack` and the `_dyn` forms), `broadcast_to`, the `diag`
+family, `vander` and `meshgrid`. A residency mismatch prints
 the one-line `stderr` notice and takes the host walk.
-# ponytail: `broadcast_to`, the `diag` family, `vander` and `meshgrid`
-# still walk a host copy on a GPU tensor; each is a gather still to write.
 """
 
 from std.collections import Array
@@ -1102,6 +1101,91 @@ def _join2[
             dst.store[1](
                 coord, bp[unsafe_offset=(o * b_len + t - a_len) * inner + i]
             )
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def _flat_map[
+    T: TensorLike, L: TensorLayout, //, kind: StaticString
+](a: T, layout: L, arg: Int) raises -> Tensor[T.dtype, L]:
+    """A device map from `a`'s flat elements to a result laid out as
+    `layout`, for the routines whose index rule is not an axis gather.
+
+    Per result element `f`: `"diag"` writes `a[f // arg]` on the diagonal
+    of an `arg x arg` matrix and `0` off it; `"diagonal"` reads
+    `a[f * (arg + 1)]`; `"vander"` writes `a[r] ** (arg - 1 - c)` at row
+    `r`, column `c` of an `arg`-column matrix, the power built by repeated
+    multiplication as the host walk does. One `elementwise` launch; `a`
+    contiguous and on a GPU context.
+    """
+    var ctx = a.context()
+    var result = Tensor[T.dtype, L]._uninitialized(ctx, layout)
+    var total = layout.size()
+    if total == 0:
+        return result^
+    var src = _flat_unchecked(a)
+    var dst = _flat_out(result)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var src, var dst, var arg}:
+        var f = coord_to_index_list(coord)[0]
+        var value = Scalar[T.dtype](0)
+        comptime if kind == "diag":
+            if f // arg == f % arg:
+                value = src[Coord(f // arg)][0]
+        elif kind == "diagonal":
+            value = src[Coord(f * (arg + 1))][0]
+        else:
+            var x = src[Coord(f // arg)][0]
+            value = Scalar[T.dtype](1)
+            for _ in range(arg - 1 - f % arg):
+                value = value * x
+        dst.store[1](coord, value)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def _broadcast_gather[
+    rank: Int, T: TensorLike
+](a: T, extents: List[Int], strides: List[Int]) raises -> Dynamic[
+    T.dtype, rank
+]:
+    """`broadcast_to`'s device path: one thread per result element, which
+    reads `a` at the stretched `strides` (zero on a broadcast axis). The
+    strides are `a`'s own, so a strided view needs no copy first."""
+    var ctx = a.context()
+    var ext = IndexList[rank]()
+    var st = IndexList[rank]()
+    var total = 1
+    for d in range(rank):
+        ext[d] = extents[d]
+        st[d] = strides[d]
+        total *= extents[d]
+    var result = Dynamic[T.dtype, rank]._uninitialized(
+        ctx, row_major(_dyn_shape_from[rank](extents))
+    )
+    if total == 0:
+        return result^
+    var sp = a.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var dst = _flat_out(result)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var sp, var dst, var ext, var st}:
+        var rem = coord_to_index_list(coord)[0]
+        var src = 0
+        comptime for k in range(rank):
+            comptime d = rank - 1 - k
+            src += (rem % ext[d]) * st[d]
+            rem //= ext[d]
+        dst.store[1](coord, sp[unsafe_offset=src])
 
     elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
     ctx.synchronize()
@@ -2101,7 +2185,9 @@ def _stretch_strides(
 
 
 def broadcast_to[
-    T: TensorLike, rank: Int
+    T: TensorLike,
+    rank: Int,
+    gpu: Bool = False,
 ](a: T, *extents: Int) raises -> Dynamic[T.dtype, rank]:
     """`a` stretched to the given shape, following NumPy's rules.
 
@@ -2151,6 +2237,11 @@ def broadcast_to[
             )
 
     var src_strides = _stretch_strides(src_extents, _strides_of(a), rank)
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _broadcast_gather[rank](a, target, src_strides)
+    else:
+        _notice[gpu]("broadcast_to")
     var values = a.to_host()
     var out = List[Scalar[dtype]](capacity=count)
     for flat in range(count):
@@ -2456,6 +2547,7 @@ def identity[
 
 def diag[
     T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 0]] where (
     T.LayoutType.rank == 1 and T.LayoutType.all_dims_known
 ):
@@ -2465,6 +2557,11 @@ def diag[
     """
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _flat_map["diag"](a, Static[dtype, n, n]._static_layout(), n)
+    else:
+        _notice[gpu]("diag")
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     var source = a.to_host()
     for i in range(n):
@@ -2474,6 +2571,7 @@ def diag[
 
 def diagonal[
     T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0]] where (
     T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
@@ -2482,6 +2580,13 @@ def diagonal[
     """The main diagonal of a square matrix. `numpy.diagonal`."""
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _flat_map["diagonal"](
+                a, Static[dtype, n]._static_layout(), n
+            )
+    else:
+        _notice[gpu]("diagonal")
     var source = a.to_host()
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
@@ -2490,7 +2595,8 @@ def diagonal[
 
 
 def diagflat[
-    T: TensorLike
+    T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Static[
     T.dtype, T.LayoutType.static_product, T.LayoutType.static_product
 ] where T.LayoutType.all_dims_known:
@@ -2502,6 +2608,11 @@ def diagflat[
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime n = LayoutType.static_product
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _flat_map["diag"](a, Static[dtype, n, n]._static_layout(), n)
+    else:
+        _notice[gpu]("diagflat")
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
@@ -2510,11 +2621,20 @@ def diagflat[
 
 
 def diagflat[
-    T: TensorLike
+    T: TensorLike,
+    gpu: Bool = False,
 ](a: T) raises -> Dynamic[T.dtype, 2] where not T.LayoutType.all_dims_known:
     """`a` flattened onto the diagonal of a square matrix, for a run-time
     shape. `numpy.diagflat`."""
     comptime dtype = T.dtype
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var size = a.size()
+            return _flat_map["diag"](
+                a, row_major(_dyn_shape[2](size, size)), size
+            )
+    else:
+        _notice[gpu]("diagflat")
     var source = a.to_host()
     var n = len(source)
     var values = List[Scalar[dtype]](length=n * n, fill=0)
@@ -3247,6 +3367,7 @@ def repeat[
 def vander[
     T: TensorLike,
     cols: Int,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], cols] where (
     T.dtype.is_floating_point()
     and T.LayoutType.rank == 1
@@ -3256,6 +3377,13 @@ def vander[
     `numpy.vander` with its default `increasing=False`."""
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _flat_map["vander"](
+                a, Static[dtype, n, cols]._static_layout(), cols
+            )
+    else:
+        _notice[gpu]("vander")
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=n * cols, fill=0)
     for r in range(n):
@@ -3269,6 +3397,7 @@ def vander[
 def meshgrid[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](x: A, y: B) raises -> Tuple[
     Static[A.dtype, dim[B, 0], dim[A, 0]], Static[A.dtype, dim[B, 0], dim[A, 0]]
 ] where (
@@ -3283,6 +3412,22 @@ def meshgrid[
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
     comptime m = dim[B, 0]
+    if _check_device[A, gpu](x) and _check_device[B, gpu](y):
+        comptime if gpu:
+            # `xx[r, c] = x[c]` tiles `x`; `yy[r, c] = y[r]` repeats `y`.
+            return (
+                _axis_gather["tile"](
+                    x, Static[dtype, m, n]._static_layout(), 0, 0
+                ),
+                _axis_gather["repeat"](
+                    _canonical[m, dtype=A.dtype](y),
+                    Static[dtype, m, n]._static_layout(),
+                    0,
+                    n,
+                ),
+            )
+    else:
+        _notice[gpu]("meshgrid")
     var xs = x.to_host()
     var ys = y.to_host[A.dtype]()
     var xx = List[Scalar[dtype]](length=m * n, fill=0)
