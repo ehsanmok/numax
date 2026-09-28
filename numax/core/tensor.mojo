@@ -317,8 +317,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     comptime rank = Self.LayoutType.rank
     comptime num_elements = Self.LayoutType.static_product
 
-    var buffer: DeviceBuffer[Self.dtype]
-    var layout: Self.LayoutType
+    var _buffer: DeviceBuffer[Self.dtype]
+    var _layout: Self.LayoutType
     var host_addressable: Bool
     """Whether this tensor's storage can be read through a plain host
     pointer -- true on a CPU context, false on a discrete GPU.
@@ -395,10 +395,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         (caught by `tests/core/test_tensor.mojo`'s zero-content check).
         """
         var device = ctx.value() if ctx else DeviceContext(api="cpu")
-        self.layout = layout
-        self.buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
+        self._layout = layout
+        self._buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
         self.host_addressable = device.api() == "cpu"
-        device.enqueue_memset(self.buffer, Scalar[Self.dtype](0))
+        device.enqueue_memset(self._buffer, Scalar[Self.dtype](0))
         device.synchronize()
 
     @staticmethod
@@ -464,10 +464,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
                 " elements",
             )
         var device = ctx.value() if ctx else DeviceContext(api="cpu")
-        self.layout = layout
-        self.buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
+        self._layout = layout
+        self._buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
         self.host_addressable = device.api() == "cpu"
-        with self.buffer.map_to_host() as host:
+        with self._buffer.map_to_host() as host:
             for i in range(layout.size()):
                 host[i] = values[i]
 
@@ -489,8 +489,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         Unchecked: both callers have already established that
         `layout.size()` matches the buffer.
         """
-        self.buffer = buffer^
-        self.layout = layout
+        self._buffer = buffer^
+        self._layout = layout
         self.host_addressable = host_addressable
 
     def context(self) raises -> DeviceContext:
@@ -499,7 +499,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         What the derived manipulations use to allocate their result next to
         their input rather than on a device the caller has to name again.
         """
-        return self.buffer.context()
+        return self._buffer.context()
 
     def on_host(self) -> Bool:
         """`host_addressable`, as the `TensorLike` method."""
@@ -512,11 +512,11 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `num_elements` alias is the comptime answer and is only meaningful
         when `LayoutType.all_dims_known`.
         """
-        return self.layout.size()
+        return self._layout.size()
 
     def dim[i: Int](self) -> Int:
         """The extent of axis `i`."""
-        return Int(self.layout.shape[i]().value())
+        return Int(self._layout.shape[i]().value())
 
     def dim_at(self, axis: Int) -> Int:
         """The extent of `axis`, chosen at run time.
@@ -542,7 +542,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         var stride = 0
         comptime for i in range(Self.rank):
             if i == axis:
-                stride = Int(self.layout.stride[i]().value())
+                stride = Int(self._layout.stride[i]().value())
         return stride
 
     def tile(
@@ -566,10 +566,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `TensorLike.view` promises.
         """
         return TileTensor[Self.dtype, Self.LayoutType, origin_of(self)](
-            ptr=self.buffer.unsafe_ptr()
+            ptr=self._buffer.unsafe_ptr()
             .unsafe_mut_cast[origin_of(self).mut]()
             .unsafe_origin_cast[origin_of(self)](),
-            layout=self.layout,
+            layout=self._layout,
         )
 
     # ------------------------------------------------------------------ #
@@ -589,10 +589,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         self, mut encoder: Some[DeviceTypeEncoder], target: MutOpaquePointer[_]
     ):
         var v = Self.device_type(
-            ptr=self.buffer.unsafe_ptr()
+            ptr=self._buffer.unsafe_ptr()
             .unsafe_mut_cast[True]()
             .unsafe_origin_cast[MutAnyOrigin](),
-            layout=self.layout,
+            layout=self._layout,
         )
         v._to_device_type(encoder, target)
 
@@ -655,7 +655,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         for d in range(Self.rank):
             extents.append(self.dim_at(d))
         return Dynamic[Self.dtype, Self.rank](
-            self.buffer,
+            self._buffer,
             row_major(_dyn_shape_from[Self.rank](extents)),
             self.host_addressable,
         )
@@ -689,7 +689,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
                     dims[i],
                 )
         return Static[Self.dtype, *dims](
-            self.buffer,
+            self._buffer,
             rebind[_LayoutOf[*dims]](row_major[*dims]()),
             self.host_addressable,
         )
@@ -705,7 +705,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         var n = self.size()
         var out = List[Scalar[dtype]](capacity=n)
-        with self.buffer.map_to_host() as host:
+        with self._buffer.map_to_host() as host:
             for i in range(n):
                 out.append(host[i].cast[dtype]())
         return out^
@@ -723,8 +723,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """
         self._check_flat(i)
         if self.host_addressable:
-            return self.buffer.unsafe_ptr()[unsafe_offset=i]
-        with self.buffer.map_to_host() as host:
+            return self._buffer.unsafe_ptr()[unsafe_offset=i]
+        with self._buffer.map_to_host() as host:
             return host[i]
 
     def __getitem__(self, r: Int, c: Int) raises -> Scalar[Self.dtype]:
@@ -947,9 +947,9 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         path.
         """
         if self.host_addressable:
-            self.buffer.unsafe_ptr()[unsafe_offset=i] = value
+            self._buffer.unsafe_ptr()[unsafe_offset=i] = value
             return
-        with self.buffer.map_to_host() as host:
+        with self._buffer.map_to_host() as host:
             host[i] = value
 
     def format(
@@ -1581,7 +1581,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
                 n,
                 " elements",
             )
-        with self.buffer.map_to_host() as host:
+        with self._buffer.map_to_host() as host:
             for i in range(n):
                 host[i] = values[i]
 
@@ -1775,7 +1775,7 @@ def _same_order[
         # about without naming an architecture; there it raises as before.
         comptime if has_accelerator() and T.dtype != DType.float64:
             var src = a.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
-            var dst = result.buffer.unsafe_ptr()
+            var dst = result._buffer.unsafe_ptr()
             var total = a.size()
 
             @always_inline
@@ -1801,7 +1801,7 @@ def _same_order[
         a.size(),
         owning=False,
     )
-    ctx.enqueue_copy(result.buffer, source)
+    ctx.enqueue_copy(result._buffer, source)
     ctx.synchronize()
     return result^
 
@@ -2136,7 +2136,7 @@ def _filled[
     staging a host write -- the same reason `zeros` is cheap on both paths.
     """
     var device = result.context()
-    device.enqueue_memset(result.buffer, fill_value)
+    device.enqueue_memset(result._buffer, fill_value)
     device.synchronize()
     return result^
 
@@ -3294,7 +3294,7 @@ def concatenate[
     reason is specific: `nn.concat` takes its inputs as a `StaticTuple`, so
     every input must share one layout *type* **and** one origin. `[n]` and
     `[m]` are different comptime layout types, and runtime-shaped views over
-    the two buffers still carry different origins (`origin_of(a.buffer)` vs
+    the two buffers still carry different origins (`origin_of(a._buffer)` vs
     `origin_of(b.buffer)`), which only an unsafe origin cast erases. Two
     buffers, one memcpy each, is not worth that.
     """
@@ -3753,7 +3753,7 @@ def _pad_into[
     comptime if gpu:
         var ctx = src.context()
         _max_pad_constant_gpu(
-            dst.buffer.unsafe_ptr(),
+            dst._buffer.unsafe_ptr(),
             dst_shape,
             src.tile().ptr.unsafe_origin_cast[MutAnyOrigin](),
             src_shape,

@@ -214,7 +214,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
 
     def work() raises {mut a, mut b}:
         var c = matmul(a, b)
-        keep(c.buffer.unsafe_ptr())
+        keep(c.tile().ptr)
 
     var ns = (
         run(
@@ -241,7 +241,7 @@ def bench_cholesky[n: Int, block: Int = 64](ctx: DeviceContext) raises:
 
     def work() raises {mut a}:
         var l = cholesky[gpu=False, block=block](a)
-        keep(l.buffer.unsafe_ptr())
+        keep(l.tile().ptr)
 
     var ns = (
         run(
@@ -271,7 +271,7 @@ def bench_lu[n: Int, block: Int = 32](ctx: DeviceContext) raises:
 
     def work() raises {mut a}:
         var f = lu_factor[gpu=False, block=block](a)
-        keep(f.factored.buffer.unsafe_ptr())
+        keep(f.factored.tile().ptr)
 
     var ns = (
         run(
@@ -304,7 +304,7 @@ def bench_solve[n: Int, block: Int = 32](ctx: DeviceContext) raises:
 
     def work() raises {mut a, mut b}:
         var x = solve[gpu=False, block=block](a, b)
-        keep(x.buffer.unsafe_ptr())
+        keep(x.tile().ptr)
 
     var ns = (
         run(
@@ -333,7 +333,7 @@ def bench_qr[
 
     def work() raises {mut a}:
         var f = qr_factor[gpu=False, block=block](a)
-        keep(f.factored.buffer.unsafe_ptr())
+        keep(f.factored.tile().ptr)
 
     var ns = (
         run(
@@ -410,7 +410,7 @@ def bench_eigvalsh[
 
     def work() raises {mut a}:
         var w = eigvalsh[gpu=False, block=block](a)
-        keep(w.buffer.unsafe_ptr())
+        keep(w.tile().ptr)
 
     var ns = (
         run(
@@ -433,7 +433,7 @@ def bench_eigh[n: Int](ctx: DeviceContext) raises:
 
     def work() raises {mut a}:
         var e = eigh(a)
-        keep(e.vectors.buffer.unsafe_ptr())
+        keep(e.vectors.tile().ptr)
 
     var ns = (
         run(
@@ -463,7 +463,7 @@ def bench_svdvals[
 
     def work() raises {mut a}:
         var s = svdvals[gpu=False, block=block](a)
-        keep(s.buffer.unsafe_ptr())
+        keep(s.tile().ptr)
 
     var ns = (
         run(
@@ -492,7 +492,7 @@ def bench_svd[n: Int](ctx: DeviceContext) raises where n >= n and n >= 1:
 
     def work() raises {mut a}:
         var f = svd(a)
-        keep(f.u.buffer.unsafe_ptr())
+        keep(f.u.tile().ptr)
 
     var ns = (
         run(
@@ -516,7 +516,7 @@ def bench_eigvals[
 
     def work() raises {mut a}:
         var w = eigvals[gpu=False, block=block](a)
-        keep(w.re.buffer.unsafe_ptr())
+        keep(w.re.tile().ptr)
 
     var ns = (
         run(
@@ -539,7 +539,7 @@ def bench_schur[n: Int](ctx: DeviceContext) raises:
 
     def work() raises {mut a}:
         var f = schur(a)
-        keep(f.t.buffer.unsafe_ptr())
+        keep(f.t.tile().ptr)
 
     var ns = (
         run(
@@ -578,7 +578,7 @@ def bench_blas1[n: Int](ctx: DeviceContext) raises:
 
     def axpy_work() raises {mut x, mut y}:
         var s = axpy(2.5, x, y)
-        keep(s.buffer.unsafe_ptr())
+        keep(s.tile().ptr)
 
     var dot_ns = (
         run(

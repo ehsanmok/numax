@@ -90,11 +90,11 @@ def bench_convolution[
 
     def direct() raises {mut x, mut h}:
         var y = convolve(x, h)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     def transform() raises {mut x, mut h}:
         var y = fftconvolve(x, h)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var direct_ns = (
         run(
@@ -132,7 +132,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
 
     def fir_work() raises {mut fir, mut one, mut x}:
         var y = lfilter(fir, one, x)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var fir_ns = (
         run(
@@ -149,7 +149,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
 
     def iir_work() raises {mut tf, mut x}:
         var y = filtfilt(tf.b, tf.a, x)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var iir_ns = (
         run(
@@ -163,7 +163,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
 
     def med_work() raises {mut x}:
         var y = medfilt[kernel_size=5](x)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var med_ns = (
         run(
@@ -177,7 +177,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
 
     def sg_work() raises {mut x}:
         var y = savgol_filter[window_length=11, polyorder=3](x)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var sg_ns = (
         run(
@@ -189,7 +189,7 @@ def bench_filters[n: Int](ctx: DeviceContext) raises where n > 0 and n >= 256:
 
     def welch_work() raises {mut x}:
         var p = welch[nperseg=256](x)
-        keep(p.power.buffer.unsafe_ptr())
+        keep(p.power.tile().ptr)
 
     var welch_ns = (
         run(

@@ -437,7 +437,7 @@ def tensorsolve[
     for d in range(rank_b, rank_b + rank_x):
         extents.append(a.dim_at(d))
     return Dynamic[A.dtype, rank_x](
-        x.buffer.copy(),
+        x._buffer.copy(),
         row_major(_dyn_shape_from[rank_x](extents)),
         x.on_host(),
     )
@@ -488,7 +488,7 @@ def tensorinv[
     for d in range(ind):
         extents.append(a.dim_at(d))
     return Dynamic[T.dtype, rank](
-        inv.buffer.copy(),
+        inv._buffer.copy(),
         row_major(_dyn_shape_from[rank](extents)),
         inv.on_host(),
     )

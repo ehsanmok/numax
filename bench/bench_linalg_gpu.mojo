@@ -160,7 +160,7 @@ def bench_gemm[n: Int](ctx: DeviceContext) raises:
 
     def work() raises {mut a, mut b, imm ctx}:
         var r = matmul[gpu=True](a, b)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     var ns = (
@@ -191,7 +191,7 @@ def bench_cholesky[n: Int, block: Int = 32](ctx: DeviceContext) raises:
 
     def work() raises {mut a, imm ctx}:
         var r = cholesky[gpu=True, block=block](a)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     var ns = (
@@ -223,7 +223,7 @@ def bench_lu[n: Int, block: Int = 16](ctx: DeviceContext) raises:
 
     def work() raises {mut a, imm ctx}:
         var r = lu_factor[gpu=True, block=block](a)
-        keep(r.factored.buffer.unsafe_ptr())
+        keep(r.factored.tile().ptr)
         ctx.synchronize()
 
     var ns = (
@@ -257,7 +257,7 @@ def bench_solve[n: Int, block: Int = 16](ctx: DeviceContext) raises:
 
     def work() raises {mut a, mut b, imm ctx}:
         var r = solve[gpu=True, block=block](a, b)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     var ns = (
@@ -290,7 +290,7 @@ def bench_qr[
 
     def work() raises {mut a, imm ctx}:
         var r = qr_factor[gpu=True, block=block](a)
-        keep(r.factored.buffer.unsafe_ptr())
+        keep(r.factored.tile().ptr)
         ctx.synchronize()
 
     var ns = (

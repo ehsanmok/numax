@@ -114,46 +114,46 @@ def bench_size[n: Int](ctx: DeviceContext) raises where n > 0:
 
     def exp_call() raises {mut a, imm ctx}:
         var r = exp[gpu=True](a)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     def exp_amort() raises {mut a, imm ctx}:
         for _ in range(batch):
             var r = exp[gpu=True](a)
-            keep(r.buffer.unsafe_ptr())
+            keep(r.tile().ptr)
         ctx.synchronize()
 
     def add_call() raises {mut a, mut b, imm ctx}:
         var r = add[gpu=True](a, b)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     def add_amort() raises {mut a, mut b, imm ctx}:
         for _ in range(batch):
             var r = add[gpu=True](a, b)
-            keep(r.buffer.unsafe_ptr())
+            keep(r.tile().ptr)
         ctx.synchronize()
 
     def scale_call() raises {mut a, imm ctx}:
         var r = multiply[gpu=True](a, Scalar[dtype](2))
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     def scale_amort() raises {mut a, imm ctx}:
         for _ in range(batch):
             var r = multiply[gpu=True](a, Scalar[dtype](2))
-            keep(r.buffer.unsafe_ptr())
+            keep(r.tile().ptr)
         ctx.synchronize()
 
     def compare_call() raises {mut a, mut zeros, imm ctx}:
         var r = greater[gpu=True](a, zeros)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
         ctx.synchronize()
 
     def compare_amort() raises {mut a, mut zeros, imm ctx}:
         for _ in range(batch):
             var r = greater[gpu=True](a, zeros)
-            keep(r.buffer.unsafe_ptr())
+            keep(r.tile().ptr)
         ctx.synchronize()
 
     def sum_call() raises {mut a, imm ctx}:

@@ -82,7 +82,7 @@ def bench_blas1[n: Int](ctx: DeviceContext) raises:
 
     def axpy_work() raises {mut x, mut y, imm ctx}:
         var s = axpy[gpu=True](2.5, x, y)
-        keep(s.buffer.unsafe_ptr())
+        keep(s.tile().ptr)
         ctx.synchronize()
 
     var dot_ns = (

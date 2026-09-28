@@ -243,7 +243,7 @@ struct TensorView[
 
     var _tile: Self.TileType
     """The borrowed storage."""
-    var ctx: DeviceContext
+    var _ctx: DeviceContext
     """The device the tile lives on."""
     var host_addressable: Bool
     """`ctx.api() == "cpu"`, recorded once, as `Tensor` records it."""
@@ -264,8 +264,8 @@ struct TensorView[
         docstring says why.
         """
         self._tile = tile.as_immut()
-        self.ctx = ctx.value() if ctx else DeviceContext(api="cpu")
-        self.host_addressable = self.ctx.api() == "cpu"
+        self._ctx = ctx.value() if ctx else DeviceContext(api="cpu")
+        self.host_addressable = self._ctx.api() == "cpu"
 
     def tile(
         ref self,
@@ -286,7 +286,7 @@ struct TensorView[
 
     def context(self) raises -> DeviceContext:
         """The device the storage lives on."""
-        return self.ctx
+        return self._ctx
 
     def on_host(self) -> Bool:
         """Whether the tile can be read through a plain host pointer."""
@@ -315,9 +315,9 @@ struct TensorView[
                 "TensorView.to_host: a strided view over device memory cannot"
                 " be copied as one block"
             )
-        var host = self.ctx.enqueue_create_host_buffer[Self.dtype](n)
-        self.ctx.enqueue_copy(host, self._tile.ptr.as_imm())
-        self.ctx.synchronize()
+        var host = self._ctx.enqueue_create_host_buffer[Self.dtype](n)
+        self._ctx.enqueue_copy(host, self._tile.ptr.as_imm())
+        self._ctx.synchronize()
         for i in range(n):
             out.append(host[i].cast[dtype]())
         return out^
@@ -345,11 +345,11 @@ struct TensorView[
                 "TensorView.copy_from_host: a strided view over device memory"
                 " cannot be written as one block"
             )
-        var host = self.ctx.enqueue_create_host_buffer[Self.dtype](n)
+        var host = self._ctx.enqueue_create_host_buffer[Self.dtype](n)
         for i in range(n):
             host[i] = values[i]
-        self.ctx.enqueue_copy(ptr, host)
-        self.ctx.synchronize()
+        self._ctx.enqueue_copy(ptr, host)
+        self._ctx.synchronize()
 
     def _offset(self, i: Int) -> Int:
         """The memory offset of the `i`-th element in row-major order of

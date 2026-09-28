@@ -524,7 +524,7 @@ def lfilter[
     # on scope exit -- `copy_from_host` is the same write, through a `List`.
     var staged = List[Scalar[A.dtype]]()
     var src = _read_ptr[A.dtype](x, staged)
-    with out.buffer.map_to_host() as dst:
+    with out._buffer.map_to_host() as dst:
         _recurrence(
             norm[0],
             norm[1],
@@ -717,7 +717,7 @@ def filtfilt[
     _recurrence(norm[0], norm[1], state, backward, backward, m, True)
 
     var out = Static[A.dtype, n]._uninitialized(x.context())
-    with out.buffer.map_to_host() as dst:
+    with out._buffer.map_to_host() as dst:
         for i in range(n):
             dst[i] = ext[edge + i]
     return out^
@@ -786,7 +786,7 @@ def sosfilt[
     var out = Static[A.dtype, n]._uninitialized(x.context())
     var staged = List[Scalar[A.dtype]]()
     var src = _read_ptr[A.dtype](x, staged)
-    with out.buffer.map_to_host() as dst:
+    with out._buffer.map_to_host() as dst:
         for i in range(n):
             dst[i] = src[unsafe_offset=i]
         var buffer = _loose(dst.unsafe_ptr())

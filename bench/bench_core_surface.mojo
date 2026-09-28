@@ -118,19 +118,19 @@ def bench_size[n: Int](ctx: DeviceContext) raises where n > 0:
 
     def exp_work() raises {mut a}:
         var r = exp(a)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
 
     def add_work() raises {mut a, mut b}:
         var r = add(a, b)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
 
     def scale_work() raises {mut a}:
         var r = multiply(a, Scalar[dtype](2))
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
 
     def compare_work() raises {mut a, mut zeros}:
         var r = greater(a, zeros)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
 
     def sum_work() raises {mut a}:
         keep(tensor_sum(a))
@@ -219,7 +219,7 @@ def bench_abstraction[n: Int](ctx: DeviceContext) raises where n > 0:
 
     def exp_work() raises {mut a}:
         var r = exp(a)
-        keep(r.buffer.unsafe_ptr())
+        keep(r.tile().ptr)
 
     _row(
         "map (serial SIMD)",

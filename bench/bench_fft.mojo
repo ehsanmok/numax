@@ -85,8 +85,8 @@ def bench_transforms[n: Int](ctx: DeviceContext) raises where n > 0:
     def build() raises {mut real, mut imag, var ctx}:
         var x = Static[dtype, n](real.copy(), ctx)
         var y = Static[dtype, n](imag.copy(), ctx)
-        keep(x.buffer.unsafe_ptr())
-        keep(y.buffer.unsafe_ptr())
+        keep(x.tile().ptr)
+        keep(y.tile().ptr)
 
     def forward() raises {mut real, mut imag, var ctx}:
         var out = fft(
@@ -95,11 +95,11 @@ def bench_transforms[n: Int](ctx: DeviceContext) raises where n > 0:
                 Static[dtype, n](imag.copy(), ctx),
             )
         )
-        keep(out[0].buffer.unsafe_ptr())
+        keep(out[0].tile().ptr)
 
     def real_forward() raises {mut real, var ctx}:
         var out = rfft(Static[dtype, n](real.copy(), ctx))
-        keep(out[0].buffer.unsafe_ptr())
+        keep(out[0].tile().ptr)
 
     def real_inverse() raises {mut half_re, mut half_im, var ctx}:
         var out = irfft[gpu=False, n=n](
@@ -108,7 +108,7 @@ def bench_transforms[n: Int](ctx: DeviceContext) raises where n > 0:
                 Static[dtype, keep_bins](half_im.copy(), ctx),
             )
         )
-        keep(out.buffer.unsafe_ptr())
+        keep(out.tile().ptr)
 
     var count = _launches(n)
     _row(
@@ -162,8 +162,8 @@ def bench_fft2[
     def build() raises {mut real, mut imag, var ctx}:
         var x = Static[dtype, rows, cols](real.copy(), ctx)
         var y = Static[dtype, rows, cols](imag.copy(), ctx)
-        keep(x.buffer.unsafe_ptr())
-        keep(y.buffer.unsafe_ptr())
+        keep(x.tile().ptr)
+        keep(y.tile().ptr)
 
     def plane() raises {mut real, mut imag, var ctx}:
         var out = fft2(
@@ -172,7 +172,7 @@ def bench_fft2[
                 Static[dtype, rows, cols](imag.copy(), ctx),
             )
         )
-        keep(out[0].buffer.unsafe_ptr())
+        keep(out[0].tile().ptr)
 
     _row(
         "input",

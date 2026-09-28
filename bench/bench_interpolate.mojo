@@ -102,7 +102,7 @@ def bench_interp[
 
     def work() raises {mut x, mut xp, mut fp}:
         var y = interp(x, xp, fp)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var ns = (
         run(
@@ -122,7 +122,7 @@ def bench_spline_build[
 
     def work() raises {mut xp, mut fp}:
         var spline = CubicSpline[dtype, n](xp, fp)
-        keep(spline.spline.c.buffer.unsafe_ptr())
+        keep(spline.spline.c.tile().ptr)
 
     var ns = (
         run(
@@ -143,7 +143,7 @@ def bench_spline_eval[
 
     def work() raises {mut spline, mut x}:
         var y = spline(x)
-        keep(y.buffer.unsafe_ptr())
+        keep(y.tile().ptr)
 
     var ns = (
         run(

@@ -900,7 +900,7 @@ def tensordot[
         for d in range(rb - axes):
             extents_1.append(b.dim_at(axes + d))
         return Dynamic[A.dtype, rank](
-            out.buffer.copy(),
+            out._buffer.copy(),
             row_major(_dyn_shape_from[rank](extents_1)),
             out.on_host(),
         )
@@ -913,7 +913,7 @@ def tensordot[
     for d in range(rb - axes):
         extents.append(b.dim_at(axes + d))
     return Dynamic[A.dtype, rank](
-        c.buffer.copy(),
+        c._buffer.copy(),
         row_major(_dyn_shape_from[rank](extents)),
         c.on_host(),
     )

@@ -195,7 +195,7 @@ def _fill[
     )
     device.synchronize()
     return Static[dtype, *dims](
-        flat.buffer,
+        flat._buffer,
         rebind[_LayoutOf[*dims]](row_major[*dims]()),
         flat.host_addressable,
     )

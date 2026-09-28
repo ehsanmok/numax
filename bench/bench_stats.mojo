@@ -86,7 +86,7 @@ def bench_norm_cdf[n: Int](ctx: DeviceContext) raises:
 
     def work() raises {mut x}:
         var p = norm.cdf(x, Scalar[dtype](0), Scalar[dtype](1))
-        keep(p.buffer.unsafe_ptr())
+        keep(p.tile().ptr)
 
     var ns = (
         run(
@@ -109,7 +109,7 @@ def bench_histogram[n: Int](ctx: DeviceContext) raises:
 
     def work() raises {x}:
         var h = histogram[bins=64](x, -3.0, 3.0)
-        keep(h.counts.buffer.unsafe_ptr())
+        keep(h.counts.tile().ptr)
 
     var ns = (
         run(
@@ -150,7 +150,7 @@ def bench_cov[
 
     def cov_work() raises {mut m}:
         var c = cov(m)
-        keep(c.buffer.unsafe_ptr())
+        keep(c.tile().ptr)
 
     var cov_ns = (
         run(
@@ -163,7 +163,7 @@ def bench_cov[
 
     def corr_work() raises {mut m}:
         var c = corrcoef(m)
-        keep(c.buffer.unsafe_ptr())
+        keep(c.tile().ptr)
 
     var corr_ns = (
         run(
