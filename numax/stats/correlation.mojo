@@ -2,20 +2,21 @@
 `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata` and
 `zscore`, with NumPy's and SciPy's conventions and SciPy's p-values.
 
-**`cov` and `corrcoef` run where the tensor lives; the rest is tier 2,
-host-side, in `Float64`.**
+**`cov` and `corrcoef` run where the tensor lives; `pearsonr`,
+`linregress` and `zscore` reduce on the device at `gpu=True`; the rank
+correlations are tier 2, host-side, in `Float64`.**
 
 The split is about what the answer costs, not about taste. `pearsonr`,
 `spearmanr`, `kendalltau`, `linregress` and `zscore` are a handful of sums
 over one or two vectors -- or, for the rank correlations, a sort and a
 pair count -- followed by a tail probability of Student's `t` or the
-normal, and the p-value is the part that decides the placement: it comes
-from `numax.stats.t.sf` and `numax.stats.norm.sf`, scalar `FloatLike`
-kernels evaluated once. The data comes down once and the answer is a few
-scalars, so a device pass would move more than it computed. `zscore` is
-the one in spirit that could move, and is host-side only because the
-whole-tensor `mean`/`stddev` it standardizes by are read back as scalars
-anyway.
+normal. The p-value comes from `numax.stats.t.sf` and
+`numax.stats.norm.sf`, scalar `FloatLike` kernels evaluated once on the
+host -- control flow on `O(1)` data, which the device-complete rule
+allows. What moves is the data: at `gpu=True`, `pearsonr` and
+`linregress` take their means and centered moments as device sums and
+read back five scalars, and `zscore` standardizes in place on the device.
+The rank correlations need a device rank, which is not here yet.
 
 `cov` and `corrcoef` are the ones that cannot stay: the covariance of
 `rows` variables over `n` observations is `O(rows^2 n)`, which this module
@@ -560,9 +561,51 @@ def _pearson(xs: List[Float64], ys: List[Float64]) raises -> CorrelationResult:
     var n = len(xs)
     if n < 3:
         raise Error("pearsonr: at least three observations are needed")
-    var r = _covariance(xs, ys, 0) / _sqrt(
-        _covariance(xs, xs, 0) * _covariance(ys, ys, 0)
+    return _pearson_finish(
+        _covariance(xs, ys, 0),
+        _covariance(xs, xs, 0),
+        _covariance(ys, ys, 0),
+        n,
     )
+
+
+@fieldwise_init
+struct _Moments(Copyable):
+    """The two means and three centered second moments (divided by `n`)
+    that `pearsonr` and `linregress` are finished from."""
+
+    var xm: Float64
+    var ym: Float64
+    var sxx: Float64
+    var syy: Float64
+    var sxy: Float64
+
+
+def _moments_device[
+    T: TensorLike
+](x: T, y: T) raises -> _Moments where (
+    T.dtype.is_floating_point() and is_row_major[T]
+):
+    """`_Moments` of two device vectors, computed there: two device sums
+    for the means, a centring launch each, three products and three more
+    sums. Five scalars come back; the data does not."""
+    comptime dtype = T.dtype
+    var count = Float64(x.size())
+    var xm = Float64(_tsum[gpu=True](x)) / count
+    var ym = Float64(_tsum[gpu=True](y)) / count
+    var dx = _tsubtract[gpu=True](x, Scalar[dtype](xm))
+    var dy = _tsubtract[gpu=True](y, Scalar[dtype](ym))
+    var sxx = Float64(_tsum[gpu=True](_tmultiply[gpu=True](dx, dx))) / count
+    var syy = Float64(_tsum[gpu=True](_tmultiply[gpu=True](dy, dy))) / count
+    var sxy = Float64(_tsum[gpu=True](_tmultiply[gpu=True](dx, dy))) / count
+    return _Moments(xm, ym, sxx, syy, sxy)
+
+
+def _pearson_finish(
+    sxy: Float64, sxx: Float64, syy: Float64, n: Int
+) raises -> CorrelationResult:
+    """`r` from the centered moments, clamped, and its `t`-test p-value."""
+    var r = sxy / _sqrt(sxx * syy)
     r = min(1.0, max(-1.0, r))
     var df = Float64(n - 2)
     if abs(r) == 1.0:
@@ -574,6 +617,7 @@ def _pearson(xs: List[Float64], ys: List[Float64]) raises -> CorrelationResult:
 def pearsonr[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](x: A, y: B) raises -> CorrelationResult where (
     (A.dtype.is_floating_point() and dim[A, 0] > 2)
     and A.LayoutType.rank == 1
@@ -591,8 +635,22 @@ def pearsonr[
     The p-value is the `t` test on `n - 2` degrees of freedom, `t = r
     sqrt((n - 2) / (1 - r^2))`, which is the same number SciPy's beta form
     gives.
+
+    At `gpu=True` with both vectors on a device, the means and centered
+    moments are device sums and only five scalars come back; the finish
+    and the `t` tail are host scalar work either way. The device sums are
+    at the tensors' dtype and reassociated, so a `float32` `r` differs
+    from the host's `Float64` one in the last digits.
     """
     comptime n = dim[A, 0]
+    if _check_device[A, gpu](x) and _check_device[B, gpu](y):
+        comptime if gpu:
+            var m = _moments_device(
+                _canonical[n](x), _canonical[n, dtype=A.dtype](y)
+            )
+            return _pearson_finish(m.sxy, m.sxx, m.syy, n)
+    else:
+        _notice[gpu]("pearsonr")
     return _pearson(_as_float64(x.to_host()), _as_float64(y.to_host()))
 
 
@@ -787,6 +845,7 @@ struct LinregressResult(Copyable):
 def linregress[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](x: A, y: B) raises -> LinregressResult where (
     (A.dtype.is_floating_point() and dim[A, 0] > 2)
     and A.LayoutType.rank == 1
@@ -801,17 +860,45 @@ def linregress[
     """The least-squares line `y = slope x + intercept` through the points,
     with `r`, the two-sided p-value of `slope = 0` and both standard
     errors. `scipy.stats.linregress(x, y)`, formula for formula.
+
+    At `gpu=True` with both vectors on a device, the moments are device
+    sums as in `pearsonr`, and only five scalars come back.
     """
     comptime n = dim[A, 0]
+    if _check_device[A, gpu](x) and _check_device[B, gpu](y):
+        comptime if gpu:
+            var m = _moments_device(
+                _canonical[n](x), _canonical[n, dtype=A.dtype](y)
+            )
+            return _linregress_finish(m.xm, m.ym, m.sxx, m.syy, m.sxy, n)
+    else:
+        _notice[gpu]("linregress")
     var xs = _as_float64(x.to_host())
     var ys = _as_float64(y.to_host())
-    var ssxm = _covariance(xs, xs, 0)
-    var ssym = _covariance(ys, ys, 0)
-    var ssxym = _covariance(xs, ys, 0)
+    return _linregress_finish(
+        _mean(xs),
+        _mean(ys),
+        _covariance(xs, xs, 0),
+        _covariance(ys, ys, 0),
+        _covariance(xs, ys, 0),
+        n,
+    )
+
+
+def _linregress_finish(
+    xm: Float64,
+    ym: Float64,
+    ssxm: Float64,
+    ssym: Float64,
+    ssxym: Float64,
+    n: Int,
+) raises -> LinregressResult:
+    """SciPy's `linregress` formulas from the means and the centered
+    moments divided by `n`."""
     if ssxm == 0:
         raise Error("linregress: x is constant")
     var slope = ssxym / ssxm
-    var intercept = _mean(ys) - slope * _mean(xs)
+    var intercept = ym - slope * xm
     var r = 0.0
     if ssym > 0:
         r = min(1.0, max(-1.0, ssxym / _sqrt(ssxm * ssym)))
@@ -820,7 +907,6 @@ def linregress[
     var statistic = r * _sqrt(df / ((1.0 - r + tiny) * (1.0 + r + tiny)))
     var pvalue = _t_two_sided(statistic, df)
     var slope_stderr = _sqrt((1.0 - r * r) * ssym / ssxm / df)
-    var xm = _mean(xs)
     var intercept_stderr = slope_stderr * _sqrt(ssxm + xm * xm)
     return LinregressResult(
         slope, intercept, r, pvalue, slope_stderr, intercept_stderr
