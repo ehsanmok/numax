@@ -51,6 +51,7 @@ from layout.tile_layout import TensorLayout
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
+from ..core._drive import _check_device, _notice
 from ..core.tensor import Static, vander
 from ..linalg.eigen import Eigenvalues, eigvals
 from ..linalg.qr import lstsq
@@ -274,8 +275,43 @@ def polyval[
     return out^
 
 
+def _poly_calculus_device[
+    T: TensorLike, //, kind: StaticString, m: Int
+](p: T, constant: Scalar[T.dtype]) raises -> Static[T.dtype, m] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 1
+):
+    """`polyder` (`"der"`, `m == k - 1`) or `polyint` (`"int"`, `m == k +
+    1`) of the descending coefficients `p`, on `p`'s device: one lane per
+    output coefficient."""
+    comptime k = dim[T, 0]
+    var ctx = p.context()
+    var out = Static[T.dtype, m]._uninitialized(ctx)
+    var src = p.tile()
+    var dst = out.tile()
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var src, var dst, var constant}:
+        var i = coord_to_index_list(coord)[0]
+        var value: Scalar[T.dtype]
+        comptime if kind == "der":
+            value = src[Coord(i)][0] * Scalar[T.dtype](k - 1 - i)
+        else:
+            if i == k:
+                value = constant
+            else:
+                value = src[Coord(i)][0] / Scalar[T.dtype](k - i)
+        dst.store[1](coord, value)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(m), ctx)
+    ctx.synchronize()
+    return out^
+
+
 def polyder[
     T: TensorLike,
+    gpu: Bool = False,
 ](p: T) raises -> Static[T.dtype, dim[T, 0] - 1] where (
     (T.dtype.is_floating_point() and dim[T, 0] >= 2)
     and T.LayoutType.rank == 1
@@ -296,9 +332,16 @@ def polyder[
     application changes the return type and a parameterized `m` would have
     to spell `k - m` with `m` proven below `k`.
 
-    Host-side: `k` coefficient multiplies, which is not work worth a launch.
+    `k` coefficient multiplies: a loop on the host, or at `gpu=True` one
+    launch on `p`'s device. A residency mismatch takes the host loop and
+    prints the `_drive` notice.
     """
     comptime k = dim[T, 0]
+    if _check_device[T, gpu](p):
+        comptime if gpu:
+            return _poly_calculus_device["der", k - 1](p, Scalar[T.dtype](0))
+    else:
+        _notice[gpu]("polyder")
     var source = p.to_host()
     var values = List[Scalar[T.dtype]](capacity=k - 1)
     for i in range(k - 1):
@@ -310,6 +353,7 @@ def polyder[
 
 def polyint[
     T: TensorLike,
+    gpu: Bool = False,
 ](p: T, constant: Scalar[T.dtype] = 0) raises -> Static[
     T.dtype, dim[T, 0] + 1
 ] where (
@@ -322,9 +366,15 @@ def polyint[
 
     One longer than its input, and the constant lands in the last slot
     because that is the `x ** 0` position in descending order. The inverse
-    of `polyder` up to that constant: `polyder(polyint(p))` is `p`.
+    of `polyder` up to that constant: `polyder(polyint(p))` is `p`. At
+    `gpu=True`, one launch on `p`'s device, as `polyder`.
     """
     comptime k = dim[T, 0]
+    if _check_device[T, gpu](p):
+        comptime if gpu:
+            return _poly_calculus_device["int", k + 1](p, constant)
+    else:
+        _notice[gpu]("polyint")
     var source = p.to_host()
     var values = List[Scalar[T.dtype]](capacity=k + 1)
     for i in range(k):
