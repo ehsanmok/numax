@@ -1053,7 +1053,8 @@ def _axis_gather[
     says which source position along it a result position `t` reads:
     `"roll"` reads `t - arg` cyclically, `"flip"` reads `length - 1 - t`,
     `"repeat"` reads `t // arg`, `"offset"` reads `t + arg` (a window, for
-    `split` and `slice`) and `"tile"` reads `t % length`. One
+    `split` and `slice`), `"stride"` reads `t * arg` (every `arg`-th, for
+    `decimate`) and `"tile"` reads `t % length`. One
     `elementwise` launch over the result, one thread per element, and the
     device path of `roll`, `flip`, `repeat`, `tile`, `split`,
     `array_split` and `slice`; their host paths are unchanged. `a` must be contiguous and on a GPU context.
@@ -1093,6 +1094,8 @@ def _axis_gather[
             k = t // arg
         elif kind == "offset":
             k = t + arg
+        elif kind == "stride":
+            k = t * arg
         else:
             k = t % src_len
         dst.store[1](coord, src[Coord((o * src_len + k) * inner + i)])

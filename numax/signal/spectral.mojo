@@ -54,7 +54,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import _canonical, Static, zeros
+from ..core.tensor import _canonical, _same_order, Static, zeros
 from ..fft.fft import Spectrum, _as_matrix, _dft, fft, ifft, irfft
 from .windows import get_window
 
@@ -849,6 +849,89 @@ def coherence[
     )
 
 
+def _istft_device[
+    keep: Int,
+    frames: Int,
+    nperseg: Int,
+    step: Int,
+    trim: Int,
+    out_n: Int,
+    dtype: DType,
+](
+    mut spectra: STFT[dtype, keep, frames],
+    win: Static[dtype, nperseg],
+    gain: Float64,
+    ctx: DeviceContext,
+) raises -> Static[dtype, out_n] where (
+    dtype.is_floating_point() and nperseg > 0
+):
+    """`istft`'s overlap-add on the device. The frame loop stays on the
+    host, as control flow; each frame is a device gather of its spectrum
+    column, a device `irfft`, and one launch adding the windowed frame and
+    the squared window into two accumulators. One last launch divides and
+    trims."""
+    comptime padded = nperseg + (frames - 1) * step
+    var acc = Static[dtype, padded](ctx)
+    var weight = Static[dtype, padded](ctx)
+    var ap = acc.tile()
+    var wp = weight.tile()
+    var tp = win.tile().as_unsafe_any_origin()
+    var rp = spectra.real.tile().as_unsafe_any_origin()
+    var ip = spectra.imag.tile().as_unsafe_any_origin()
+    var scale = Scalar[dtype](gain)
+    for f in range(frames):
+        var col_re = Static[dtype, keep]._uninitialized(ctx)
+        var col_im = Static[dtype, keep]._uninitialized(ctx)
+        var cre = col_re.tile().as_unsafe_any_origin()
+        var cim = col_im.tile().as_unsafe_any_origin()
+
+        @always_inline
+        def column[
+            width: Int, alignment: Int = 1
+        ](coord: Coord) {var rp, var ip, var cre, var cim, var f, var scale}:
+            var k = coord_to_index_list(coord)[0]
+            cre.store[1](coord, rp.ptr[unsafe_offset=k * frames + f] * scale)
+            cim.store[1](coord, ip.ptr[unsafe_offset=k * frames + f] * scale)
+
+        elementwise[simd_width=1, target="gpu"](column, Coord(keep), ctx)
+        var spectrum: Spectrum[dtype, keep] = (col_re^, col_im^)
+        var frame = irfft[gpu=True, n=nperseg](spectrum^)
+        var fp = frame.tile().as_unsafe_any_origin()
+        var base = f * step
+
+        @always_inline
+        def add[
+            width: Int, alignment: Int = 1
+        ](coord: Coord) {var ap, var wp, var tp, var fp, var base}:
+            var j = coord_to_index_list(coord)[0]
+            var w = tp[coord][0]
+            ap.store[1](
+                Coord(base + j), ap[Coord(base + j)][0] + fp[coord][0] * w
+            )
+            wp.store[1](Coord(base + j), wp[Coord(base + j)][0] + w * w)
+
+        elementwise[simd_width=1, target="gpu"](add, Coord(nperseg), ctx)
+        ctx.synchronize()
+        _ = frame^
+    var out = Static[dtype, out_n]._uninitialized(ctx)
+    var op = out.tile()
+
+    @always_inline
+    def finish[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var ap, var wp, var op}:
+        var i = coord_to_index_list(coord)[0]
+        var w = wp[Coord(i + trim)][0]
+        var value = Scalar[dtype](0)
+        if w > 0:
+            value = ap[Coord(i + trim)][0] / w
+        op.store[1](coord, value)
+
+    elementwise[simd_width=1, target="gpu"](finish, Coord(out_n), ctx)
+    ctx.synchronize()
+    return out^
+
+
 def istft[
     dtype: DType,
     keep: Int,
@@ -924,6 +1007,11 @@ def istft[
     var sums = _window_sums(win)
     var taps = win.to_host()
 
+    comptime if gpu:
+        if not spectra.frequencies.on_host():
+            return _istft_device[keep, frames, nperseg, step, trim, out_n](
+                spectra, win, sums[0], ctx
+            )
     var re = spectra.real.to_host()
     var im = spectra.imag.to_host()
 
@@ -981,7 +1069,8 @@ def hilbert[
     var ctx = x.context()
     var spectrum = fft[gpu=gpu](
         Spectrum[T.dtype, n](
-            Static[T.dtype, n](ctx, x.to_host()), zeros[T.dtype, n](ctx)
+            _same_order(x, Static[T.dtype, n]._static_layout()),
+            zeros[T.dtype, n](ctx),
         )
     )
     # The two halves of a `Spectrum` share the tuple's origin, so their

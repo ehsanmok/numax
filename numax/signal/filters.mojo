@@ -2,18 +2,19 @@
 `filtfilt`, `sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample`
 and the `firwin` design, with `scipy.signal`'s signatures and semantics.
 
-**This module is tier 2**, and it is the one place in `numax.signal` over
-`Tensor` where *host-side* is the honest label rather than a placement:
-the recursive filters -- `lfilter`, `filtfilt`, `sosfilt` -- are a
-sequential recurrence, each output depending on the last, with no GEMM to
-feed and no independent lanes to launch. They run on the host, the way
-`numax.linalg.banded` does and for the same reason, and their docstrings
-say so. `numax.signal.array.lfilter` is the tier-1 sibling: the same
-recurrence per SIMD lane over a register-resident frame, which is the
-shape a recurrence *can* parallelize in.
+**This module is tier 2.** The recursive filters -- `lfilter`,
+`filtfilt`, `sosfilt` -- are a sequential recurrence, each output depending
+on the last. On the host they run that recurrence directly. At `gpu=True`
+they run it block-parallel (`_iir_device`): the state-space form lets each
+block be filtered from a zero state independently, a short sequential
+carry fixes up the block boundaries, and a correction launch adds each
+block's true initial state back, so the `O(n)` work is on the device and
+only an `O(n / 128)` carry of `K x K` products is sequential.
+`numax.signal.array.lfilter` is the tier-1 sibling: the same recurrence
+per SIMD lane over a register-resident frame.
 
-Host-side is not the same as off-tensor, and the difference is most of
-what these three cost. The recurrence reads and writes through
+On the host, host-side is not the same as off-tensor, and the difference
+is most of what these three cost. The recurrence reads and writes through
 `buffer.map_to_host()` -- the accessor `Tensor.to_host` and
 `Tensor.copy_from_host` use internally, and the only one correct on both a
 CPU and a GPU context (`numax/core/tensor.mojo`'s docstring says why a raw
@@ -34,8 +35,8 @@ full-length `List[Float64]`s; it now holds one `List[Scalar[dtype]]`.
 
 The rest is device work. `medfilt` and `savgol_filter` are one
 `elementwise` launch each (a window per lane), `detrend` is two reductions
-and one launch, and `resample` is two transforms around a host reshuffle
-of the spectrum, `numax.linalg.solve_circulant`'s shape.
+and one launch, and `resample` is two transforms around a reshuffle of the
+spectrum that runs on the device at `gpu=True`.
 
 ## The MAX gate
 
@@ -59,8 +60,21 @@ from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
+from layout.tile_layout import row_major
+
+from ..core._drive import _check_device, _notice, _require_contiguous
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import _canonical, Static, arange_n, zeros
+from ..core.tensor import (
+    _axis_gather,
+    _canonical,
+    _dyn_shape,
+    _same_order,
+    Dynamic,
+    Static,
+    arange_n,
+    asarray,
+    zeros,
+)
 from ..core.ops import subtract
 from ..fft.fft import Spectrum, fft, ifft
 from ..linalg.blas import dot
@@ -214,6 +228,211 @@ def _recurrence[
         dst.unsafe_store(i, yi)
 
 
+comptime _IIR_BLOCK = 128
+"""Samples per block of the device recurrence: long enough that the
+sequential carry across blocks is short, short enough that the powers of
+the companion matrix in the correction table stay tame for a stable
+filter."""
+
+
+def _iir_device[
+    dtype: DType
+](
+    b: List[Scalar[dtype]],
+    a: List[Scalar[dtype]],
+    src: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    dst: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    n: Int,
+    zi: List[Scalar[dtype]],
+    scale_zi: Bool,
+    reverse: Bool,
+    ctx: DeviceContext,
+) raises:
+    """`_recurrence` on the device, block-parallel. `src` and `dst` are
+    device pointers and may be the same.
+
+    With `z' = A z + B x`, `y = z[0] + b0 x` the transposed direct form II
+    in state-space form, the signal splits into blocks of `_IIR_BLOCK`:
+    one thread per block filters it from a zero state and records the
+    state it ends in; one thread then carries the true initial state
+    across the blocks, `S[j+1] = A^L S[j] + f[j]`; and every sample adds
+    its block's initial state through `e0 A^t`, the response to a state
+    after `t` steps. Three launches, the only sequential one `O(n / L)`
+    steps of a `K x K` product. The tables (`e0 A^t` for `t < L`, and
+    `A^L`) come from the filter's handful of coefficients, built on the
+    host in `Float64`. `scale_zi` multiplies the initial state by the first
+    sample the pass reads, `filtfilt`'s steady-state start. `reverse` walks
+    from the end. The answer matches the host recurrence to rounding for a
+    stable filter; a filter with poles very near the unit circle loses
+    accuracy in the `A^t` table first.
+    """
+    var taps = len(b)
+    var order = taps - 1
+    comptime L = _IIR_BLOCK
+    if n == 0:
+        return
+    var blocks = (n + L - 1) // L
+    var coef = List[Scalar[dtype]](capacity=2 * order + 1)
+    for k in range(taps):
+        coef.append(b[k])
+    for k in range(1, taps):
+        coef.append(a[k])
+    var width = max(order, 1)
+    # Host tables: the companion matrix, its rows `e0 A^t` and `A^L`.
+    var g = List[Scalar[dtype]](length=L * width, fill=0)
+    var al = List[Scalar[dtype]](length=width * width, fill=0)
+    if order > 0:
+        var mat = List[Float64](length=order * order, fill=0.0)
+        for k in range(order):
+            mat[k * order] = -Float64(a[k + 1])
+            if k + 1 < order:
+                mat[k * order + k + 1] = 1.0
+        var row = List[Float64](length=order, fill=0.0)
+        row[0] = 1.0
+        for t in range(L):
+            for k in range(order):
+                g[t * order + k] = Scalar[dtype](row[k])
+            var nxt = List[Float64](length=order, fill=0.0)
+            for m in range(order):
+                var acc = 0.0
+                for k in range(order):
+                    acc += row[k] * mat[k * order + m]
+                nxt[m] = acc
+            row = nxt^
+        var power = List[Float64](length=order * order, fill=0.0)
+        for k in range(order):
+            power[k * order + k] = 1.0
+        for _ in range(L):
+            var nxt = List[Float64](length=order * order, fill=0.0)
+            for r in range(order):
+                for c in range(order):
+                    var acc = 0.0
+                    for k in range(order):
+                        acc += power[r * order + k] * mat[k * order + c]
+                    nxt[r * order + c] = acc
+            power = nxt^
+        for k in range(order * order):
+            al[k] = Scalar[dtype](power[k])
+    var initial = List[Scalar[dtype]](length=width, fill=0)
+    for k in range(len(zi)):
+        initial[k] = zi[k]
+    var coef_d = asarray(coef^, ctx)
+    var g_d = asarray(g^, ctx)
+    var al_d = asarray(al^, ctx)
+    var zi_d = asarray(initial^, ctx)
+    var finals = Dynamic[dtype, 1](
+        ctx, row_major(_dyn_shape[1](blocks * width))
+    )
+    var inits = Dynamic[dtype, 1](ctx, row_major(_dyn_shape[1](blocks * width)))
+    var cp = _device_ptr[dtype](coef_d)
+    var gp = _device_ptr[dtype](g_d)
+    var ap = _device_ptr[dtype](al_d)
+    var zp = _device_ptr[dtype](zi_d)
+    var fp = _device_ptr[dtype](finals)
+    var ip = _device_ptr[dtype](inits)
+
+    # The initial state goes in first: in place, the zero-state pass below
+    # overwrites the first sample `scale_zi` multiplies by.
+    @always_inline
+    def seed[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var src, var zp, var ip, var order, var n, var reverse, var scale_zi
+    }:
+        var first = src[unsafe_offset=n - 1 if reverse else 0]
+        for k in range(order):
+            var value = zp[unsafe_offset=k]
+            if scale_zi:
+                value = value * first
+            ip[unsafe_offset=k] = value
+
+    if order > 0:
+        elementwise[simd_width=1, target="gpu"](seed, Coord(1), ctx)
+
+    @always_inline
+    def zero_state[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var src,
+        var dst,
+        var cp,
+        var fp,
+        var order,
+        var width,
+        var n,
+        var reverse,
+    }:
+        var j = coord_to_index_list(coord)[0]
+        var z = fp + j * width
+        for k in range(order):
+            z[unsafe_offset=k] = 0
+        var stop = min(n, (j + 1) * L)
+        for s in range(j * L, stop):
+            var i = n - 1 - s if reverse else s
+            var xi = src[unsafe_offset=i]
+            var yi = cp[unsafe_offset=0] * xi
+            if order > 0:
+                yi += z[unsafe_offset=0]
+            for k in range(order - 1):
+                z[unsafe_offset=k] = (
+                    cp[unsafe_offset=k + 1] * xi
+                    + z[unsafe_offset=k + 1]
+                    - cp[unsafe_offset=order + k + 1] * yi
+                )
+            if order > 0:
+                z[unsafe_offset=order - 1] = (
+                    cp[unsafe_offset=order] * xi
+                    - cp[unsafe_offset=2 * order] * yi
+                )
+            dst[unsafe_offset=i] = yi
+
+    elementwise[simd_width=1, target="gpu"](zero_state, Coord(blocks), ctx)
+    if order == 0:
+        ctx.synchronize()
+        return
+
+    @always_inline
+    def carry[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var ap, var fp, var ip, var order, var blocks}:
+        for j in range(blocks - 1):
+            for k in range(order):
+                var acc = fp[unsafe_offset=j * order + k]
+                for m in range(order):
+                    acc += (
+                        ap[unsafe_offset=k * order + m]
+                        * ip[unsafe_offset=j * order + m]
+                    )
+                ip[unsafe_offset=(j + 1) * order + k] = acc
+
+    elementwise[simd_width=1, target="gpu"](carry, Coord(1), ctx)
+
+    @always_inline
+    def correct[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var dst, var gp, var ip, var order, var n, var reverse}:
+        var s = coord_to_index_list(coord)[0]
+        var j = s // L
+        var t = s % L
+        var i = n - 1 - s if reverse else s
+        var acc = Scalar[dtype](0)
+        for k in range(order):
+            acc += (
+                gp[unsafe_offset=t * order + k]
+                * ip[unsafe_offset=j * order + k]
+            )
+        dst[unsafe_offset=i] = dst[unsafe_offset=i] + acc
+
+    elementwise[simd_width=1, target="gpu"](correct, Coord(n), ctx)
+    ctx.synchronize()
+    _ = coef_d^
+    _ = g_d^
+    _ = al_d^
+    _ = zi_d^
+    _ = finals^
+    _ = inits^
+
+
 def _zi_host[
     dtype: DType
 ](b: List[Scalar[dtype]], a: List[Scalar[dtype]]) raises -> List[Scalar[dtype]]:
@@ -242,6 +461,7 @@ def lfilter[
     A: TensorLike,
     B: TensorLike,
     C: TensorLike,
+    gpu: Bool = False,
 ](b: A, a: B, x: C) raises -> Static[A.dtype, dim[C, 0]] where (
     (
         A.dtype.is_floating_point()
@@ -279,6 +499,24 @@ def lfilter[
     comptime na = dim[B, 0]
     comptime n = dim[C, 0]
     var norm = _normalized(b.to_host(), a.to_host[A.dtype]())
+    if _check_device[C, gpu](x):
+        comptime if gpu:
+            _require_contiguous(x)
+            var result = Static[A.dtype, n]._uninitialized(x.context())
+            _iir_device(
+                norm[0],
+                norm[1],
+                _device_ptr[A.dtype](x),
+                _device_ptr[A.dtype](result),
+                n,
+                List[Scalar[A.dtype]](),
+                False,
+                False,
+                x.context(),
+            )
+            return result^
+    else:
+        _notice[gpu]("lfilter")
     var state = List[Scalar[A.dtype]](length=max(len(norm[0]) - 1, 1), fill=0)
     var out = Static[A.dtype, n]._uninitialized(x.context())
     # `_uninitialized` is sound here because the loop below writes every one
@@ -335,10 +573,66 @@ def lfilter_zi[
     return Static[A.dtype, (nb if nb > na else na) - 1](b.context(), zi^)
 
 
+def _device_ptr[
+    dtype: DType, T: TensorLike
+](x: T) -> UnsafePointer[Scalar[dtype], MutAnyOrigin]:
+    """`x`'s device pointer at `dtype`, erased for a recurrence that reads it
+    and, in place, writes it."""
+    return (
+        x.tile()
+        .ptr.unsafe_bitcast[Scalar[dtype]]()
+        .unsafe_mut_cast[True]()
+        .unsafe_origin_cast[MutAnyOrigin]()
+    )
+
+
+def _filtfilt_device[
+    n: Int, dtype: DType, T: TensorLike
+](
+    b: List[Scalar[dtype]], a: List[Scalar[dtype]], x: T, edge: Int
+) raises -> Static[dtype, n]:
+    """`filtfilt` on the device: one launch builds the odd extension, the
+    device recurrence runs forward and then backward over it in place, each
+    started at `lfilter_zi` times the first sample it reads, and a window
+    copies out the middle."""
+    _require_contiguous(x)
+    var ctx = x.context()
+    var m = n + 2 * edge
+    var ext = Dynamic[dtype, 1]._uninitialized(ctx, row_major(_dyn_shape[1](m)))
+    var xp = _device_ptr[dtype](x)
+    var ep = _device_ptr[dtype](ext)
+
+    @always_inline
+    def extend[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var xp, var ep, var edge}:
+        var j = coord_to_index_list(coord)[0]
+        var value: Scalar[dtype]
+        if j < edge:
+            value = 2 * xp[unsafe_offset=0] - xp[unsafe_offset=edge - j]
+        elif j < edge + n:
+            value = xp[unsafe_offset=j - edge]
+        else:
+            value = (
+                2 * xp[unsafe_offset=n - 1]
+                - xp[unsafe_offset=n - 2 - (j - edge - n)]
+            )
+        ep[unsafe_offset=j] = value
+
+    elementwise[simd_width=1, target="gpu"](extend, Coord(m), ctx)
+    var zi = _zi_host(b, a)
+    _iir_device(b, a, ep, ep, m, zi, True, False, ctx)
+    _iir_device(b, a, ep, ep, m, zi, True, True, ctx)
+    return _axis_gather["offset"](
+        ext, Static[dtype, n]._static_layout(), 0, edge
+    )
+
+
 def filtfilt[
     A: TensorLike,
     B: TensorLike,
     C: TensorLike,
+    gpu: Bool = False,
 ](b: A, a: B, x: C, padlen: Optional[Int] = None) raises -> Static[
     A.dtype, dim[C, 0]
 ] where (
@@ -385,6 +679,11 @@ def filtfilt[
         raise Error(
             "filtfilt: the signal length must be greater than padlen ", edge
         )
+    if _check_device[C, gpu](x):
+        comptime if gpu:
+            return _filtfilt_device[n](norm[0], norm[1], x, edge)
+    else:
+        _notice[gpu]("filtfilt")
 
     # Odd extension: `2 x[0] - x[edge..1]`, `x`, `2 x[n-1] - x[n-2..n-1-edge]`.
     var ext = List[Scalar[A.dtype]](capacity=n + 2 * edge)
@@ -427,6 +726,7 @@ def filtfilt[
 def sosfilt[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](sos: A, x: B) raises -> Static[A.dtype, dim[B, 0]] where (
     (A.dtype.is_floating_point() and dim[A, 0] > 0 and dim[B, 0] > 0)
     and A.LayoutType.rank == 2
@@ -454,6 +754,35 @@ def sosfilt[
     comptime sections = dim[A, 0]
     comptime n = dim[B, 0]
     var table = sos.to_host()
+    if _check_device[B, gpu](x):
+        comptime if gpu:
+            # Each section filters the buffer in place on the device.
+            var result = _same_order(
+                _canonical[n, dtype=A.dtype](x),
+                Static[A.dtype, n]._static_layout(),
+            )
+            var rp = _device_ptr[A.dtype](result)
+            for s in range(sections):
+                var b = List[Scalar[A.dtype]](capacity=3)
+                var a = List[Scalar[A.dtype]](capacity=3)
+                for k in range(3):
+                    b.append(table[s * 6 + k])
+                    a.append(table[s * 6 + 3 + k])
+                var norm = _normalized(b^, a^)
+                _iir_device(
+                    norm[0],
+                    norm[1],
+                    rp,
+                    rp,
+                    n,
+                    List[Scalar[A.dtype]](),
+                    False,
+                    False,
+                    x.context(),
+                )
+            return result^
+    else:
+        _notice[gpu]("sosfilt")
     var out = Static[A.dtype, n]._uninitialized(x.context())
     var staged = List[Scalar[A.dtype]]()
     var src = _read_ptr[A.dtype](x, staged)
@@ -765,15 +1094,43 @@ def savgol_filter[
                 "savgol_filter: with mode 'interp', window_length must not"
                 " exceed the signal length"
             )
-        var xs = _as_float64(x.to_host())
         var grid = List[Float64](capacity=window_length)
         for j in range(window_length):
             grid.append(Float64(j))
         var left = List[Float64](capacity=window_length)
         var right = List[Float64](capacity=window_length)
+        # Only the two edge windows are fitted, so a device signal sends
+        # back those `2 * window_length` samples rather than all of itself.
+        var head: List[Scalar[T.dtype]]
+        var tail: List[Scalar[T.dtype]]
+        comptime if gpu:
+            if not x.on_host():
+                head = _axis_gather["offset"](
+                    x, Static[T.dtype, window_length]._static_layout(), 0, 0
+                ).to_host()
+                tail = _axis_gather["offset"](
+                    x,
+                    Static[T.dtype, window_length]._static_layout(),
+                    0,
+                    n - window_length,
+                ).to_host()
+            else:
+                var all = x.to_host()
+                head = List[Scalar[T.dtype]](capacity=window_length)
+                tail = List[Scalar[T.dtype]](capacity=window_length)
+                for j in range(window_length):
+                    head.append(all[j])
+                    tail.append(all[n - window_length + j])
+        else:
+            var all = x.to_host()
+            head = List[Scalar[T.dtype]](capacity=window_length)
+            tail = List[Scalar[T.dtype]](capacity=window_length)
+            for j in range(window_length):
+                head.append(all[j])
+                tail.append(all[n - window_length + j])
         for j in range(window_length):
-            left.append(xs[j])
-            right.append(xs[n - window_length + j])
+            left.append(Float64(head[j]))
+            right.append(Float64(tail[j]))
         var left_fit = _polyfit_host(grid, left, polyorder)
         var right_fit = _polyfit_host(grid, right, polyorder)
         var inv_delta = 1.0
@@ -852,6 +1209,58 @@ def savgol_filter[
 # ---------------------------------------------------------------------------
 
 
+def _resample_device[
+    n: Int, num: Int, dtype: DType
+](var spectrum: Spectrum[dtype, n], ctx: DeviceContext) raises -> Static[
+    dtype, num
+] where (dtype.is_floating_point() and n > 0 and num > 0):
+    """`resample`'s spectrum reshuffle on the device: one launch builds the
+    `num`-bin spectrum from the `n`-bin one by the host rule -- the leading
+    `m // 2 + 1` bins, the trailing negative frequencies, SciPy's Nyquist
+    fold or split, and the `num / n` gain -- then the inverse transform,
+    whose real half is the answer."""
+    comptime m = min(num, n)
+    comptime m2 = m // 2 + 1
+    var yre = Static[dtype, num]._uninitialized(ctx)
+    var yim = Static[dtype, num]._uninitialized(ctx)
+    var re = spectrum[0].tile().as_unsafe_any_origin()
+    var im = spectrum[1].tile().as_unsafe_any_origin()
+    var ore = yre.tile()
+    var oim = yim.tile()
+    var gain = Scalar[dtype](Float64(num) / Float64(n))
+
+    @always_inline
+    def reshuffle[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var re, var im, var ore, var oim, var gain}:
+        var k = coord_to_index_list(coord)[0]
+        var r = Scalar[dtype](0)
+        var i = Scalar[dtype](0)
+        if k < m2:
+            r = re[Coord(k)][0]
+            i = im[Coord(k)][0]
+        elif k >= num - (m - m2):
+            r = re[Coord(n - num + k)][0]
+            i = im[Coord(n - num + k)][0]
+        comptime if m % 2 == 0:
+            comptime if num < n:
+                if k == num - m // 2:
+                    r += re[Coord(n - m // 2)][0]
+                    i += im[Coord(n - m // 2)][0]
+            elif n < num:
+                if k == m // 2 or k == num - m // 2:
+                    r = re[Coord(m // 2)][0] / 2
+                    i = im[Coord(m // 2)][0] / 2
+        ore.store[1](coord, r * gain)
+        oim.store[1](coord, i * gain)
+
+    elementwise[simd_width=1, target="gpu"](reshuffle, Coord(num), ctx)
+    ctx.synchronize()
+    _ = spectrum^
+    var back = ifft[gpu=True](Spectrum[dtype, num](yre^, yim^))
+    return _same_order(back[0], Static[dtype, num]._static_layout())
+
+
 def resample[
     T: TensorLike,
     num: Int,
@@ -872,23 +1281,27 @@ def resample[
     signal is periodic, as the method does; a signal that is not will ring
     at the ends.
 
-    Two transforms on the device around a host reshuffle of the spectrum,
-    which is `O(n)` against their `O(n log n)`; the spelling
-    `numax.linalg.solve_circulant` uses.
+    Two transforms around a reshuffle of the spectrum, `O(n)` against their
+    `O(n log n)`. At `gpu=True` the reshuffle is one device launch too, so
+    nothing crosses to the host; on the host it is a loop.
     """
     comptime n = dim[T, 0]
     var ctx = x.context()
     var spectrum = fft[gpu=gpu](
         Spectrum[T.dtype, n](
-            Static[T.dtype, n](ctx, x.to_host()), zeros[T.dtype, n](ctx)
+            _same_order(x, Static[T.dtype, n]._static_layout()),
+            zeros[T.dtype, n](ctx),
         )
     )
+    comptime m = min(num, n)
+    comptime m2 = m // 2 + 1
+    comptime if gpu:
+        if not x.on_host():
+            return _resample_device[n, num](spectrum^, ctx)
     var re = _as_float64(spectrum[0].to_host())
     var im = _as_float64(spectrum[1].to_host())
     _ = spectrum^
 
-    comptime m = min(num, n)
-    comptime m2 = m // 2 + 1
     var yre = List[Float64](length=num, fill=0.0)
     var yim = List[Float64](length=num, fill=0.0)
     for k in range(m2):
@@ -1013,6 +1426,7 @@ def decimate[
     T: TensorLike,
     q: Int,
     numtaps: Int = 20 * q + 1,
+    gpu: Bool = False,
 ](x: T) raises -> Static[T.dtype, (dim[T, 0] + q - 1) // q] where (
     (T.dtype.is_floating_point() and dim[T, 0] > 0 and q >= 2 and numtaps > 0)
     and T.LayoutType.rank == 1
@@ -1055,10 +1469,15 @@ def decimate[
     # what lets a signal only a few times longer than the taps be
     # decimated at all: at `q = 2` the default would demand 124 samples
     # where this needs 61.
-    var smoothed = filtfilt(taps, denominator, x, 3 * (numtaps // 2))
+    var smoothed = filtfilt[gpu=gpu](taps, denominator, x, 3 * (numtaps // 2))
+    comptime out_n = (n + q - 1) // q
+    comptime if gpu:
+        if not smoothed.on_host():
+            return _axis_gather["stride"](
+                smoothed, Static[T.dtype, out_n]._static_layout(), 0, q
+            )
     var host = smoothed.to_host()
 
-    comptime out_n = (n + q - 1) // q
     var values = List[Scalar[T.dtype]](capacity=out_n)
     for i in range(out_n):
         values.append(host[i * q])

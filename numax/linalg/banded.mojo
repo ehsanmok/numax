@@ -60,8 +60,15 @@ a sequential sweep with data-dependent deflation.
 
 from std.math import sqrt as _sqrt
 
+from max.gpu.host import DeviceContext
+
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Static, copy, zeros
+from algorithm.rowwise_types import RowCoord
+from layout import Coord, coord_to_index_list
+from max.algorithm.functional import elementwise
+
+from ..core.rowwise import reduce_all
+from ..core.tensor import _canonical, _same_order, Static, copy, zeros
 from ..fft.fft import Spectrum, fft, ifft
 
 
@@ -493,6 +500,60 @@ def solve_toeplitz[
     return Static[A.dtype, n](ctx, out^)
 
 
+def _circulant_divide[
+    n: Int, dtype: DType
+](
+    var c_spectrum: Spectrum[dtype, n],
+    var b_spectrum: Spectrum[dtype, n],
+    ctx: DeviceContext,
+) raises -> Static[dtype, n] where (dtype.is_floating_point() and n > 0):
+    """`solve_circulant`'s spectral division on the device: one launch
+    divides `fft(b)` by `fft(c)` in place and writes each `|fft(c)_k|^2`,
+    a device `min` over those checks for a zero eigenvalue, and the inverse
+    transform's real half is the answer."""
+    var cr = c_spectrum[0].tile().as_unsafe_any_origin()
+    var ci = c_spectrum[1].tile().as_unsafe_any_origin()
+    var br = b_spectrum[0].tile().as_unsafe_any_origin()
+    var bi = b_spectrum[1].tile().as_unsafe_any_origin()
+    var magnitudes = Static[dtype, n]._uninitialized(ctx)
+    var mv = magnitudes.tile()
+
+    @always_inline
+    def divide[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var cr, var ci, var br, var bi, var mv}:
+        var a = cr[coord][0]
+        var b = ci[coord][0]
+        var p = br[coord][0]
+        var q = bi[coord][0]
+        var size = a * a + b * b
+        mv.store[1](coord, size)
+        br.store[1](coord, (p * a + q * b) / size)
+        bi.store[1](coord, (q * a - p * b) / size)
+
+    elementwise[simd_width=1, target="gpu"](divide, Coord(n), ctx)
+    var smallest = Static[dtype, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
+        return tile
+
+    reduce_all[monoid="min", target="gpu"](
+        magnitudes.tile(), smallest.tile(), identity, n, Optional(ctx)
+    )
+    if smallest.to_host()[0] == 0:
+        raise Error(
+            "solve_circulant: the matrix is singular -- an eigenvalue of the"
+            " circulant is zero. Its eigenvalues are exactly the entries of"
+            " fft(c)."
+        )
+    _ = c_spectrum^
+    var solved = ifft[dtype, n, True](b_spectrum^)
+    return _same_order(solved[0], Static[dtype, n]._static_layout())
+
+
 def solve_circulant[
     A: TensorLike,
     B: TensorLike,
@@ -534,10 +595,11 @@ def solve_circulant[
     answer there instead; numax does not, since the pseudoinverse route
     would need a tolerance policy this module has nowhere to state.
 
-    The division is done on the host. It is `O(n)` against the transforms'
-    `O(n log n)`, and it needs complex arithmetic that
-    `numax.core.ops` does not carry -- the same reason `numax.fft` returns
-    a real/imaginary pair rather than a complex tensor.
+    The division is `O(n)` against the transforms' `O(n log n)` and needs
+    complex arithmetic `numax.core.ops` does not carry, so it is written
+    out over the real/imaginary pair: a host loop, or at `gpu=True` one
+    device launch with the singularity check as a device `min` over the
+    eigenvalue magnitudes, so nothing crosses to the host.
     """
     comptime n = dim[A, 0]
     var ctx = c.context()
@@ -548,15 +610,22 @@ def solve_circulant[
     # buffer is a decision rather than something that happens silently.
     var c_spectrum = fft[A.dtype, n, gpu](
         Spectrum[A.dtype, n](
-            Static[A.dtype, n](ctx, c.to_host()), zeros[A.dtype, n](ctx)
+            _same_order(c, Static[A.dtype, n]._static_layout()),
+            zeros[A.dtype, n](ctx),
         )
     )
     var b_spectrum = fft[A.dtype, n, gpu](
         Spectrum[A.dtype, n](
-            Static[A.dtype, n](ctx, b.to_host[A.dtype]()),
+            _same_order(
+                _canonical[n, dtype=A.dtype](b),
+                Static[A.dtype, n]._static_layout(),
+            ),
             zeros[A.dtype, n](ctx),
         )
     )
+    comptime if gpu:
+        if not c.on_host():
+            return _circulant_divide[n](c_spectrum^, b_spectrum^, ctx)
 
     var c_real = c_spectrum[0].to_host()
     var c_imag = c_spectrum[1].to_host()
