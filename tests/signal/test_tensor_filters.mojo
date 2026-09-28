@@ -321,7 +321,7 @@ def test_the_recurrence_runs_at_the_input_dtype() raises:
     the `float64` pins above.
 
     The recurrence used to widen to `Float64` whatever it was handed. It
-    no longer does, which is SciPy's own behaviour, and the cost is the
+    no longer does, which is SciPy's own behavior, and the cost is the
     last bits: `scipy.signal.lfilter` on this signal differs between
     `float32` and `float64` by `4.3e-8`, and `filtfilt` by `1.4e-7`.
     """

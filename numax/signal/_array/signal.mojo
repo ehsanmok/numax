@@ -73,8 +73,8 @@ def convolve[
     depends on it. `numpy.convolve`'s third mode, `"valid"`, is not
     provided; nothing in numax needs it yet.
 
-    For `same`, the centre offset is `(k - 1) // 2`, matching NumPy for
-    both odd and even `k`. For an even-length kernel the centre is
+    For `same`, the center offset is `(k - 1) // 2`, matching NumPy for
+    both odd and even `k`. For an even-length kernel the center is
     ambiguous and NumPy picks the earlier of the two; this does the same
     rather than choosing differently and being subtly incompatible.
 

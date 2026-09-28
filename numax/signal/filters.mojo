@@ -1168,7 +1168,7 @@ def savgol_filter[
     var ctx = x.context()
 
     # The correlation coefficients: row `deriv` of `(V^T V)^{-1} V^T` over
-    # the centred positions, times `deriv! / delta^deriv`.
+    # the centered positions, times `deriv! / delta^deriv`.
     var positions = List[Float64](capacity=window_length)
     for j in range(window_length):
         positions.append(Float64(j - half))
@@ -1500,7 +1500,7 @@ def firwin[
     edges are a bandstop or a bandpass respectively, and so on. SciPy's
     construction: the ideal response is a sum of sinc differences over the
     pass bands, tapered by the symmetric `window` (Hamming by default) and,
-    with `scale`, normalized to unit gain at the centre of the first pass
+    with `scale`, normalized to unit gain at the center of the first pass
     band. A design that must pass Nyquist -- a highpass, or a bandpass whose
     top edge is 1 -- needs an odd `numtaps`, as SciPy insists, since an
     even-length symmetric filter has a zero there.
@@ -1565,12 +1565,12 @@ def firwin[
     if scale:
         var left = bands[0]
         var right = bands[1]
-        var centre = 0.0 if left == 0 else (
+        var center = 0.0 if left == 0 else (
             1.0 if right == 1 else 0.5 * (left + right)
         )
         var total = 0.0
         for i in range(numtaps):
-            total += taps[i] * _cos(_PI * (Float64(i) - alpha) * centre)
+            total += taps[i] * _cos(_PI * (Float64(i) - alpha) * center)
         for i in range(numtaps):
             taps[i] /= total
     return _upload[dtype=dtype, n=numtaps](device, taps)

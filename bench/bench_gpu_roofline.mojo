@@ -59,7 +59,7 @@ check whether they still hold.
 2. **Coarsening does not help on this hardware.** Across `width` in
    `{1, 2, 4, 8}` and `block_dim` in `{128, 256, 512, 1024}`, `width=1` was
    fastest or tied every time, and `width=8` was consistently a few percent
-   behind. Neighbouring threads already read neighboring addresses, so the
+   behind. Neighboring threads already read neighboring addresses, so the
    hardware coalesces them into wide transactions and there is nothing for
    a wider per-thread access to recover. `block_dim=256` (the value every
    call site in `numax` already used) is at or within ~1% of the best.

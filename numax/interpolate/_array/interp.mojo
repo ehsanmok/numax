@@ -185,7 +185,7 @@ def cubic_spline_eval[
     `cubic_spline_moments`) at `x`.
 
     See this module's docstring for the `O(n)` scan and the clamping
-    behaviour outside `[x0, x0 + (n-1)*h]`.
+    behavior outside `[x0, x0 + (n-1)*h]`.
     """
     var last = T.constant(Float64(n - 1))
     var clamped = min_of(max_of((x - x0) / h, T.constant(0.0)), last)

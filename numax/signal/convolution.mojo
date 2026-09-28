@@ -29,7 +29,7 @@ the operator MAX has and why this module is not it. **Extend.**
 ## Modes
 
 `MODE_FULL` (the default), `MODE_SAME` and `MODE_VALID`, as `numpy.convolve` defines them
-and with its lengths: `m + k - 1`, `max(m, k)` centred, and `max(m, k) -
+and with its lengths: `m + k - 1`, `max(m, k)` centered, and `max(m, k) -
 min(m, k) + 1`. `mode` is a compile-time parameter because the length is
 part of the return type. `correlate` is `convolve` with the second
 argument read backwards, in the same loop, so its modes and offsets are
@@ -85,7 +85,7 @@ def _out_len(m: Int, k: Int, mode: Int) -> Int:
 
 def _offset(m: Int, k: Int, mode: Int) -> Int:
     """The index into the `full` result at which `mode`'s output starts:
-    NumPy centres `same` on the longer input and `valid` where the shorter
+    NumPy centers `same` on the longer input and `valid` where the shorter
     one first fits entirely."""
     if mode == MODE_FULL:
         return 0

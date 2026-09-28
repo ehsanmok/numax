@@ -606,7 +606,7 @@ def _lp2bp_zpk(var f: _Zpk, wo: Float64, bw: Float64) -> _Zpk:
 
 def _lp2bs_zpk(var f: _Zpk, wo: Float64, bw: Float64) -> _Zpk:
     """`s -> (s bw) / (s^2 + wo^2)`: the highpass inversion, then the same
-    split, with the missing zeros landing on the band's own centre
+    split, with the missing zeros landing on the band's own center
     frequency at `+-i wo` rather than at the origin."""
     var degree = f.relative_degree()
     var half = bw / 2.0

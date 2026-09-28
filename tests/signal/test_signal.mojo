@@ -112,7 +112,7 @@ def test_convolve_mode_same_takes_the_central_window() raises:
         assert_almost_equal(s(out[i]), expected[i])
 
 
-def test_convolve_mode_same_centres_an_odd_kernel() raises:
+def test_convolve_mode_same_centers_an_odd_kernel() raises:
     # numpy.convolve([1, 2, 3, 4], [1, 1, 1], "same") == [3, 6, 9, 7]
     var a = filled[4]([1.0, 2.0, 3.0, 4.0])
     var kernel = filled[3]([1.0, 1.0, 1.0])
@@ -198,7 +198,7 @@ def test_hann_is_symmetric() raises:
 
 
 def test_hann_peaks_at_one_for_odd_length() raises:
-    # An odd-length symmetric window has a sample exactly at the centre.
+    # An odd-length symmetric window has a sample exactly at the center.
     comptime n = 9
     var w = hann[P, n]()
     assert_almost_equal(s(w[n // 2]), 1.0, atol=1e-15)

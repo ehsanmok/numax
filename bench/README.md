@@ -427,7 +427,7 @@ Two cautions on reading the GPU column. First, this benchmark enqueues all
 timed iterations and synchronizes once at the end, so per-call host
 round-trip is amortized; the cross-language table above pays a synchronize
 per call, and the two sets of numbers are therefore not comparable. Second,
-this is the *most* favourable possible fusion case — two cheap elementwise
+this is the *most* favorable possible fusion case — two cheap elementwise
 ops where the second does almost no arithmetic, so the chained version is
 nearly pure extra memory traffic.
 

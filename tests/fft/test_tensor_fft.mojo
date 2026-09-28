@@ -277,13 +277,13 @@ def test_irfft_of_a_dc_spike_is_constant() raises:
         assert_almost_equal(Float64(x[i]), 1.0, atol=1e-12)
 
 
-def test_fftshift_centres_fftfreq() raises:
+def test_fftshift_centers_fftfreq() raises:
     """`fftshift(fftfreq(8))` is the monotone grid `-0.5 .. 0.375`, the
     canonical use, and `ifftshift` puts it back."""
-    var centred = fftshift(fftfreq[dtype=dtype, n=8]()).to_host()
+    var centered = fftshift(fftfreq[dtype=dtype, n=8]()).to_host()
     var expected = [-0.5, -0.375, -0.25, -0.125, 0.0, 0.125, 0.25, 0.375]
     for i in range(8):
-        assert_almost_equal(Float64(centred[i]), expected[i], atol=1e-15)
+        assert_almost_equal(Float64(centered[i]), expected[i], atol=1e-15)
 
     var restored = ifftshift(fftshift(fftfreq[dtype=dtype, n=8]())).to_host()
     var grid = fftfreq[dtype=dtype, n=8]().to_host()
@@ -451,8 +451,8 @@ def test_rfft2_is_the_left_half_of_fft2() raises:
         assert_almost_equal(Float64(him[1 * 5 + k]), row1_im[k], atol=1e-12)
 
 
-def test_fftshift_of_a_2d_spectrum_centres_dc() raises:
-    """`fftshift(fft2(constant))` has its one spike at the centre pixel
+def test_fftshift_of_a_2d_spectrum_centers_dc() raises:
+    """`fftshift(fft2(constant))` has its one spike at the center pixel
     `(rows/2, cols/2)`, both axes shifted at once as NumPy's default
     does."""
     var ctx = _cpu()

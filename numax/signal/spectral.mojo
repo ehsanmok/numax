@@ -210,7 +210,7 @@ def _times[
 ](ctx: DeviceContext, first: Float64, step: Int, fs: Float64) raises -> Static[
     dtype, frames
 ]:
-    """`(first + f * step) / fs`: the centre of each frame in seconds."""
+    """`(first + f * step) / fs`: the center of each frame in seconds."""
     var values = List[Scalar[dtype]](capacity=frames)
     for f in range(frames):
         values.append(Scalar[dtype]((first + Float64(f * step)) / fs))
@@ -493,7 +493,7 @@ def spectrogram[
     frames laid out in time. `scipy.signal.spectrogram(x, fs, window,
     nperseg, noverlap, detrend, scaling, mode="psd")`.
 
-    `power[k, f]` is bin `k` of frame `f`, whose centre is `times[f] =
+    `power[k, f]` is bin `k` of frame `f`, whose center is `times[f] =
     (nperseg / 2 + f * step) / fs`. SciPy's default `noverlap` here is
     `nperseg // 8`, an eighth rather than `welch`'s half, and its default
     window is a Tukey taper this module does not have -- pass `"hann"` (the
@@ -612,7 +612,7 @@ def stft[
     padded=True, scaling="spectrum")`.
 
     SciPy's legacy `stft` defaults exactly: `nperseg // 2` zeros are added
-    at both ends so the first frame is centred on the first sample, the
+    at both ends so the first frame is centered on the first sample, the
     signal is extended to a whole number of hops, no detrending, and every
     value is divided by `sum(w)` so a pure tone reads its amplitude. The
     time of frame `f` is `f * step / fs`. Every frame is one row of one

@@ -1288,7 +1288,7 @@ def fftshift[
     rows > 0 and cols > 0
 ):
     """`fftshift` over both axes of a matrix -- NumPy's default for a 2-D
-    input, so `fftshift(fft2(image))` puts DC at the centre pixel.
+    input, so `fftshift(fft2(image))` puts DC at the center pixel.
 
     Parameters:
         dtype: The element type of `x`.

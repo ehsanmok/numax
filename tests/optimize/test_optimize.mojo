@@ -258,7 +258,7 @@ def test_ad_gradient_beats_a_central_difference() raises:
         return Float64(rosenbrock[P](v^).v)
 
     # Sweep h and keep the *best* central difference, so the comparison is
-    # against finite differencing at its most favourable rather than a
+    # against finite differencing at its most favorable rather than a
     # strawman step size.
     var best_fd_error = 1e30
     var h = 1e-2

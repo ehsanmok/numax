@@ -28,7 +28,7 @@ from test_signal import (
     test_convolve_mode_same_takes_the_central_window as test_signal__test_convolve_mode_same_takes_the_central_window,
 )
 from test_signal import (
-    test_convolve_mode_same_centres_an_odd_kernel as test_signal__test_convolve_mode_same_centres_an_odd_kernel,
+    test_convolve_mode_same_centers_an_odd_kernel as test_signal__test_convolve_mode_same_centers_an_odd_kernel,
 )
 from test_signal import (
     test_correlate_matches_numpy_on_an_asymmetric_pair as test_signal__test_correlate_matches_numpy_on_an_asymmetric_pair,
@@ -274,7 +274,7 @@ def main() raises:
     suite.test[test_signal__test_convolve_is_commutative]()
     suite.test[test_signal__test_convolve_sums_to_the_product_of_the_sums]()
     suite.test[test_signal__test_convolve_mode_same_takes_the_central_window]()
-    suite.test[test_signal__test_convolve_mode_same_centres_an_odd_kernel]()
+    suite.test[test_signal__test_convolve_mode_same_centers_an_odd_kernel]()
     suite.test[
         test_signal__test_correlate_matches_numpy_on_an_asymmetric_pair
     ]()

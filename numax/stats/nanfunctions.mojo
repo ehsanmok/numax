@@ -179,8 +179,8 @@ def nanvar[
     var kept = xs.size() - _nan_count[gpu=gpu](xs)
     if kept <= ddof:
         raise Error("nanvar: not enough non-NaN elements for ddof ", ddof)
-    var centre = nanmean[gpu=gpu](xs)
-    var deviation = subtract[gpu=gpu](xs, centre)
+    var center = nanmean[gpu=gpu](xs)
+    var deviation = subtract[gpu=gpu](xs, center)
     var squares = multiply[gpu=gpu](deviation, deviation)
     return _sum[gpu=gpu](_filled[gpu=gpu](squares, Scalar[dtype](0))) / Scalar[
         dtype

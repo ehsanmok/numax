@@ -939,7 +939,7 @@ points in 2.4 ms. `histogram` matches NumPy; both are host-side counts.
 
 **`cov` is the largest single ratio this page records.** It was an
 `O(rows^2 n)` `Float64` host loop at 124,783 µs and is now a Welford
-`variance_axis` for the means, one `broadcast_op_axis` to centre, and one
+`variance_axis` for the means, one `broadcast_op_axis` to center, and one
 `inner` for the Gram matrix with the `1/(n - ddof)` scaling folded into
 the matmul epilogue: **30x faster** and 3.3x ahead of NumPy, because the
 cubic term is `linalg.matmul` and NumPy's `cov` is not a GEMM.

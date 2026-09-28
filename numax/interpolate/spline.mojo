@@ -59,7 +59,7 @@ SciPy's `PPoly.__call__(x, nu)` has it.
 Outside the knots, `CubicSpline` and `PchipInterpolator` **extrapolate**
 with the end intervals' cubics -- SciPy's default, `extrapolate=True` --
 and `Akima1DInterpolator` returns NaN, which is SciPy's default for that
-one. Each constructor takes `extrapolate` to choose the other behaviour.
+one. Each constructor takes `extrapolate` to choose the other behavior.
 The `Array` tier clamps instead, for the reason its docstring gives.
 
 ## The MAX gate

@@ -177,7 +177,7 @@ def test_determinant_is_multiplicative() raises:
     # `B@A` rather than `A@B`: the latter happens to have a zero in its
     # top-left entry, which the unpivoted LU cannot factor -- see
     # `test_unpivoted_lu_fails_on_a_zero_pivot` below, which pins that
-    # behaviour down deliberately.
+    # behavior down deliberately.
     var a = spd3()
     var b = general3()
     var product = matmul[P, 3](b, a)

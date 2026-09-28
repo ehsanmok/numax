@@ -98,7 +98,7 @@ def main() raises:
     # 0.2 is 100 Hz here: the 50 Hz tone passes, the 220 Hz does not.
     var lowpass = firwin[dtype=dtype, numtaps=taps]([0.2], ctx=ctx)
     var coefficients = lowpass.to_host()
-    print("  firwin(33, 0.2) centre tap =", coefficients[taps // 2])
+    print("  firwin(33, 0.2) center tap =", coefficients[taps // 2])
 
     # Route one: the direct convolution, one launch of dot products.
     var signal_a = two_tones(ctx)

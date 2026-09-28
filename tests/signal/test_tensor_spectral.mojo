@@ -155,7 +155,7 @@ def test_welch_matches_scipy() raises:
 
 def test_spectrogram_matches_scipy() raises:
     """`spectrogram(x, fs=4, window="hann", nperseg=8, noverlap=4)`: three
-    frames centred at `1, 2, 3` seconds, `power` in `(frequencies,
+    frames centered at `1, 2, 3` seconds, `power` in `(frequencies,
     times)` orientation."""
     var x = _from[16](_x())
     var result = spectrogram[nperseg=8, noverlap=4](x, fs=4.0)

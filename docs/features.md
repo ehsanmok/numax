@@ -302,7 +302,7 @@ factorizations step with. [`array/`](../numax/linalg/_array/) mirrors that
 split for the other tier and adds `eigen`, which is `Array`-only. Mojo
 wants a single owning module per name, so a name is defined once per tier
 and never twice within one. Every function's docstring records its own
-error behaviour and which MAX kernel, if any, it delegates to; every
+error behavior and which MAX kernel, if any, it delegates to; every
 module's docstring records the tier and the MAX disposition for the
 family.
 

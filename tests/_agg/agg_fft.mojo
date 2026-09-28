@@ -114,7 +114,7 @@ from test_tensor_fft import (
     test_irfft_of_a_dc_spike_is_constant as test_tensor_fft__test_irfft_of_a_dc_spike_is_constant,
 )
 from test_tensor_fft import (
-    test_fftshift_centres_fftfreq as test_tensor_fft__test_fftshift_centres_fftfreq,
+    test_fftshift_centers_fftfreq as test_tensor_fft__test_fftshift_centers_fftfreq,
 )
 from test_tensor_fft import (
     test_fftshift_and_ifftshift_differ_at_odd_n as test_tensor_fft__test_fftshift_and_ifftshift_differ_at_odd_n,
@@ -132,7 +132,7 @@ from test_tensor_fft import (
     test_rfft2_is_the_left_half_of_fft2 as test_tensor_fft__test_rfft2_is_the_left_half_of_fft2,
 )
 from test_tensor_fft import (
-    test_fftshift_of_a_2d_spectrum_centres_dc as test_tensor_fft__test_fftshift_of_a_2d_spectrum_centres_dc,
+    test_fftshift_of_a_2d_spectrum_centers_dc as test_tensor_fft__test_fftshift_of_a_2d_spectrum_centers_dc,
 )
 from test_tensor_fft import (
     test_the_two_tiers_agree_on_fft2 as test_tensor_fft__test_the_two_tiers_agree_on_fft2,
@@ -247,13 +247,13 @@ def main() raises:
     suite.test[test_tensor_fft__test_the_two_tiers_agree]()
     suite.test[test_tensor_fft__test_irfft_inverts_rfft]()
     suite.test[test_tensor_fft__test_irfft_of_a_dc_spike_is_constant]()
-    suite.test[test_tensor_fft__test_fftshift_centres_fftfreq]()
+    suite.test[test_tensor_fft__test_fftshift_centers_fftfreq]()
     suite.test[test_tensor_fft__test_fftshift_and_ifftshift_differ_at_odd_n]()
     suite.test[test_tensor_fft__test_fft2_matches_numpy]()
     suite.test[test_tensor_fft__test_ifft2_inverts_fft2_on_a_rectangle]()
     suite.test[test_tensor_fft__test_fft2_is_rows_then_columns]()
     suite.test[test_tensor_fft__test_rfft2_is_the_left_half_of_fft2]()
-    suite.test[test_tensor_fft__test_fftshift_of_a_2d_spectrum_centres_dc]()
+    suite.test[test_tensor_fft__test_fftshift_of_a_2d_spectrum_centers_dc]()
     suite.test[test_tensor_fft__test_the_two_tiers_agree_on_fft2]()
     suite.test[
         test_tensor_fft__test_fft_matches_a_naive_dft_at_every_length_to_13

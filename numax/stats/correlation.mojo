@@ -344,7 +344,7 @@ def _cov_device[
     and T.LayoutType.rank == 2
     and T.LayoutType.all_dims_known
 ):
-    """Centre, one GEMM, one scaling launch."""
+    """Center, one GEMM, one scaling launch."""
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
     comptime n = dim[T, 1]
@@ -1407,11 +1407,11 @@ def zscore[
     var n = len(values)
     if n - ddof <= 0:
         raise Error("zscore: not enough elements for ddof ", ddof)
-    var centre = _mean(values)
+    var center = _mean(values)
     var scale = _sqrt(_covariance(values, values, ddof))
     if scale == 0:
         raise Error("zscore: the tensor is constant")
     var out = List[Scalar[dtype]](capacity=n)
     for i in range(n):
-        out.append(Scalar[dtype]((values[i] - centre) / scale))
+        out.append(Scalar[dtype]((values[i] - center) / scale))
     return Tensor[dtype, LayoutType](xs.tile().layout, out^, xs.context())

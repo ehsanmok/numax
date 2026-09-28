@@ -4,7 +4,7 @@
 Every expected value is NumPy's or SciPy's own on a 16-sample signal:
 `numpy.quantile` under all thirteen methods at seven probabilities,
 `percentile`, the `nan*` family with two NaNs planted, `scipy.stats.iqr`,
-`scipy.stats.moment` at four orders and a given centre, `numpy.ptp` and
+`scipy.stats.moment` at four orders and a given center, `numpy.ptp` and
 `numpy.average` with weights.
 
 The 0.2 selection route adds the small-sample and tie cases a quickselect
@@ -395,7 +395,7 @@ def test_iqr_matches_scipy() raises:
 
 def test_ptp_average_and_moment_match_numpy_and_scipy() raises:
     """`numpy.ptp`, `numpy.average` with weights, and `scipy.stats.moment`
-    at orders 1-4 about the mean and at order 2 about a given centre."""
+    at orders 1-4 about the mean and at order 2 about a given center."""
     var x = _from[16](_x())
     assert_almost_equal(Float64(ptp(x)), 6.0, atol=1e-15)
     var weights = _from[16](

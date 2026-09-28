@@ -477,7 +477,7 @@ def root_scalar[
     converges to something; a guess-based one can walk into a different
     basin or diverge. Defaulting a missing `bracket` to some interval around
     `x0` would hand back the first family's name with the second family's
-    behaviour, so a missing argument is an error naming the one that was
+    behavior, so a missing argument is an error naming the one that was
     wanted.
 
     **`"brentq"` is the default and is what to reach for whenever a bracket

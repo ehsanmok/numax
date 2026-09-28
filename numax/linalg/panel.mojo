@@ -108,7 +108,7 @@ crossover is in `j`: handing the build to the threads from `j = 15` on
 from 199 to 188 -- the same dispatch, paying at one width and not at the
 other. `1 << 17` puts the line between them. It is an absolute work count
 rather than a width, so a larger `n` crosses it at a narrower panel, which
-is the behaviour wanted.
+is the behavior wanted.
 """
 
 

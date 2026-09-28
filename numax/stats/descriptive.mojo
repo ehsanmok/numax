@@ -48,10 +48,10 @@ def _mean(values: List[Float64]) -> Float64:
 
 
 def _central_moment(values: List[Float64], order: Int) -> Float64:
-    var centre = _mean(values)
+    var center = _mean(values)
     var total = 0.0
     for i in range(len(values)):
-        var d = values[i] - centre
+        var d = values[i] - center
         var p = 1.0
         for _ in range(order):
             p *= d
@@ -78,14 +78,14 @@ def _moments[
     var n = Float64(count)
     if _check_device[T, gpu](xs):
         comptime if gpu:
-            var centre = Float64(_tsum[gpu=True](xs)) / n
-            var d = subtract[gpu=True](xs, Scalar[T.dtype](centre))
+            var center = Float64(_tsum[gpu=True](xs)) / n
+            var d = subtract[gpu=True](xs, Scalar[T.dtype](center))
             var d2 = multiply[gpu=True](d, d)
             var d3 = multiply[gpu=True](d2, d)
             var d4 = multiply[gpu=True](d2, d2)
             return [
                 n,
-                centre,
+                center,
                 Float64(_tsum[gpu=True](d2)) / n,
                 Float64(_tsum[gpu=True](d3)) / n,
                 Float64(_tsum[gpu=True](d4)) / n,
@@ -577,17 +577,17 @@ def describe[
     var values = _values(xs)
     var lo = values[0]
     var hi = values[0]
-    var centre = _mean(values)
+    var center = _mean(values)
     var total = 0.0
     for i in range(n):
         lo = min(lo, values[i])
         hi = max(hi, values[i])
-        total += (values[i] - centre) * (values[i] - centre)
+        total += (values[i] - center) * (values[i] - center)
     return Description(
         n,
         lo,
         hi,
-        centre,
+        center,
         total / Float64(n - ddof),
         skew(xs, bias),
         kurtosis(xs, True, bias),

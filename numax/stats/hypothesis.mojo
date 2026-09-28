@@ -100,10 +100,10 @@ def _mean(values: List[Float64]) -> Float64:
 
 
 def _variance(values: List[Float64], ddof: Int) -> Float64:
-    var centre = _mean(values)
+    var center = _mean(values)
     var total = 0.0
     for i in range(len(values)):
-        total += (values[i] - centre) * (values[i] - centre)
+        total += (values[i] - center) * (values[i] - center)
     return total / Float64(len(values) - ddof)
 
 
@@ -1312,7 +1312,7 @@ def wilcoxon[
     and is_row_major[B]
 ):
     """The Wilcoxon signed-rank test that the paired differences
-    `xs - ys` are centred on zero.
+    `xs - ys` are centered on zero.
     `scipy.stats.wilcoxon(x, y, alternative, correction, method="approx")`.
 
     `ttest_rel`'s nonparametric counterpart: it ranks the *magnitudes* of

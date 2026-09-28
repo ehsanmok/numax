@@ -1,6 +1,6 @@
 """`pearsonr` and `linregress` at `gpu=True`, against the host.
 
-On the device the means and centred moments are `float32` sums, so the
+On the device the means and centered moments are `float32` sums, so the
 statistics agree with the host's `Float64` ones to `float32` precision;
 the p-values go through the same host `t` tail.
 """

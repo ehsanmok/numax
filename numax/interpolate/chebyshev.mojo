@@ -198,7 +198,7 @@ def chebval[
 
     The raw form: no domain mapping, so this is `Chebyshev.__call__` with
     `a = -1`, `b = 1`, and a point outside `[-1, 1]` evaluates the
-    polynomial there rather than being rejected -- NumPy's behaviour too.
+    polynomial there rather than being rejected -- NumPy's behavior too.
 
     Parameters:
         A: The tensor type of `x`, rank 1 with `m > 0` elements.
