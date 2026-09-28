@@ -28,6 +28,13 @@ Box-Muller on the two uniforms at words `2i` and `2i + 1`; `exponential`
 is `-scale ln(1 - U)` on word `i`; `randint` is `low + ((high - low) * word) >> 32`
 in integer arithmetic; `randbool` compares `U < p`.
 
+`Generator.gamma`, `beta`, `lognormal`, `poisson` and `binomial` take
+several words per element: element `i` owns a fixed block of the stream
+and a rejection sampler gets a fixed number of attempts inside it
+(Marsaglia-Tsang for the gamma family, NumPy's PTRS and BTRS transformed
+rejection for the counts, inversion below their splits), so they fill on
+the device like the rest.
+
 Because the value at every position is a pure function of `(seed, i)`,
 the fill is the same body on both sides of the launch boundary, driven by
 `max.algorithm.elementwise` the way the distributions' `Tensor` overloads
@@ -64,7 +71,7 @@ ordinary Mojo. What numax takes from MAX here is the generator itself,
 MAX's idiom (a `TileTensor` out, one thread per element). **Extend.**
 """
 
-from std.math import cos, log, sqrt
+from std.math import cos, exp, floor, log, sqrt
 from std.random import Random, random_ui64, seed as _std_seed
 from std.sys.info import simd_width_of
 from std.utils.coord import coord_to_index_list
@@ -143,6 +150,274 @@ def _randbool_step[
     dtype: DType
 ](seed: UInt64, index: Int, p: Float32, unused: Float32) -> Scalar[dtype]:
     return _uniform01[DType.float32](seed, index).lt(p).cast[dtype]()
+
+
+# ---------------------------------------------------------------------------
+# Draws that take several words per element
+# ---------------------------------------------------------------------------
+#
+# Element `i` of these reads only the words in its own block `[i W, (i+1) W)`
+# of the stream, `W` fixed per distribution, so elements stay independent
+# and the fill stays one body on either side of the launch. A rejection
+# sampler gets a fixed number of attempts inside its block rather than an
+# open-ended loop; the attempt counts below make running out rarer than
+# one in `1e20` draws, and the fallback then is the distribution's own
+# center, stated at each.
+
+comptime _GAMMA_TRIES = 16
+"""Marsaglia-Tsang attempts per gamma draw; each accepts with probability
+above 0.95, so all sixteen failing is below `1e-20`."""
+comptime _GAMMA_WORDS = 3 * _GAMMA_TRIES + 1
+"""Words per gamma draw: a normal (two) and a uniform per attempt, and one
+more for the `shape < 1` boost."""
+comptime _REJECT_TRIES = 24
+"""Transformed-rejection attempts per Poisson or binomial draw; each accepts
+with probability above 0.85 (Hormann's bound), so all failing is below
+`1e-20`."""
+comptime _REJECT_WORDS = 2 * _REJECT_TRIES
+"""Words per Poisson or binomial draw by transformed rejection."""
+comptime _INVERSION_WORDS = 1
+"""Words per draw by inversion: one uniform."""
+
+
+@always_inline
+def _word_uniform[
+    dtype: DType
+](seed: UInt64, word: Int) -> Scalar[dtype] where dtype.is_floating_point():
+    """Word `word` of the stream as a uniform in `[0, 1)` at `dtype`'s
+    precision, one word even at `float64`: these samplers need the
+    word count per element fixed across dtypes."""
+    var r = Random(seed=seed, offset=UInt64(word // 4))
+    var bits = r.step()[word % 4]
+    return Scalar[dtype](Float32(bits >> 8) * 5.960464477539063e-08)
+
+
+@always_inline
+def _word_normal[
+    dtype: DType
+](seed: UInt64, word: Int) -> Scalar[dtype] where dtype.is_floating_point():
+    """A standard normal from words `word` and `word + 1`, Box-Muller."""
+    var u1 = _word_uniform[dtype](seed, word)
+    var u2 = _word_uniform[dtype](seed, word + 1)
+    var radius = sqrt(Scalar[dtype](-2.0) * log(Scalar[dtype](1.0) - u1))
+    return radius * cos(Scalar[dtype](_TWO_PI) * u2)
+
+
+def _loggam[
+    dtype: DType
+](x: Scalar[dtype]) -> Scalar[dtype] where dtype.is_floating_point():
+    """`ln Gamma(x)` for `x >= 1`: NumPy's `random_loggam`, Stirling's series
+    after shifting `x` above 7, plain arithmetic and `log` so it runs in a
+    device kernel."""
+    if x == 1 or x == 2:
+        return Scalar[dtype](0)
+    var x0 = x
+    var shift = 0
+    if x <= 7:
+        shift = Int(7 - x)
+        x0 = x + Scalar[dtype](shift)
+    var x2 = 1 / (x0 * x0)
+    var gl0 = Scalar[dtype](-1.39243221690590e00)
+    gl0 = gl0 * x2 + Scalar[dtype](1.796443723688307e-01)
+    gl0 = gl0 * x2 + Scalar[dtype](-2.955065359477124e-02)
+    gl0 = gl0 * x2 + Scalar[dtype](6.410256410256410e-03)
+    gl0 = gl0 * x2 + Scalar[dtype](-1.917526917526918e-03)
+    gl0 = gl0 * x2 + Scalar[dtype](8.417508417508418e-04)
+    gl0 = gl0 * x2 + Scalar[dtype](-5.952380952380952e-04)
+    gl0 = gl0 * x2 + Scalar[dtype](7.936507936507937e-04)
+    gl0 = gl0 * x2 + Scalar[dtype](-2.777777777777778e-03)
+    gl0 = gl0 * x2 + Scalar[dtype](8.333333333333333e-02)
+    var gl = (
+        gl0 / x0 + Scalar[dtype](0.9189385332046727) + (x0 - 0.5) * log(x0) - x0
+    )
+    for _ in range(shift):
+        gl -= log(x0 - 1)
+        x0 -= 1
+    return gl
+
+
+def _standard_gamma[
+    dtype: DType
+](seed: UInt64, base: Int, shape: Scalar[dtype]) -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    """A standard gamma draw from the words at `base`: Marsaglia and Tsang's
+    squeeze for `shape >= 1`, and for `shape < 1` a draw at `shape + 1`
+    times `U^(1/shape)`, their boost. After `_GAMMA_TRIES` rejections the
+    draw is the proposal's center `d`."""
+    var boost = shape < 1
+    var a = shape + 1 if boost else shape
+    var d = a - Scalar[dtype](1.0 / 3.0)
+    var c = 1 / sqrt(9 * d)
+    var result = d
+    for t in range(_GAMMA_TRIES):
+        var x = _word_normal[dtype](seed, base + 3 * t)
+        var v = 1 + c * x
+        if v <= 0:
+            continue
+        v = v * v * v
+        var u = _word_uniform[dtype](seed, base + 3 * t + 2)
+        if log(u) < Scalar[dtype](0.5) * x * x + d - d * v + d * log(v):
+            result = d * v
+            break
+    if boost:
+        var u = _word_uniform[dtype](seed, base + 3 * _GAMMA_TRIES)
+        result = result * (u ** (1 / shape))
+    return result
+
+
+def _gamma_step[
+    dtype: DType
+](
+    seed: UInt64, index: Int, shape: Scalar[dtype], scale: Scalar[dtype]
+) -> Scalar[dtype] where dtype.is_floating_point():
+    return scale * _standard_gamma[dtype](seed, index * _GAMMA_WORDS, shape)
+
+
+def _beta_step[
+    dtype: DType
+](seed: UInt64, index: Int, a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[
+    dtype
+] where dtype.is_floating_point():
+    """`X / (X + Y)` with `X ~ Gamma(a)` and `Y ~ Gamma(b)` from two blocks."""
+    var base = index * 2 * _GAMMA_WORDS
+    var x = _standard_gamma[dtype](seed, base, a)
+    var y = _standard_gamma[dtype](seed, base + _GAMMA_WORDS, b)
+    return x / (x + y)
+
+
+def _lognormal_step[
+    dtype: DType
+](
+    seed: UInt64, index: Int, mean: Scalar[dtype], sigma: Scalar[dtype]
+) -> Scalar[dtype] where dtype.is_floating_point():
+    return exp(mean + sigma * _normal_step[dtype](seed, index, 0, 1))
+
+
+def _poisson_count[
+    W: DType
+](seed: UInt64, base: Int, lam: Scalar[W]) -> Scalar[
+    W
+] where W.is_floating_point():
+    """A Poisson draw from the words at `base`: inversion by a sequential
+    search for `lam < 10`, bounded at `lam + 12 sqrt(lam) + 30` steps, and
+    Hormann's PTRS transformed rejection above, NumPy's own split and its
+    constants. The rejection's fallback is `floor(lam)`."""
+    if lam <= 0:
+        return Scalar[W](0)
+    if lam < 10:
+        var u = _word_uniform[W](seed, base)
+        var k = Scalar[W](0)
+        var term = exp(-lam)
+        var total = term
+        var bound = Int(lam + 12 * sqrt(lam) + 30)
+        for _ in range(bound):
+            if u < total:
+                break
+            k += 1
+            term = term * lam / k
+            total += term
+        return k
+    var slam = sqrt(lam)
+    var loglam = log(lam)
+    var b = Scalar[W](0.931) + Scalar[W](2.53) * slam
+    var a = Scalar[W](-0.059) + Scalar[W](0.02483) * b
+    var invalpha = Scalar[W](1.1239) + Scalar[W](1.1328) / (b - Scalar[W](3.4))
+    var vr = Scalar[W](0.9277) - Scalar[W](3.6224) / (b - 2)
+    for t in range(_REJECT_TRIES):
+        var u = _word_uniform[W](seed, base + 2 * t) - Scalar[W](0.5)
+        var v = _word_uniform[W](seed, base + 2 * t + 1)
+        var us = Scalar[W](0.5) - abs(u)
+        var k = floor((2 * a / us + b) * u + lam + Scalar[W](0.43))
+        if us >= Scalar[W](0.07) and v <= vr:
+            return k
+        if k < 0 or (us < Scalar[W](0.013) and v > us):
+            continue
+        if log(v) + log(invalpha) - log(a / (us * us) + b) <= (
+            -lam + k * loglam - _loggam[W](k + 1)
+        ):
+            return k
+    return floor(lam)
+
+
+def _poisson_step[
+    dtype: DType, W: DType
+](seed: UInt64, index: Int, lam: Scalar[W], unused: Scalar[W]) -> Scalar[
+    dtype
+] where W.is_floating_point():
+    return _poisson_count[W](seed, index * _REJECT_WORDS, lam).cast[dtype]()
+
+
+def _binomial_count[
+    W: DType
+](seed: UInt64, base: Int, n: Scalar[W], p_in: Scalar[W]) -> Scalar[
+    W
+] where W.is_floating_point():
+    """A binomial draw from the words at `base`: inversion for
+    `n min(p, 1-p) < 10`, and Hormann's BTRS transformed rejection above,
+    with `p > 1/2` reflected to `n - Binomial(n, 1 - p)`. The rejection's
+    fallback is the mode."""
+    if n <= 0 or p_in <= 0:
+        return Scalar[W](0)
+    if p_in >= 1:
+        return n
+    var flip = p_in > Scalar[W](0.5)
+    var p = 1 - p_in if flip else p_in
+    var q = 1 - p
+    var k = Scalar[W](0)
+    if n * p < 10:
+        var u = _word_uniform[W](seed, base)
+        var term = q**n
+        var total = term
+        var ratio = p / q
+        var mean = n * p
+        var steps = min(Int(n), Int(mean + 12 * sqrt(mean) + 30))
+        for _ in range(steps):
+            if u < total:
+                break
+            k += 1
+            term = term * ratio * (n - k + 1) / k
+            total += term
+    else:
+        var spq = sqrt(n * p * q)
+        var b = Scalar[W](1.15) + Scalar[W](2.53) * spq
+        var a = Scalar[W](-0.0873) + Scalar[W](0.0248) * b + Scalar[W](0.01) * p
+        var c = n * p + Scalar[W](0.5)
+        var vr = Scalar[W](0.92) - Scalar[W](4.2) / b
+        var alpha = (Scalar[W](2.83) + Scalar[W](5.1) / b) * spq
+        var lpq = log(p / q)
+        var m = floor((n + 1) * p)
+        var h = _loggam[W](m + 1) + _loggam[W](n - m + 1)
+        k = m
+        for t in range(_REJECT_TRIES):
+            var u = _word_uniform[W](seed, base + 2 * t) - Scalar[W](0.5)
+            var v = _word_uniform[W](seed, base + 2 * t + 1)
+            var us = Scalar[W](0.5) - abs(u)
+            var cand = floor((2 * a / us + b) * u + c)
+            if cand < 0 or cand > n:
+                continue
+            if us >= Scalar[W](0.07) and v <= vr:
+                k = cand
+                break
+            var lv = log(v * alpha / (a / (us * us) + b))
+            if (
+                lv
+                <= h
+                - _loggam[W](cand + 1)
+                - _loggam[W](n - cand + 1)
+                + (cand - m) * lpq
+            ):
+                k = cand
+                break
+    return n - k if flip else k
+
+
+def _binomial_step[
+    dtype: DType, W: DType
+](seed: UInt64, index: Int, n: Scalar[W], p: Scalar[W]) -> Scalar[
+    dtype
+] where W.is_floating_point():
+    return _binomial_count[W](seed, index * _REJECT_WORDS, n, p).cast[dtype]()
 
 
 @always_inline
@@ -615,3 +890,191 @@ struct Generator(Copyable):
         return _fill[
             DType.bool, DType.float32, _randbool_step[DType.bool], gpu, *dims
         ](self._advance(), Float32(p), Float32(p), ctx)
+
+    def gamma[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self,
+        shape: Scalar[dtype],
+        scale: Scalar[dtype] = 1,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Gamma draws with the given `shape` and `scale`.
+        `numpy.random.Generator.gamma`.
+
+        Marsaglia and Tsang's squeeze method, with their `U^(1/shape)` boost
+        below `shape = 1`; each element takes its own fixed block of the
+        stream, so the fill runs on the device like every other draw.
+
+        Parameters:
+            dtype: The floating-point element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            shape: The shape `k`, positive.
+            scale: The scale `theta`; the mean is `k theta`.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of gamma draws; this generator's seed
+            advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
+        return _fill[dtype, dtype, _gamma_step[dtype], gpu, *dims](
+            self._advance(), shape, scale, ctx
+        )
+
+    def beta[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self,
+        a: Scalar[dtype],
+        b: Scalar[dtype],
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Beta draws with shapes `a` and `b`. `numpy.random.Generator.beta`.
+
+        `X / (X + Y)` with `X ~ Gamma(a)` and `Y ~ Gamma(b)`.
+
+        Parameters:
+            dtype: The floating-point element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            a: The first shape, positive.
+            b: The second shape, positive.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of draws in `(0, 1)`; this generator's seed
+            advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
+        return _fill[dtype, dtype, _beta_step[dtype], gpu, *dims](
+            self._advance(), a, b, ctx
+        )
+
+    def lognormal[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self,
+        mean: Scalar[dtype] = 0,
+        sigma: Scalar[dtype] = 1,
+        ctx: Optional[DeviceContext] = None,
+    ) raises -> Static[dtype, *dims] where dtype.is_floating_point():
+        """Log-normal draws: `exp(N(mean, sigma))`.
+        `numpy.random.Generator.lognormal`.
+
+        Parameters:
+            dtype: The floating-point element type of the result.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            mean: The mean of the underlying normal.
+            sigma: The standard deviation of the underlying normal.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of positive draws; this generator's seed
+            advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
+        return _fill[dtype, dtype, _lognormal_step[dtype], gpu, *dims](
+            self._advance(), mean, sigma, ctx
+        )
+
+    def poisson[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self, lam: Float64 = 1.0, ctx: Optional[DeviceContext] = None
+    ) raises -> Static[dtype, *dims]:
+        """Poisson draws with rate `lam`. `numpy.random.Generator.poisson`.
+
+        NumPy's split and constants: inversion by sequential search below
+        `lam = 10`, Hormann's PTRS transformed rejection above. The
+        arithmetic is `float64` on the host and `float32` on the device
+        (Metal has no `double`), which bounds a device draw's fidelity for a
+        rate past about `1e6`.
+
+        Parameters:
+            dtype: The element type of the result; an integer dtype gives
+                exact counts.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            lam: The rate, at least 0.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of counts; this generator's seed advances by
+            one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
+        comptime if gpu:
+            comptime W = DType.float32
+            return _fill[dtype, W, _poisson_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](lam), Scalar[W](lam), ctx
+            )
+        else:
+            comptime W = DType.float64
+            return _fill[dtype, W, _poisson_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](lam), Scalar[W](lam), ctx
+            )
+
+    def binomial[
+        dtype: DType, *dims: Int, gpu: Bool = False
+    ](
+        mut self, n: Int, p: Float64, ctx: Optional[DeviceContext] = None
+    ) raises -> Static[dtype, *dims]:
+        """Binomial draws: successes in `n` trials of probability `p`.
+        `numpy.random.Generator.binomial`.
+
+        Inversion for `n min(p, 1-p) < 10` and Hormann's BTRS transformed
+        rejection above, `p > 1/2` reflected; `float64` on the host and
+        `float32` on the device, as `poisson` is.
+
+        Parameters:
+            dtype: The element type of the result; an integer dtype gives
+                exact counts.
+            dims: The result's compile-time shape.
+            gpu: Whether to fill one thread per element on `ctx`'s device.
+
+        Args:
+            n: The number of trials, at least 0.
+            p: The success probability, in `[0, 1]`.
+            ctx: The device to allocate and fill on; `None` means the host.
+
+        Returns:
+            A new `Static` tensor of counts in `[0, n]`; this generator's seed
+            advances by one.
+
+        Raises:
+            When the host context cannot be created, or the allocation or the
+            fill launch fails.
+        """
+        comptime if gpu:
+            comptime W = DType.float32
+            return _fill[dtype, W, _binomial_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](n), Scalar[W](p), ctx
+            )
+        else:
+            comptime W = DType.float64
+            return _fill[dtype, W, _binomial_step[dtype, W], gpu, *dims](
+                self._advance(), Scalar[W](n), Scalar[W](p), ctx
+            )
