@@ -71,6 +71,26 @@ def _mul_op[
     return a * b
 
 
+def _rsub_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return b - a
+
+
+def _rdiv_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return b / a
+
+
+def _rpow_op[
+    dtype: DType, w: Int
+](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[
+    dtype, w
+] where dtype.is_floating_point():
+    return b**a
+
+
 def _div_op[
     dtype: DType, w: Int
 ](a: SIMD[dtype, w], b: SIMD[dtype, w]) -> SIMD[dtype, w]:
@@ -354,6 +374,36 @@ def power[
 
 def _negative_op[dtype: DType, w: Int](x: SIMD[dtype, w]) -> SIMD[dtype, w]:
     return -x
+
+
+def _reflected[
+    T: TensorLike, kind: StaticString, gpu: Bool = False
+](a: T, s: Scalar[T.dtype]) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where is_row_major[T]:
+    """`s - a` or `s / a` (`kind` `"sub"` or `"div"`) with the scalar on the
+    left: what `Tensor`'s reflected operators forward to. One launch with
+    the operands swapped inside the op, so the rounding is the left-hand
+    spelling's rather than a negation or reciprocal of the other."""
+    comptime dtype = T.dtype
+    comptime if kind == "sub":
+        return binary_scalar[
+            T, op=_rsub_op[dtype, _], gpu=gpu, name="subtract"
+        ](a, s)
+    else:
+        return binary_scalar[T, op=_rdiv_op[dtype, _], gpu=gpu, name="divide"](
+            a, s
+        )
+
+
+def _rpower[
+    T: TensorLike, gpu: Bool = False
+](a: T, s: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """`s ** a` with the scalar base on the left, for `__rpow__`."""
+    comptime dtype = T.dtype
+    return binary_scalar[T, op=_rpow_op[dtype, _], gpu=gpu, name="power"](a, s)
 
 
 def negative[

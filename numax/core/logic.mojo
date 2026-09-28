@@ -65,6 +65,7 @@ from ._drive import (
     _notice,
     _width,
     binary,
+    binary_scalar_to,
     binary_to,
     broadcast_binary,
     broadcast_binary_to,
@@ -257,6 +258,80 @@ def greater_equal[
         op=_ge_op[dtype, _],
         gpu=gpu,
         name="greater_equal",
+    ](a, b)
+
+
+def equal[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    DType.bool, T.LayoutType
+] where is_row_major[T]:
+    """`a == b` against one scalar `b`, elementwise. `numpy.equal(a, b)`."""
+    comptime dtype = T.dtype
+    return binary_scalar_to[
+        T, DType.bool, op=_eq_op[dtype, _], gpu=gpu, name="equal"
+    ](a, b)
+
+
+def not_equal[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    DType.bool, T.LayoutType
+] where is_row_major[T]:
+    """`a != b` against one scalar `b`, elementwise. `numpy.not_equal(a, b)`."""
+    comptime dtype = T.dtype
+    return binary_scalar_to[
+        T, DType.bool, op=_ne_op[dtype, _], gpu=gpu, name="not_equal"
+    ](a, b)
+
+
+def less[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    DType.bool, T.LayoutType
+] where is_row_major[T]:
+    """`a < b` against one scalar `b`, elementwise. `numpy.less(a, b)`."""
+    comptime dtype = T.dtype
+    return binary_scalar_to[
+        T, DType.bool, op=_lt_op[dtype, _], gpu=gpu, name="less"
+    ](a, b)
+
+
+def less_equal[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    DType.bool, T.LayoutType
+] where is_row_major[T]:
+    """`a <= b` against one scalar `b`, elementwise. `numpy.less_equal(a, b)`.
+    """
+    comptime dtype = T.dtype
+    return binary_scalar_to[
+        T, DType.bool, op=_le_op[dtype, _], gpu=gpu, name="less_equal"
+    ](a, b)
+
+
+def greater[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    DType.bool, T.LayoutType
+] where is_row_major[T]:
+    """`a > b` against one scalar `b`, elementwise. `numpy.greater(a, b)`."""
+    comptime dtype = T.dtype
+    return binary_scalar_to[
+        T, DType.bool, op=_gt_op[dtype, _], gpu=gpu, name="greater"
+    ](a, b)
+
+
+def greater_equal[
+    T: TensorLike, gpu: Bool = False
+](a: T, b: Scalar[T.dtype]) raises -> Tensor[
+    DType.bool, T.LayoutType
+] where is_row_major[T]:
+    """`a >= b` against one scalar `b`, elementwise. `numpy.greater_equal(a, b)`.
+    """
+    comptime dtype = T.dtype
+    return binary_scalar_to[
+        T, DType.bool, op=_ge_op[dtype, _], gpu=gpu, name="greater_equal"
     ](a, b)
 
 

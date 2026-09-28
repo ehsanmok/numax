@@ -374,6 +374,22 @@ def _host_walk_binary_scalar[
     return Tensor[dtype, LayoutType](a.context(), a.tile().layout, out^)
 
 
+def _host_walk_binary_scalar_to[
+    T: TensorLike,
+    out_dtype: DType,
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
+        out_dtype, w
+    ],
+](a: T, s: Scalar[T.dtype]) raises -> Tensor[out_dtype, T.LayoutType]:
+    comptime LayoutType = T.LayoutType
+    var n = a.size()
+    var values = a.to_host()
+    var out = List[Scalar[out_dtype]](length=n, fill=0)
+    for i in range(n):
+        out[i] = op[1](values[i], s)
+    return Tensor[out_dtype, LayoutType](a.context(), a.tile().layout, out^)
+
+
 comptime _BroadcastRank[
     ALayout: TensorLayout, BLayout: TensorLayout
 ] = ALayout.rank if ALayout.rank > BLayout.rank else BLayout.rank
@@ -665,6 +681,42 @@ def binary_scalar[
 
     var ctx = a.context()
     var out = Tensor[dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
+    var xs = _flat(a)
+    var ys = _flat_out(out)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xs, var ys, var s}:
+        ys.store[width](
+            coord, op[width](xs.load[width](coord), SIMD[dtype, width](s))
+        )
+
+    _launch[gpu=gpu, lanes=_width[dtype, gpu]()](body, a.size(), ctx)
+    return out^
+
+
+def binary_scalar_to[
+    T: TensorLike,
+    out_dtype: DType,
+    op: def[w: Int](SIMD[T.dtype, w], SIMD[T.dtype, w]) thin -> SIMD[
+        out_dtype, w
+    ],
+    gpu: Bool,
+    name: StaticString,
+](a: T, s: Scalar[T.dtype]) raises -> Tensor[
+    out_dtype, T.LayoutType
+] where is_row_major[T]:
+    """`binary_scalar` where `op` changes dtype -- a comparison against one
+    scalar."""
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    if not _check_device[gpu=gpu](a):
+        _notice[gpu](name)
+        return _host_walk_binary_scalar_to[T, out_dtype, op](a, s)
+
+    var ctx = a.context()
+    var out = Tensor[out_dtype, LayoutType]._uninitialized(ctx, a.tile().layout)
     var xs = _flat(a)
     var ys = _flat_out(out)
 
