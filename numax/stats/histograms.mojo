@@ -1,14 +1,17 @@
 """Binning over `numax.core.tensor.Tensor`: `histogram`, `histogram2d`,
 `histogramdd`, `bincount` and `digitize`, with NumPy's edge rules.
 
-**Tier 2, host-side**, the way `median` and `quantile` are: a histogram
-is a scatter into bins -- every sample increments one counter -- and MAX
-ships no scatter-add or bucketize kernel to build a device path on
-(`docs/parity.md` records that `nn.gather_scatter` gathers; its scatter
-is a plain store, not an accumulate). The samples come to the host once,
-the bins are found by arithmetic or bisection, and the counts go back up as
-a tensor. The bin *count* is a compile-time parameter because it shapes
-the result.
+**Tier 2.** A histogram is a scatter into bins -- every sample increments
+one counter -- and MAX ships no scatter-add or bucketize kernel to build on
+(`docs/parity.md` records that `nn.gather_scatter` gathers; its scatter is
+a plain store, not an accumulate). So the device path is numax's own: at
+`gpu=True` one launch bins every sample by the same arithmetic or
+bisection the host uses and adds its `1`, or its weight, with an atomic
+add (`std.atomic`). The data range, the NaN check and `bincount`'s extent
+are device reductions; the `bins + 1` edges and the density scaling are
+host arithmetic over a handful of numbers. On the host the samples come
+down once and are counted in a loop. The bin *count* is a compile-time
+parameter because it shapes the result.
 
 ## NumPy's rules, kept
 
@@ -25,11 +28,32 @@ tensor as long as its largest value plus one, or `minlength`.
 
 from std.math import floor as _floor
 
-from layout.tile_layout import TensorLayout
+from algorithm.rowwise_types import RowCoord
+from layout import Coord, coord_to_index_list
+from layout.tile_layout import TensorLayout, row_major
+from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
+from std.atomic import Atomic
+from std.utils import IndexList
 
+from ..core._drive import (
+    _check_device,
+    _flat_unchecked,
+    _notice,
+    _require_contiguous,
+)
+from ..core.ops import astype
+from ..core.rowwise import reduce_all
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.tensor import Dynamic, Static, Tensor, asarray
+from ..core.tensor import (
+    _canonical,
+    _dyn_shape,
+    Dynamic,
+    Static,
+    Tensor,
+    asarray,
+)
+from .statistics import max as _smax, min as _smin
 
 
 def _as_float64[dtype: DType](values: List[Scalar[dtype]]) -> List[Float64]:
@@ -109,6 +133,223 @@ def _edge_bin(v: Float64, edges: List[Float64]) -> Int:
     return lo
 
 
+def _nan_count_device[T: TensorLike](xs: T) raises -> Int:
+    """How many NaNs a contiguous GPU-context `xs` holds: one launch and an
+    atomic counter."""
+    var ctx = xs.context()
+    var nans = Static[DType.int32, 1](ctx)
+    var np_ = nans.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var xp = xs.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+
+    @always_inline
+    def spot[width: Int, alignment: Int = 1](coord: Coord) {var np_, var xp}:
+        var v = xp[unsafe_offset=coord_to_index_list(coord)[0]]
+        if v != v:
+            _ = Atomic[Int32].fetch_add(np_, Int32(1))
+
+    if xs.size() > 0:
+        elementwise[simd_width=1, target="gpu"](spot, Coord(xs.size()), ctx)
+    return Int(nans.to_host()[0])
+
+
+def _device_range[T: TensorLike](xs: T) raises -> Tuple[Float64, Float64]:
+    """`_data_range` over a GPU-context tensor: device `min`/`max` and a
+    device NaN count, three scalars back."""
+    if xs.size() == 0:
+        raise Error("histogram: no samples")
+    _require_contiguous(xs)
+    var ctx = xs.context()
+    if _nan_count_device(xs) > 0:
+        raise Error("histogram: the samples contain NaN")
+    var lo = Static[T.dtype, 1](ctx)
+    var hi = Static[T.dtype, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
+        return tile
+
+    reduce_all[monoid="min", target="gpu"](
+        _flat_unchecked(xs), lo.tile(), identity, xs.size(), Optional(ctx)
+    )
+    reduce_all[monoid="max", target="gpu"](
+        _flat_unchecked(xs), hi.tile(), identity, xs.size(), Optional(ctx)
+    )
+    var low = Float64(lo.to_host()[0])
+    var high = Float64(hi.to_host()[0])
+    if low == high:
+        return (low - 0.5, high + 0.5)
+    return (low, high)
+
+
+@always_inline
+def _bin_of[
+    dtype: DType
+](
+    v: Scalar[dtype],
+    edges: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    bins: Int,
+    uniform: Bool,
+) -> Int:
+    """`_uniform_bin` or `_edge_bin` in a kernel body: the bin of `v` over
+    `bins + 1` edges, `-1` outside, the last edge inclusive."""
+    var low = edges[unsafe_offset=0]
+    var high = edges[unsafe_offset=bins]
+    if v < low or v > high or v != v:
+        return -1
+    if v == high:
+        return bins - 1
+    if uniform:
+        var index = Int((v - low) * Scalar[dtype](bins) / (high - low))
+        index = min(max(index, 0), bins - 1)
+        if v < edges[unsafe_offset=index]:
+            index -= 1
+        elif index + 1 < bins and v >= edges[unsafe_offset=index + 1]:
+            index += 1
+        return index
+    var lo = 0
+    var hi = bins
+    while hi - lo > 1:
+        var mid = (lo + hi) // 2
+        if edges[unsafe_offset=mid] <= v:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _count_device[
+    dtype: DType, bins: Int, weighted: Bool, T: TensorLike, W: TensorLike
+](
+    xs: T, weights: W, edges: List[Float64], uniform: Bool, density: Bool
+) raises -> Histogram[dtype, bins] where (
+    T.dtype == dtype and W.dtype == dtype
+):
+    """`_count` on the device: one launch bins every sample and adds `1`,
+    or its weight, into the bins with an atomic add; the `bins + 1` edges
+    and the density normalization are host arithmetic over `bins` numbers.
+    """
+    _require_contiguous(xs)
+    var ctx = xs.context()
+    var edge_values = List[Scalar[dtype]](capacity=bins + 1)
+    for b in range(bins + 1):
+        edge_values.append(Scalar[dtype](edges[b]))
+    var edge_d = Static[dtype, bins + 1](ctx, edge_values.copy())
+    var counts = Static[dtype, bins](ctx)
+    var n = xs.size()
+    if n > 0:
+        var xp = (
+            xs.tile()
+            .ptr.unsafe_bitcast[Scalar[dtype]]()
+            .unsafe_origin_cast[ImmutAnyOrigin]()
+        )
+        var wp = (
+            weights.tile()
+            .ptr.unsafe_bitcast[Scalar[dtype]]()
+            .unsafe_origin_cast[ImmutAnyOrigin]()
+        )
+        var ep = edge_d.tile().ptr.as_imm().unsafe_origin_cast[ImmutAnyOrigin]()
+        var cp = counts.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+        @always_inline
+        def tally[
+            width: Int, alignment: Int = 1
+        ](coord: Coord) {var xp, var wp, var ep, var cp, var uniform}:
+            var i = coord_to_index_list(coord)[0]
+            var b = _bin_of(xp[unsafe_offset=i], ep, bins, uniform)
+            if b >= 0:
+                var add = Scalar[dtype](1)
+                comptime if weighted:
+                    add = wp[unsafe_offset=i]
+                _ = Atomic[Scalar[dtype]].fetch_add(cp + b, add)
+
+        elementwise[simd_width=1, target="gpu"](tally, Coord(n), ctx)
+        ctx.synchronize()
+    if density:
+        var raw = counts.to_host()
+        var total = 0.0
+        for b in range(bins):
+            total += Float64(raw[b])
+        var scaled = List[Scalar[dtype]](capacity=bins)
+        for b in range(bins):
+            var width = edges[b + 1] - edges[b]
+            scaled.append(
+                Scalar[dtype](
+                    Float64(raw[b]) / (total * width) if total > 0 else 0.0
+                )
+            )
+        counts = Static[dtype, bins](ctx, scaled^)
+    return Histogram[dtype, bins](counts^, edge_d^)
+
+
+def _cells_device[
+    dtype: DType, dims: Int
+](
+    base: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    second: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    n: Int,
+    row_stride: Int,
+    edges: List[List[Float64]],
+    ctx: DeviceContext,
+) raises -> List[Float64]:
+    """The multi-dimensional tally on the device: sample `i`'s coordinate
+    `k` is `base[i * row_stride + k]`, except that with `second` set (the
+    two-vector `histogram2d`) coordinate 1 is `second[i]`. One launch finds
+    each sample's cell and atomically adds one; the counts, one per cell,
+    come back for the host's density and assembly."""
+    var extents = IndexList[dims]()
+    var offsets = IndexList[dims]()
+    var flat_edges = List[Scalar[dtype]]()
+    var cells = 1
+    for k in range(dims):
+        var bins = len(edges[k]) - 1
+        extents[k] = bins
+        offsets[k] = len(flat_edges)
+        cells *= bins
+        for e in edges[k]:
+            flat_edges.append(Scalar[dtype](e))
+    var edge_d = asarray(flat_edges^, ctx)
+    var counts = Dynamic[dtype, 1](ctx, row_major(_dyn_shape[1](cells)))
+    var ep = edge_d.tile().ptr.as_imm().unsafe_origin_cast[ImmutAnyOrigin]()
+    var cp = counts.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var paired = second != base
+
+    @always_inline
+    def tally[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var base,
+        var second,
+        var row_stride,
+        var ep,
+        var cp,
+        var extents,
+        var offsets,
+        var paired,
+    }:
+        var i = coord_to_index_list(coord)[0]
+        var flat = 0
+        comptime for k in range(dims):
+            var v = base[unsafe_offset=i * row_stride + k]
+            if paired and k == 1:
+                v = second[unsafe_offset=i]
+            var b = _bin_of(v, ep + offsets[k], extents[k], True)
+            if b < 0:
+                return
+            flat = flat * extents[k] + b
+        _ = Atomic[Scalar[dtype]].fetch_add(cp + flat, Scalar[dtype](1))
+
+    if n > 0:
+        elementwise[simd_width=1, target="gpu"](tally, Coord(n), ctx)
+        ctx.synchronize()
+    var raw = counts.to_host()
+    var out = List[Float64](capacity=cells)
+    for c in range(cells):
+        out.append(Float64(raw[c]))
+    return out^
+
+
 def _count[
     dtype: DType, bins: Int
 ](
@@ -165,7 +406,7 @@ struct Histogram[dtype: DType, bins: Int](Movable):
 
 
 def histogram[
-    T: TensorLike, bins: Int = 10
+    T: TensorLike, bins: Int = 10, gpu: Bool = False
 ](
     xs: T,
     low: Optional[Float64] = None,
@@ -185,6 +426,18 @@ def histogram[
     form takes an `edges` tensor instead. Host-side, one pass.
     """
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var span = _device_range(xs)
+            var lo = low.value() if low else span[0]
+            var hi = high.value() if high else span[1]
+            if hi <= lo:
+                raise Error("histogram: high must exceed low")
+            return _count_device[dtype, bins, False](
+                xs, xs, _uniform_edges(lo, hi, bins), True, density
+            )
+    else:
+        _notice[gpu]("histogram")
     var values = _as_float64(xs.to_host())
     var span = _data_range(values)
     var lo = low.value() if low else span[0]
@@ -202,7 +455,7 @@ def histogram[
 
 
 def histogram[
-    T: TensorLike, bins: Int = 10
+    T: TensorLike, bins: Int = 10, gpu: Bool = False
 ](
     xs: T,
     weights: T,
@@ -216,6 +469,19 @@ def histogram[
     one. `numpy.histogram(a, bins, weights=w)`; `density` normalizes the
     weighted total."""
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs) and _check_device[T, gpu](weights):
+        comptime if gpu:
+            var span = _device_range(xs)
+            var lo = low.value() if low else span[0]
+            var hi = high.value() if high else span[1]
+            if hi <= lo:
+                raise Error("histogram: high must exceed low")
+            _require_contiguous(weights)
+            return _count_device[dtype, bins, True](
+                xs, weights, _uniform_edges(lo, hi, bins), True, density
+            )
+    else:
+        _notice[gpu]("histogram")
     var values = _as_float64(xs.to_host())
     var span = _data_range(values)
     var lo = low.value() if low else span[0]
@@ -233,7 +499,7 @@ def histogram[
 
 
 def histogram[
-    T: TensorLike, m: Int
+    T: TensorLike, m: Int, gpu: Bool = False
 ](
     xs: T,
     edges: Static[T.dtype, m],
@@ -250,6 +516,13 @@ def histogram[
     (`histogram[bins=...]`) in that one case.
     """
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _count_device[dtype, m - 1, False](
+                xs, xs, _as_float64(edges.to_host()), False, density
+            )
+    else:
+        _notice[gpu]("histogram")
     return _count[dtype, m - 1](
         xs.context(),
         _as_float64(xs.to_host()),
@@ -261,7 +534,7 @@ def histogram[
 
 
 def histogram[
-    T: TensorLike, m: Int
+    T: TensorLike, m: Int, gpu: Bool = False
 ](
     xs: T,
     edges: Static[T.dtype, m],
@@ -272,6 +545,14 @@ def histogram[
 ):
     """The explicit-edges `histogram` with weights."""
     comptime dtype = T.dtype
+    if _check_device[T, gpu](xs) and _check_device[T, gpu](weights):
+        comptime if gpu:
+            _require_contiguous(weights)
+            return _count_device[dtype, m - 1, True](
+                xs, weights, _as_float64(edges.to_host()), False, density
+            )
+    else:
+        _notice[gpu]("histogram")
     return _count[dtype, m - 1](
         xs.context(),
         _as_float64(xs.to_host()),
@@ -307,6 +588,7 @@ def histogram2d[
     B: TensorLike,
     xbins: Int = 10,
     ybins: Int = 10,
+    gpu: Bool = False,
 ](x: A, y: B, density: Bool = False) raises -> Histogram2D[
     A.dtype, xbins, ybins
 ] where (
@@ -328,18 +610,46 @@ def histogram2d[
     """
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
-    var xs = _as_float64(x.to_host())
-    var ys = _as_float64(y.to_host())
-    var xspan = _data_range(xs)
-    var yspan = _data_range(ys)
-    var xe = _uniform_edges(xspan[0], xspan[1], xbins)
-    var ye = _uniform_edges(yspan[0], yspan[1], ybins)
-    var counts = List[Float64](length=xbins * ybins, fill=0.0)
-    for i in range(n):
-        var bx = _uniform_bin(xs[i], xe, xbins)
-        var by = _uniform_bin(ys[i], ye, ybins)
-        if bx >= 0 and by >= 0:
-            counts[bx * ybins + by] += 1.0
+    var xe = List[Float64]()
+    var ye = List[Float64]()
+    var counts = List[Float64]()
+    var on_device = False
+    comptime if gpu:
+        on_device = _check_device[A, True](x) and _check_device[B, True](y)
+        if on_device:
+            var xspan = _device_range(x)
+            var yspan = _device_range(y)
+            xe = _uniform_edges(xspan[0], xspan[1], xbins)
+            ye = _uniform_edges(yspan[0], yspan[1], ybins)
+            var both = List[List[Float64]]()
+            both.append(xe.copy())
+            both.append(ye.copy())
+            _require_contiguous(y)
+            counts = _cells_device[dtype, 2](
+                x.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin](),
+                y.tile()
+                .ptr.unsafe_bitcast[Scalar[dtype]]()
+                .unsafe_origin_cast[ImmutAnyOrigin](),
+                n,
+                1,
+                both,
+                x.context(),
+            )
+        else:
+            _notice[gpu]("histogram2d")
+    if not on_device:
+        var xs = _as_float64(x.to_host())
+        var ys = _as_float64(y.to_host())
+        var xspan = _data_range(xs)
+        var yspan = _data_range(ys)
+        xe = _uniform_edges(xspan[0], xspan[1], xbins)
+        ye = _uniform_edges(yspan[0], yspan[1], ybins)
+        counts = List[Float64](length=xbins * ybins, fill=0.0)
+        for i in range(n):
+            var bx = _uniform_bin(xs[i], xe, xbins)
+            var by = _uniform_bin(ys[i], ye, ybins)
+            if bx >= 0 and by >= 0:
+                counts[bx * ybins + by] += 1.0
     if density:
         var total = 0.0
         for k in range(xbins * ybins):
@@ -390,6 +700,7 @@ def histogramdd[
     T: TensorLike,
     //,
     *bins: Int,
+    gpu: Bool = False,
 ](points: T, density: Bool = False) raises -> HistogramDD[
     T.dtype, *bins
 ] where (
@@ -412,23 +723,51 @@ def histogramdd[
     comptime d = dim[T, 1]
     comptime dims = len(bins)
     comptime assert dims == d, "histogramdd: one bin count per dimension"
-    var host = points.to_host()
     var ctx = points.context()
-
     var edges = List[List[Float64]]()
     var extents = List[Int]()
+    comptime for k in range(dims):
+        extents.append(bins[k])
+    var total_cells = 1
+    for k in range(dims):
+        total_cells *= extents[k]
+    var counts = List[Float64]()
+    var on_device = False
+    comptime if gpu:
+        on_device = _check_device[T, True](points)
+        if on_device:
+            _require_contiguous(points)
+            if _nan_count_device(points) > 0:
+                raise Error("histogram: the samples contain NaN")
+            var lows = _smin[axis=0, gpu=True](
+                _canonical[n, d](points)
+            ).to_host()
+            var highs = _smax[axis=0, gpu=True](
+                _canonical[n, d](points)
+            ).to_host()
+            comptime for k in range(dims):
+                var lo = Float64(lows[k])
+                var hi = Float64(highs[k])
+                if lo == hi:
+                    lo -= 0.5
+                    hi += 0.5
+                edges.append(_uniform_edges(lo, hi, bins[k]))
+            var base = points.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+            counts = _cells_device[dtype, dims](base, base, n, d, edges, ctx)
+        else:
+            _notice[gpu]("histogramdd")
+    if on_device:
+        return _histogramdd_finish[dtype, *bins](
+            ctx, counts^, edges^, extents, total_cells, density
+        )
+    var host = points.to_host()
     comptime for k in range(dims):
         var column = List[Float64](capacity=n)
         for i in range(n):
             column.append(Float64(host[i * d + k]))
         var span = _data_range(column)
         edges.append(_uniform_edges(span[0], span[1], bins[k]))
-        extents.append(bins[k])
-
-    var total_cells = 1
-    for k in range(dims):
-        total_cells *= extents[k]
-    var counts = List[Float64](length=total_cells, fill=0.0)
+    counts = List[Float64](length=total_cells, fill=0.0)
     for i in range(n):
         var flat = 0
         var inside = True
@@ -440,6 +779,24 @@ def histogramdd[
             flat = flat * extents[k] + b
         if inside:
             counts[flat] += 1.0
+    return _histogramdd_finish[dtype, *bins](
+        ctx, counts^, edges^, extents, total_cells, density
+    )
+
+
+def _histogramdd_finish[
+    dtype: DType, *bins: Int
+](
+    ctx: DeviceContext,
+    var counts: List[Float64],
+    var edges: List[List[Float64]],
+    extents: List[Int],
+    total_cells: Int,
+    density: Bool,
+) raises -> HistogramDD[dtype, *bins]:
+    """`histogramdd`'s density normalization and assembly, shared by the
+    host and device tallies."""
+    comptime dims = len(bins)
     if density:
         var total = 0.0
         for c in range(total_cells):
@@ -461,16 +818,87 @@ def histogramdd[
     )
 
 
+def _int_range[T: TensorLike](xs: T) raises -> Tuple[Int, Int]:
+    """The smallest and largest value of a non-empty integral GPU-context
+    tensor, by two device reductions."""
+    var ctx = xs.context()
+    var lo = Static[T.dtype, 1](ctx)
+    var hi = Static[T.dtype, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
+        return tile
+
+    reduce_all[monoid="min", target="gpu"](
+        _flat_unchecked(xs), lo.tile(), identity, xs.size(), Optional(ctx)
+    )
+    reduce_all[monoid="max", target="gpu"](
+        _flat_unchecked(xs), hi.tile(), identity, xs.size(), Optional(ctx)
+    )
+    return (Int(lo.to_host()[0]), Int(hi.to_host()[0]))
+
+
+def _bincount_device[
+    T: TensorLike, wdtype: DType, weighted: Bool, W: TensorLike
+](xs: T, weights: W, minlength: Int) raises -> Dynamic[wdtype, 1]:
+    """`bincount` on the device: the range by two reductions, then one
+    launch adding each sample's `1`, or weight, into its bin atomically."""
+    _require_contiguous(xs)
+    var ctx = xs.context()
+    var n = xs.size()
+    var largest = -1
+    if n > 0:
+        var span = _int_range(xs)
+        if span[0] < 0:
+            raise Error("bincount: values must be non-negative")
+        largest = span[1]
+    var length = max(largest + 1, minlength)
+    var totals = Dynamic[wdtype, 1](ctx, row_major(_dyn_shape[1](length)))
+    if n == 0:
+        return totals^
+    var xp = xs.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var wp = (
+        weights.tile()
+        .ptr.unsafe_bitcast[Scalar[wdtype]]()
+        .unsafe_origin_cast[ImmutAnyOrigin]()
+    )
+    var tp = totals.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def tally[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xp, var wp, var tp}:
+        var i = coord_to_index_list(coord)[0]
+        var add = Scalar[wdtype](1)
+        comptime if weighted:
+            add = wp[unsafe_offset=i]
+        _ = Atomic[Scalar[wdtype]].fetch_add(tp + Int(xp[unsafe_offset=i]), add)
+
+    elementwise[simd_width=1, target="gpu"](tally, Coord(n), ctx)
+    ctx.synchronize()
+    return totals^
+
+
 def bincount[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, minlength: Int = 0) raises -> Dynamic[DType.int64, 1] where (
     is_row_major[T] and T.dtype.is_integral()
 ):
     """How often each non-negative integer occurs in `xs`: `out[v]` is the
     count of `v`, and the result is `max(xs) + 1` long or `minlength`,
     whichever is greater. `numpy.bincount(x, minlength)`. A negative value
-    raises, as NumPy's does.
+    raises, as NumPy's does. At `gpu=True` the counts are `int32` atomics
+    on the device, widened to `int64` there.
     """
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return astype[DType.int64, gpu=True](
+                _bincount_device[T, DType.int32, False](xs, xs, minlength)
+            )
+    else:
+        _notice[gpu]("bincount")
     var host = xs.to_host()
     var largest = -1
     for i in range(len(host)):
@@ -486,7 +914,7 @@ def bincount[
 
 
 def bincount[
-    T: TensorLike, wdtype: DType
+    T: TensorLike, wdtype: DType, gpu: Bool = False
 ](
     xs: T,
     weights: Tensor[wdtype, T.LayoutType],
@@ -496,6 +924,12 @@ def bincount[
 ):
     """`bincount` summing each value's weight instead of counting it.
     `numpy.bincount(x, weights=w, minlength)`."""
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            _require_contiguous(weights)
+            return _bincount_device[T, wdtype, True](xs, weights, minlength)
+    else:
+        _notice[gpu]("bincount")
     var host = xs.to_host()
     var ws = weights.to_host()
     var largest = -1
@@ -511,8 +945,58 @@ def bincount[
     return asarray(totals^, xs.context())
 
 
+def _digitize_device[
+    T: TensorLike
+](xs: T, edges: List[Float64], right: Bool, increasing: Bool) raises -> Dynamic[
+    DType.int64, 1
+]:
+    """`digitize` on the device: the (ascending) edges uploaded once, then
+    one binary search per element, exactly the host's side rule."""
+    _require_contiguous(xs)
+    var ctx = xs.context()
+    var m = len(edges)
+    var values = List[Scalar[T.dtype]](capacity=m)
+    for e in edges:
+        values.append(Scalar[T.dtype](e))
+    var edge_d = asarray(values^, ctx)
+    var n = xs.size()
+    var result = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    if n == 0:
+        return result^
+    var xp = xs.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var ep = edge_d.tile().ptr.as_imm().unsafe_origin_cast[ImmutAnyOrigin]()
+    var rp = result.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var take_right = not right
+
+    @always_inline
+    def search[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var xp, var ep, var rp, var m, var take_right, var increasing
+    }:
+        var i = coord_to_index_list(coord)[0]
+        var v = xp[unsafe_offset=i]
+        var lo = 0
+        var hi = m
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            var e = ep[unsafe_offset=mid]
+            var goes_left = e > v if take_right else e >= v
+            if goes_left:
+                hi = mid
+            else:
+                lo = mid + 1
+        rp[unsafe_offset=i] = Int64(lo if increasing else m - lo)
+
+    elementwise[simd_width=1, target="gpu"](search, Coord(n), ctx)
+    ctx.synchronize()
+    return result^
+
+
 def digitize[
-    T: TensorLike, m: Int
+    T: TensorLike, m: Int, gpu: Bool = False
 ](xs: T, bins: Static[T.dtype, m], right: Bool = False) raises -> Dynamic[
     DType.int64, 1
 ] where (T.dtype.is_floating_point() and m > 0):
@@ -533,6 +1017,11 @@ def digitize[
         for i in range(m):
             reversed.append(edges[m - 1 - i])
         edges = reversed^
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            return _digitize_device(xs, edges, right, increasing)
+    else:
+        _notice[gpu]("digitize")
     var host = xs.to_host()
     var out = List[Scalar[DType.int64]](capacity=len(host))
     for i in range(len(host)):
