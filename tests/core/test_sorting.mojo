@@ -108,7 +108,7 @@ def test_argsort_matches_numpy() raises:
     var order = argsort(a)
     var expected = [1, 3, 0, 2, 4]
     for i in range(5):
-        assert_equal(order[i], expected[i])
+        assert_equal(Int(order[i]), expected[i])
 
 
 def test_argsort_is_stable_on_duplicates() raises:
@@ -126,7 +126,7 @@ def test_argsort_indexes_back_into_sorted_order() raises:
     var order = argsort(a)
     var sorted_copy = sort(a)
     for i in range(6):
-        assert_almost_equal(a[order[i]], sorted_copy[i])
+        assert_almost_equal(a[Int(order[i])], sorted_copy[i])
 
 
 # ------------------------------------------------------------------
@@ -355,7 +355,7 @@ def test_take_reads_the_index_lists_the_module_already_returns() raises:
     var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
 
     # take + argsort is the sorted copy.
-    var by_take = take(a, argsort(a))
+    var by_take = take[axis=0](a, argsort(a))
     var sorted_a = sort(a)
     for i in range(5):
         assert_almost_equal(by_take[i], sorted_a[i])
@@ -414,7 +414,7 @@ def test_sort_agrees_across_the_two_shapes() raises:
 def test_argsort_and_take_compose_at_a_run_time_shape() raises:
     var a = mk[5]([3.0, 1.0, 4.0, 1.0, 5.0])
     var kept = extract(mk_mask[5]([False, True, True, True, False]), a)
-    var ordered = take(kept, argsort(kept))
+    var ordered = take[axis=0](kept, argsort(kept))
 
     assert_equal(ordered.size(), 3)
     assert_almost_equal(ordered[0], 1.0)
@@ -818,11 +818,27 @@ def test_partition_rejects_a_kth_outside_the_tensor() raises:
 def test_argpartition_indices_reproduce_partition() raises:
     var a = mk[7]([7.0, 2.0, 9.0, 4.0, 1.0, 8.0, 3.0])
     var idx = argpartition(a, 3)
-    assert_equal(len(idx), 7)
+    assert_equal(idx.size(), 7)
     var values = a.to_host()
     var direct = partition(a, 3).to_host()
     for i in range(7):
-        assert_equal(values[idx[i]], direct[i])
+        assert_equal(values[Int(idx[i])], direct[i])
+
+
+def test_argsort_and_sort_put_nan_last_like_numpy() raises:
+    """`numpy.argsort([1, nan, 0, 2, nan])` is `[2, 0, 3, 1, 4]` and
+    `numpy.sort` of it ends in the two NaNs. MAX's CPU sort does not order
+    NaN, so this is the path that routes around it."""
+    var nan = Float64.MAX * 2 - Float64.MAX * 2
+    var a = mk[5]([1.0, nan, 0.0, 2.0, nan])
+    var order = argsort(a)
+    var expected = [2, 0, 3, 1, 4]
+    for i in range(5):
+        assert_equal(Int(order[i]), expected[i])
+    var s = sort(a)
+    assert_almost_equal(s[0], 0.0)
+    assert_almost_equal(s[2], 2.0)
+    assert_true(s[3] != s[3] and s[4] != s[4])
 
 
 def main() raises:

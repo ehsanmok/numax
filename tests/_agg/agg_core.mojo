@@ -1133,6 +1133,9 @@ from test_sorting import (
 from test_sorting import (
     test_argpartition_indices_reproduce_partition as test_sorting__test_argpartition_indices_reproduce_partition,
 )
+from test_sorting import (
+    test_argsort_and_sort_put_nan_last_like_numpy as test_sorting__test_argsort_and_sort_put_nan_last_like_numpy,
+)
 from test_sqrt import (
     test_plain_matches_std_math as test_sqrt__test_plain_matches_std_math,
 )
@@ -2065,6 +2068,7 @@ def main() raises:
     ]()
     suite.test[test_sorting__test_partition_rejects_a_kth_outside_the_tensor]()
     suite.test[test_sorting__test_argpartition_indices_reproduce_partition]()
+    suite.test[test_sorting__test_argsort_and_sort_put_nan_last_like_numpy]()
     # tests/core/test_sqrt.mojo
     suite.test[test_sqrt__test_plain_matches_std_math]()
     suite.test[test_sqrt__test_plain_squares_back]()

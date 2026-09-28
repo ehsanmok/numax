@@ -31,11 +31,11 @@ right thing for a caller already holding a `TileTensor` on a device.
 targets, values and indices out together, so `top_k` below is pure
 delegation. What neither gives is a *value* sort, an n-dimensional sort,
 `searchsorted`, or `unique` -- and `argsort` returns indices into a tensor
-rather than a sorted copy.
+rather than a sorted copy. So `sort`, `partition` and `argpartition` at
+`gpu=True` are `nn.argsort` on the device plus a gather by its indices.
 `std.builtin.sort` (stable, comparator-driven, over a `Span`) is what the
-functions here are built on, since these walks run on a host copy of the
-tensor's elements (`Tensor.to_host`) and that is
-exactly what `sort` wants.
+host walks here are built on, over a host copy of the tensor's elements
+(`Tensor.to_host`).
 
 ## Results whose length the data decides
 
@@ -59,6 +59,7 @@ would be numax discarding a capability MAX already has.
 """
 
 from std.builtin.sort import sort as _std_sort
+from std.utils.numerics import nan as _nan
 
 from nn.argsort import argsort as _nn_argsort
 from nn.gather_scatter import (
@@ -68,13 +69,21 @@ from nn.gather_scatter import (
 from nn.topk import top_k as _max_top_k
 from std.collections import Array
 
+from algorithm.rowwise_types import RowCoord
 from layout import Coord, TileTensor, coord_to_index_list
 from max.algorithm.functional import elementwise
 from std.utils import IndexList
 from layout.tile_layout import TensorLayout, row_major
 from .tensorlike import TensorLike, dim, is_row_major
-from ._drive import _check_device, _flat_out, _flat_unchecked, _notice
+from ._drive import (
+    _check_device,
+    _flat_out,
+    _flat_unchecked,
+    _notice,
+    _require_contiguous,
+)
 from .logic import _count_nonzero_device
+from .rowwise import reduce_all
 from .tensor import (
     Dynamic,
     Static,
@@ -87,11 +96,20 @@ from .tensor import (
     _stretch_strides,
     _strides_of,
     broadcast_shapes,
+    _same_order,
+    _axis_gather,
 )
 
 
+def _nan_last_less[dtype: DType](x: Scalar[dtype], y: Scalar[dtype]) -> Bool:
+    """`x < y` with NaN above every number, NumPy's sort order."""
+    if y != y:
+        return x == x
+    return x < y
+
+
 def sort[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](a: T) raises -> Static[
     T.dtype, T.LayoutType.static_product
 ] where T.LayoutType.all_dims_known:
@@ -111,62 +129,204 @@ def sort[
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     comptime n = LayoutType.static_product
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _sort_device(a)^.as_static[n]()
+    else:
+        _notice[gpu]("sort")
     var values = a.to_host()
-    _std_sort(values)
+    comptime if dtype.is_floating_point():
+        _std_sort(values, _nan_last_less[dtype])
+    else:
+        _std_sort(values)
     return Static[dtype, n](a.context(), values^)
 
 
 def sort[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](a: T) raises -> Dynamic[T.dtype, 1] where not T.LayoutType.all_dims_known:
     """A sorted rank-1 copy of `a`, ascending, for a run-time shape.
 
     Same sort as the overload above; the result's length is a run-time
     value because the input's is.
     """
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _sort_device(a)
+    else:
+        _notice[gpu]("sort")
     var values = a.to_host()
-    _std_sort(values)
+    comptime if T.dtype.is_floating_point():
+        _std_sort(values, _nan_last_less[T.dtype])
+    else:
+        _std_sort(values)
     return asarray(values^, a.context())
 
 
-def argsort[T: TensorLike](a: T) raises -> List[Int]:
-    """The flat indices that would sort `a`, ascending.
-    `numpy.argsort(a, axis=None)`.
+def argsort[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Dynamic[DType.int64, 1]:
+    """The flat indices that would sort `a`, ascending, as an `int64`
+    tensor on `a`'s device. `numpy.argsort(a, axis=None)`.
 
-    Routed straight to `nn.argsort`, which is MAX's own sort: rank-1,
-    ascending or descending, with a CPU and a GPU implementation behind one
-    name. numax has no business writing a second one -- an earlier version
-    here open-coded an O(n^2) insertion sort over an index list, which this
-    replaces outright.
+    On the host, routed to `nn.argsort`, MAX's CPU sort. **At `gpu=True`
+    numax sorts itself**, because MAX's GPU `argsort` is wrong past 256
+    elements on Metal -- its single-block local sort is right and its
+    cross-block merge is not (`findings.mdc`) -- and numax names no
+    architecture to route around it on one vendor only. The device path is
+    `_argsort_device`, a bitonic sort that orders `(value, index)` pairs,
+    so ties keep their input order exactly as the host's stable sort does.
 
-    Returned as a `List[Int]` rather than a `Tensor`, because an index array
-    is not a numeric tensor: nothing downstream wants to run a `FloatLike`
-    kernel over it, and giving it a `Static[int64, ...]` would invite exactly
-    that. The flattening is the `axis=None` contract every other routine in
-    this module follows, and it is also what makes the input rank-1 the way
-    `nn.argsort` requires.
-
-    The scratch tensors are built at the input's run-time length rather
-    than from its type, so a tensor whose extents are run-time values
-    sorts the same way a compile-time-shaped one does.
+    A tensor rather than the `List[Int]` it used to be, as NumPy's is an
+    array: a host list could not stay on the device, and
+    `take[axis=0](a, argsort(a))` is then the sorted copy on either target.
+    The flattening is the `axis=None` contract every other routine in this
+    module follows, and it is what makes the input rank-1 the way
+    `nn.argsort` requires. NaN sorts last, as in NumPy.
     """
     var n = a.size()
     var ctx = a.context()
-    var flat = asarray(a.to_host(), ctx)
     var indices = Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](n)))
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _argsort_device(a)
+    else:
+        _notice[gpu]("argsort")
+    var host_values = a.to_host()
+    comptime if T.dtype.is_floating_point():
+        # MAX's CPU sort does not order NaN (it answers close to the
+        # identity once one is present), so a NaN sends the call to a
+        # stable comparator sort that puts NaN last, as NumPy does.
+        var has_nan = False
+        for i in range(n):
+            if host_values[i] != host_values[i]:
+                has_nan = True
+        if has_nan:
+            var order = List[Int](capacity=n)
+            for i in range(n):
+                order.append(i)
+
+            def nan_last(p: Int, q: Int) {imm} -> Bool:
+                var x = host_values[p]
+                var y = host_values[q]
+                var xn = x != x
+                var yn = y != y
+                if xn or yn:
+                    return (yn and not xn) or (xn and yn and p < q)
+                return x < y or (x == y and p < q)
+
+            _std_sort(order, nan_last)
+            var out = List[Scalar[DType.int64]](capacity=n)
+            for i in range(n):
+                out.append(Int64(order[i]))
+            indices.copy_from_host(out)
+            return indices^
+    var flat = asarray(host_values^, ctx)
     var flat_view = flat.tile()
     var indices_view = indices.tile()
     _nn_argsort(indices_view, flat_view)
-
     # `tile()` erases the origin, so `flat` is not kept alive by
     # `flat_view` and destruction is ASAP. See `numax.linalg.qr`.
     _ = flat^
+    return indices^
 
-    var order = List[Int](capacity=n)
-    var raw = indices.to_host()
-    for i in range(n):
-        order.append(Int(raw[i]))
-    return order^
+
+def _argsort_device[T: TensorLike](a: T) raises -> Dynamic[DType.int64, 1]:
+    """`argsort` on the device: a bitonic sort of `(value, index)` pairs.
+
+    The keys are copied into a power-of-two buffer whose padding holds the
+    largest value, each paired with its position. Every compare-exchange
+    step is one `elementwise` launch over the buffer -- `log2(m) *
+    (log2(m) + 1) / 2` of them for a buffer of `m` -- and a pair compares
+    by value, then by index, with NaN above every number, which makes the
+    order total: ties keep their input order, NaN lands after every number
+    including `+inf`, and the padding (NaN, or the largest value for an
+    integer dtype, at indices past `n`) lands last. The first `n`
+    indices are the answer. `ponytail:` a global-memory bitonic network,
+    `O(n log^2 n)` work; a shared-memory local stage, or MAX's own kernel
+    once its merge is right on every target, is the upgrade.
+    """
+    comptime dtype = T.dtype
+    var ctx = a.context()
+    var n = a.size()
+    if n == 0:
+        return Dynamic[DType.int64, 1](ctx, row_major(_dyn_shape[1](0)))
+    var m = 1
+    while m < n:
+        m *= 2
+    var keys = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](m))
+    )
+    var order = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](m))
+    )
+    var src = _flat_unchecked(a)
+    var kv = _flat_out(keys)
+    var ov = _flat_out(order)
+    var top = Scalar[dtype].MAX_FINITE
+    comptime if dtype.is_floating_point():
+        top = _nan[dtype]()
+
+    @always_inline
+    def seed[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var src, var kv, var ov, var n, var top}:
+        var i = coord_to_index_list(coord)[0]
+        var key = top
+        if i < n:
+            key = src[coord][0]
+        kv.store[1](coord, key)
+        ov.store[1](coord, Int64(i))
+
+    elementwise[simd_width=1, target="gpu"](seed, Coord(m), ctx)
+    var k = 2
+    while k <= m:
+        var j = k // 2
+        while j >= 1:
+
+            @always_inline
+            def step[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var kv, var ov, var j, var k}:
+                var i = coord_to_index_list(coord)[0]
+                var l = i ^ j
+                if l > i:
+                    var ki = kv[Coord(i)][0]
+                    var kl = kv[Coord(l)][0]
+                    var ii = ov[Coord(i)][0]
+                    var il = ov[Coord(l)][0]
+                    var greater = ki > kl
+                    var same = ki == kl
+                    comptime if dtype.is_floating_point():
+                        var ni = ki != ki
+                        var nl = kl != kl
+                        greater = (ni and not nl) or (
+                            not ni and not nl and ki > kl
+                        )
+                        same = (ni and nl) or ki == kl
+                    var above = greater or (same and ii > il)
+                    if above == ((i & k) == 0):
+                        kv.store[1](Coord(i), kl)
+                        kv.store[1](Coord(l), ki)
+                        ov.store[1](Coord(i), il)
+                        ov.store[1](Coord(l), ii)
+
+            elementwise[simd_width=1, target="gpu"](step, Coord(m), ctx)
+            j //= 2
+        k *= 2
+    ctx.synchronize()
+    _ = keys^
+    if m == n:
+        return order^
+    return _axis_gather["offset"](order, row_major(_dyn_shape[1](n)), 0, 0)
+
+
+def _sort_device[T: TensorLike](a: T) raises -> Dynamic[T.dtype, 1]:
+    """`sort` on the device: `argsort` there, then a gather by the
+    indices, on a flat copy so the gather is along axis 0."""
+    var flat = _same_order(a, row_major(_dyn_shape[1](a.size())))
+    var order = argsort[gpu=True](flat)
+    return take[axis=0, gpu=True](flat, order)
 
 
 def searchsorted[
@@ -255,6 +415,75 @@ def searchsorted[
     )
 
 
+def _take_device[
+    T: TensorLike, IndexLayout: TensorLayout, //, axis: Int
+](a: T, indices: Tensor[DType.int64, IndexLayout]) raises -> Dynamic[
+    T.dtype, T.LayoutType.rank
+]:
+    """`take` on the device: `nn.gather` over the tensors where they live.
+
+    The bounds check is two device reductions over `indices` -- its `min`
+    and `max` -- so only two scalars come back, where the host path reads
+    every index. `a` and `indices` contiguous and on a GPU context.
+    """
+    comptime rank = T.LayoutType.rank
+    var ctx = a.context()
+    var count = indices.size()
+    var length = a.dim_at(axis)
+    if count > 0:
+        var lo = Static[DType.int64, 1](ctx)
+        var hi = Static[DType.int64, 1](ctx)
+
+        @always_inline
+        def identity[
+            w: Int
+        ](tile: SIMD[DType.int64, w], idx: RowCoord[1]) {} -> SIMD[
+            DType.int64, w
+        ]:
+            return tile
+
+        reduce_all[monoid="min", target="gpu"](
+            _flat_unchecked(indices), lo.tile(), identity, count, Optional(ctx)
+        )
+        reduce_all[monoid="max", target="gpu"](
+            _flat_unchecked(indices), hi.tile(), identity, count, Optional(ctx)
+        )
+        var smallest = Int(lo.to_host()[0])
+        var largest = Int(hi.to_host()[0])
+        if smallest < 0 or largest >= length:
+            raise Error(
+                "take: index ",
+                smallest if smallest < 0 else largest,
+                " is out of range for an axis of extent ",
+                length,
+            )
+    var in_extents = List[Int](capacity=rank)
+    var out_extents = List[Int](capacity=rank)
+    for d in range(rank):
+        in_extents.append(a.dim_at(d))
+        out_extents.append(count if d == axis else a.dim_at(d))
+    _require_contiguous(a)
+    var result = Dynamic[T.dtype, rank]._uninitialized(
+        ctx, row_major(_dyn_shape_from[rank](out_extents))
+    )
+    if result.size() == 0:
+        return result^
+    _nn_gather[axis=axis, target="gpu"](
+        result.tile(),
+        TileTensor(
+            a.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin](),
+            row_major(_dyn_shape_from[rank](in_extents)),
+        ),
+        TileTensor(
+            indices.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin](),
+            row_major(Coord(count)),
+        ),
+        context=ctx,
+    )
+    ctx.synchronize()
+    return result^
+
+
 def take[
     T: TensorLike,
     IndexLayout: TensorLayout,
@@ -286,6 +515,11 @@ def take[
     comptime rank = LayoutType.rank
     var count = indices.size()
     var length = a.dim_at(axis)
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _take_device[axis=axis](a, indices)
+    else:
+        _notice[gpu]("take")
     var index_values = indices.to_host()
     for q in range(count):
         var at = Int(index_values[q])
@@ -308,7 +542,7 @@ def take[
     var values = a.to_host()
     var out = List[Scalar[dtype]](length=total, fill=0)
     var ctx = a.context()
-    _nn_gather[axis=axis, target="gpu" if gpu else "cpu"](
+    _nn_gather[axis=axis, target="cpu"](
         TileTensor(out, row_major(_dyn_shape_from[rank](out_extents))),
         TileTensor(values, row_major(_dyn_shape_from[rank](in_extents))),
         TileTensor(index_values, row_major(Coord(count))),
@@ -398,7 +632,10 @@ def unique[T: TensorLike](a: T) raises -> Dynamic[T.dtype, 1]:
     """
     var n = a.size()
     var values = a.to_host()
-    _std_sort(values)
+    comptime if T.dtype.is_floating_point():
+        _std_sort(values, _nan_last_less[T.dtype])
+    else:
+        _std_sort(values)
 
     var count = 0
     for i in range(n):
@@ -638,7 +875,7 @@ def compress[
 
 
 def partition[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](a: T, kth: Int) raises -> Static[
     T.dtype, T.LayoutType.static_product
 ] where T.LayoutType.all_dims_known:
@@ -664,11 +901,11 @@ def partition[
             a.size(),
             " elements",
         )
-    return sort(a)
+    return sort[gpu=gpu](a)
 
 
 def partition[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](a: T, kth: Int) raises -> Dynamic[
     T.dtype, 1
 ] where not T.LayoutType.all_dims_known:
@@ -682,10 +919,12 @@ def partition[
             a.size(),
             " elements",
         )
-    return sort(a)
+    return sort[gpu=gpu](a)
 
 
-def argpartition[T: TensorLike](a: T, kth: Int) raises -> List[Int]:
+def argpartition[
+    T: TensorLike, gpu: Bool = False
+](a: T, kth: Int) raises -> Dynamic[DType.int64, 1]:
     """The flat indices that would partition `a` about `kth`.
     `numpy.argpartition(a, kth, axis=None)`.
 
@@ -701,7 +940,7 @@ def argpartition[T: TensorLike](a: T, kth: Int) raises -> List[Int]:
             a.size(),
             " elements",
         )
-    return argsort(a)
+    return argsort[gpu=gpu](a)
 
 
 def take[T: TensorLike](a: T, indices: List[Int]) raises -> Dynamic[T.dtype, 1]:
