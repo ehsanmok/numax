@@ -31,7 +31,8 @@ three `norm` modes, `fftshift`/`ifftshift` at rank 1 and 2,
 `fftfreq`/`rfftfreq`, `next_fast_len` -- the next power of two, the length
 this engine is fast at -- and the `Spectrum` pair they travel in; and, from
 `numax.fft.trig`, the real trigonometric transforms `dct`/`idct` and
-`dst`/`idst`, types I-IV under SciPy's three norms, each one complex DFT.
+`dst`/`idst`, types I-IV under SciPy's three norms, each one complex DFT,
+and their every-axis forms `dctn`/`idctn`/`dstn`/`idstn`.
 `circular_convolve` is `Array`-tier only; over `Tensor` the same identity is
 `numax.signal`'s to spell.
 """
@@ -58,7 +59,7 @@ from .fft import (
     rfftfreq,
     rfftn,
 )
-from .trig import dct, dst, idct, idst
+from .trig import dct, dctn, dst, dstn, idct, idctn, idst, idstn
 from ._array import (
     circular_convolve,
 )

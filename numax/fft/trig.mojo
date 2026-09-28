@@ -51,9 +51,10 @@ are their own.
 
 ## What is not here
 
-`dctn`/`idctn` and an `axis` argument: these are 1-D over a rank-1 tensor.
-The row-column form is `fft2`'s shape, on the same lane engine, and would
-be added the way `fft2` was when a caller has one.
+An `axis` argument. `dctn`/`idctn`/`dstn`/`idstn` transform every axis,
+one batched pass per axis on the same lane engine; each pass writes its
+output bin-major, which rotates the axes so the next pass finds its axis
+last, the way `fftn` does.
 """
 
 from std.math import cos as _cos, sin as _sin, sqrt as _sqrt
@@ -61,7 +62,10 @@ from std.math import cos as _cos, sin as _sin, sqrt as _sqrt
 from layout import Coord, coord_to_index_list
 from max.algorithm.functional import elementwise
 
-from ..core.tensor import Static
+from layout.tile_layout import TensorLayout
+
+from ..core.tensor import Static, Tensor
+from ..core.tensorlike import TensorLike
 from .fft import _PI, _as_matrix, _dft
 
 comptime _SQRT2 = 1.4142135623730951
@@ -93,11 +97,43 @@ def _trig[
     norm: StaticString,
     inverse: Bool,
 ](var x: Static[dtype, n]) raises -> Static[dtype, n]:
-    """The one driver behind all eight transforms and both directions.
+    """One transform of a rank-1 `x`: `_trig_pass` over a single lane."""
+    var out = Static[dtype, n]._uninitialized(x.context())
+    _trig_pass[
+        dtype=dtype,
+        batch=1,
+        n=n,
+        gpu=gpu,
+        cosine=cosine,
+        type=type,
+        norm=norm,
+        inverse=inverse,
+    ](x, out)
+    _ = x^
+    return out^
+
+
+def _trig_pass[
+    dtype: DType,
+    batch: Int,
+    n: Int,
+    gpu: Bool,
+    cosine: Bool,
+    type: Int,
+    norm: StaticString,
+    inverse: Bool,
+    S: TensorLike,
+    D: TensorLike,
+](x: S, mut out: D) raises where S.dtype == dtype and D.dtype == dtype:
+    """The one driver behind all eight transforms and both directions, over
+    `batch` lanes of length `n`: lane `b` is `x[b*n .. b*n + n)`, and bin
+    `k` of lane `b` is written to `out[k*batch + b]` -- bin-major, which is
+    the ordinary layout at `batch = 1` and an axis rotation otherwise, the
+    one `dctn` uses to reach every axis with no transpose pass.
 
     Builds the three tables on the host for the effective type (the paired
-    type when `inverse`), runs the gather kernel, one length-`M` `_dft`,
-    and the project kernel. The module docstring has the tables; the code
+    type when `inverse`), runs the gather kernel, one length-`M` `_dft`
+    per lane, and the project kernel. The module docstring has the tables; the code
     below is those tables written out, with the normalization folded in:
     a uniform `1/M`, `1/sqrt(M)` or `1` on the post-multiplier, and the
     `sqrt(2)` boundary tweaks `"ortho"` needs on whichever side SciPy puts
@@ -233,67 +269,73 @@ def _trig[
     var post_re = Static[dtype, n](pr^, ctx)
     var post_im = Static[dtype, n](pi^, ctx)
 
-    # `u[j] = w[j] * x[source[j]]`, or zero where `source[j] < 0`.
-    var u_re = Static[dtype, m]._uninitialized(ctx)
-    var u_im = Static[dtype, m]._uninitialized(ctx)
-    var xs = x.tile()
+    # `u[b, j] = w[j] * x[b, source[j]]`, or zero where `source[j] < 0`.
+    var u_re = Static[dtype, batch, m]._uninitialized(ctx)
+    var u_im = Static[dtype, batch, m]._uninitialized(ctx)
+    var xs = x.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
     var ix = index.tile()
     var wre = weight_re.tile()
     var wim = weight_im.tile()
-    var ure = u_re.tile()
-    var uim = u_im.tile()
+    var ure = u_re.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var uim = u_im.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
 
     @always_inline
     def gather[
         w: Int, alignment: Int = 1
     ](coord: Coord) {var xs, var ix, var wre, var wim, var ure, var uim}:
-        var j = coord_to_index_list(coord)[0]
+        var f = coord_to_index_list(coord)[0]
+        var b = f // m
+        var j = f % m
         var s = Int(ix[Coord(j)])
         if s >= 0:
-            var v = xs[Coord(s)]
-            ure.store[1](Coord(j), v * wre[Coord(j)])
-            uim.store[1](Coord(j), v * wim[Coord(j)])
+            var v = rebind[Scalar[dtype]](xs[unsafe_offset=b * n + s])
+            ure[unsafe_offset=f] = v * rebind[Scalar[dtype]](wre[Coord(j)])
+            uim[unsafe_offset=f] = v * rebind[Scalar[dtype]](wim[Coord(j)])
         else:
-            ure.store[1](Coord(j), Scalar[dtype](0))
-            uim.store[1](Coord(j), Scalar[dtype](0))
+            ure[unsafe_offset=f] = Scalar[dtype](0)
+            uim[unsafe_offset=f] = Scalar[dtype](0)
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
-        gather, Coord(m), ctx
+        gather, Coord(batch * m), ctx
     )
 
-    var big_re = Static[dtype, m]._uninitialized(ctx)
-    var big_im = Static[dtype, m]._uninitialized(ctx)
-    _dft[dtype=dtype, batch=1, n=m, gpu=gpu, inverse=False](
-        _as_matrix[rows=1, cols=m](u_re),
-        _as_matrix[rows=1, cols=m](u_im),
-        _as_matrix[rows=1, cols=m](big_re),
-        _as_matrix[rows=1, cols=m](big_im),
+    var big_re = Static[dtype, batch, m]._uninitialized(ctx)
+    var big_im = Static[dtype, batch, m]._uninitialized(ctx)
+    _dft[dtype=dtype, batch=batch, n=m, gpu=gpu, inverse=False](
+        _as_matrix[rows=batch, cols=m](u_re),
+        _as_matrix[rows=batch, cols=m](u_im),
+        _as_matrix[rows=batch, cols=m](big_re),
+        _as_matrix[rows=batch, cols=m](big_im),
         ctx,
     )
 
-    # `y[k] = Re(p[k] * U[k + offset])`.
-    var out = Static[dtype, n]._uninitialized(ctx)
-    var bre = big_re.tile()
-    var bim = big_im.tile()
+    # `y[k, b] = Re(p[k] * U[b, k + offset])`, bin-major.
+    var bre = big_re.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+    var bim = big_im.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
     var pre = post_re.tile()
     var pim = post_im.tile()
-    var ys = out.tile()
+    var ys = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
 
     @always_inline
     def project[
         w: Int, alignment: Int = 1
     ](coord: Coord) {var bre, var bim, var pre, var pim, var ys}:
-        var k = coord_to_index_list(coord)[0]
-        var c = Coord(k + offset)
-        ys.store[1](Coord(k), pre[Coord(k)] * bre[c] - pim[Coord(k)] * bim[c])
+        var f = coord_to_index_list(coord)[0]
+        var b = f // n
+        var k = f % n
+        var at = b * m + k + offset
+        var y = (
+            rebind[Scalar[dtype]](pre[Coord(k)]) * bre[unsafe_offset=at]
+            - rebind[Scalar[dtype]](pim[Coord(k)]) * bim[unsafe_offset=at]
+        )
+        ys[unsafe_offset=k * batch + b] = rebind[Scalar[D.dtype]](y)
 
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
-        project, Coord(n), ctx
+        project, Coord(batch * n), ctx
     )
     ctx.synchronize()
 
     # Everything the kernels read went through an origin-erased view.
-    _ = x^
     _ = index^
     _ = weight_re^
     _ = weight_im^
@@ -303,7 +345,6 @@ def _trig[
     _ = u_im^
     _ = big_re^
     _ = big_im^
-    return out^
 
 
 def dct[
@@ -474,3 +515,228 @@ def idst[
         fails.
     """
     return _trig[gpu=gpu, cosine=False, type=type, norm=norm, inverse=True](x^)
+
+
+def _trign[
+    dtype: DType,
+    L: TensorLayout,
+    gpu: Bool,
+    cosine: Bool,
+    type: Int,
+    norm: StaticString,
+    inverse: Bool,
+](var x: Tensor[dtype, L]) raises -> Tensor[dtype, L]:
+    """The transform along every axis: one `_trig_pass` per axis, each on
+    the current last axis and writing bin-major, which rotates the axes so
+    the next is last; after one pass per axis the order is the original."""
+    comptime rank = L.rank
+    comptime total = L.static_product
+    var ctx = x.context()
+    var layout = x.tile().layout
+    var a = Tensor[dtype, L]._uninitialized(ctx, layout)
+    var b = Tensor[dtype, L]._uninitialized(ctx, layout)
+    comptime for s in range(rank):
+        comptime n = L.static_shape[rank - 1 - s]
+        comptime lanes = total // n
+        comptime if s == 0:
+            _trig_pass[
+                dtype=dtype,
+                batch=lanes,
+                n=n,
+                gpu=gpu,
+                cosine=cosine,
+                type=type,
+                norm=norm,
+                inverse=inverse,
+            ](x, a)
+        else:
+            _trig_pass[
+                dtype=dtype,
+                batch=lanes,
+                n=n,
+                gpu=gpu,
+                cosine=cosine,
+                type=type,
+                norm=norm,
+                inverse=inverse,
+            ](a, b)
+            swap(a, b)
+    _ = x^
+    _ = b^
+    return a^
+
+
+def dctn[
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    gpu: Bool = False,
+    type: Int = 2,
+    norm: StaticString = "backward",
+](var x: Tensor[dtype, L]) raises -> Tensor[dtype, L] where (
+    dtype.is_floating_point()
+    and L.all_dims_known
+    and L.static_product > 0
+    and (type >= 1 and type <= 4)
+):
+    """The discrete cosine transform along every axis of `x`. `scipy.fft.dctn(x, type,
+    norm=norm)`.
+
+    `dct` of the same type and norm applied along each axis in turn --
+    the transform separates, so this is the definition, not an
+    approximation. One pass per axis, each over every lane of the current
+    last axis and writing bin-major, so the axes rotate into place with no
+    transpose pass; at rank 1 it is `dct`. Type I needs every extent at
+    least 2.
+
+    Parameters:
+        dtype: The floating-point element type of `x`, inferred.
+        L: The compile-time layout of `x`, inferred; any rank.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real array to transform.
+
+    Returns:
+        The real transform at `x`'s shape.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    return _trign[dtype, L, gpu, True, type, norm, False](x^)
+
+
+def idctn[
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    gpu: Bool = False,
+    type: Int = 2,
+    norm: StaticString = "backward",
+](var x: Tensor[dtype, L]) raises -> Tensor[dtype, L] where (
+    dtype.is_floating_point()
+    and L.all_dims_known
+    and L.static_product > 0
+    and (type >= 1 and type <= 4)
+):
+    """The inverse discrete cosine transform along every axis of `x`. `scipy.fft.idctn(x, type,
+    norm=norm)`.
+
+    `idct` of the same type and norm applied along each axis in turn --
+    the transform separates, so this is the definition, not an
+    approximation. One pass per axis, each over every lane of the current
+    last axis and writing bin-major, so the axes rotate into place with no
+    transpose pass; at rank 1 it is `idct`. Type I needs every extent at
+    least 2.
+
+    Parameters:
+        dtype: The floating-point element type of `x`, inferred.
+        L: The compile-time layout of `x`, inferred; any rank.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real array to transform.
+
+    Returns:
+        The real transform at `x`'s shape.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    return _trign[dtype, L, gpu, True, type, norm, True](x^)
+
+
+def dstn[
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    gpu: Bool = False,
+    type: Int = 2,
+    norm: StaticString = "backward",
+](var x: Tensor[dtype, L]) raises -> Tensor[dtype, L] where (
+    dtype.is_floating_point()
+    and L.all_dims_known
+    and L.static_product > 0
+    and (type >= 1 and type <= 4)
+):
+    """The discrete sine transform along every axis of `x`. `scipy.fft.dstn(x, type,
+    norm=norm)`.
+
+    `dst` of the same type and norm applied along each axis in turn --
+    the transform separates, so this is the definition, not an
+    approximation. One pass per axis, each over every lane of the current
+    last axis and writing bin-major, so the axes rotate into place with no
+    transpose pass; at rank 1 it is `dst`. Type I needs every extent at
+    least 2 (and SciPy's DST-I at least 1).
+
+    Parameters:
+        dtype: The floating-point element type of `x`, inferred.
+        L: The compile-time layout of `x`, inferred; any rank.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real array to transform.
+
+    Returns:
+        The real transform at `x`'s shape.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    return _trign[dtype, L, gpu, False, type, norm, False](x^)
+
+
+def idstn[
+    dtype: DType,
+    L: TensorLayout,
+    //,
+    gpu: Bool = False,
+    type: Int = 2,
+    norm: StaticString = "backward",
+](var x: Tensor[dtype, L]) raises -> Tensor[dtype, L] where (
+    dtype.is_floating_point()
+    and L.all_dims_known
+    and L.static_product > 0
+    and (type >= 1 and type <= 4)
+):
+    """The inverse discrete sine transform along every axis of `x`. `scipy.fft.idstn(x, type,
+    norm=norm)`.
+
+    `idst` of the same type and norm applied along each axis in turn --
+    the transform separates, so this is the definition, not an
+    approximation. One pass per axis, each over every lane of the current
+    last axis and writing bin-major, so the axes rotate into place with no
+    transpose pass; at rank 1 it is `idst`. Type I needs every extent at
+    least 2 (and SciPy's DST-I at least 1).
+
+    Parameters:
+        dtype: The floating-point element type of `x`, inferred.
+        L: The compile-time layout of `x`, inferred; any rank.
+        gpu: When `True`, every kernel launches with `target="gpu"` on the
+            input's device; otherwise they run on the CPU.
+        type: The transform type, `1` through `4`; `2` is the default.
+        norm: The scaling mode, `"backward"`, `"ortho"` or `"forward"`.
+
+    Args:
+        x: The real array to transform.
+
+    Returns:
+        The real transform at `x`'s shape.
+
+    Raises:
+        If allocating a buffer or launching a kernel on the input's device
+        fails.
+    """
+    return _trign[dtype, L, gpu, False, type, norm, True](x^)

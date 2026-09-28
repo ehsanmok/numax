@@ -560,7 +560,7 @@ from .fft.fft import (
     rfftfreq,
     rfftn,
 )
-from .fft.trig import dct, dst, idct, idst
+from .fft.trig import dct, dctn, dst, dstn, idct, idctn, idst, idstn
 
 # Convolution, correlation, windows -- `numax.signal`, the `Tensor` tier;
 # the `FloatLike` half is `numax.signal`'s `Array` tier.

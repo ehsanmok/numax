@@ -476,6 +476,7 @@ not.
 | `fftfreq`, `rfftfreq` — frequency grids, filled on the device when `ctx` is one | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `next_fast_len` — the next power of two, the length this engine is fast at; a non-power-of-two `n` costs three transforms of `next_fast_len(2n - 1)` | [`fft/fft.mojo`](../numax/fft/fft.mojo) |
 | `dct`, `idct`, `dst`, `idst` — types I-IV, `norm` `"backward"`/`"ortho"`/`"forward"`, SciPy's definitions; each is one complex DFT of length `2N` (`2(N∓1)` for type I) between a gather-and-weight pass and a twiddle-and-project pass, so all eight are three host tables over one kernel pair | [`fft/trig.mojo`](../numax/fft/trig.mojo) |
+| `dctn`, `idctn`, `dstn`, `idstn` — the same transforms along every axis at any rank: one batched pass per axis, each writing bin-major so the axes rotate into place with no transpose pass | [`fft/trig.mojo`](../numax/fft/trig.mojo) |
 
 Tier 2: the stage loop is on the host and every launch it makes is a
 device kernel, so the data stays device-resident between them but nothing

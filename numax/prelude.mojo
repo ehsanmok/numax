@@ -505,7 +505,7 @@ from .fft.fft import (
     rfftfreq,
     rfftn,
 )
-from .fft.trig import dct, dst, idct, idst
+from .fft.trig import dct, dctn, dst, dstn, idct, idctn, idst, idstn
 
 # Signal processing. `hilbert` the transform is not here -- see the
 # docstring.
