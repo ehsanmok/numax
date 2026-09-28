@@ -126,13 +126,12 @@ pack from an arbitrary subset of an existing one.
 parameter, since a copy is a driver call rather than a kernel. The
 reordering ones take `gpu: Bool = False` like the rest of numax, and at
 `gpu=True` are one gather launch each: `transpose`, `tril`, `triu`,
-constant-mode `pad`, `roll`, `flip`, `repeat`, `tile`, `concatenate`,
-`stack`, `split`, `array_split` and `slice`. A residency mismatch prints
+constant-mode `pad`, `roll`, `flip`, `repeat`, `tile`, `slice`, and every
+join and split (`concatenate`, `stack`, `split`, `array_split`, `vstack`,
+`hstack`, `dstack` and the `_dyn` forms). A residency mismatch prints
 the one-line `stderr` notice and takes the host walk.
-# ponytail: the fixed-shape joins (`vstack`, `hstack`, `dstack`, the static
-# `concatenate`/`stack`/`split` and the `_dyn` forms), `broadcast_to`, the
-# `diag` family, `vander` and `meshgrid` still walk a host copy on a GPU
-# tensor; each is a gather, or a route to the general form, still to write.
+# ponytail: `broadcast_to`, the `diag` family, `vander` and `meshgrid`
+# still walk a host copy on a GPU tensor; each is a gather still to write.
 """
 
 from std.collections import Array
@@ -1721,6 +1720,7 @@ def atleast_3d[
 def stack[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Static[A.dtype, 2, dim[A, 0]] where (
     A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
@@ -1743,6 +1743,19 @@ def stack[
     """
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                Static[A.dtype, 2, dim[A, 0]]._static_layout(),
+                1,
+                1,
+                1,
+                dim[A, 0],
+            )
+    else:
+        _notice[gpu]("stack")
     var a_values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](capacity=2 * n)
@@ -1914,7 +1927,9 @@ def slice[
 
 
 def concatenate_dyn[
-    A: TensorLike, B: TensorLike
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Dynamic[A.dtype, 1] where A.dtype == B.dtype:
     """Join two tensors end to end as one flat tensor.
 
@@ -1923,6 +1938,19 @@ def concatenate_dyn[
     than a sum the compiler has to see. Reach for `concatenate` when both
     lengths are constants and the result's should be too.
     """
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                row_major(_dyn_shape[1](a.size() + b.size())),
+                1,
+                a.size(),
+                b.size(),
+                1,
+            )
+    else:
+        _notice[gpu]("concatenate_dyn")
     var values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     for i in range(len(b_values)):
@@ -1931,7 +1959,8 @@ def concatenate_dyn[
 
 
 def split_dyn[
-    T: TensorLike
+    T: TensorLike,
+    gpu: Bool = False,
 ](a: T, at: Int) raises -> Tuple[Dynamic[T.dtype, 1], Dynamic[T.dtype, 1]]:
     """Cut a tensor in two at a run-time index: elements `[0, at)` and
     `[at, size())`, both flat. The inverse of `concatenate_dyn`.
@@ -1946,6 +1975,19 @@ def split_dyn[
         raise Error(
             "split_dyn: cannot cut at ", at, " in a tensor of ", n, " elements"
         )
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var flat = _same_order(a, row_major(_dyn_shape[1](n)))
+            return (
+                _axis_gather["offset"](
+                    flat, row_major(_dyn_shape[1](at)), 0, 0
+                ),
+                _axis_gather["offset"](
+                    flat, row_major(_dyn_shape[1](n - at)), 0, at
+                ),
+            )
+    else:
+        _notice[gpu]("split_dyn")
     var values = a.to_host()
     var head = List[Scalar[dtype]](capacity=at)
     for i in range(at):
@@ -1958,7 +2000,9 @@ def split_dyn[
 
 
 def stack_dyn[
-    A: TensorLike, B: TensorLike
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Dynamic[A.dtype, 2] where A.dtype == B.dtype:
     """Stack two same-length tensors along a new leading axis, flattening
     each: `(2, size)`.
@@ -1972,6 +2016,13 @@ def stack_dyn[
         raise Error(
             "stack_dyn: lengths ", a.size(), " and ", b.size(), " differ"
         )
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a, b, row_major(_dyn_shape[2](2, a.size())), 1, 1, 1, a.size()
+            )
+    else:
+        _notice[gpu]("stack_dyn")
     var values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     for i in range(len(b_values)):
@@ -2180,6 +2231,7 @@ def flatten[
 def concatenate[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Static[A.dtype, dim[A, 0] + dim[B, 0]] where (
     A.LayoutType.rank == 1
     and A.LayoutType.all_dims_known
@@ -2206,6 +2258,19 @@ def concatenate[
     comptime dtype = A.dtype
     comptime n = dim[A, 0]
     comptime m = dim[B, 0]
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                Static[A.dtype, dim[A, 0] + dim[B, 0]]._static_layout(),
+                1,
+                dim[A, 0],
+                dim[B, 0],
+                1,
+            )
+    else:
+        _notice[gpu]("concatenate")
     var a_values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](capacity=n + m)
@@ -2219,6 +2284,7 @@ def concatenate[
 def split[
     T: TensorLike,
     at: Int,
+    gpu: Bool = False,
 ](a: T) raises -> Tuple[
     Static[T.dtype, at], Static[T.dtype, dim[T, 0] - at]
 ] where (
@@ -2238,6 +2304,18 @@ def split[
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     var ctx = a.context()
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return (
+                _axis_gather["offset"](
+                    a, Static[T.dtype, at]._static_layout(), 0, 0
+                ),
+                _axis_gather["offset"](
+                    a, Static[T.dtype, dim[T, 0] - at]._static_layout(), 0, at
+                ),
+            )
+    else:
+        _notice[gpu]("split")
     var values = a.to_host()
     var head = List[Scalar[dtype]](capacity=at)
     for i in range(at):
@@ -3260,6 +3338,7 @@ def copy[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:
 def vstack[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Static[
     A.dtype, dim[A, 0] + dim[B, 0], dim[A, 1]
 ] where (
@@ -3279,6 +3358,21 @@ def vstack[
     comptime rows_a = dim[A, 0]
     comptime cols = dim[A, 1]
     comptime rows_b = dim[B, 0]
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                Static[
+                    A.dtype, dim[A, 0] + dim[B, 0], dim[A, 1]
+                ]._static_layout(),
+                1,
+                dim[A, 0],
+                dim[B, 0],
+                dim[A, 1],
+            )
+    else:
+        _notice[gpu]("vstack")
     var a_values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](capacity=(rows_a + rows_b) * cols)
@@ -3292,6 +3386,7 @@ def vstack[
 def dstack[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 1], 2] where (
     A.LayoutType.rank == 2
     and A.LayoutType.all_dims_known
@@ -3311,6 +3406,19 @@ def dstack[
     comptime dtype = A.dtype
     comptime rows = dim[A, 0]
     comptime cols = dim[A, 1]
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                Static[A.dtype, dim[A, 0], dim[A, 1], 2]._static_layout(),
+                dim[A, 0] * dim[A, 1],
+                1,
+                1,
+                1,
+            )
+    else:
+        _notice[gpu]("dstack")
     var a_values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](length=rows * cols * 2, fill=0)
@@ -3389,6 +3497,7 @@ def rot90[
 def hstack[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](a: A, b: B) raises -> Static[
     A.dtype, dim[A, 0], dim[A, 1] + dim[B, 1]
 ] where (
@@ -3404,6 +3513,21 @@ def hstack[
     comptime rows = dim[A, 0]
     comptime cols_a = dim[A, 1]
     comptime cols_b = dim[B, 1]
+    if _check_device[A, gpu](a) and _check_device[B, gpu](b):
+        comptime if gpu:
+            return _join2(
+                a,
+                b,
+                Static[
+                    A.dtype, dim[A, 0], dim[A, 1] + dim[B, 1]
+                ]._static_layout(),
+                dim[A, 0],
+                dim[A, 1],
+                dim[B, 1],
+                1,
+            )
+    else:
+        _notice[gpu]("hstack")
     var a_values = a.to_host()
     var b_values = b.to_host[A.dtype]()
     var values = List[Scalar[dtype]](length=rows * (cols_a + cols_b), fill=0)

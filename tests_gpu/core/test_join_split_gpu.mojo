@@ -11,9 +11,15 @@ from numax.core.tensor import (
     Static,
     array_split,
     concatenate,
+    concatenate_dyn,
+    dstack,
+    hstack,
     slice,
     split,
+    split_dyn,
     stack,
+    stack_dyn,
+    vstack,
 )
 
 comptime f32 = DType.float32
@@ -108,6 +114,68 @@ def test_slice_on_the_device_matches_the_host() raises:
     assert_equal(d.dim_at(1), 3)
     _assert_same(
         d.to_host(), slice(_grid[4, 6](cpu, 0), starts, stops).to_host()
+    )
+
+
+def _line[n: Int](ctx: DeviceContext, base: Int) raises -> Static[f32, n]:
+    var values = List[Scalar[f32]](capacity=n)
+    for i in range(n):
+        values.append(Float32(base + i))
+    return Static[f32, n](ctx, values^)
+
+
+def test_the_fixed_shape_joins_on_the_device_match_the_host() raises:
+    """`vstack`, `hstack`, `dstack` and the rank-1 `concatenate`/`stack`,
+    whose shapes stay in the type."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var v = vstack[gpu=True](_grid[2, 4](gpu, 0), _grid[3, 4](gpu, 100))
+    assert_false(v.on_host())
+    _assert_same(
+        v.to_host(),
+        vstack(_grid[2, 4](cpu, 0), _grid[3, 4](cpu, 100)).to_host(),
+    )
+    _assert_same(
+        hstack[gpu=True](_grid[3, 2](gpu, 0), _grid[3, 4](gpu, 100)).to_host(),
+        hstack(_grid[3, 2](cpu, 0), _grid[3, 4](cpu, 100)).to_host(),
+    )
+    _assert_same(
+        dstack[gpu=True](_grid[3, 4](gpu, 0), _grid[3, 4](gpu, 100)).to_host(),
+        dstack(_grid[3, 4](cpu, 0), _grid[3, 4](cpu, 100)).to_host(),
+    )
+    _assert_same(
+        concatenate[gpu=True](_line[5](gpu, 0), _line[3](gpu, 100)).to_host(),
+        concatenate(_line[5](cpu, 0), _line[3](cpu, 100)).to_host(),
+    )
+    _assert_same(
+        stack[gpu=True](_line[5](gpu, 0), _line[5](gpu, 100)).to_host(),
+        stack(_line[5](cpu, 0), _line[5](cpu, 100)).to_host(),
+    )
+
+
+def test_the_fixed_shape_and_run_time_splits_on_the_device() raises:
+    """The rank-1 `split[at]` and the flat `_dyn` forms, which flatten a
+    matrix first."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var d = split[at=3, gpu=True](_line[8](gpu, 0))
+    var h = split[at=3](_line[8](cpu, 0))
+    assert_false(d[1].on_host())
+    _assert_same(d[0].to_host(), h[0].to_host())
+    _assert_same(d[1].to_host(), h[1].to_host())
+    var dd = split_dyn[gpu=True](_grid[3, 4](gpu, 0), 5)
+    var hh = split_dyn(_grid[3, 4](cpu, 0), 5)
+    _assert_same(dd[0].to_host(), hh[0].to_host())
+    _assert_same(dd[1].to_host(), hh[1].to_host())
+    _assert_same(
+        concatenate_dyn[gpu=True](
+            _grid[2, 3](gpu, 0), _line[4](gpu, 100)
+        ).to_host(),
+        concatenate_dyn(_grid[2, 3](cpu, 0), _line[4](cpu, 100)).to_host(),
+    )
+    _assert_same(
+        stack_dyn[gpu=True](_grid[2, 3](gpu, 0), _line[6](gpu, 100)).to_host(),
+        stack_dyn(_grid[2, 3](cpu, 0), _line[6](cpu, 100)).to_host(),
     )
 
 

@@ -21,6 +21,12 @@ from test_join_split_gpu import (
 from test_join_split_gpu import (
     test_slice_on_the_device_matches_the_host as test_join_split_gpu__test_slice_on_the_device_matches_the_host,
 )
+from test_join_split_gpu import (
+    test_the_fixed_shape_joins_on_the_device_match_the_host as test_join_split_gpu__test_the_fixed_shape_joins_on_the_device_match_the_host,
+)
+from test_join_split_gpu import (
+    test_the_fixed_shape_and_run_time_splits_on_the_device as test_join_split_gpu__test_the_fixed_shape_and_run_time_splits_on_the_device,
+)
 from test_reorder_gpu import (
     test_roll_on_the_device_matches_the_host as test_reorder_gpu__test_roll_on_the_device_matches_the_host,
 )
@@ -67,6 +73,12 @@ def main() raises:
         test_join_split_gpu__test_split_and_array_split_on_the_device_match_the_host
     ]()
     suite.test[test_join_split_gpu__test_slice_on_the_device_matches_the_host]()
+    suite.test[
+        test_join_split_gpu__test_the_fixed_shape_joins_on_the_device_match_the_host
+    ]()
+    suite.test[
+        test_join_split_gpu__test_the_fixed_shape_and_run_time_splits_on_the_device
+    ]()
     # tests_gpu/core/test_reorder_gpu.mojo
     suite.test[test_reorder_gpu__test_roll_on_the_device_matches_the_host]()
     suite.test[test_reorder_gpu__test_flip_on_the_device_matches_the_host]()
