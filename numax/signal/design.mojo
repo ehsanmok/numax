@@ -64,13 +64,17 @@ delegate to. **Extend.**
 """
 
 from std.math import (
+    acosh as _acosh,
     asin as _asin,
     asinh as _asinh,
+    atan as _atan,
+    ceil as _ceil,
     cos as _cos,
     cosh as _cosh,
     exp as _exp,
     expm1 as _expm1,
     hypot as _hypot,
+    log10 as _log10,
     sin as _sin,
     sinh as _sinh,
     sqrt as _sqrt,
@@ -2541,6 +2545,609 @@ def group_delay[
     ctx.synchronize()
     _ = coeffs^
     return GroupDelay[dtype, worN](Static[dtype, worN](scaled^, ctx), gd^)
+
+
+# --------------------------------------------------------------------------
+# Order selection
+# --------------------------------------------------------------------------
+
+
+@fieldwise_init
+struct FilterOrder(Copyable, Movable):
+    """What the order estimators return: the lowest order that meets the
+    specification and the critical frequency (or band) to design it at,
+    SciPy's `(N, Wn)`. Pass `order` as the design's compile-time `order`
+    and `wn` (or `(wn, wn_high)` for a band) as its edge."""
+
+    var order: Int
+    """The minimum filter order."""
+    var wn: Float64
+    """The critical frequency, or the band's lower edge."""
+    var wn_high: Float64
+    """The band's upper edge; `0` for a lowpass or highpass."""
+
+
+def _ellipkm1(p: Float64) -> Float64:
+    """`K(1 - p)`, accurate for small `p`: `pi / (2 AGM(1, sqrt(p)))` with
+    the complement's square root taken directly. Iterates to convergence,
+    since a tiny `sqrt(p)` takes a few more rounds than `_ellipk`'s
+    twelve."""
+    var a = 1.0
+    var b = _sqrt(p)
+    for _ in range(64):
+        if abs(a - b) <= 1e-16 * a:
+            break
+        var next_a = 0.5 * (a + b)
+        b = _sqrt(a * b)
+        a = next_a
+    return _PI / (2.0 * a)
+
+
+def _ellipk_full(m: Float64) -> Float64:
+    """`K(m)` iterated to convergence, for `m` near 1."""
+    return _ellipkm1(1.0 - m)
+
+
+def _order_count(
+    kind: StaticString, nat: Float64, gpass: Float64, gstop: Float64
+) -> Float64:
+    """The fractional order a band edge ratio `nat` needs, per family --
+    `band_stop_obj`'s objective."""
+    if kind == "butter":
+        var gs = 10.0 ** (0.1 * abs(gstop))
+        var gp = 10.0 ** (0.1 * abs(gpass))
+        return _log10((gs - 1.0) / (gp - 1.0)) / (2.0 * _log10(nat))
+    elif kind == "cheby":
+        var gs = 10.0 ** (0.1 * abs(gstop))
+        var gp = 10.0 ** (0.1 * abs(gpass))
+        return _acosh(_sqrt((gs - 1.0) / (gp - 1.0))) / _acosh(nat)
+    var gs = 10.0 ** (0.1 * gstop)
+    var gp = 10.0 ** (0.1 * gpass)
+    var arg1 = _sqrt((gp - 1.0) / (gs - 1.0))
+    var arg0 = 1.0 / nat
+    var d00 = _ellipk_full(arg0 * arg0)
+    var d01 = _ellipk_full(1.0 - arg0 * arg0)
+    var d10 = _ellipk_full(arg1 * arg1)
+    var d11 = _ellipk_full(1.0 - arg1 * arg1)
+    return d00 * d11 / (d01 * d10)
+
+
+def _band_stop_obj(
+    wp: Float64,
+    ind: Int,
+    passb: List[Float64],
+    stopb: List[Float64],
+    gpass: Float64,
+    gstop: Float64,
+    kind: StaticString,
+) -> Float64:
+    """`scipy.signal.band_stop_obj`: the order a bandstop needs when edge
+    `ind` of the passband moves to `wp`."""
+    var p0 = wp if ind == 0 else passb[0]
+    var p1 = wp if ind == 1 else passb[1]
+    var nat = 1e300
+    for i in range(2):
+        nat = min(
+            nat, abs(stopb[i] * (p0 - p1) / (stopb[i] * stopb[i] - p0 * p1))
+        )
+    return _order_count(kind, nat, gpass, gstop)
+
+
+def _fminbound(
+    lo: Float64,
+    hi: Float64,
+    ind: Int,
+    passb: List[Float64],
+    stopb: List[Float64],
+    gpass: Float64,
+    gstop: Float64,
+    kind: StaticString,
+) -> Float64:
+    """`scipy.optimize.fminbound` of `_band_stop_obj` on `[lo, hi]` at its
+    default `xtol = 1e-5`: Brent's bounded minimizer transcribed, so the
+    band edges come out where SciPy's do."""
+    var sqrt_eps = _sqrt(2.2e-16)
+    var golden_mean = 0.5 * (3.0 - _sqrt(5.0))
+    var xatol = 1e-5
+    var a = lo
+    var b = hi
+    var fulc = a + golden_mean * (b - a)
+    var nfc = fulc
+    var xf = fulc
+    var rat = 0.0
+    var e = 0.0
+    var x = xf
+    var fx = _band_stop_obj(x, ind, passb, stopb, gpass, gstop, kind)
+    var num = 1
+    var ffulc = fx
+    var fnfc = fx
+    var xm = 0.5 * (a + b)
+    var tol1 = sqrt_eps * abs(xf) + xatol / 3.0
+    var tol2 = 2.0 * tol1
+    while abs(xf - xm) > (tol2 - 0.5 * (b - a)):
+        var golden = True
+        if abs(e) > tol1:
+            golden = False
+            var r = (xf - nfc) * (fx - ffulc)
+            var q = (xf - fulc) * (fx - fnfc)
+            var p = (xf - fulc) * q - (xf - nfc) * r
+            q = 2.0 * (q - r)
+            if q > 0.0:
+                p = -p
+            q = abs(q)
+            r = e
+            e = rat
+            if (
+                (abs(p) < abs(0.5 * q * r))
+                and (p > q * (a - xf))
+                and (p < q * (b - xf))
+            ):
+                rat = p / q
+                x = xf + rat
+                if ((x - a) < tol2) or ((b - x) < tol2):
+                    var si = 1.0 if xm - xf >= 0 else -1.0
+                    rat = tol1 * si
+            else:
+                golden = True
+        if golden:
+            if xf >= xm:
+                e = a - xf
+            else:
+                e = b - xf
+            rat = golden_mean * e
+        var si = 1.0 if rat >= 0 else -1.0
+        x = xf + si * max(abs(rat), tol1)
+        var fu = _band_stop_obj(x, ind, passb, stopb, gpass, gstop, kind)
+        num += 1
+        if fu <= fx:
+            if x >= xf:
+                a = xf
+            else:
+                b = xf
+            fulc = nfc
+            ffulc = fnfc
+            nfc = xf
+            fnfc = fx
+            xf = x
+            fx = fu
+        else:
+            if x < xf:
+                a = x
+            else:
+                b = x
+            if (fu <= fnfc) or (nfc == xf):
+                fulc = nfc
+                ffulc = fnfc
+                nfc = x
+                fnfc = fu
+            elif (fu <= ffulc) or (fulc == xf) or (fulc == nfc):
+                fulc = x
+                ffulc = fu
+        xm = 0.5 * (a + b)
+        tol1 = sqrt_eps * abs(xf) + xatol / 3.0
+        tol2 = 2.0 * tol1
+        if num >= 500:
+            break
+    return xf
+
+
+def _estimate_order(
+    kind: StaticString,
+    family: StaticString,
+    wp_in: List[Float64],
+    ws_in: List[Float64],
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64],
+) raises -> FilterOrder:
+    """The shared body of `buttord`, `cheb1ord`, `cheb2ord` and `ellipord`:
+    SciPy's `_validate_wp_ws`, `_pre_warp` and `_find_nat_freq`, then the
+    family's own order formula and edge placement."""
+    if gpass <= 0.0:
+        raise Error(family, ": gpass must be positive")
+    if gstop <= 0.0:
+        raise Error(family, ": gstop must be positive")
+    if gpass > gstop:
+        raise Error(family, ": gpass must not exceed gstop")
+    var wp = wp_in.copy()
+    var ws = ws_in.copy()
+    if fs:
+        for i in range(len(wp)):
+            wp[i] = 2.0 * wp[i] / fs.value()
+            ws[i] = 2.0 * ws[i] / fs.value()
+    var filter_type = 2 * (len(wp) - 1) + 1
+    if wp[0] >= ws[0]:
+        filter_type += 1
+    var passb = List[Float64]()
+    var stopb = List[Float64]()
+    for i in range(len(wp)):
+        passb.append(_tan(_PI * wp[i] / 2.0))
+        stopb.append(_tan(_PI * ws[i] / 2.0))
+    var nat: Float64
+    if filter_type == 1:
+        nat = abs(stopb[0] / passb[0])
+    elif filter_type == 2:
+        nat = abs(passb[0] / stopb[0])
+    elif filter_type == 3:
+        var wp0 = _fminbound(
+            passb[0], stopb[0] - 1e-12, 0, passb, stopb, gpass, gstop, kind
+        )
+        var wp1 = _fminbound(
+            stopb[1] + 1e-12, passb[1], 1, passb, stopb, gpass, gstop, kind
+        )
+        passb = [wp0, wp1]
+        nat = 1e300
+        for i in range(2):
+            nat = min(
+                nat,
+                abs(
+                    stopb[i]
+                    * (passb[0] - passb[1])
+                    / (stopb[i] * stopb[i] - passb[0] * passb[1])
+                ),
+            )
+    else:
+        nat = 1e300
+        for i in range(2):
+            nat = min(
+                nat,
+                abs(
+                    (stopb[i] * stopb[i] - passb[0] * passb[1])
+                    / (stopb[i] * (passb[0] - passb[1]))
+                ),
+            )
+    var order: Int
+    var wn = List[Float64]()
+    if family == "buttord":
+        var gs = 10.0 ** (0.1 * abs(gstop))
+        var gp = 10.0 ** (0.1 * abs(gpass))
+        order = Int(
+            _ceil(_log10((gs - 1.0) / (gp - 1.0)) / (2.0 * _log10(nat)))
+        )
+        var w0 = (gp - 1.0) ** (
+            -1.0 / (2.0 * Float64(order))
+        ) if order != 0 else 1.0
+        if filter_type == 1:
+            wn = [w0 * passb[0]]
+        elif filter_type == 2:
+            wn = [passb[0] / w0]
+        elif filter_type == 3:
+            var discr = _sqrt(
+                (passb[1] - passb[0]) ** 2 + 4.0 * w0 * w0 * passb[0] * passb[1]
+            )
+            var a = abs(((passb[1] - passb[0]) + discr) / (2.0 * w0))
+            var b = abs(((passb[1] - passb[0]) - discr) / (2.0 * w0))
+            wn = [min(a, b), max(a, b)]
+        else:
+            var half = (passb[1] - passb[0]) / 2.0
+            var root_part = _sqrt(
+                w0 * w0 / 4.0 * (passb[1] - passb[0]) ** 2 + passb[0] * passb[1]
+            )
+            var a = abs(w0 * half + root_part)
+            var b = abs(-w0 * half + root_part)
+            wn = [min(a, b), max(a, b)]
+    elif family == "ellipord":
+        var arg1_sq = _pow10m1(0.1 * gpass) / _pow10m1(0.1 * gstop)
+        var arg0 = 1.0 / nat
+        var d00 = _ellipk_full(arg0 * arg0)
+        var d01 = _ellipkm1(arg0 * arg0)
+        var d10 = _ellipk_full(arg1_sq)
+        var d11 = _ellipkm1(arg1_sq)
+        order = Int(_ceil(d00 * d11 / (d01 * d10)))
+        wn = passb.copy()
+    else:
+        var gs = 10.0 ** (0.1 * abs(gstop))
+        var gp = 10.0 ** (0.1 * abs(gpass))
+        var v_pass_stop = _acosh(_sqrt((gs - 1.0) / (gp - 1.0)))
+        order = Int(_ceil(v_pass_stop / _acosh(nat)))
+        if family == "cheb1ord":
+            wn = passb.copy()
+        else:
+            var new_freq = 1.0 / _cosh(v_pass_stop / Float64(order))
+            if filter_type == 1:
+                wn = [passb[0] / new_freq]
+            elif filter_type == 2:
+                wn = [passb[0] * new_freq]
+            elif filter_type == 3:
+                var nat0 = new_freq / 2.0 * (passb[0] - passb[1]) + _sqrt(
+                    new_freq * new_freq * (passb[1] - passb[0]) ** 2 / 4.0
+                    + passb[1] * passb[0]
+                )
+                wn = [nat0, passb[1] * passb[0] / nat0]
+            else:
+                var nat0 = 1.0 / (2.0 * new_freq) * (
+                    passb[0] - passb[1]
+                ) + _sqrt(
+                    (passb[1] - passb[0]) ** 2 / (4.0 * new_freq * new_freq)
+                    + passb[1] * passb[0]
+                )
+                wn = [nat0, passb[0] * passb[1] / nat0]
+    var scale = fs.value() / 2.0 if fs else 1.0
+    for i in range(len(wn)):
+        wn[i] = _atan(wn[i]) * 2.0 / _PI * scale
+    if len(wn) == 1:
+        return FilterOrder(order, wn[0], 0.0)
+    return FilterOrder(order, wn[0], wn[1])
+
+
+def buttord(
+    wp: Float64,
+    ws: Float64,
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """The lowest Butterworth order that loses no more than `gpass` dB in
+    the passband and at least `gstop` dB in the stopband, and the edge to
+    design it at. `scipy.signal.buttord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edge, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edge, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edge, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order("butter", "buttord", [wp], [ws], gpass, gstop, fs)
+
+
+def buttord(
+    wp: Tuple[Float64, Float64],
+    ws: Tuple[Float64, Float64],
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """`buttord` for a band: the `(low, high)` passband and stopband edges of a bandpass (the passband inside the stopband) or bandstop (the stopband inside). `scipy.signal.buttord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step, including the bounded Brent search it runs to place a bandstop's passband edges.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edges, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edges, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edges, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order(
+        "butter", "buttord", [wp[0], wp[1]], [ws[0], ws[1]], gpass, gstop, fs
+    )
+
+
+def cheb1ord(
+    wp: Float64,
+    ws: Float64,
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """The lowest Chebyshev type I order that loses no more than `gpass` dB in
+    the passband and at least `gstop` dB in the stopband, and the edge to
+    design it at. `scipy.signal.cheb1ord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edge, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edge, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edge, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order("cheby", "cheb1ord", [wp], [ws], gpass, gstop, fs)
+
+
+def cheb1ord(
+    wp: Tuple[Float64, Float64],
+    ws: Tuple[Float64, Float64],
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """`cheb1ord` for a band: the `(low, high)` passband and stopband edges of a bandpass (the passband inside the stopband) or bandstop (the stopband inside). `scipy.signal.cheb1ord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edges, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edges, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edges, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order(
+        "cheby", "cheb1ord", [wp[0], wp[1]], [ws[0], ws[1]], gpass, gstop, fs
+    )
+
+
+def cheb2ord(
+    wp: Float64,
+    ws: Float64,
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """The lowest Chebyshev type II order that loses no more than `gpass` dB in
+    the passband and at least `gstop` dB in the stopband, and the edge to
+    design it at. `scipy.signal.cheb2ord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edge, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edge, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edge, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order("cheby", "cheb2ord", [wp], [ws], gpass, gstop, fs)
+
+
+def cheb2ord(
+    wp: Tuple[Float64, Float64],
+    ws: Tuple[Float64, Float64],
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """`cheb2ord` for a band: the `(low, high)` passband and stopband edges of a bandpass (the passband inside the stopband) or bandstop (the stopband inside). `scipy.signal.cheb2ord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edges, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edges, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edges, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order(
+        "cheby", "cheb2ord", [wp[0], wp[1]], [ws[0], ws[1]], gpass, gstop, fs
+    )
+
+
+def ellipord(
+    wp: Float64,
+    ws: Float64,
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """The lowest elliptic order that loses no more than `gpass` dB in
+    the passband and at least `gstop` dB in the stopband, and the edge to
+    design it at. `scipy.signal.ellipord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edge, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edge, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edge, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order("ellip", "ellipord", [wp], [ws], gpass, gstop, fs)
+
+
+def ellipord(
+    wp: Tuple[Float64, Float64],
+    ws: Tuple[Float64, Float64],
+    gpass: Float64,
+    gstop: Float64,
+    fs: Optional[Float64] = None,
+) raises -> FilterOrder:
+    """`ellipord` for a band: the `(low, high)` passband and stopband edges of a bandpass (the passband inside the stopband) or bandstop (the stopband inside). `scipy.signal.ellipord(wp, ws, gpass, gstop, fs=fs)`.
+
+    SciPy's computation step for step.
+    The order is a run-time value and a design's order is a compile-time
+    parameter, so this answers "what order", to be written into the
+    design call.
+
+    Args:
+        wp: The passband edges, as a fraction of Nyquist unless `fs`
+            is given.
+        ws: The stopband edges, in the same units.
+        gpass: The most passband loss allowed, in dB.
+        gstop: The least stopband attenuation required, in dB.
+        fs: The sampling frequency the edges are in; `None` means
+            fractions of Nyquist.
+
+    Returns:
+        A `FilterOrder` with the order and the design edges, in the
+        units of the inputs.
+
+    Raises:
+        If `gpass` or `gstop` is not positive or `gpass > gstop`.
+    """
+    return _estimate_order(
+        "ellip", "ellipord", [wp[0], wp[1]], [ws[0], ws[1]], gpass, gstop, fs
+    )
 
 
 def zpk2tf[
