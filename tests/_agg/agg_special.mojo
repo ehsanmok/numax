@@ -174,7 +174,10 @@ from test_elliptic import (
     test_elliptic_e_at_one_is_one as test_elliptic__test_elliptic_e_at_one_is_one,
 )
 from test_elliptic import (
-    test_elliptic_k_diverges_but_stays_finite_at_one as test_elliptic__test_elliptic_k_diverges_but_stays_finite_at_one,
+    test_elliptic_k_is_infinite_at_one as test_elliptic__test_elliptic_k_is_infinite_at_one,
+)
+from test_elliptic import (
+    test_complete_integrals_match_scipy as test_elliptic__test_complete_integrals_match_scipy,
 )
 from test_elliptic import (
     test_elliptic_k_matches_agm_reference as test_elliptic__test_elliptic_k_matches_agm_reference,
@@ -581,9 +584,8 @@ def main() raises:
     # tests/special/test_elliptic.mojo
     suite.test[test_elliptic__test_elliptic_k_e_at_zero_are_pi_over_two]()
     suite.test[test_elliptic__test_elliptic_e_at_one_is_one]()
-    suite.test[
-        test_elliptic__test_elliptic_k_diverges_but_stays_finite_at_one
-    ]()
+    suite.test[test_elliptic__test_elliptic_k_is_infinite_at_one]()
+    suite.test[test_elliptic__test_complete_integrals_match_scipy]()
     suite.test[test_elliptic__test_elliptic_k_matches_agm_reference]()
     suite.test[test_elliptic__test_elliptic_e_matches_agm_reference]()
     suite.test[test_elliptic__test_elliptic_k_derivative_matches_closed_form]()

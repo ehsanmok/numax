@@ -622,14 +622,14 @@ def main():
     refs = materialize[ELLIPTIC_K_REF]()
     for i in range(ELLIPTIC_K_N):
         s.observe(xs[i], elliptic_k(p(xs[i])).v[0], refs[i])
-    s.report("elliptic_k (A&S 17.3.34), m in [0,0.999]")
+    s.report("elliptic_k (Carlson R_F), m in [0,0.999]")
 
     s = Stats()
     xs = materialize[ELLIPTIC_E_X]()
     refs = materialize[ELLIPTIC_E_REF]()
     for i in range(ELLIPTIC_E_N):
         s.observe(xs[i], elliptic_e(p(xs[i])).v[0], refs[i])
-    s.report("elliptic_e (A&S 17.3.36), m in [0,1]")
+    s.report("elliptic_e (Carlson R_F - m/3 R_D), m in [0,1]")
 
     s = Stats()
     xs = materialize[ELLIPKINC_0P5_X]()

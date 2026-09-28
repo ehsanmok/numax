@@ -2,115 +2,35 @@
 `E(m)` (parameterized by `m = k^2`, following `std`'s and A&S's own
 convention -- not the modulus `k` itself), the incomplete `F(phi | m)` and
 `E(phi | m)` as `ellipkinc`/`ellipeinc`, and Carlson's symmetric forms
-`elliprf` and `elliprd` they are built on.
+`elliprf` and `elliprd` all of them are built on.
 
-The incomplete pair is Carlson's: `F = sin(phi) R_F(cos^2, 1 - m sin^2,
-1)` and `E` that minus `(m/3) sin^3 R_D(...)`, after reducing the
-amplitude by the period `F(phi + pi) = F(phi) + 2 K(m)`. `R_F` and `R_D`
-run a fixed sixteen duplication steps and Carlson's fifth-order series,
-which `pixi run accuracy` reads at a few ulp, `1e-15` relative, including
-`m = 0.99` and negative `m`. The polynomial `K`/`E` below are the older,
-`2e-8` pair.
+**This module is tier 1.** `R_F` and `R_D` run a fixed sixteen
+duplication steps and Carlson's fifth-order series, with no convergence
+test; everything else is a closed form over them, and the edge cases are
+substitutions and blends rather than branches.
 
-**This module is tier 1.** `m1` is floored at a small positive epsilon
-before it reaches `ln`, branchlessly, which is what keeps both functions
-finite at their shared singular point.
+- `K(m) = R_F(0, 1 - m, 1)` and `E(m) = R_F(0, 1 - m, 1) - (m/3) R_D(0,
+  1 - m, 1)`, with the first duplication step taken by hand for the zero
+  argument, since `sqrt(0)` would put `0/0` in a `Dual`'s derivative.
+  `K(1)` is `inf` and `E(1)` is `1`, as SciPy's.
+- `F(phi | m) = sin(phi) R_F(cos^2, 1 - m sin^2, 1)` and `E(phi | m)`
+  that minus `(m/3) sin^3 R_D(...)`, after reducing the amplitude by the
+  period `F(phi + pi) = F(phi) + 2 K(m)`.
 
-Both are Abramowitz & Stegun 17.3.34/17.3.36's polynomial-plus-log
-("Hastings") approximations in `m1 = 1 - m`, each accurate to ~2e-8. Neither
-is in `std.math` or MAX's accelerator library at all, so there's nothing to
-delegate to for either function, and both were checked against a
-from-scratch Gauss-AGM reference implementation written in Python before
-this module (see `tests/special/test_elliptic.mojo`, which ports it).
+`pixi run accuracy` reads all of them at a few ulp, `1e-15` relative,
+including `m = 0.99` and negative `m`. Before 0.3 `K`/`E` were Abramowitz
+and Stegun 17.3.34/17.3.36's polynomial-plus-log approximations at
+`~2e-8` -- the second only after its misdigitized `b4` coefficient was
+recovered by fitting against an AGM reference -- and the Carlson forms
+replaced them outright.
 
-That reference was not a formality: A&S 17.3.36's table, as digitized,
-has a known-bad digit group for `E(m)`'s `b4` coefficient. Every OCR'd copy
-found while researching this returns `b4` mangled -- differently each time,
-but always wrong by roughly 40%, producing a ~3e-4 error instead of the
-documented ~2e-8. It was recovered by holding the other seven coefficients
-at their literature values and least-squares fitting `b4` alone against the
-AGM reference across `m` in `(0, 1)`, landing on the `0.00526449639` used
-below. That value also resolves the "449639" tail visible in the mangled
-text once the leading digits are corrected, so it's the number the table
-meant rather than an independent invention. `K`'s 17.3.34 table needed none
-of this: all ten of its coefficients checked out exactly against the same
-reference.
+## The MAX gate
 
-`K(m)` has a genuine logarithmic singularity at `m = 1` (`K(m) ->
-+infinity`); `E(m)` is finite there (`E(1) = 1`) but its own formula has a
-`0 * (-infinity)` indeterminate form at exactly `m1 = 0`, since `E`'s log
-coefficient `Q(m1)` has no constant term (`Q(m1) = b1*m1 + ...`, `Q(0) =
-0`) while `ln(m1) -> -infinity` there. Both get the same fix: `m1` is
-floored at a small epsilon (branchless, via `numax.core.functional.max_op`,
-the exact selection `numax.core.numeric.max_of` is, same as
-`numax.special.bessel`'s domain clamps) before it's handed to `ln` -- for `K`, this caps the singularity at
-a large-but-finite value rather than reaching a true `+infinity`; for `E`,
-it turns the indeterminate `0 * (-infinity)` into an ordinary `(tiny) *
-(large but finite)`, which is what the limit actually evaluates to.
+Nothing: neither `std.math` nor any MAX root has an elliptic integral.
+**Extend.**
 """
 
-from ..core.numeric import FloatLike, max_of, min_of
-
-
-def elliptic_k[T: FloatLike](m: T) -> T:
-    """The complete elliptic integral of the first kind, `K(m) =
-    integral(0, pi/2, dtheta / sqrt(1 - m*sin(theta)^2))`.
-
-    Valid for `0 <= m < 1`; diverges (to a large-but-finite value, per this
-    module's docstring) as `m` approaches `1`.
-    """
-    var m1 = T.one() - m
-    var log_m1 = max_of(m1, T.constant(1e-15)).ln()
-
-    var p = (
-        (
-            (T.constant(0.01451196212) * m1 + T.constant(0.03742563713)) * m1
-            + T.constant(0.03590092383)
-        )
-        * m1
-        + T.constant(0.09666344259)
-    ) * m1 + T.constant(1.38629436112)
-    var q = (
-        (
-            (T.constant(0.00441787012) * m1 + T.constant(0.03328355346)) * m1
-            + T.constant(0.06880248576)
-        )
-        * m1
-        + T.constant(0.12498593597)
-    ) * m1 + T.constant(0.5)
-
-    return p - (q * log_m1)
-
-
-def elliptic_e[T: FloatLike](m: T) -> T:
-    """The complete elliptic integral of the second kind, `E(m) =
-    integral(0, pi/2, sqrt(1 - m*sin(theta)^2) dtheta)`.
-
-    Valid for `0 <= m <= 1` (unlike `K`, `E(1) = 1` is finite -- see this
-    module's docstring for the `0 * (-infinity)` indeterminate form that
-    needs guarding against right there).
-    """
-    var m1 = T.one() - m
-    var log_m1 = max_of(m1, T.constant(1e-15)).ln()
-
-    var p = (
-        (
-            (T.constant(0.01736506451) * m1 + T.constant(0.04757383546)) * m1
-            + T.constant(0.06260601220)
-        )
-        * m1
-        + T.constant(0.44325141463)
-    ) * m1 + T.one()
-    var q = (
-        (
-            (T.constant(0.00526449639) * m1 + T.constant(0.04069697526)) * m1
-            + T.constant(0.09200180037)
-        )
-        * m1
-        + T.constant(0.24998368310)
-    ) * m1
-
-    return p - (q * log_m1)
+from ..core.numeric import FloatLike, blend, ge_indicator, min_of
 
 
 comptime _DUPLICATIONS = 16
@@ -277,7 +197,7 @@ def ellipkinc[T: FloatLike](phi: T, m: T) -> T:
     Tier 1. The amplitude is reduced to `r` in `[-pi/2, pi/2]` with `phi =
     k pi + r`, and `F = 2 k K(m) + sin(r) R_F(cos(r)^2, 1 - m sin(r)^2,
     1)`, the complete integral `K(m) = R_F(0, 1 - m, 1)` taken from the
-    same `elliprf` rather than `elliptic_k`'s `2e-8` polynomial.
+    same `elliprf` that `elliptic_k` is.
 
     Parameters:
         T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
@@ -339,3 +259,56 @@ def ellipeinc[T: FloatLike](phi: T, m: T) -> T:
     var q = one - m
     var complete = _elliprf0(q, one) - third * m * _elliprd0(q, one)
     return T.constant(2.0) * k * complete + partial
+
+
+def elliptic_k[T: FloatLike](m: T) -> T:
+    """The complete elliptic integral of the first kind, `K(m) =
+    integral(0, pi/2, dtheta / sqrt(1 - m sin(theta)^2))`.
+    `scipy.special.ellipk(m)`.
+
+    `R_F(0, 1 - m, 1)`, per this module's docstring: `1e-15` relative for
+    every `m < 1`, negative `m` included, `inf` at `m = 1` and NaN above
+    it.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        m: The parameter, `m <= 1`.
+
+    Returns:
+        `K(m)`.
+    """
+    var one = T.one()
+    var q = one - m
+    # `m = 1` runs at a stand-in `q` and is divided to `inf` afterwards,
+    # since the duplication of `R_F(0, 0, 1)` is finite but meaningless.
+    var at_one = ge_indicator(T.constant(0.0), q.abs())
+    var k = _elliprf0(q + at_one * T.constant(0.5), one)
+    return k / (one - at_one)
+
+
+def elliptic_e[T: FloatLike](m: T) -> T:
+    """The complete elliptic integral of the second kind, `E(m) =
+    integral(0, pi/2, sqrt(1 - m sin(theta)^2) dtheta)`.
+    `scipy.special.ellipe(m)`.
+
+    `R_F(0, 1 - m, 1) - (m/3) R_D(0, 1 - m, 1)`, per this module's
+    docstring: `1e-15` relative for `m < 1`, and exactly `1` at `m = 1`,
+    where the two terms would each be infinite.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        m: The parameter, `m <= 1`.
+
+    Returns:
+        `E(m)`.
+    """
+    var one = T.one()
+    var q = one - m
+    var at_one = ge_indicator(T.constant(0.0), q.abs())
+    var qs = q + at_one * T.constant(0.5)
+    var e = _elliprf0(qs, one) - T.constant(1.0 / 3.0) * m * _elliprd0(qs, one)
+    return blend(at_one, one, e)

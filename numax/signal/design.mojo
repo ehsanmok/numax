@@ -47,13 +47,12 @@ string-keyed entry points follow.
 ## Complete `K(m)` here rather than `numax.special.elliptic_k`
 
 `_ellipap` needs `K` twice inside the degree equation, once under an
-exponential, and the tier-1 `elliptic_k` is Abramowitz and Stegun
-17.3.34's polynomial-plus-log at `~2e-8`. Measured: routing `_ellipdeg`
-through it puts `ellip(3, 1, 40, 0.3)`'s coefficients `1e-8` from SciPy's,
-where the arithmetic-geometric mean below puts them `4e-13` away. The AGM
-is four lines and converges quadratically, and this is host tier-2 code
-with no fixed-iteration obligation, so it is the right `K` for this call
-site and `elliptic_k` stays the right one for a GPU-launchable kernel.
+exponential. When this was written the tier-1 `elliptic_k` was a `2e-8`
+polynomial, which put `ellip(3, 1, 40, 0.3)`'s coefficients `1e-8` from
+SciPy's; the arithmetic-geometric mean below puts them `4e-13` away.
+`elliptic_k` is now Carlson's `R_F` at `1e-15` and would serve too. The
+AGM stays because it is four lines of host tier-2 code that converges
+quadratically, and nothing here needs the kernel-launchable form.
 
 ## The MAX gate
 
@@ -338,7 +337,7 @@ def _ellipk(m: Float64) -> Float64:
     """The complete elliptic integral of the first kind by the
     arithmetic-geometric mean: `K(m) = pi / (2 AGM(1, sqrt(1 - m)))`.
 
-    The module docstring says why this is here rather than
+    The module docstring says why this is here beside
     `numax.special.elliptic_k`. Twelve iterations is well past the six a
     quadratically convergent mean needs for float64.
     """

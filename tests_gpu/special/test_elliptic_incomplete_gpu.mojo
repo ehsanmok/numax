@@ -1,4 +1,4 @@
-"""`ellipkinc` and `ellipeinc` inside a device kernel through
+"""`ellipkinc`, `ellipeinc`, `elliptic_k` and `elliptic_e` inside a device kernel through
 `map[gpu=True]`, against the same map on the host, at `float32`: the
 duplication is a fixed step count and the amplitude reduction a `floor`,
 so every lane does the same work."""
@@ -7,7 +7,7 @@ from std.testing import TestSuite, assert_almost_equal, assert_false
 
 from max.gpu.host import DeviceContext
 
-from numax import Plain, ellipeinc, ellipkinc
+from numax import Plain, ellipeinc, ellipkinc, elliptic_e, elliptic_k
 from numax.core.functional import map
 from numax.core.tensor import Static
 
@@ -28,6 +28,14 @@ def _f[w: Int](phi: SIMD[f32, w]) -> SIMD[f32, w]:
 
 def _e[w: Int](phi: SIMD[f32, w]) -> SIMD[f32, w]:
     return ellipeinc(Plain[f32, w](phi), _m(phi)).v
+
+
+def _k[w: Int](phi: SIMD[f32, w]) -> SIMD[f32, w]:
+    return elliptic_k(_m(phi)).v
+
+
+def _ek[w: Int](phi: SIMD[f32, w]) -> SIMD[f32, w]:
+    return elliptic_e(_m(phi)).v
 
 
 def _values(ctx: DeviceContext) raises -> Static[f32, n]:
@@ -56,6 +64,8 @@ def test_incomplete_elliptic_on_the_device_matches_the_host() raises:
     var cpu = DeviceContext(api="cpu")
     _check[_f](gpu, cpu)
     _check[_e](gpu, cpu)
+    _check[_k](gpu, cpu)
+    _check[_ek](gpu, cpu)
 
 
 def main() raises:
