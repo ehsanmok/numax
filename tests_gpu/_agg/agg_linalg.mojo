@@ -12,6 +12,9 @@ from std.testing import TestSuite
 from test_banded_gpu import (
     test_tridiagonal_solve_banded_on_the_device_matches_the_host as test_banded_gpu__test_tridiagonal_solve_banded_on_the_device_matches_the_host,
 )
+from test_banded_gpu import (
+    test_symmetric_tridiagonal_solveh_banded_on_the_device as test_banded_gpu__test_symmetric_tridiagonal_solveh_banded_on_the_device,
+)
 from test_linalg_gpu import (
     test_matmul_on_the_device_matches_the_host as test_linalg_gpu__test_matmul_on_the_device_matches_the_host,
 )
@@ -61,6 +64,9 @@ def main() raises:
     # tests_gpu/linalg/test_banded_gpu.mojo
     suite.test[
         test_banded_gpu__test_tridiagonal_solve_banded_on_the_device_matches_the_host
+    ]()
+    suite.test[
+        test_banded_gpu__test_symmetric_tridiagonal_solveh_banded_on_the_device
     ]()
     # tests_gpu/linalg/test_linalg_gpu.mojo
     suite.test[test_linalg_gpu__test_matmul_on_the_device_matches_the_host]()

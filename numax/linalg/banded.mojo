@@ -11,11 +11,12 @@ reaches for and a shape numax could not express, not a faster path to an
 answer numax already had.
 
 The one device path is the tridiagonal case, `solve_banded[l=1, u=1,
-gpu=True]`: parallel cyclic reduction, `ceil(log2 n)` launches that each
-eliminate every equation's neighbors at once. It does not pivot, so it
-is for the systems that need none -- diagonally dominant, as a spline's
-or a second-difference operator's is -- and `numax.interpolate` builds
-its splines on it. Every other bandwidth at `gpu=True` runs the host
+gpu=True]` and `solveh_banded[u=1, gpu=True]`: parallel cyclic
+reduction, `ceil(log2 n)` launches that each eliminate every equation's
+neighbors at once. It does not pivot, so it is for the systems that need
+none -- diagonally dominant, as a spline's or a second-difference
+operator's is, or symmetric positive definite -- and `numax.interpolate`
+builds its splines on it. Every other bandwidth at `gpu=True` runs the host
 elimination and says so on `stderr`.
 
 The dense `numax.linalg.solve` is the alternative and it is not a silly
@@ -493,6 +494,7 @@ def solveh_banded[
     B: TensorLike,
     u: Int,
     lower: Bool = False,
+    gpu: Bool = False,
 ](ab: A, b: B) raises -> Static[A.dtype, dim[A, 1]] where (
     (A.dtype.is_floating_point() and u >= 0 and dim[A, 1] >= 1)
     and A.LayoutType.rank == 2
@@ -515,8 +517,62 @@ def solveh_banded[
     positive definite. It does half the arithmetic, needs no pivoting, and
     -- the part that matters at scale -- keeps the factor's bandwidth equal
     to the matrix's, where `solve_banded`'s pivoting widens it to `u + l`.
+
+    At `gpu=True` with `u == 1` and `ab` on a device, the symmetric
+    tridiagonal system is solved there by the cyclic reduction
+    `solve_banded` uses: no pivoting, which a symmetric positive definite
+    matrix does not need, since odd-even elimination is a symmetric
+    permutation and keeps every reduced system positive definite. Wider
+    bands at `gpu=True` take the host factorization and print the
+    `_drive` notice.
     """
     comptime n = dim[A, 1]
+    var ctx = ab.context()
+    comptime if gpu and u == 1:
+        if not ab.on_host():
+            var sub = Static[A.dtype, n]._uninitialized(ctx)
+            var diag = Static[A.dtype, n]._uninitialized(ctx)
+            var sup = Static[A.dtype, n]._uninitialized(ctx)
+            var abv = ab.tile().as_unsafe_any_origin()
+            var sv = sub.tile()
+            var dv = diag.tile()
+            var uv = sup.tile()
+
+            @always_inline
+            def split[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var abv, var sv, var dv, var uv}:
+                var j = coord_to_index_list(coord)[0]
+                var zero = Scalar[A.dtype](0)
+                comptime if lower:
+                    dv.store[1](coord, abv[Coord(0, j)][0])
+                    sv.store[1](
+                        coord, abv[Coord(1, j - 1)][0] if j > 0 else zero
+                    )
+                    uv.store[1](
+                        coord, abv[Coord(1, j)][0] if j < n - 1 else zero
+                    )
+                else:
+                    dv.store[1](coord, abv[Coord(1, j)][0])
+                    sv.store[1](coord, abv[Coord(0, j)][0] if j > 0 else zero)
+                    uv.store[1](
+                        coord, abv[Coord(0, j + 1)][0] if j < n - 1 else zero
+                    )
+
+            elementwise[simd_width=1, target="gpu"](split, Coord(n), ctx)
+            return _tridiagonal_device[A.dtype, n](
+                sub^,
+                diag^,
+                sup^,
+                _same_order(
+                    _canonical[n, dtype=A.dtype](b),
+                    Static[A.dtype, n]._static_layout(),
+                ),
+                ctx,
+            )
+    elif gpu:
+        if not ab.on_host():
+            _notice[gpu]("solveh_banded")
     var factor = cholesky_banded[u=u, lower=lower](ab)
     return cho_solve_banded[u=u, lower=lower](factor, b)
 
