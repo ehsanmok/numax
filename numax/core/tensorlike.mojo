@@ -61,6 +61,10 @@ from layout import TileTensor
 from layout.tile_layout import TensorLayout
 from layout.tile_tensor import DefaultEngine
 from max.gpu.host import DeviceContext
+from std.sys import has_accelerator
+
+from .tensor import Dynamic, Tensor
+from ._drive import _BroadcastRank
 
 
 trait TensorLike:
@@ -353,6 +357,474 @@ struct TensorView[
             rem //= extent
         return off
 
+    # Mixed operands: any other `TensorLike` of the same dtype -- a view
+    # of other storage, a `Static` beside a `Dynamic`, a broadcastable
+    # shape -- through the broadcasting free functions, into a
+    # run-time-shaped result. A same-typed operand takes the overloads
+    # above, which keep the static shape.
+
+    def __add__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a + b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.add`'s
+        broadcasting overload and follows `a` to its device."""
+        from .ops import add as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __sub__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a - b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.subtract`'s
+        broadcasting overload and follows `a` to its device."""
+        from .ops import subtract as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __mul__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a * b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.multiply`'s
+        broadcasting overload and follows `a` to its device."""
+        from .ops import multiply as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __truediv__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a / b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.divide`'s
+        broadcasting overload and follows `a` to its device."""
+        from .ops import divide as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __lt__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a < b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        from .logic import less as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __le__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a <= b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        from .logic import less_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __gt__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a > b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        from .logic import greater as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __ge__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a >= b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        from .logic import greater_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __eq__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a == b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        from .logic import equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __ne__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a != b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        from .logic import not_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
     def write_to(self, mut writer: Some[Writer]):
-        """`print(v)`: the tile's own printer."""
-        writer.write(self._tile)
+        """`print(v)`, in the same format as `print(a)` for a `Tensor`:
+        both go through `numax.core.tensor._format_tensor`."""
+        from .tensor import _format_tensor
+
+        try:
+            writer.write(_format_tensor(self, 4, 1000, 3))
+        except e:
+            writer.write("<unreadable: ", String(e), ">")
+
+    # The operators, as `Tensor` has them: each returns a new owned tensor
+    # (a view owns nothing to write into), forwards to `numax.core.ops` or
+    # `numax.core.logic`, and follows the view to its device. The imports
+    # are local because `ops` and `logic` import this module.
+
+    def __add__(
+        self, other: Self
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a + b` against a view of the same type, into a new tensor. Forwards to
+        `numax.core.ops.add` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import add as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __add__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a + b` against a scalar, into a new tensor. Forwards to
+        `numax.core.ops.add` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import add as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __sub__(
+        self, other: Self
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a - b` against a view of the same type, into a new tensor. Forwards to
+        `numax.core.ops.subtract` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import subtract as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __sub__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a - b` against a scalar, into a new tensor. Forwards to
+        `numax.core.ops.subtract` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import subtract as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __mul__(
+        self, other: Self
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a * b` against a view of the same type, into a new tensor. Forwards to
+        `numax.core.ops.multiply` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import multiply as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __mul__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a * b` against a scalar, into a new tensor. Forwards to
+        `numax.core.ops.multiply` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import multiply as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __truediv__(
+        self, other: Self
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a / b` against a view of the same type, into a new tensor. Forwards to
+        `numax.core.ops.divide` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import divide as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __truediv__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`a / b` against a scalar, into a new tensor. Forwards to
+        `numax.core.ops.divide` and follows the view, as `Tensor.__add__`
+        describes."""
+        from .ops import divide as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __radd__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`b + a` with a scalar `b` on the left."""
+        return self.__add__(other)
+
+    def __rmul__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`b * a` with a scalar `b` on the left."""
+        return self.__mul__(other)
+
+    def __rsub__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`b - a` with a scalar `b` on the left, one launch."""
+        from .ops import _reflected
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _reflected[kind="sub", gpu=True](self, other)
+        return _reflected[kind="sub"](self, other)
+
+    def __rtruediv__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`b / a` with a scalar `b` on the left, one launch."""
+        from .ops import _reflected
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _reflected[kind="div", gpu=True](self, other)
+        return _reflected[kind="div"](self, other)
+
+    def __neg__(
+        self,
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where is_row_major[Self]:
+        """`-a`, into a new tensor."""
+        from .ops import negative as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self)
+        return _op(self)
+
+    def __pow__(
+        self, other: Self
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where (
+        is_row_major[Self] and Self.dtype.is_floating_point()
+    ):
+        """`a ** b`, into a new tensor."""
+        from .ops import power as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __pow__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[Self.dtype, Self.LayoutType] where (
+        is_row_major[Self] and Self.dtype.is_floating_point()
+    ):
+        """`a ** b`, into a new tensor."""
+        from .ops import power as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __lt__(
+        self, other: Self
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a < b`, elementwise, as a new `bool` tensor."""
+        from .logic import less as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __lt__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a < b`, elementwise, as a new `bool` tensor."""
+        from .logic import less as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __le__(
+        self, other: Self
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a <= b`, elementwise, as a new `bool` tensor."""
+        from .logic import less_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __le__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a <= b`, elementwise, as a new `bool` tensor."""
+        from .logic import less_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __gt__(
+        self, other: Self
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a > b`, elementwise, as a new `bool` tensor."""
+        from .logic import greater as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __gt__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a > b`, elementwise, as a new `bool` tensor."""
+        from .logic import greater as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __ge__(
+        self, other: Self
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a >= b`, elementwise, as a new `bool` tensor."""
+        from .logic import greater_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __ge__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a >= b`, elementwise, as a new `bool` tensor."""
+        from .logic import greater_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __eq__(
+        self, other: Self
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a == b`, elementwise, as a new `bool` tensor."""
+        from .logic import equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __eq__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a == b`, elementwise, as a new `bool` tensor."""
+        from .logic import equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __ne__(
+        self, other: Self
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a != b`, elementwise, as a new `bool` tensor."""
+        from .logic import not_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)
+
+    def __ne__(
+        self, other: Scalar[Self.dtype]
+    ) raises -> Tensor[DType.bool, Self.LayoutType] where is_row_major[Self]:
+        """`a != b`, elementwise, as a new `bool` tensor."""
+        from .logic import not_equal as _op
+
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _op[gpu=True](self, other)
+        return _op(self, other)

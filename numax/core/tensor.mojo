@@ -178,6 +178,7 @@ from .tensorlike import (
     is_row_major,
 )
 from ._drive import (
+    _BroadcastRank,
     _check_device,
     _flat_out,
     _flat_unchecked,
@@ -1141,6 +1142,136 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         `a`'s shape: `numpy`'s comparison, and the mask `where`, `compress`
         and `extract` take. Forwards to `numax.core.logic.not_equal` and
         follows the tensor, as `__add__` describes."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _not_equal[gpu=True](self, other)
+        return _not_equal(self, other)
+
+    # Mixed operands: any other `TensorLike` of the same dtype -- a view
+    # of other storage, a `Static` beside a `Dynamic`, a broadcastable
+    # shape -- through the broadcasting free functions, into a
+    # run-time-shaped result. A same-typed operand takes the overloads
+    # above, which keep the static shape.
+
+    def __add__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a + b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.add`'s
+        broadcasting overload and follows `a` to its device."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _add[gpu=True](self, other)
+        return _add(self, other)
+
+    def __sub__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a - b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.subtract`'s
+        broadcasting overload and follows `a` to its device."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _subtract[gpu=True](self, other)
+        return _subtract(self, other)
+
+    def __mul__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a * b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.multiply`'s
+        broadcasting overload and follows `a` to its device."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _multiply[gpu=True](self, other)
+        return _multiply(self, other)
+
+    def __truediv__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a / b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes. Forwards to `numax.core.ops.divide`'s
+        broadcasting overload and follows `a` to its device."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _divide[gpu=True](self, other)
+        return _divide(self, other)
+
+    def __lt__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a < b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _less[gpu=True](self, other)
+        return _less(self, other)
+
+    def __le__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a <= b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _less_equal[gpu=True](self, other)
+        return _less_equal(self, other)
+
+    def __gt__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a > b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _greater[gpu=True](self, other)
+        return _greater(self, other)
+
+    def __ge__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a >= b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _greater_equal[gpu=True](self, other)
+        return _greater_equal(self, other)
+
+    def __eq__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a == b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                return _equal[gpu=True](self, other)
+        return _equal(self, other)
+
+    def __ne__[
+        B: TensorLike
+    ](self, other: B) raises -> Dynamic[
+        DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
+    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+        """`a != b` against any `TensorLike` `b` of the same dtype, at two
+        broadcastable shapes, as a `bool` tensor."""
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _not_equal[gpu=True](self, other)
