@@ -364,10 +364,57 @@ def searchsorted[
     return lo
 
 
+def _searchsorted_device[
+    A: TensorLike, B: TensorLike, //, right: Bool
+](sorted_values: A, values: B) raises -> Dynamic[DType.int64, 1] where (
+    B.dtype == A.dtype
+):
+    """`searchsorted` on the device: one lane per query, each a binary
+    search of `sorted_values` -- `O(log n)` reads, all lanes independent."""
+    var ctx = values.context()
+    var n = sorted_values.size()
+    var m = values.size()
+    var out = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](m))
+    )
+    if m == 0:
+        return out^
+    var hv = _flat_unchecked(sorted_values)
+    var nv = _flat_unchecked(values)
+    var ov = _flat_out(out)
+
+    @always_inline
+    def search[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var hv, var nv, var ov, var n}:
+        var value = rebind[Scalar[A.dtype]](nv[coord][0])
+        var lo = 0
+        var hi = n
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            var here = hv[Coord(mid)][0]
+            comptime if right:
+                if here <= value:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            else:
+                if here < value:
+                    lo = mid + 1
+                else:
+                    hi = mid
+        ov.store[1](coord, Int64(lo))
+
+    elementwise[simd_width=1, target="gpu"](search, Coord(m), ctx)
+    ctx.synchronize()
+    return out^
+
+
 def searchsorted[
     A: TensorLike,
     B: TensorLike,
     right: Bool = False,
+    gpu: Bool = False,
 ](sorted_values: A, values: B) raises -> Dynamic[DType.int64, 1] where (
     B.dtype == A.dtype
 ):
@@ -388,8 +435,19 @@ def searchsorted[
     run-time error -- `top_k`'s `largest` makes the same trade.
 
     `sorted_values` is assumed sorted and not checked, as in the scalar
-    overload. MAX ships no `searchsorted`, so this is numax's own.
+    overload. MAX ships no `searchsorted`, so this is numax's own. At
+    `gpu=True`, with both tensors on a device, one lane per query does its
+    own binary search there and the indices stay on the device; both must
+    be contiguous. A residency mismatch takes the host loop with the
+    `_drive` notice.
     """
+    if _check_device[A, gpu](sorted_values) and _check_device[B, gpu](values):
+        comptime if gpu:
+            _require_contiguous(sorted_values)
+            _require_contiguous(values)
+            return _searchsorted_device[right=right](sorted_values, values)
+    else:
+        _notice[gpu]("searchsorted")
     var haystack = sorted_values.to_host()
     var needles = values.to_host[A.dtype]()
     var n = len(haystack)
@@ -623,15 +681,49 @@ def take_along_axis[
     )
 
 
-def unique[T: TensorLike](a: T) raises -> Dynamic[T.dtype, 1]:
+def unique[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Dynamic[T.dtype, 1]:
     """The sorted distinct values of `a`. `numpy.unique`.
 
     Right-sized: the result holds exactly as many elements as there are
     distinct values, which is a count only the data knows. That is what a
     run-time-shaped tensor is for, and `unique(a).size()` is the answer to
     "how many" rather than a second return value the caller has to carry.
+    Every NaN is its own value, since NaN compares unequal to itself --
+    NumPy's `equal_nan=False`, not its default.
+
+    At `gpu=True`, with `a` on a device: the device sort, one launch
+    flagging each element that differs from its predecessor, and the
+    compaction `nonzero` uses; only the count is read back. A residency
+    mismatch takes the host path with the `_drive` notice.
     """
     var n = a.size()
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            var sorted = _sort_device(a)
+            if n == 0:
+                return sorted^
+            var flags = Dynamic[DType.int64, 1]._uninitialized(
+                sorted.context(), row_major(_dyn_shape[1](n))
+            )
+            var sv = _flat_unchecked(sorted)
+            var fv = _flat_out(flags)
+
+            @always_inline
+            def fresh[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var sv, var fv}:
+                var i = coord_to_index_list(coord)[0]
+                var differs = i == 0 or sv[coord][0] != sv[Coord(i - 1)][0]
+                fv.store[1](coord, Int64(1) if differs else Int64(0))
+
+            elementwise[simd_width=1, target="gpu"](
+                fresh, Coord(n), sorted.context()
+            )
+            return _pack_device[indices=False](flags, sorted, n)
+    else:
+        _notice[gpu]("unique")
     var values = a.to_host()
     comptime if T.dtype.is_floating_point():
         _std_sort(values, _nan_last_less[T.dtype])
