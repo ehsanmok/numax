@@ -331,9 +331,45 @@ def _larger[dtype: DType](a: Scalar[dtype], b: Scalar[dtype]) -> Scalar[dtype]:
     return a if a > b else b
 
 
+comptime _KeptRank[rank: Int, keepdims: Bool] = rank if keepdims else rank - 1
+"""The rank an axis reduction of a rank-`rank` tensor returns: one less, or
+the same with the reduced axis kept at extent 1 under `keepdims`."""
+
+
+def _kept[
+    D: TensorLike & Movable & Deinitable,
+    //,
+    rank: Int,
+    axis: Int,
+    keepdims: Bool,
+](var out: D) raises -> Dynamic[D.dtype, rank]:
+    """`out`, an axis reduction's result, as the rank-`rank` tensor the
+    caller returns: unchanged, or with the reduced axis put back at extent
+    1 when `keepdims` asks for it -- NumPy's `keepdims=True`. The result is
+    small (one element per slice), and putting the axis back is one
+    device-to-device copy."""
+    comptime in_rank = D.LayoutType.rank
+    comptime if keepdims:
+        var extents = List[Int](capacity=in_rank + 1)
+        for d in range(in_rank + 1):
+            if d < axis:
+                extents.append(out.dim_at(d))
+            elif d == axis:
+                extents.append(1)
+            else:
+                extents.append(out.dim_at(d - 1))
+        return rebind_var[Dynamic[D.dtype, rank]](
+            _same_order(out, row_major(_dyn_shape_from[in_rank + 1](extents)))
+        )
+    else:
+        return rebind_var[Dynamic[D.dtype, rank]](out^)
+
+
 def sum[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     is_row_major[T]
     and T.dtype.is_floating_point()
     and axis >= 0
@@ -353,21 +389,28 @@ def sum[
     GPU under `gpu=True`, and never downloads `xs`. The sum is
     reassociated, so it differs in the last bits from the host walk this
     replaced.
+
+    `keepdims=True` keeps the reduced axis at extent 1, as NumPy's
+    `keepdims` does, so the result broadcasts against `xs`.
     """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("sum")
-        return _host_fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
+        return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+            _host_fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
+        )
     var out = _axis_dst[axis=axis](xs)
     sum_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
-    return out^
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](out^)
 
 
 def prod[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -383,21 +426,28 @@ def prod[
 
     MAX's `ReduceProduct` monoid, `sum`'s sibling, and reassociated for
     the same reason.
+
+    `keepdims=True` keeps the reduced axis at extent 1, as NumPy's
+    `keepdims` does, so the result broadcasts against `xs`.
     """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("prod")
-        return _host_fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
+        return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+            _host_fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
+        )
     var out = _axis_dst[axis=axis](xs)
     prod_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
-    return out^
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](out^)
 
 
 def min[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -416,24 +466,31 @@ def min[
     of nothing but `+inf` would come back finite; `_restore_infinity_axis`
     puts that right in one launch over the result, scanning only the
     slices whose slot came back at the edge.
+
+    `keepdims=True` keeps the reduced axis at extent 1, as NumPy's
+    `keepdims` does, so the result broadcasts against `xs`.
     """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("min")
-        return _host_fold_axis[axis=axis, combine=_smaller[dtype]](
-            xs, _inf[dtype]()
+        return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+            _host_fold_axis[axis=axis, combine=_smaller[dtype]](
+                xs, _inf[dtype]()
+            )
         )
     var out = _axis_dst[axis=axis](xs)
     min_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
     _restore_infinity_axis[axis=axis, largest=False, gpu=gpu](xs, out)
-    return out^
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](out^)
 
 
 def max[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -447,24 +504,32 @@ def max[
 ):
     """The largest element along `axis`. `numpy.max(a, axis=k)`. MAX's
     `ReduceMax` monoid, `min`'s mirror and exact for the same reason, with
-    the same repair for a slice of nothing but `-inf`."""
+    the same repair for a slice of nothing but `-inf`.
+
+    `keepdims=True` keeps the reduced axis at extent 1, as NumPy's
+    `keepdims` does, so the result broadcasts against `xs`.
+    """
     comptime dtype = T.dtype
     if not _check_device[gpu=gpu](xs):
         _notice[gpu]("max")
-        return _host_fold_axis[axis=axis, combine=_larger[dtype]](
-            xs, _neg_inf[dtype]()
+        return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+            _host_fold_axis[axis=axis, combine=_larger[dtype]](
+                xs, _neg_inf[dtype]()
+            )
         )
     var out = _axis_dst[axis=axis](xs)
     max_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
     _restore_infinity_axis[axis=axis, largest=True, gpu=gpu](xs, out)
-    return out^
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](out^)
 
 
 def mean[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -485,6 +550,8 @@ def mean[
     Parameters:
         T: The tensor type of `xs`; its `dtype` must be floating point.
         axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        keepdims: Keep the reduced axis at extent 1, NumPy's `keepdims=True`,
+            so the result broadcasts against `xs`.
         gpu: Whether to fold on `xs`'s device; the Welford reduction
             runs wherever `xs` lives, so `gpu=True` needs a device `xs`.
 
@@ -500,7 +567,7 @@ def mean[
     var means = _axis_dst[axis=axis](xs)
     var variances = _axis_dst[axis=axis](xs)
     _welford_axis[axis=axis, gpu=gpu](xs, means, variances, 0)
-    return means^
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](means^)
 
 
 def variance_axis[
@@ -992,8 +1059,10 @@ def _slice_modes_device[
 
 
 def median[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     is_row_major[T]
     and T.dtype.is_floating_point()
     and axis >= 0
@@ -1015,6 +1084,8 @@ def median[
     Parameters:
         T: The tensor type of `xs`; its `dtype` must be floating point.
         axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        keepdims: Keep the reduced axis at extent 1, NumPy's `keepdims=True`,
+            so the result broadcasts against `xs`.
         gpu: Whether to run on `xs`'s device; a residency mismatch falls
             back to the host walk with a notice on `stderr`.
 
@@ -1071,7 +1142,9 @@ def median[
                     middle, Coord(rows), xs.context()
                 )
                 xs.context().synchronize()
-                return out^
+                return _kept[
+                    _KeptRank[T.LayoutType.rank, keepdims], axis, keepdims
+                ](out^)
     else:
         _notice[gpu]("median")
     var values = xs.to_host()
@@ -1082,12 +1155,16 @@ def median[
             for k in range(length):
                 slice_.append(values[(o * length + k) * inner + i])
             out.append(_median_of(slice_^))
-    return Dynamic[dtype, LayoutType.rank - 1](
-        row_major(
-            _dyn_shape_from[LayoutType.rank - 1](_axis_extents[axis=axis](xs))
-        ),
-        out^,
-        xs.context(),
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+        Dynamic[dtype, LayoutType.rank - 1](
+            row_major(
+                _dyn_shape_from[LayoutType.rank - 1](
+                    _axis_extents[axis=axis](xs)
+                )
+            ),
+            out^,
+            xs.context(),
+        )
     )
 
 
@@ -1131,8 +1208,10 @@ def mode[
 
 
 def mode[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    T.dtype, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -1149,6 +1228,8 @@ def mode[
     Parameters:
         T: The tensor type of `xs`; its `dtype` must be floating point.
         axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        keepdims: Keep the reduced axis at extent 1, NumPy's `keepdims=True`,
+            so the result broadcasts against `xs`.
         gpu: Whether to run on `xs`'s device; a residency mismatch falls
             back to the host walk with a notice on `stderr`.
 
@@ -1177,13 +1258,17 @@ def mode[
                 _require_contiguous(xs)
                 var grouped = _grouped_sorted_device(xs, length, inner)
                 var modes = _slice_modes_device(grouped, rows, length)
-                return _same_order(
-                    modes,
-                    row_major(
-                        _dyn_shape_from[LayoutType.rank - 1](
-                            _axis_extents[axis=axis](xs)
-                        )
-                    ),
+                return _kept[
+                    _KeptRank[T.LayoutType.rank, keepdims], axis, keepdims
+                ](
+                    _same_order(
+                        modes,
+                        row_major(
+                            _dyn_shape_from[LayoutType.rank - 1](
+                                _axis_extents[axis=axis](xs)
+                            )
+                        ),
+                    )
                 )
     else:
         _notice[gpu]("mode")
@@ -1195,12 +1280,16 @@ def mode[
             for k in range(length):
                 slice_.append(values[(o * length + k) * inner + i])
             out.append(_mode_of(slice_^))
-    return Dynamic[dtype, LayoutType.rank - 1](
-        row_major(
-            _dyn_shape_from[LayoutType.rank - 1](_axis_extents[axis=axis](xs))
-        ),
-        out^,
-        xs.context(),
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+        Dynamic[dtype, LayoutType.rank - 1](
+            row_major(
+                _dyn_shape_from[LayoutType.rank - 1](
+                    _axis_extents[axis=axis](xs)
+                )
+            ),
+            out^,
+            xs.context(),
+        )
     )
 
 
@@ -1392,8 +1481,10 @@ def _argn_axis[
 
 
 def argmax[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[DType.int64, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    DType.int64, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -1408,6 +1499,8 @@ def argmax[
     Parameters:
         T: The tensor type of `xs`; its `dtype` must be floating point.
         axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        keepdims: Keep the reduced axis at extent 1, NumPy's `keepdims=True`,
+            so the result broadcasts against `xs`.
         gpu: Whether to run on `xs`'s device; a residency mismatch falls
             back to the host walk with a notice on `stderr`.
 
@@ -1422,12 +1515,16 @@ def argmax[
         If a device allocation, launch or copy fails, or on a
         residency mismatch under the `"raise"` fallback policy.
     """
-    return _argn_axis[axis=axis, largest=True, gpu=gpu](xs)
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+        _argn_axis[axis=axis, largest=True, gpu=gpu](xs)
+    )
 
 
 def argmin[
-    T: TensorLike, axis: Int, gpu: Bool = False
-](xs: T) raises -> Dynamic[DType.int64, T.LayoutType.rank - 1] where (
+    T: TensorLike, axis: Int, keepdims: Bool = False, gpu: Bool = False
+](xs: T) raises -> Dynamic[
+    DType.int64, _KeptRank[T.LayoutType.rank, keepdims]
+] where (
     T.dtype.is_floating_point()
     and axis >= 0
     and axis < T.LayoutType.rank
@@ -1438,6 +1535,8 @@ def argmin[
     Parameters:
         T: The tensor type of `xs`; its `dtype` must be floating point.
         axis: The axis to reduce, in `[0, rank)`; it is dropped from the result.
+        keepdims: Keep the reduced axis at extent 1, NumPy's `keepdims=True`,
+            so the result broadcasts against `xs`.
         gpu: Whether to run on `xs`'s device; a residency mismatch falls
             back to the host walk with a notice on `stderr`.
 
@@ -1452,7 +1551,9 @@ def argmin[
         If a device allocation, launch or copy fails, or on a
         residency mismatch under the `"raise"` fallback policy.
     """
-    return _argn_axis[axis=axis, largest=False, gpu=gpu](xs)
+    return _kept[_KeptRank[T.LayoutType.rank, keepdims], axis, keepdims](
+        _argn_axis[axis=axis, largest=False, gpu=gpu](xs)
+    )
 
 
 def _scan_axis[
