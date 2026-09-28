@@ -82,6 +82,7 @@ from numax import (
     legendre_p,
     lgamma,
     poch,
+    polygamma,
     sici,
     zeta,
     airy,
@@ -537,6 +538,34 @@ def main():
     for i in range(DIGAMMA_NEG_N):
         s.observe(xs[i], digamma(p(xs[i])).v[0], refs[i])
     s.report("digamma (reflected), (-5,0) off poles")
+
+    s = Stats()
+    xs = materialize[POLYGAMMA_1_X]()
+    refs = materialize[POLYGAMMA_1_REF]()
+    for i in range(POLYGAMMA_1_N):
+        s.observe(xs[i], polygamma(1, p(xs[i])).v[0], refs[i])
+    s.report("polygamma n=1 (N=30+2n direct, EM M=8), [0.2,30]")
+
+    s = Stats()
+    xs = materialize[POLYGAMMA_3_X]()
+    refs = materialize[POLYGAMMA_3_REF]()
+    for i in range(POLYGAMMA_3_N):
+        s.observe(xs[i], polygamma(3, p(xs[i])).v[0], refs[i])
+    s.report("polygamma n=3 (N=30+2n direct, EM M=8), [0.2,30]")
+
+    s = Stats()
+    xs = materialize[POLYGAMMA_10_X]()
+    refs = materialize[POLYGAMMA_10_REF]()
+    for i in range(POLYGAMMA_10_N):
+        s.observe(xs[i], polygamma(10, p(xs[i])).v[0], refs[i])
+    s.report("polygamma n=10 (N=30+2n direct, EM M=8), [0.5,30]")
+
+    s = Stats()
+    xs = materialize[POLYGAMMA_1_NEG_X]()
+    refs = materialize[POLYGAMMA_1_NEG_REF]()
+    for i in range(POLYGAMMA_1_NEG_N):
+        s.observe(xs[i], polygamma(1, p(xs[i])).v[0], refs[i])
+    s.report("polygamma n=1 (N=30+2n direct, EM M=8), (-5,0) off poles")
 
     # --- Bessel -------------------------------------------------------
     section("Bessel")

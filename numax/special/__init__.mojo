@@ -17,7 +17,7 @@ from numax.special import gamma, j0, erf, gaussian
 | `normal` | `ndtr`, `log_ndtr`, `ndtri` -- `erfc`, a three-region `log_ndtr`, and Wichura's AS 241 inverse, full precision in the tails |
 | `gamma` | `gamma`, `lgamma`, `digamma`, `gammainc`, `gammaincc`, `gammaincinv`, `gammasgn`, `factorial`, `comb`, `perm`, `poch` |
 | `expint` | `exp1`, `expi`, `expn`, `sici`, `fresnel` -- series against continued fractions, the complex ones over `Complex[T]` |
-| `zeta` | `zeta(s)`, `zeta(s, q)` -- one Euler-Maclaurin sum on both sides of the pole |
+| `zeta` | `zeta(s)`, `zeta(s, q)` -- one Euler-Maclaurin sum on both sides of the pole; `polygamma(n, x)` over integer powers, valid on the negative axis |
 | `hyper` | `hyp1f1`, `hyp2f1` -- the series, with Kummer's and Pfaff's transformations for the negative side |
 | `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit`, `expit`, `log_expit` -- the `0 log 0` conventions as blends |
 | `logsumexp` | `logsumexp` over an `Array` (tier 1) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid (tier 2, the one delegation here) |
@@ -90,7 +90,7 @@ from .information import (
 )
 from .normal import log_ndtr, ndtr, ndtri
 from .logsumexp import logsumexp
-from .zeta import zeta
+from .zeta import polygamma, zeta
 from .lambertw import lambertw, lambertw_m1
 from .legendre import legendre_p
 from .orthopoly import chebyshev_t, chebyshev_u, hermite_h, laguerre_l

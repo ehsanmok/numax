@@ -322,6 +322,23 @@ def build() -> list[Case]:
             mp.digamma,
         )
     )
+    for (n, lo) in ((1, 0.2), (3, 0.2), (10, 0.5)):
+        cases.append(
+            Case(
+                f"polygamma_{n}",
+                f"polygamma(n={n}, x), x in [{lo}, 30]",
+                clustered(lo, 30.0),
+                lambda x, n=n: mp.polygamma(n, x),
+            )
+        )
+    cases.append(
+        Case(
+            "polygamma_1_neg",
+            "polygamma(n=1, x), (-5, 0) off the poles",
+            between_poles(-5, 0),
+            lambda x: mp.polygamma(1, x),
+        )
+    )
 
     cases.append(
         Case("bessel_j0", "bessel_j0, [-15, 15]", clustered(-15.0, 15.0),

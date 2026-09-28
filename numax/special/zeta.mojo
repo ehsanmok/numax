@@ -1,5 +1,6 @@
-"""The Riemann and Hurwitz zeta functions, `zeta(s)` and `zeta(s, q)`.
-`scipy.special.zeta`.
+"""The Riemann and Hurwitz zeta functions, `zeta(s)` and `zeta(s, q)`,
+`scipy.special.zeta`, and the polygamma functions built on the Hurwitz
+one, `polygamma(n, x)`.
 
 **This module is tier 1.** One Euler-Maclaurin formula, at a fixed `N =
 10` direct terms and `M = 8` Bernoulli corrections, evaluates the analytic
@@ -51,7 +52,7 @@ from ..core.numeric import (
     max_of,
     min_of,
 )
-from .gamma import gamma
+from .gamma import digamma, gamma
 
 comptime _N = 10
 comptime _M = 8
@@ -225,3 +226,85 @@ def zeta[T: FloatLike](s: T, q: T) -> T:
         The Hurwitz `zeta(s, q)`.
     """
     return _euler_maclaurin[T, False](s, q)
+
+
+def _int_pow[T: FloatLike](base: T, e: Int) -> T:
+    """`base^e` for `e >= 0` by binary exponentiation: `log2(e)` roundings
+    rather than `e`, and exact in sign for a negative `base`, which
+    `exp(e ln(base))` is not. `e` is one value for every lane, so the
+    branch on its bits is uniform."""
+    var acc = T.one()
+    var b = base.copy()
+    var k = e
+    while k > 0:
+        if k & 1 == 1:
+            acc = acc * b
+        b = b * b
+        k >>= 1
+    return acc^
+
+
+def polygamma[T: FloatLike](n: Int, x: T) -> T:
+    """The `n`-th derivative of the digamma function,
+    `psi^(n)(x) = d^(n+1)/dx^(n+1) ln Gamma(x)`. `scipy.special.polygamma(n,
+    x)`.
+
+    `n = 0` is `digamma`. For `n >= 1` it is `(-1)^(n+1) n! zeta(n + 1,
+    x)`, the Hurwitz zeta summed here rather than through `zeta(s, q)`:
+    the exponent is the integer `n + 1`, so the direct terms
+    `(x + k)^-(n+1)` are integer powers (`_int_pow`), exact in sign for a
+    negative `x + k`, where `zeta`'s `exp(-s ln(k + q))` would be NaN. That
+    is what makes the function valid on the negative axis, as SciPy's is.
+    `N = 30 + 2n` direct terms are followed by the Euler-Maclaurin tail at
+    `q = x + N`, `q^-n / n + q^-(n+1) / 2 + sum_{j<=8} B_2j / (2j)! (n+1)
+    ... (n+2j-1) q^-(n+2j)`; the first omitted correction is below `1e-16`
+    relative for `n <= 20` at `x >= 0`, and the extra 30 terms keep `q` that
+    large for `x` down to `-20`. The term counts depend on `n` alone,
+    which is the same for every lane, so the function stays tier 1.
+    `pixi run accuracy` reads `7e-16` relative at `n = 1` and `3` over
+    `[0.2, 30]`, `1.5e-15` at `n = 10`, and `7e-16` at `n = 1` between the
+    poles on `(-5, 0)`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the input.
+
+    Args:
+        n: The derivative order, `0 <= n <= 20`.
+        x: The point to evaluate at, `x > -20` and not a non-positive
+            integer (the poles).
+
+    Returns:
+        `psi^(n)(x)`.
+    """
+    if n == 0:
+        return digamma(x)
+    var one = T.one()
+    var terms = 30 + 2 * n
+    var total = T.constant(0.0)
+    var shifted = x.copy()
+    for _ in range(terms):
+        total = total + _int_pow(one / shifted, n + 1)
+        shifted = shifted + one
+
+    # The tail at `q = x + N`, with the order and its rising product
+    # carried as `T` values: a runtime `Int` converted to `Float64` inside
+    # the body would be a `double` Metal rejects.
+    var order = T.constant(0.0)
+    var factorial = one.copy()
+    for _ in range(n):
+        order = order + one
+        factorial = factorial * order
+    var inv_q = one / shifted
+    var power = _int_pow(inv_q, n)
+    total = total + power / order + power * inv_q / T.constant(2.0)
+    var rising = order + one
+    var next = order + T.constant(2.0)
+    power = power * inv_q * inv_q
+    comptime for j in range(_M):
+        comptime b_j = _BERNOULLI[j]
+        total = total + T.constant(b_j) * rising * power
+        rising = rising * next * (next + one)
+        next = next + T.constant(2.0)
+        power = power * inv_q * inv_q
+    var sign = one.copy() if n % 2 == 1 else -one
+    return sign * factorial * total
