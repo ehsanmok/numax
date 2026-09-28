@@ -3,8 +3,8 @@
 `zscore`, with NumPy's and SciPy's conventions and SciPy's p-values.
 
 **`cov` and `corrcoef` run where the tensor lives; `pearsonr`,
-`linregress` and `zscore` reduce on the device at `gpu=True`; the rank
-correlations are tier 2, host-side, in `Float64`.**
+`linregress`, `zscore`, `rankdata` and `spearmanr` run on the device at
+`gpu=True`; `kendalltau` is tier 2, host-side, in `Float64`.**
 
 The split is about what the answer costs, not about taste. `pearsonr`,
 `spearmanr`, `kendalltau`, `linregress` and `zscore` are a handful of sums
@@ -16,7 +16,9 @@ host -- control flow on `O(1)` data, which the device-complete rule
 allows. What moves is the data: at `gpu=True`, `pearsonr` and
 `linregress` take their means and centered moments as device sums and
 read back five scalars, and `zscore` standardizes in place on the device.
-The rank correlations need a device rank, which is not here yet.
+`rankdata` ranks on the device from a device sort, and `spearmanr` is
+two device ranks and the same moments. `kendalltau`'s pair count stays
+on the host.
 
 `cov` and `corrcoef` are the ones that cannot stay: the covariance of
 `rows` variables over `n` observations is `O(rows^2 n)`, which this module
@@ -83,13 +85,24 @@ from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
 
 from ..core.tensorlike import TensorLike, dim, is_row_major
-from ..core.tensor import _canonical, Static, Tensor
+from ..core.sorting import argsort, take
+from ..core.tensor import (
+    _canonical,
+    _dyn_shape,
+    _same_order,
+    _scan_device,
+    Dynamic,
+    Static,
+    Tensor,
+)
 from ..core._drive import (
     _check_device,
     _dense,
     _flat,
+    _flat_out,
     _flat_unchecked,
     _notice,
+    _require_contiguous,
     _target,
 )
 from ..core.plain import Plain
@@ -697,16 +710,138 @@ def _ranks(values: List[Float64], method: StaticString) raises -> List[Float64]:
     return ranks^
 
 
-def rankdata[
+def _method_code(method: StaticString) raises -> Int:
+    """`rankdata`'s five methods as `0 .. 4`, or the host's error."""
+    if method == "average":
+        return 0
+    if method == "min":
+        return 1
+    if method == "max":
+        return 2
+    if method == "dense":
+        return 3
+    if method == "ordinal":
+        return 4
+    raise Error(
+        "rankdata: unknown method '",
+        method,
+        "'; expected average, min, max, dense or ordinal",
+    )
+
+
+def _rank_device[
     T: TensorLike
+](xs: T, method: StaticString) raises -> Tensor[
+    T.dtype, T.LayoutType
+] where T.dtype.is_floating_point():
+    """`rankdata` on `xs`'s device.
+
+    The device `argsort` (stable, so `"ordinal"` breaks ties by position
+    as the host does) and a gather give the ascending values; then one
+    launch over the sorted positions, where each lane binary-searches the
+    first and one-past-last occurrence of its value -- which is all
+    `"average"`, `"min"` and `"max"` need -- and scatters its rank to the
+    element's original position. `"dense"` also needs the number of
+    distinct values up to each position, a flag launch and a device scan.
+    """
+    comptime dtype = T.dtype
+    comptime LayoutType = T.LayoutType
+    var code = _method_code(method)
+    var ctx = xs.context()
+    var n = xs.size()
+    var result = Tensor[dtype, LayoutType]._uninitialized(ctx, xs.tile().layout)
+    if n == 0:
+        return result^
+    var flat = _same_order(xs, row_major(_dyn_shape[1](n)))
+    var order = argsort[gpu=True](flat)
+    var sorted = take[axis=0, gpu=True](flat, order)
+    var distinct = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var sv = _flat_unchecked(sorted)
+    if code == 3:
+        var fv = _flat_out(distinct)
+
+        @always_inline
+        def fresh[
+            width: Int, alignment: Int = 1
+        ](coord: Coord) {var sv, var fv}:
+            var i = coord_to_index_list(coord)[0]
+            var differs = i == 0 or sv[coord][0] != sv[Coord(i - 1)][0]
+            fv.store[1](coord, Int64(1) if differs else Int64(0))
+
+        elementwise[simd_width=1, target="gpu"](fresh, Coord(n), ctx)
+        distinct = _scan_device["sum"](
+            distinct, row_major(_dyn_shape[1](n)), n, 1
+        )
+    var dv = _flat_unchecked(distinct)
+    var iv = _flat_unchecked(order)
+    var rv = _flat_out(result)
+
+    @always_inline
+    def rank[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var sv, var dv, var iv, var rv, var code, var n}:
+        var i = coord_to_index_list(coord)[0]
+        var value = sv[coord][0]
+        var lo = 0
+        var hi = i
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if sv[Coord(mid)][0] < value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var first = lo
+        lo = i
+        hi = n
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if sv[Coord(mid)][0] <= value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var last = lo
+        var r: Scalar[dtype]
+        if code == 0:
+            r = Scalar[dtype](first + last + 1) / 2
+        elif code == 1:
+            r = Scalar[dtype](first + 1)
+        elif code == 2:
+            r = Scalar[dtype](last)
+        elif code == 3:
+            r = Scalar[dtype](dv[coord][0])
+        else:
+            r = Scalar[dtype](i + 1)
+        rv.store[1](Coord(Int(iv[coord][0])), r)
+
+    elementwise[simd_width=1, target="gpu"](rank, Coord(n), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def rankdata[
+    T: TensorLike, gpu: Bool = False
 ](xs: T, method: StaticString = "average") raises -> Tensor[
     T.dtype, T.LayoutType
 ] where T.dtype.is_floating_point():
     """The one-based rank of every element, ties resolved by `method`:
     `"average"` (the default), `"min"`, `"max"`, `"dense"` or
-    `"ordinal"`. `scipy.stats.rankdata(a, method)`, the same shape back."""
+    `"ordinal"`. `scipy.stats.rankdata(a, method)`, the same shape back.
+
+    At `gpu=True`, with `xs` on a device and contiguous, the ranks are
+    computed there from a device sort (`_rank_device`) and never leave
+    it. A residency mismatch takes the host path with the `_drive`
+    notice. Neither path gives NaN a special rank.
+    """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            _require_contiguous(xs)
+            return _rank_device(xs, method)
+    else:
+        _notice[gpu]("rankdata")
     var ranks = _ranks(_as_float64(xs.to_host()), method)
     var values = List[Scalar[dtype]](capacity=len(ranks))
     for i in range(len(ranks)):
@@ -717,6 +852,7 @@ def rankdata[
 def spearmanr[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](x: A, y: B) raises -> CorrelationResult where (
     (A.dtype.is_floating_point() and dim[A, 0] > 2)
     and A.LayoutType.rank == 1
@@ -728,8 +864,23 @@ def spearmanr[
 ):
     """Spearman's rank correlation and its two-sided p-value:
     `pearsonr` on the average ranks, with the same `t` test on `n - 2`
-    degrees of freedom SciPy uses. `scipy.stats.spearmanr(x, y)`."""
+    degrees of freedom SciPy uses. `scipy.stats.spearmanr(x, y)`.
+
+    At `gpu=True`, with both vectors on a device and contiguous, both are
+    ranked there (`rankdata[gpu=True]`) and correlated by `pearsonr`'s
+    device moments; only five scalars come back.
+    """
     comptime n = dim[A, 0]
+    if _check_device[A, gpu](x) and _check_device[B, gpu](y):
+        comptime if gpu:
+            _require_contiguous(x)
+            _require_contiguous(y)
+            var rx = _rank_device(_canonical[n](x), "average")
+            var ry = _rank_device(_canonical[n, dtype=A.dtype](y), "average")
+            var m = _moments_device(rx, ry)
+            return _pearson_finish(m.sxy, m.sxx, m.syy, n)
+    else:
+        _notice[gpu]("spearmanr")
     return _pearson(
         _ranks(_as_float64(x.to_host()), "average"),
         _ranks(_as_float64(y.to_host()), "average"),
