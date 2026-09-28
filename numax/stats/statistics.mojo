@@ -112,8 +112,9 @@ from std.utils.numerics import nan as _nan
 from std.utils import IndexList
 
 from algorithm.rowwise_types import RowCoord
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major, TensorLayout
+from max.algorithm.functional import elementwise
 from layout.tile_tensor import DefaultEngine
 from nn.argmaxmin import argmax as _nn_argmax, argmin as _nn_argmin
 from nn.argmaxmin_gpu import argmaxmin_gpu as _nn_argmaxmin_gpu
@@ -126,10 +127,21 @@ from ..core.tensor import (
     Tensor,
     _broadcast_gather,
     _scan_device,
+    _dyn_shape,
     _dyn_shape_from,
+    _same_order,
     _strides_of,
 )
-from ..core._drive import _check_device, _dense, _flat, _notice
+from ..core._drive import (
+    _check_device,
+    _dense,
+    _flat,
+    _flat_out,
+    _flat_unchecked,
+    _notice,
+    _require_contiguous,
+)
+from ..core.sorting import argsort, take
 from ..core.ops import (
     multiply as _multiply,
     power as _power,
@@ -703,8 +715,145 @@ def median[
     return _median_of(xs.to_host())
 
 
+comptime _ROW_KEY_LIMIT = 1 << 24
+"""The most slices `_grouped_sorted_device` can order: its row keys are
+`float32`, exact up to `2^24`."""
+
+
+def _grouped_sorted_device[
+    T: TensorLike
+](xs: T, length: Int, inner: Int) raises -> Dynamic[
+    T.dtype, 1
+] where T.dtype.is_floating_point():
+    """Every slice of `xs` along an axis of `length`, `inner` elements
+    apart, sorted and laid end to end: slice `r = o * inner + i` occupies
+    `[r * length, (r + 1) * length)`, ascending.
+
+    Two stable device sorts and no data movement to the host: `argsort`
+    by value, then a stable `argsort` of the permuted elements' slice
+    numbers (a `float32` key, exact below `_ROW_KEY_LIMIT` slices), which
+    groups the slices while keeping each one in value order, and one
+    gather. A single slice skips the second sort.
+    """
+    comptime dtype = T.dtype
+    var ctx = xs.context()
+    var n = xs.size()
+    var flat = _same_order(xs, row_major(_dyn_shape[1](n)))
+    var order = argsort[gpu=True](flat)
+    if n == length:
+        return take[axis=0, gpu=True](flat, order)
+    var keys = Dynamic[DType.float32, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var ov = _flat_unchecked(order)
+    var kv = _flat_out(keys)
+    var span = length * inner
+
+    @always_inline
+    def slice_of[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var ov, var kv, var span, var inner}:
+        var f = Int(ov[coord][0])
+        kv.store[1](coord, Float32((f // span) * inner + f % inner))
+
+    elementwise[simd_width=1, target="gpu"](slice_of, Coord(n), ctx)
+    var regroup = argsort[gpu=True](keys)
+    var out = Dynamic[dtype, 1]._uninitialized(ctx, row_major(_dyn_shape[1](n)))
+    var fv = _flat_unchecked(flat)
+    var rv = _flat_unchecked(regroup)
+    var dv = _flat_out(out)
+
+    @always_inline
+    def gather[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var fv, var ov, var rv, var dv}:
+        var j = Int(rv[coord][0])
+        dv.store[1](coord, fv[Coord(Int(ov[Coord(j)][0]))][0])
+
+    elementwise[simd_width=1, target="gpu"](gather, Coord(n), ctx)
+    ctx.synchronize()
+    return out^
+
+
+def _slice_modes_device[
+    dtype: DType
+](grouped: Dynamic[dtype, 1], rows: Int, length: Int) raises -> Dynamic[
+    dtype, 1
+]:
+    """The mode of each sorted slice of `grouped` (as
+    `_grouped_sorted_device` lays them out), smallest among ties.
+
+    One launch gives every position the key `count * (length + 1) +
+    (length - start)` of its run of equal values -- `count` the run's
+    length, `start` its first position in the slice, both by binary
+    search within the slice -- so the largest key in a slice is its
+    longest run, and among equally long runs the earliest, which is the
+    smallest value. A device `max_axis` over the `rows x length` keys and
+    one gather finish.
+    """
+    var ctx = grouped.context()
+    var keys = Dynamic[DType.int64, 2]._uninitialized(
+        ctx, row_major(_dyn_shape[2](rows, length))
+    )
+    var gv = _flat_unchecked(grouped)
+    var kv = _flat_out(keys)
+
+    @always_inline
+    def run[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var gv, var kv, var length}:
+        var f = coord_to_index_list(coord)[0]
+        var base = (f // length) * length
+        var value = gv[coord][0]
+        var lo = base
+        var hi = f
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if gv[Coord(mid)][0] < value:
+                lo = mid + 1
+            else:
+                hi = mid
+        var first = lo
+        lo = f
+        hi = base + length
+        while lo < hi:
+            var mid = (lo + hi) // 2
+            if gv[Coord(mid)][0] <= value:
+                lo = mid + 1
+            else:
+                hi = mid
+        kv.store[1](
+            coord,
+            Int64(lo - first) * Int64(length + 1)
+            + Int64(length - (first - base)),
+        )
+
+    elementwise[simd_width=1, target="gpu"](run, Coord(rows * length), ctx)
+    var best = Dynamic[DType.int64, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](rows))
+    )
+    max_axis[axis=1, target="gpu"](keys.tile(), best.tile(), ctx)
+    var out = Dynamic[dtype, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](rows))
+    )
+    var bv = _flat_unchecked(best)
+    var dv = _flat_out(out)
+
+    @always_inline
+    def pick[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var gv, var bv, var dv, var length}:
+        var r = coord_to_index_list(coord)[0]
+        var start = length - Int(bv[coord][0] % Int64(length + 1))
+        dv.store[1](coord, gv[Coord(r * length + start)][0])
+
+    elementwise[simd_width=1, target="gpu"](pick, Coord(rows), ctx)
+    ctx.synchronize()
+    return out^
+
+
 def median[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
     is_row_major[T]
     and T.dtype.is_floating_point()
@@ -715,10 +864,14 @@ def median[
     """`xs` reduced to its median along `axis`. `numpy.median(a, axis=k)`.
 
     A median is not a fold -- it is an order statistic of the whole slice
-    -- so this gathers each slice on the host and selects rather than
-    folding through a monoid the way `sum[axis=k]` does, and takes no `gpu`
-    parameter. The even-count convention is `_median_of`'s, the same one
-    the whole-tensor overload uses.
+    -- so on the host this gathers each slice and selects rather than
+    folding through a monoid the way `sum[axis=k]` does. At `gpu=True`,
+    with `xs` on a device, every slice is sorted there at once
+    (`_grouped_sorted_device`) and one launch reads each slice's middle
+    pair; only the result stays, on the device. The even-count convention
+    is `_median_of`'s, the same one the whole-tensor overload uses. More
+    than `2^24` slices, or empty ones, take the host path; so does a
+    residency mismatch, with the `_drive` notice.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
@@ -726,6 +879,45 @@ def median[
     var outer = split[0]
     var length = split[1]
     var inner = split[2]
+    var rows = outer * inner
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            if length > 0 and rows > 0 and rows <= _ROW_KEY_LIMIT:
+                var grouped = _grouped_sorted_device(xs, length, inner)
+                var out = Dynamic[dtype, LayoutType.rank - 1]._uninitialized(
+                    xs.context(),
+                    row_major(
+                        _dyn_shape_from[LayoutType.rank - 1](
+                            _axis_extents[axis=axis](xs)
+                        )
+                    ),
+                )
+                var gv = _flat_unchecked(grouped)
+                var dv = _flat_out(out)
+
+                @always_inline
+                def middle[
+                    width: Int, alignment: Int = 1
+                ](coord: Coord) {var gv, var dv, var length}:
+                    var base = coord_to_index_list(coord)[0] * length
+                    var half = length // 2
+                    var value: Scalar[dtype]
+                    if length % 2 == 1:
+                        value = gv[Coord(base + half)][0]
+                    else:
+                        value = (
+                            gv[Coord(base + half - 1)][0]
+                            + gv[Coord(base + half)][0]
+                        ) / Scalar[dtype](2)
+                    dv.store[1](coord, value)
+
+                elementwise[simd_width=1, target="gpu"](
+                    middle, Coord(rows), xs.context()
+                )
+                xs.context().synchronize()
+                return out^
+    else:
+        _notice[gpu]("median")
     var values = xs.to_host()
     var out = List[Scalar[dtype]](capacity=outer * inner)
     for o in range(outer):
@@ -744,19 +936,30 @@ def median[
 
 
 def mode[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> SIMD[T.dtype, 1] where T.dtype.is_floating_point():
     """The most frequent value in `xs`; the smallest among ties, matching
     `scipy.stats.mode`'s convention.
 
-    **Host-side** for `median`'s reason: a mode is a sort and a run count
-    over the whole slice, not a fold, so there is no `gpu` parameter.
+    A sort and a run count over the whole tensor, not a fold. At
+    `gpu=True`, with `xs` on a device, both run there (a device sort, then
+    `_slice_modes_device` over one slice) and one scalar comes back. A
+    residency mismatch takes the host path with the `_drive` notice.
     """
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            var n = xs.size()
+            if n > 0:
+                _require_contiguous(xs)
+                var grouped = _grouped_sorted_device(xs, n, 1)
+                return _slice_modes_device(grouped, 1, n).to_host()[0]
+    else:
+        _notice[gpu]("mode")
     return _mode_of(xs.to_host())
 
 
 def mode[
-    T: TensorLike, axis: Int
+    T: TensorLike, axis: Int, gpu: Bool = False
 ](xs: T) raises -> Dynamic[T.dtype, T.LayoutType.rank - 1] where (
     T.dtype.is_floating_point()
     and axis >= 0
@@ -764,14 +967,35 @@ def mode[
     and T.LayoutType.rank > 1
 ):
     """`xs` reduced to its most frequent value along `axis`.
-    `scipy.stats.mode(a, axis=k)`, smallest among ties. **Host-side**, like
-    the whole-tensor overload."""
+    `scipy.stats.mode(a, axis=k)`, smallest among ties. At `gpu=True`,
+    with `xs` on a device and contiguous, every slice is sorted there at
+    once and `_slice_modes_device` finds each slice's longest run; the
+    result stays on the device. More than `2^24` slices, or empty ones,
+    take the host path; so does a residency mismatch, with the `_drive`
+    notice."""
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     var split = _axis_split[axis=axis](xs)
     var outer = split[0]
     var length = split[1]
     var inner = split[2]
+    var rows = outer * inner
+    if _check_device[T, gpu](xs):
+        comptime if gpu:
+            if length > 0 and rows > 0 and rows <= _ROW_KEY_LIMIT:
+                _require_contiguous(xs)
+                var grouped = _grouped_sorted_device(xs, length, inner)
+                var modes = _slice_modes_device(grouped, rows, length)
+                return _same_order(
+                    modes,
+                    row_major(
+                        _dyn_shape_from[LayoutType.rank - 1](
+                            _axis_extents[axis=axis](xs)
+                        )
+                    ),
+                )
+    else:
+        _notice[gpu]("mode")
     var values = xs.to_host()
     var out = List[Scalar[dtype]](capacity=outer * inner)
     for o in range(outer):
