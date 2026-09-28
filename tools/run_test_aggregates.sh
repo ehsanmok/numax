@@ -15,8 +15,15 @@
 
 set -uo pipefail
 
-AGG_DIR="tests/_agg"
-BUILD_DIR="${BUILD_DIR:-build/agg}"
+# The test root: `tests` (default, every machine) or `tests_gpu` (the
+# `gpu=True` comparisons, which only build where there is an accelerator).
+ROOT="${1:-tests}"
+AGG_DIR="$ROOT/_agg"
+BUILD_DIR="${BUILD_DIR:-build/agg${ROOT#tests}}"
+# `--build-only` compiles and stops: how CI type-checks `tests_gpu` against a
+# named accelerator it does not have. `AGG_BUILD_FLAGS` carries that target.
+BUILD_ONLY=0; [ "${2:-}" = "--build-only" ] && BUILD_ONLY=1
+AGG_BUILD_FLAGS="${AGG_BUILD_FLAGS:-}"
 
 # Default to the core count. The build phase dominates and the aggregates
 # are independent, so this is where the wall clock goes. Capped at 4
@@ -54,15 +61,16 @@ build_one() {
   # Each aggregate imports bare module names, resolved against its own
   # area directory.
   local area="${src##*/agg_}"; area="${area%.mojo}"
-  local inc="tests/$area"
-  [ "$area" = "_root" ] && inc="tests"
+  local inc="$ROOT/$area"
+  [ "$area" = "_root" ] && inc="$ROOT"
   # Line tables so a crash names the function it died in rather than eight
   # raw addresses -- the reason the per-file CI loop built before running.
-  if ! mojo build -debug-level=line-tables -I . -I "$inc" "$src" -o "$out" 2>"$out.log"; then
+  # shellcheck disable=SC2086
+  if ! mojo build $AGG_BUILD_FLAGS -debug-level=line-tables -I . -I "$inc" "$src" -o "$out" 2>"$out.log"; then
     echo "BUILD FAILED: $src"; sed -n '1,25p' "$out.log"; return 1
   fi
 }
-export -f build_one; export BUILD_DIR
+export -f build_one; export BUILD_DIR ROOT AGG_BUILD_FLAGS
 build_failed=()
 if [ "$JOBS" -gt 1 ]; then
   printf '%s\n' "${AGGS[@]}" | xargs -P "$JOBS" -n1 -I FF bash -c 'build_one FF'
@@ -79,6 +87,11 @@ if [ "${#build_failed[@]}" -ne 0 ]; then
   echo "── ${#build_failed[@]} aggregate(s) failed to build ──"
   printf '  %s\n' "${build_failed[@]}"
   exit 1
+fi
+
+if [ "$BUILD_ONLY" -eq 1 ]; then
+  echo "── built ${#AGGS[@]} aggregates, not run (--build-only) ──"
+  exit 0
 fi
 
 # Run everything and collect failures rather than stopping at the first:

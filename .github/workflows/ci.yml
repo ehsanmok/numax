@@ -127,6 +127,12 @@ jobs:
       - name: Compile GPU examples
         run: pixi run examples-gpu-build
 
+      # The same for `tests_gpu/`: its aggregates compiled for `sm_80`, never
+      # run, so a device-path signature drift fails here rather than on the
+      # next machine with an accelerator.
+      - name: Compile GPU tests
+        run: pixi run tests-gpu-build
+
       - name: Run CPU benchmark
         run: pixi run bench
 

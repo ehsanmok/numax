@@ -120,8 +120,8 @@ pre-commit = ">=4.2.0,<5"
 [feature.dev.tasks]
 install-pre-commit = "pre-commit install"
 # In the dev feature because it depends-on `install-pre-commit`.
-format = { cmd = "mojo format numax examples tests bench", depends-on = ["install-pre-commit"] }
-format-check = { cmd = "bash -c 'mojo format numax examples tests bench && git diff --exit-code numax examples tests bench || (echo \"Error: Code is not formatted. Run \\\"pixi run -e dev format\\\" to fix.\" && exit 1)'" }
+format = { cmd = "mojo format numax examples tests tests_gpu bench", depends-on = ["install-pre-commit"] }
+format-check = { cmd = "bash -c 'mojo format numax examples tests tests_gpu bench && git diff --exit-code numax examples tests tests_gpu bench || (echo \"Error: Code is not formatted. Run \\\"pixi run -e dev format\\\" to fix.\" && exit 1)'" }
 # `--open` previews; `docs-build` writes target/doc/ for docs.yaml.
 docs      = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --open'" }
 docs-build = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --out-dir target/doc --base-url /numax/'" }
@@ -240,6 +240,11 @@ test-map-blocks = "mojo -I . tests/core/test_map_blocks.mojo"
 # building, so a new test file cannot silently stop running.
 tests = "bash tools/run_test_aggregates.sh"
 tests-gen = "python3 tools/gen_test_aggregates.py"
+# The `gpu=True` comparisons in `tests_gpu/`: every device routine against
+# its host answer at float32 (Metal has no double). Needs a real device, so
+# it is a local gate; CI compiles the same aggregates for `sm_80` below.
+tests-gpu = "bash tools/run_test_aggregates.sh tests_gpu"
+tests-gpu-build = { cmd = "bash tools/run_test_aggregates.sh tests_gpu --build-only", env = { AGG_BUILD_FLAGS = "--target-accelerator sm_80", BUILD_DIR = "build/agg_gpu_sm80" } }
 
 # For bisecting to one file. A new suite is picked up by the aggregates
 # automatically; this list is optional.

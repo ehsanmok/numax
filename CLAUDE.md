@@ -23,13 +23,14 @@ invocation needs this directory on the import path** — the tasks all spell out
 
 ```bash
 pixi run tests                    # all suites (aggregate task)
+pixi run tests-gpu                # gpu=True vs host, tests_gpu/ (needs a device)
 pixi run test-dual                # one suite; there is a test-<name> task per file
 pixi run run tests/core/test_dual.mojo   # arbitrary file with -I . supplied
 pixi run examples-cpu             # every example that does not need a GPU
 pixi run examples                 # + the GPU ones (needs real Metal/CUDA)
 pixi run accuracy                 # max error per function vs. checked-in mpmath refs
 pixi run bench                    # map vs. a hand-rolled raw-SIMD loop
-pixi run -e dev format            # mojo format over numax examples tests bench
+pixi run -e dev format            # mojo format over numax examples tests tests_gpu bench
 pixi run -e dev format-check      # format + git diff --exit-code
 pixi run -e dev docs-build        # mojodoc → target/doc/
 ```
@@ -54,6 +55,13 @@ what stops a new suite from silently not running. Commit the regenerated
 
 Adding a `test-<name>` task and a `tests-per-file` entry is optional and only
 buys the one-file spelling used when bisecting.
+
+**Device tests live in `tests_gpu/`**, same layout and same generator
+(`pixi run tests-gen` writes `tests_gpu/_agg/` too). `tests/` never names
+`gpu=True`, because a GPU-less CI runner cannot compile the device path;
+`tests_gpu/` compares each `gpu=True` routine against its host answer at
+`float32` (Metal has no `double`). `pixi run tests-gpu` runs it on a machine
+with an accelerator; CI only compiles it for `sm_80` (`tests-gpu-build`).
 
 Test files use `std.testing`: `def test_*() raises` functions plus
 `TestSuite.discover_tests[__functions_in_module()]().run()` in `main`. Keep
@@ -330,6 +338,9 @@ code comment.
    aggregate), `pixi run examples-cpu`, `pixi run accuracy`, `mojo doc -I .`
    and `pixi run -e dev format-check` clean. A feature is not done until the
    whole gate passes, not just its own suite.
+3. Anything touching a device path: `pixi run tests-gpu` and `pixi run
+   examples` green on a real accelerator, and a `tests_gpu/` test for any
+   routine that gains a `gpu=True` path.
 
 ## Releasing
 
