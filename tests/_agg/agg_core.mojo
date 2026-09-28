@@ -202,6 +202,21 @@ from test_creation import (
 from test_creation import (
     test_pad_by_zero_is_a_copy as test_creation__test_pad_by_zero_is_a_copy,
 )
+from test_creation import (
+    test_arange_takes_numpy_start_stop_step as test_creation__test_arange_takes_numpy_start_stop_step,
+)
+from test_creation import (
+    test_arange_counts_down_and_rounds_the_length_up as test_creation__test_arange_counts_down_and_rounds_the_length_up,
+)
+from test_creation import (
+    test_arange_of_stop_agrees_with_arange_n as test_creation__test_arange_of_stop_agrees_with_arange_n,
+)
+from test_creation import (
+    test_arange_of_an_empty_range_is_empty as test_creation__test_arange_of_an_empty_range_is_empty,
+)
+from test_creation import (
+    test_arange_rejects_a_zero_step as test_creation__test_arange_rejects_a_zero_step,
+)
 from test_decimal import (
     test_one_is_scaled_by_factor as test_decimal__test_one_is_scaled_by_factor,
 )
@@ -1483,6 +1498,13 @@ def main() raises:
     suite.test[test_creation__test_pad_edge_repeats_the_border]()
     suite.test[test_creation__test_pad_rank_two_widens_both_axes]()
     suite.test[test_creation__test_pad_by_zero_is_a_copy]()
+    suite.test[test_creation__test_arange_takes_numpy_start_stop_step]()
+    suite.test[
+        test_creation__test_arange_counts_down_and_rounds_the_length_up
+    ]()
+    suite.test[test_creation__test_arange_of_stop_agrees_with_arange_n]()
+    suite.test[test_creation__test_arange_of_an_empty_range_is_empty]()
+    suite.test[test_creation__test_arange_rejects_a_zero_step]()
     # tests/core/test_decimal.mojo
     suite.test[test_decimal__test_one_is_scaled_by_factor]()
     suite.test[test_decimal__test_to_float64_descales_the_raw_integer]()

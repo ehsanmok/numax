@@ -60,7 +60,7 @@ from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import _canonical, Static, arange, zeros
+from ..core.tensor import _canonical, Static, arange_n, zeros
 from ..core.ops import subtract
 from ..fft.fft import Spectrum, fft, ifft
 from ..linalg.blas import dot
@@ -561,7 +561,7 @@ def detrend[
     if type == "constant":
         return subtract(_canonical[n](x), Scalar[T.dtype](mean_y))
 
-    var index = arange[n, T.dtype](ctx=ctx)
+    var index = arange_n[n, T.dtype](ctx=ctx)
     var mean_i = Float64(n - 1) / 2.0
     var sxx = Float64(n) * (Float64(n) * Float64(n) - 1.0) / 12.0
     var sxy = Float64(dot[gpu=gpu](index, x)) - Float64(n) * mean_i * mean_y

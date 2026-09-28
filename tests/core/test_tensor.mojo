@@ -36,7 +36,7 @@ from numax.core.tensor import (
     to_array,
     Static,
     Tensor,
-    arange,
+    arange_n,
     array_split,
     concatenate,
     atleast_1d,
@@ -290,7 +290,7 @@ def test_tensor_survives_the_call_that_built_it() raises:
 
 def test_arange_starts_at_start_and_steps_by_step() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[5, dtype](2, 3, ctx=ctx)
+    var a = arange_n[5, dtype](2, 3, ctx=ctx)
     assert_equal(a.num_elements, 5)
     for i in range(5):
         assert_equal(a[i], Scalar[dtype](2 + 3 * i))
@@ -298,14 +298,14 @@ def test_arange_starts_at_start_and_steps_by_step() raises:
 
 def test_arange_defaults_to_zero_start_unit_step() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[4, dtype](ctx=ctx)
+    var a = arange_n[4, dtype](ctx=ctx)
     for i in range(4):
         assert_equal(a[i], Scalar[dtype](i))
 
 
 def test_reshape_preserves_row_major_element_order() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[6, dtype](ctx=ctx)
+    var a = arange_n[6, dtype](ctx=ctx)
     var m = reshape[rows=2, cols=3](a)
     assert_equal(m.dim[0](), 2)
     assert_equal(m.dim[1](), 3)
@@ -317,7 +317,7 @@ def test_reshape_preserves_row_major_element_order() raises:
 
 def test_ravel_inverts_reshape() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[6, dtype](ctx=ctx)
+    var a = arange_n[6, dtype](ctx=ctx)
     var m = reshape[rows=3, cols=2](a)
     var flat = ravel(m)
     assert_equal(flat.num_elements, 6)
@@ -342,8 +342,8 @@ def test_ravel_flattens_a_2d_tensor_row_by_row() raises:
 
 def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[3, dtype](ctx=ctx)
-    var b = arange[2, dtype](100, ctx=ctx)
+    var a = arange_n[3, dtype](ctx=ctx)
+    var b = arange_n[2, dtype](100, ctx=ctx)
     var c = concatenate(a, b)
     assert_equal(c.num_elements, 5)
     for i in range(3):
@@ -354,8 +354,8 @@ def test_concatenate_joins_two_rank1_tensors_end_to_end() raises:
 
 def test_split_inverts_concatenate() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[3, dtype](ctx=ctx)
-    var b = arange[4, dtype](50, ctx=ctx)
+    var a = arange_n[3, dtype](ctx=ctx)
+    var b = arange_n[4, dtype](50, ctx=ctx)
     var joined = concatenate(a, b)
     var parts = split[at=3](joined)
     assert_equal(parts[0].num_elements, 3)
@@ -368,7 +368,7 @@ def test_split_inverts_concatenate() raises:
 
 def test_split_at_an_endpoint_gives_one_empty_side() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[3, dtype](ctx=ctx)
+    var a = arange_n[3, dtype](ctx=ctx)
     var parts = split[at=0](a)
     assert_equal(parts[0].num_elements, 0)
     assert_equal(parts[1].num_elements, 3)
@@ -910,7 +910,7 @@ def test_rot90_turns_counterclockwise_and_four_turns_is_identity() raises:
 
 def test_atleast_3d_uses_numpys_shapes_at_each_rank() raises:
     var ctx = DeviceContext(api="cpu")
-    var v = arange[4, dtype](ctx=ctx)
+    var v = arange_n[4, dtype](ctx=ctx)
     var promoted = atleast_3d(v)
     assert_equal(promoted.dim_at(0), 1)
     assert_equal(promoted.dim_at(1), 4)
@@ -926,7 +926,7 @@ def test_atleast_3d_uses_numpys_shapes_at_each_rank() raises:
 
 def test_array_split_divides_evenly_and_unevenly() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[6, dtype](ctx=ctx)
+    var a = arange_n[6, dtype](ctx=ctx)
 
     var even = array_split(a, 3)
     assert_equal(len(even), 3)
@@ -935,7 +935,7 @@ def test_array_split_divides_evenly_and_unevenly() raises:
     assert_equal(even[1].to_host()[0], Scalar[dtype](2))
 
     # numpy: [len(p) for p in np.array_split(np.arange(7), 3)] == [3, 2, 2]
-    var b = arange[7, dtype](ctx=ctx)
+    var b = arange_n[7, dtype](ctx=ctx)
     var uneven = array_split(b, 3)
     assert_equal(len(uneven), 3)
     assert_equal(uneven[0].size(), 3)
@@ -960,7 +960,7 @@ def test_array_split_along_a_later_axis_keeps_the_other_extents() raises:
 
 def test_array_split_rejects_a_nonpositive_count() raises:
     var ctx = DeviceContext(api="cpu")
-    var a = arange[4, dtype](ctx=ctx)
+    var a = arange_n[4, dtype](ctx=ctx)
     var raised = False
     try:
         _ = array_split(a, 0)

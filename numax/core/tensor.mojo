@@ -90,7 +90,7 @@ argument lets the *literals* infer `dtype`, and inference outranks a
 default, so `linspace[5](0, 1)` would quietly hand back an integer tensor.
 
 **Which functions need a `DeviceContext`.** The root factories (`zeros`,
-`ones`, `full`, `empty`, `eye`, `linspace`, `logspace`, `arange`) take one,
+`ones`, `full`, `empty`, `eye`, `linspace`, `logspace`, `arange_n`) take one,
 because they allocate with no input tensor to inherit a device from.
 Everything derived from an existing tensor (`*_like`, `transpose`,
 `squeeze`, `stack`, `reshape`, `ravel`, `concatenate`, `split`) allocates on
@@ -1143,7 +1143,7 @@ def logspace[
     return Static[dtype, num](_context(ctx), values^)
 
 
-def arange[
+def arange_n[
     num: Int, dtype: DType = DType.float64
 ](
     start: Float64 = 0,
@@ -1152,11 +1152,12 @@ def arange[
 ) raises -> Static[dtype, num]:
     """`num` values starting at `start`, spaced by `step`.
 
-    `numpy.arange` takes a `stop` and derives the count from it, which makes
-    the output extent depend on runtime values; this module's shapes are
-    comptime, so the count is the parameter and `stop` is implied
-    (`start + num*step`). `numax.core.tensor.linspace` is the one to reach for
-    when the endpoints are what matter.
+    The compile-time-count form: `arange_n[5]()` is `numpy.arange(5)` with
+    the length in the type, so the result is a `Static` and reaches
+    `map[gpu=True]`. `arange(start, stop, step)` is NumPy's spelling, whose
+    length is a run-time fact and whose result is therefore `Dynamic`.
+    `numax.core.tensor.linspace` is the one to reach for when the endpoints
+    are what matter.
     """
     var first = Scalar[dtype](start)
     var by = Scalar[dtype](step)
@@ -1164,6 +1165,45 @@ def arange[
     for i in range(num):
         values.append(first + Scalar[dtype](i) * by)
     return Static[dtype, num](_context(ctx), values^)
+
+
+def arange[
+    dtype: DType = DType.float64
+](
+    start: Float64,
+    stop: Float64,
+    step: Float64 = 1,
+    ctx: Optional[DeviceContext] = None,
+) raises -> Dynamic[dtype, 1]:
+    """Values from `start` up to but not including `stop`, spaced by
+    `step`. `numpy.arange(start, stop, step)`.
+
+    The length is `ceil((stop - start) / step)`, which depends on the
+    arguments' values, so the result is `Dynamic`; `arange_n[num]` puts the
+    count in the type instead. An empty range gives an empty tensor, as in
+    NumPy, and a zero `step` raises.
+    """
+    if step == 0:
+        raise Error("arange: step must be nonzero")
+    var span = (stop - start) / step
+    var n = Int(span)
+    if Float64(n) < span:
+        n += 1
+    n = max(n, 0)
+    var values = List[Scalar[dtype]](capacity=n)
+    for i in range(n):
+        values.append(Scalar[dtype](start + Float64(i) * step))
+    return asarray[dtype](values^, ctx=ctx)
+
+
+def arange[
+    dtype: DType = DType.float64
+](stop: Float64, ctx: Optional[DeviceContext] = None) raises -> Dynamic[
+    dtype, 1
+]:
+    """`0, 1, ..., ceil(stop) - 1`. `numpy.arange(stop)`; see the
+    three-argument form."""
+    return arange[dtype](0, stop, 1, ctx=ctx)
 
 
 def zeros_like[T: TensorLike](a: T) raises -> Tensor[T.dtype, T.LayoutType]:

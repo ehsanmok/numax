@@ -10,7 +10,7 @@ on a quadrant of one without a copy. These tests build a 4x4 whose leading
 
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
-from numax.core.tensor import Static, arange, reshape, transpose, zeros
+from numax.core.tensor import Static, arange_n, reshape, transpose, zeros
 from numax.core.tensorlike import TensorView
 from numax.linalg import cholesky, det, matmul, solve
 
@@ -58,7 +58,7 @@ def test_solve_and_det_accept_a_view() raises:
 
 
 def test_matmul_and_transpose_accept_views() raises:
-    var m = reshape[rows=2, cols=3](arange[6, f64]())
+    var m = reshape[rows=2, cols=3](arange_n[6, f64]())
     var vm = TensorView(m.tile())
     var t_owned = transpose(m)
     var t_view = transpose(vm)

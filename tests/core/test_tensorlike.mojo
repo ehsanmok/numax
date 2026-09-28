@@ -17,7 +17,7 @@ from layout import Coord, TileTensor
 from numax.core.tensor import (
     Static,
     Tensor,
-    arange,
+    arange_n,
     reshape,
     transpose,
     zeros,
@@ -56,7 +56,7 @@ def _double[w: Int](x: SIMD[f64, w]) -> SIMD[f64, w]:
 
 
 def test_tensor_and_view_conform_and_agree() raises:
-    var m = reshape[rows=3, cols=4](arange[12, f64]())
+    var m = reshape[rows=3, cols=4](arange_n[12, f64]())
     var w = TensorView(m.tile())
     assert_equal(_total(m), 66.0)
     assert_equal(_total(w), 66.0)
@@ -82,12 +82,12 @@ def test_readonly_routine_can_view_a_borrowed_tensor() raises:
     def readonly(x: Static[f64, 2, 3]) raises -> Float64:
         return _total(x)
 
-    var a = reshape[rows=2, cols=3](arange[6, f64]())
+    var a = reshape[rows=2, cols=3](arange_n[6, f64]())
     assert_equal(readonly(a), 15.0)
 
 
 def test_tracked_view_erases_to_any_origin_for_kernels() raises:
-    var a = arange[4, f64]()
+    var a = arange_n[4, f64]()
     var b = zeros[f64, 4]()
     # The kernel tier spells `MutAnyOrigin`; the tracked view converts at
     # the call site with inference intact.
@@ -129,8 +129,8 @@ def test_tensor_device_type_is_the_erased_view() raises:
 
 def test_core_surface_accepts_a_view_and_agrees_with_the_tensor() raises:
     # One routine, two conformers: the public surface takes either.
-    var a = arange[6, f64]()
-    var m = reshape[rows=2, cols=3](arange[6, f64]())
+    var a = arange_n[6, f64]()
+    var m = reshape[rows=2, cols=3](arange_n[6, f64]())
     var v = TensorView(a.tile())
     var vm = TensorView(m.tile())
     var e_t = exp(a).to_host()
@@ -149,7 +149,7 @@ def test_core_surface_accepts_a_view_and_agrees_with_the_tensor() raises:
 
 
 def test_view_to_host_reads_a_strided_block_in_its_own_order() raises:
-    var m = reshape[rows=4, cols=4](arange[16, f64]())
+    var m = reshape[rows=4, cols=4](arange_n[16, f64]())
     var block = TensorView(m.tile().tile[2, 2](1, 1))
     var got = block.to_host()
     # Rows 2..3, columns 2..3 of the 4x4 arange: 10 11 / 14 15.

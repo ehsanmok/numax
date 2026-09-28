@@ -18,7 +18,7 @@ lets `numax` accept it.
 
 from layout import Coord
 
-from numax.core.tensor import Static, arange, reshape, zeros
+from numax.core.tensor import Static, arange_n, reshape, zeros
 from numax.core.elementwise import exp
 from numax.core.tensorlike import TensorLike, TensorView, dim
 from numax.linalg import cholesky, det, solve
@@ -79,7 +79,7 @@ def main() raises:
     print("det(owned):", det(owned))
 
     # 3. Reductions and elementwise math take a TensorView too.
-    var m = reshape[rows=3, cols=4](arange[12, f64]())
+    var m = reshape[rows=3, cols=4](arange_n[12, f64]())
     var row1 = TensorView(m.tile().tile[1, 4](1, 0), m.context())
     print("--- stats on one row of a 3x4, through a TensorView ---")
     print("sum(row 1):", sum(row1), " mean(row 1):", mean(row1))

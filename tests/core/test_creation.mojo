@@ -6,13 +6,20 @@ including the shapes that are compile-time functions of the inputs
 square).
 """
 
-from std.testing import TestSuite, assert_almost_equal, assert_equal
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_raises,
+)
 
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import (
     Static,
     Tensor,
+    arange,
+    arange_n,
     copy,
     diag,
     diagflat,
@@ -276,6 +283,44 @@ def test_pad_by_zero_is_a_copy() raises:
     var original = m.to_host()
     for i in range(6):
         assert_equal(got[i], original[i])
+
+
+def test_arange_takes_numpy_start_stop_step() raises:
+    """`numpy.arange(1, 2, 0.25)` is `[1, 1.25, 1.5, 1.75]`: `stop` is
+    excluded and the length is derived from the arguments."""
+    var got = arange(1.0, 2.0, 0.25).to_host()
+    assert_equal(len(got), 4)
+    for i in range(4):
+        assert_almost_equal(got[i], 1.0 + 0.25 * Float64(i))
+
+
+def test_arange_counts_down_and_rounds_the_length_up() raises:
+    """`numpy.arange(0, -3, -1)` is `[0, -1, -2]`, and
+    `numpy.arange(0, 1, 0.3)` has four elements, not three."""
+    var down = arange(0.0, -3.0, -1.0).to_host()
+    assert_equal(len(down), 3)
+    assert_equal(down[2], -2.0)
+    assert_equal(arange(0.0, 1.0, 0.3).size(), 4)
+
+
+def test_arange_of_stop_agrees_with_arange_n() raises:
+    """`arange(5)` and `arange_n[5]()` are the same five values, one with a
+    run-time length and one with the length in the type."""
+    var dyn = arange(5.0).to_host()
+    var fixed = arange_n[5]().to_host()
+    assert_equal(len(dyn), 5)
+    for i in range(5):
+        assert_equal(dyn[i], fixed[i])
+
+
+def test_arange_of_an_empty_range_is_empty() raises:
+    """`numpy.arange(3, 1)` is empty rather than an error."""
+    assert_equal(arange(3.0, 1.0).size(), 0)
+
+
+def test_arange_rejects_a_zero_step() raises:
+    with assert_raises(contains="step must be nonzero"):
+        _ = arange(0.0, 1.0, 0.0)
 
 
 def main() raises:

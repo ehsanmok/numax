@@ -42,7 +42,7 @@ def test_creation_and_manipulation_are_reachable() raises:
     assert_almost_equal(xs[0], Scalar[dtype](0.0))
     assert_almost_equal(xs[4], Scalar[dtype](1.0))
 
-    var grid = reshape[rows=2, cols=3](arange[6]())
+    var grid = reshape[rows=2, cols=3](arange_n[6]())
     assert_equal(grid.dim[0](), 2)
     assert_equal(ravel(grid)[5], Scalar[dtype](5.0))
 
@@ -94,7 +94,7 @@ def test_the_convolution_modes_sit_beside_the_full_factory() raises:
 
 
 def test_stats_and_io_are_reachable() raises:
-    var xs = arange[4]()
+    var xs = arange_n[4]()
     assert_almost_equal(mean(xs), Scalar[dtype](1.5))
 
     var path = String("/tmp/numax_prelude_test.npy")
@@ -107,7 +107,7 @@ def test_the_rank_and_broadcast_surface_is_reachable() raises:
     """Every public name the rank-and-broadcast work added has to be in the
     prelude, or a star-import promises a surface it does not carry. One
     call per name: this test fails to compile if any is missing."""
-    var grid = reshape[rows=2, cols=3](arange[6]())
+    var grid = reshape[rows=2, cols=3](arange_n[6]())
 
     # Shape manipulation.
     assert_equal(transpose(grid, 1, 0).dim_at(0), 3)
@@ -123,7 +123,7 @@ def test_the_rank_and_broadcast_surface_is_reachable() raises:
     assert_equal(joint[0], 2)
     assert_equal(joint[1], 3)
 
-    var row = arange[3]()
+    var row = arange_n[3]()
     assert_almost_equal(add(grid, row)[4], Scalar[dtype](5.0))
 
     # Indexing.

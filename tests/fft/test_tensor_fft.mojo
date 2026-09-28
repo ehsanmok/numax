@@ -74,7 +74,7 @@ def _signal() -> List[Float64]:
 
 
 def _image() -> List[Float64]:
-    """`arange(16) * 0.5 - 3`, as a 4x4: the matrix NumPy's `fft2`
+    """`arange_n(16) * 0.5 - 3`, as a 4x4: the matrix NumPy's `fft2`
     reference values below were taken on."""
     var out = List[Float64]()
     for i in range(16):
@@ -292,8 +292,8 @@ def test_fftshift_centres_fftfreq() raises:
 
 
 def test_fftshift_and_ifftshift_differ_at_odd_n() raises:
-    """NumPy: `fftshift(arange(7)) == [4, 5, 6, 0, 1, 2, 3]` while
-    `ifftshift(arange(7)) == [3, 4, 5, 6, 0, 1, 2]`. The two rotations
+    """NumPy: `fftshift(arange_n(7)) == [4, 5, 6, 0, 1, 2, 3]` while
+    `ifftshift(arange_n(7)) == [3, 4, 5, 6, 0, 1, 2]`. The two rotations
     coincide only for even `n`, which is why both names exist."""
     var ramp: List[Float64] = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     var shifted = fftshift(_from[7](ramp)).to_host()
@@ -306,7 +306,7 @@ def test_fftshift_and_ifftshift_differ_at_odd_n() raises:
 
 
 def test_fft2_matches_numpy() raises:
-    """`numpy.fft.fft2(arange(16).reshape(4, 4) * 0.5 - 3)`, every
+    """`numpy.fft.fft2(arange_n(16).reshape(4, 4) * 0.5 - 3)`, every
     entry."""
     var ctx = _cpu()
     var out = fft2((_matrix[4, 4](_image()), zeros[dtype, 4, 4](ctx)))
@@ -653,7 +653,7 @@ def test_rfft_and_irfft_round_trip_at_an_odd_length() raises:
 
 
 def test_fft2_at_non_power_of_two_extents_matches_numpy() raises:
-    """`numpy.fft.fft2(arange(18).reshape(3, 6) * 0.5 - 2)`: both axes
+    """`numpy.fft.fft2(arange_n(18).reshape(3, 6) * 0.5 - 2)`: both axes
     take the Bluestein path, one of them through the transposed view."""
     var ctx = _cpu()
     var values = List[Float64]()

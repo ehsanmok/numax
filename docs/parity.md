@@ -523,7 +523,7 @@ reporting.
 | `eig` as one name | **Out.** `eigvals` returns the spectrum and `schur` the invariant subspaces; a combined `eig` would have to return non-orthogonal eigenvectors, which is the numerically worst of the three and the one LAPACK warns about. |
 | `broadcast_arrays` | **Out**, recorded above: it returns a tuple of tensors and Mojo 1.0 cannot destructure one. |
 | `vdot` | **Out**, recorded above: `dot` is the real case and there is no complex `Tensor`. |
-| `fromfunction` | **Out.** `numax.core.functional.map` over `arange` is the same thing with the kernel visible. |
+| `fromfunction` | **Out.** `numax.core.functional.map` over `arange_n` is the same thing with the kernel visible. |
 
 **SciPy.**
 

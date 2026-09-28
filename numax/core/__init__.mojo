@@ -40,6 +40,7 @@ from .tensor import (
     Static,
     Tensor,
     arange,
+    arange_n,
     array_split,
     atleast_3d,
     broadcast_shapes,

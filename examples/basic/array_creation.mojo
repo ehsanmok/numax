@@ -16,7 +16,7 @@ three manipulation gaps this module fills.
 
 from max.gpu.host import DeviceContext
 from numax.core.tensor import (
-    arange,
+    arange_n,
     concatenate,
     eye,
     full,
@@ -116,10 +116,10 @@ def main() raises:
     print("stack(a, b) row 0:", sv[0, 0], sv[0, 1], sv[0, 2])
     print("stack(a, b) row 1:", sv[1, 0], sv[1, 1], sv[1, 2])
 
-    # Shape manipulation: arange -> reshape -> ravel round-trips, and
+    # Shape manipulation: arange_n -> reshape -> ravel round-trips, and
     # concatenate/split are inverses of each other.
-    var r = arange[6, dtype](ctx=ctx)
-    print("arange(6):", r[0], r[1], r[2], r[3], r[4], r[5])
+    var r = arange_n[6, dtype](ctx=ctx)
+    print("arange_n(6):", r[0], r[1], r[2], r[3], r[4], r[5])
 
     var grid = reshape[rows=2, cols=3](r)
     var gv = grid.tile()
@@ -140,8 +140,8 @@ def main() raises:
         "ravel(2x3 -> 6):", back[0], back[1], back[2], back[3], back[4], back[5]
     )
 
-    var left = arange[3, dtype](ctx=ctx)
-    var right = arange[2, dtype](100, ctx=ctx)
+    var left = arange_n[3, dtype](ctx=ctx)
+    var right = arange_n[2, dtype](100, ctx=ctx)
     var joined = concatenate(left, right)
     print(
         "concatenate([0,1,2], [100,101]):",
