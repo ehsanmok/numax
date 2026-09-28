@@ -3,7 +3,7 @@ system's sensitivity from the same factorization.
 
 A batch of small dense solves is the shape a `Tensor` kernel cannot
 express: `solve` over a 4x4 is a handful of flops against a launch and two
-allocations, so doing it 4096 times means 4096 launches. `numax.linalg.array`
+allocations, so doing it 4096 times means 4096 launches. `numax.linalg`'s `Array` tier
 already has the answer for one problem -- a register-resident,
 `FloatLike`-generic `cholesky` that fits inside a GPU thread -- and
 `numax.core.functional.map_blocks` is what hands it a whole batch: `step`
@@ -48,7 +48,7 @@ anywhere).
 from max.gpu.host import DeviceContext
 
 from numax.core.functional import map_blocks
-from numax.linalg.array import cholesky, cholesky_solve
+from numax.linalg import cholesky, cholesky_solve
 from numax.prelude import *
 
 comptime dtype = f32

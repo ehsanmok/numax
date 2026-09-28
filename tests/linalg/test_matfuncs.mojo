@@ -27,9 +27,9 @@ from max.gpu.host import DeviceContext
 from numax import Dual, FloatLike, Plain
 from numax.core.tensor import Static
 from numax.linalg import expm, matmul
-from numax.linalg.array import expm as array_expm
-from numax.linalg.array import matmul as array_matmul
-from numax.linalg.array import sqrtm
+from numax.linalg import expm
+from numax.linalg import matmul
+from numax.linalg import sqrtm
 
 comptime dtype = DType.float64
 comptime P = Plain[DType.float64, 1]
@@ -164,7 +164,7 @@ def test_array_expm_agrees_with_the_tensor_tier() raises:
     var aa = Array[Float64, 9](fill=0.0)
     for i in range(9):
         aa[i] = values[i]
-    var got = array_expm[P, 3](_as_array[9](aa))
+    var got = expm[P, 3](_as_array[9](aa))
 
     for i in range(9):
         assert_almost_equal(got[i].v, Float64(want[i]), atol=1e-10)
@@ -177,7 +177,7 @@ def test_array_expm_of_the_rotation_generator() raises:
     aa[1] = -t
     aa[2] = t
     aa[3] = 0.0
-    var got = array_expm[P, 2](_as_array[4](aa))
+    var got = expm[P, 2](_as_array[4](aa))
     assert_almost_equal(got[0].v, cos_f64(t), atol=1e-13)
     assert_almost_equal(got[1].v, -sin_f64(t), atol=1e-13)
 
@@ -202,7 +202,7 @@ def test_expm_differentiates_at_dual() raises:
     var t = D(P.constant(1.0), P.one())
     for i in range(4):
         seeded[i] = t * D(P.constant(base[i]), P.constant(0.0))
-    var differentiated = array_expm[D, 2](seeded^)
+    var differentiated = expm[D, 2](seeded^)
 
     # For this `N`, `expm(t N) = I + t N`, so d/dt at the (0,1) entry is 1.
     assert_almost_equal(differentiated[1].value.v, 1.0, atol=1e-12)
@@ -216,8 +216,8 @@ def test_expm_differentiates_at_dual() raises:
     for i in range(4):
         plus[i] = (1.0 + h) * base[i]
         minus[i] = (1.0 - h) * base[i]
-    var up = array_expm[P, 2](_as_array[4](plus))
-    var down = array_expm[P, 2](_as_array[4](minus))
+    var up = expm[P, 2](_as_array[4](plus))
+    var down = expm[P, 2](_as_array[4](minus))
     var difference = (up[1].v - down[1].v) / (2 * h)
     assert_almost_equal(differentiated[1].deriv.v, difference, atol=1e-6)
 
@@ -233,7 +233,7 @@ def test_sqrtm_squares_back_to_the_matrix() raises:
     for i in range(9):
         values[i] = entries[i]
     var root = sqrtm[P, 3](_as_array[9](values))
-    var squared = array_matmul[P, 3](root, root)
+    var squared = matmul[P, 3](root, root)
     for i in range(9):
         assert_almost_equal(squared[i].v, entries[i], atol=1e-8)
 

@@ -26,7 +26,7 @@ from std.sys.info import simd_width_of
 from std.time import perf_counter_ns
 
 from numax import Plain
-from numax.linalg.array import matmul as numax_matmul
+from numax.linalg import matmul
 
 comptime dtype = DType.float32
 comptime width = simd_width_of[dtype]()
@@ -63,11 +63,11 @@ def run[n: Int](timed_iters: Int) raises:
     var ea_wide = _numax_operands[n, width](0)
     var eb_wide = _numax_operands[n, width](1)
 
-    var ec = numax_matmul[Plain[dtype], n](ea, eb)
+    var ec = matmul[Plain[dtype], n](ea, eb)
     for _ in range(warmup_iters):
         max_matmul[target="cpu"](c, a, b)
-        _ = numax_matmul[Plain[dtype], n](ea, eb)
-        _ = numax_matmul[Plain[dtype, width], n](ea_wide, eb_wide)
+        _ = matmul[Plain[dtype], n](ea, eb)
+        _ = matmul[Plain[dtype, width], n](ea_wide, eb_wide)
 
     var t0 = perf_counter_ns()
     for _ in range(timed_iters):
@@ -76,12 +76,12 @@ def run[n: Int](timed_iters: Int) raises:
 
     t0 = perf_counter_ns()
     for _ in range(timed_iters):
-        _ = numax_matmul[Plain[dtype], n](ea, eb)
+        _ = matmul[Plain[dtype], n](ea, eb)
     var scalar_ns = Float64(perf_counter_ns() - t0) / Float64(timed_iters)
 
     t0 = perf_counter_ns()
     for _ in range(timed_iters):
-        _ = numax_matmul[Plain[dtype, width], n](ea_wide, eb_wide)
+        _ = matmul[Plain[dtype, width], n](ea_wide, eb_wide)
     var batched_ns = (
         Float64(perf_counter_ns() - t0) / Float64(timed_iters) / Float64(width)
     )

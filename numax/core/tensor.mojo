@@ -4876,7 +4876,7 @@ def to_tensor[
     A forward-mode pass over the `Array` tier produces both halves at once
     and there is no reason to throw one away, so the pair is the return
     value rather than two calls: factor a seeded matrix with
-    `numax.linalg.array.cholesky` at `Dual[Plain[dtype]]` and this lowers
+    `numax.linalg.cholesky` at `Dual[Plain[dtype]]` and this lowers
     the factor and `d(factor)/dt` in the seeded direction together.
 
     One value rather than two `mut` destinations, the shape

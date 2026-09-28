@@ -47,8 +47,8 @@ Dependencies run one way: `core` depends on nothing else in `numax`, every
 other subpackage depends on `core`, and the few cross-subpackage edges are
 deliberate (`stats` uses `special`'s incomplete gamma and beta,
 `integrate` uses `special`'s Legendre roots and `optimize`'s Newton solver,
-`interpolate`'s `Array` tier uses `linalg.array`'s tridiagonal solve and `interpolate`'s `Tensor` splines use `linalg.banded`'s `solve_banded` and its `Chebyshev.fit` uses `linalg.qr`'s `lstsq`, and `optimize` uses
-`linalg.array`'s Cholesky for the damped normal equations a least-squares
+`interpolate`'s `Array` tier uses `linalg`'s `Array` tier's tridiagonal solve and `interpolate`'s `Tensor` splines use `linalg.banded`'s `solve_banded` and its `Chebyshev.fit` uses `linalg.qr`'s `lstsq`, and `optimize` uses
+`linalg`'s `Array` tier's Cholesky for the damped normal equations a least-squares
 step solves -- both take the `Array` tier because both are called from
 tier-1 kernels). The fifth is newer and runs the other way: `linalg` uses
 `fft` for `solve_circulant`, since a circulant matrix is diagonalized by the
@@ -309,7 +309,7 @@ survey of what MAX does ship.
   `hessenberg`, `eigvals`, `schur` and the matrix functions on the Schur
   form -- are here too, their reductions blocked through the same GEMM and
   their band iterations on the host, tier 2 and declared.
-  `numax.linalg.array` is the `Array[T, n*n]` tier — the same operations
+  `numax.linalg`'s `Array` tier is the `Array[T, n*n]` tier — the same operations
   `FloatLike`-generic and register-resident, where the point is
   differentiability rather than speed: MAX's kernels are monomorphic in a
   raw `dtype`, so no `Dual` passes through them. The flat surface exports the `Tensor` tier only, so a

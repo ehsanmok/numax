@@ -4,7 +4,7 @@
 **The `Tensor` tier.** MAX ships no Cholesky at any size -- its only
 factorization is `qr_factorization`, on the older `LayoutTensor`, which
 numax denies rather than bridges -- so this is numax's, as is the
-`FloatLike`-generic tier in `numax.linalg.array.cholesky`.
+`FloatLike`-generic tier in `numax.linalg.cholesky`.
 
 `cholesky` here is right-looking and blocked: each step factors
 one `block x block` diagonal panel, solves the panel below it, then
@@ -41,6 +41,10 @@ from .triangular import (
     _solve_triangular_vector,
     solve_triangular,
 )
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.cholesky import cholesky as _array_cholesky
+from ._array.cholesky import cholesky_solve as _array_cholesky_solve
 
 
 def cholesky[
@@ -406,3 +410,19 @@ def cholesky_solve[
     return _solve_triangular_matrix[
         upper=True, unit=False, trans=True, gpu=gpu, block=block
     ](lower, y)
+
+
+def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.cholesky.cholesky`."""
+    return _array_cholesky[T=T, n=n](a)
+
+
+def cholesky_solve[
+    T: FloatLike, n: Int
+](lower: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.cholesky.cholesky_solve`."""
+    return _array_cholesky_solve[T=T, n=n](lower, b)

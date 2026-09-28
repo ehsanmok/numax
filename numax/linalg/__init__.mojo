@@ -4,7 +4,11 @@
 from numax.linalg import cholesky, qr_factor, solve, det, norm, matmul
 ```
 
-Every name here takes a `Tensor` and runs where that tensor lives.
+Every name here takes a `Tensor` and runs where that tensor lives, and
+the names the register tier shares -- `cholesky`, `solve`, `eigh`, `svd`,
+`matmul` and 26 more -- also take an `Array[T, n * n]` of `FloatLike`
+values, through a second overload that forwards to the private
+`_array/` package.
 `matmul`, `matvec` and `batched_matmul` are MAX kernels over `TileTensor`,
 so they inherit its whole dispatch tree -- Apple, NVIDIA, AMD, vendor
 BLAS -- without numax naming an architecture. `cholesky`, `lu_factor`,
@@ -13,12 +17,12 @@ factorization on `TileTensor` at all, so numax writes them blocked and
 sends the cubic term back through `matmul`. This tier is
 `dtype`-monomorphic.
 
-The `FloatLike`-generic, register-resident half of the library is
-`numax.linalg.array`, one import away and covering names this surface does
-not have at all -- `eigh`, `eigvals`, `svd`, `qr` as a pair of factors,
-`pinv`, `cond`, the substitutions, `tridiagonal_solve`. That
-subpackage's docstring says why it exists and what the split costs;
-`to_tensor`/`to_array` cross between the two.
+The `FloatLike`-generic, register-resident half is exported from here
+too: its shared names as those overloads, and its own -- `lu` and `qr` as
+factor pairs, `PivotedLU`, `forward_substitution`/`back_substitution`,
+`tridiagonal_solve`, `slogdet_cholesky` -- directly. It differentiates at
+`Dual` and runs per SIMD lane inside a kernel; `to_tensor`/`to_array`
+cross between the two.
 
 ## Layout
 
@@ -42,10 +46,10 @@ modules matter when reading or extending.
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
-`common` holds the private helpers and exports nothing. `array/` mirrors
-this split for the other tier, so `array.cholesky` is the `Array`
-`cholesky` and this `cholesky` is the `Tensor` one -- a name is defined
-once per tier and never twice within one.
+`common` holds the private helpers and exports nothing. `_array/`
+mirrors this split for the register tier, and each shared name's `Array`
+overload sits beside its `Tensor` definition here, so a name is defined
+in one public module however many tiers it covers.
 
 ## What is here
 
@@ -184,7 +188,7 @@ tuple unpacking wants `ImplicitlyCopyable` -- so a tuple-shaped overload
 would hand back a pair no caller could take apart. `QR.r()` and
 `.q()` materialize either factor and `.apply_q_transpose`/`.solve` skip
 `Q` entirely, which is LAPACK's split and the more useful surface anyway.
-`numax.linalg.array.qr` is the tuple-returning one.
+`numax.linalg.qr` is the tuple-returning one.
 """
 
 from .banded import (
@@ -272,3 +276,12 @@ from .special_matrices import (
     toeplitz,
 )
 from .triangular import solve_triangular
+from ._array import (
+    PivotedLU,
+    back_substitution,
+    forward_substitution,
+    lu,
+    qr,
+    slogdet_cholesky,
+    tridiagonal_solve,
+)

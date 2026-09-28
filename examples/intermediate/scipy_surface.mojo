@@ -228,7 +228,7 @@ def main() raises:
 
     # eigvalsh / svdvals / sqrtm over `Tensor`, so the first parameter is
     # a `DType` and the argument is a device-resident matrix. Same SciPy
-    # names, and `numax.linalg.array` has the same three for the conformer
+    # names, and `numax.linalg`'s `Array` tier has the same three for the conformer
     # tier one import away.
     var symmetric = Static[dtype, 3, 3](
         [4.0, -1.0, -1.0, -1.0, 4.0, -1.0, -1.0, -1.0, 3.0], ctx

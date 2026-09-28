@@ -40,8 +40,8 @@ from numax.linalg.eigen import (
     _top_n_descending,
 )
 from numax.linalg.basic import null_space, orth, polar
-from numax.linalg.array import eigvalsh as array_eigvalsh
-from numax.linalg.array import svdvals as array_svdvals
+from numax.linalg import eigvalsh
+from numax.linalg import svdvals
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype, 1]
@@ -475,7 +475,7 @@ def test_eigvalsh_agrees_with_the_array_tier_as_a_multiset() raises:
     var lifted = to_array[P](a)
 
     var here = eigvalsh(a).to_host()
-    var there = array_eigvalsh[P, n, sweeps=20](lifted)
+    var there = eigvalsh[P, n, sweeps=20](lifted)
     var there_sorted = List[Float64](capacity=n)
     for i in range(n):
         there_sorted.append(Float64(there[i].v[0]))
@@ -1077,7 +1077,7 @@ def test_svdvals_agrees_with_the_array_tier_as_a_multiset() raises:
     var a = _hilbert[n]()
     var lifted = to_array[P](a)
     var here = svdvals(a).to_host()
-    var there = array_svdvals[P, n, sweeps=20](lifted)
+    var there = svdvals[P, n, sweeps=20](lifted)
     var there_sorted = List[Float64](capacity=n)
     for i in range(n):
         there_sorted.append(Float64(there[i].v[0]))

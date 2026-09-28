@@ -28,7 +28,7 @@ MAX ships nothing to delegate to here. There is no eigensolver, no SVD, no
 denied twice over. So everything here is an **extend**, written in MAX's
 idiom.
 
-`numax.linalg.array.eigen` is the `FloatLike`-generic sibling, one import
+`numax.linalg.eigen` is the `FloatLike`-generic sibling, one import
 away: cyclic Jacobi at a fixed sweep count, square matrices small enough to
 live in registers, differentiable and GPU-launchable in a way this tier
 cannot be. This tier is for the sizes that one cannot reach.
@@ -65,6 +65,16 @@ from .panel import (
     sytd2_column,
 )
 from .qr import _apply_block_reflector, _MIN_GEMM_COLS, _ReflectorWork
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.eigen import eigh as _array_eigh
+from ..core.complex import Complex
+from ._array.eigen import eigvals as _array_eigvals
+from ._array.eigen import eigvalsh as _array_eigvalsh
+from ._array.eigen import hessenberg as _array_hessenberg
+from ._array.eigen import matrix_rank as _array_matrix_rank
+from ._array.eigen import svd as _array_svd
+from ._array.eigen import svdvals as _array_svdvals
 
 
 struct Tridiagonal[dtype: DType, n: Int, gpu: Bool = False](
@@ -218,7 +228,7 @@ def sytrd[
     which is all GEMM, then banded to tridiagonal by a bulge chase. That
     is a different algorithm and it is not in 0.2.
 
-    `numax.linalg.array.eigh` is the small-matrix route and needs none of
+    `numax.linalg.eigh` is the small-matrix route and needs none of
     this: cyclic Jacobi at a fixed sweep count, differentiable, and
     launchable inside a GPU thread.
     """
@@ -1044,7 +1054,7 @@ struct Eigh[dtype: DType, n: Int](
     A struct rather than the `(w, v)` tuple SciPy returns, for the reason
     `qr_factor` returns a `QR`: a `Tuple` of two `Tensor`s cannot be
     destructured in Mojo 1.0, so a tuple-shaped return would hand back a
-    pair no caller could take apart. `numax.linalg.array.eigh` returns the
+    pair no caller could take apart. `numax.linalg.eigh` returns the
     tuple because `Array` copies.
     """
 
@@ -1433,7 +1443,7 @@ def hessenberg[
     BLAS-2 for the same reason. Closing it needs a two-stage reduction,
     not a wider panel.
 
-    `numax.linalg.array.hessenberg` is the `FloatLike`-generic sibling for
+    `numax.linalg.hessenberg` is the `FloatLike`-generic sibling for
     matrices small enough to live in registers.
     """
     comptime n = dim[T, 0]
@@ -1901,7 +1911,7 @@ struct Eigenvalues[dtype: DType, n: Int](
     """`eigvals`'s result: the spectrum as a real and an imaginary tensor.
 
     A `dtype`-monomorphic `Tensor` cannot hold a `Complex`, the constraint
-    `numax.fft`'s `Spectrum` answers the same way; `numax.linalg.array.eigvals`
+    `numax.fft`'s `Spectrum` answers the same way; `numax.linalg.eigvals`
     returns `Array[Complex[T], n]` because `Array` can. A complex pair sits
     in consecutive slots, positive imaginary part first, and a real
     eigenvalue has `im == 0` exactly.
@@ -1949,7 +1959,7 @@ def eigvals[
 
     Eigenvalues come out in LAPACK's deflation order, not sorted; a
     complex pair is adjacent with the positive imaginary part first.
-    `numax.linalg.array.eigvals` is the fixed-sweep, differentiable
+    `numax.linalg.eigvals` is the fixed-sweep, differentiable
     sibling for matrices small enough to live in registers.
 
     `block` is the reduction's `lahr2` panel width, the one thing here it
@@ -3231,3 +3241,64 @@ def matrix_rank[
         if Float64(s[i]) > threshold:
             rank += 1
     return rank
+
+
+def eigh[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Tuple[Array[T, n], Array[T, n * n]]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.eigh`."""
+    return _array_eigh[T=T, n=n, sweeps=sweeps](a)
+
+
+def eigvals[
+    T: FloatLike, n: Int, sweeps: Int = 100, tol: Float64 = 1e-8
+](a: Array[T, n * n]) -> Array[Complex[T], n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.eigvals`."""
+    return _array_eigvals[T=T, n=n, sweeps=sweeps, tol=tol](a)
+
+
+def eigvalsh[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.eigvalsh`."""
+    return _array_eigvalsh[T=T, n=n, sweeps=sweeps](a)
+
+
+def hessenberg[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.hessenberg`."""
+    return _array_hessenberg[T=T, n=n](a)
+
+
+def matrix_rank[
+    T: FloatLike, n: Int, sweeps: Int = 12, rcond: Float64 = 1e-12
+](a: Array[T, n * n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.matrix_rank`."""
+    return _array_matrix_rank[T=T, n=n, sweeps=sweeps, rcond=rcond](a)
+
+
+def svd[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Tuple[Array[T, n * n], Array[T, n], Array[T, n * n]]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.svd`."""
+    return _array_svd[T=T, n=n, sweeps=sweeps](a)
+
+
+def svdvals[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.eigen.svdvals`."""
+    return _array_svdvals[T=T, n=n, sweeps=sweeps](a)

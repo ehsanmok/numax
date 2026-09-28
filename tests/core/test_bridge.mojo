@@ -36,9 +36,9 @@ from numax.core.tensor import (
     zeros,
     zeros_dyn,
 )
-from numax.linalg.array import cholesky, det
+from numax.linalg import cholesky, det
 from numax.core.functional import map_strided
-from numax.linalg.array import matmul as numax_matmul
+from numax.linalg import matmul
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]
@@ -268,7 +268,7 @@ def test_one_matrix_multiplied_through_both_layers_agrees() raises:
     ctx.synchronize()
 
     var through_numax = to_tensor[dtype, 2, 2](
-        numax_matmul[P, 2](to_array[P](a), to_array[P](b)), ctx
+        matmul[P, 2](to_array[P](a), to_array[P](b)), ctx
     )
     for i in range(4):
         assert_almost_equal(through_numax[i], through_max[i])

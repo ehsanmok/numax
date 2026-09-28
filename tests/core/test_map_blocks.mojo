@@ -25,7 +25,7 @@ from numax.core.tensor import Static
 from numax.core.dual import Dual
 from numax.core.plain import Plain
 from numax.core.functional import map_blocks
-from numax.linalg.array import solve
+from numax.linalg import solve
 
 comptime dtype = DType.float64
 comptime batch = 1003
@@ -190,7 +190,7 @@ def test_a_block_sum_equals_a_host_loop() raises:
 
 
 def test_one_array_tier_solve_per_lane_matches_the_host_solve() raises:
-    """The claim the primitive exists for: `numax.linalg.array.solve` runs
+    """The claim the primitive exists for: `numax.linalg.solve` runs
     inside the lane, and agrees with the same `solve` called once per
     problem on the host."""
     var ctx = DeviceContext(api="cpu")

@@ -20,9 +20,9 @@ from max.gpu.host import DeviceContext
 from numax import FloatLike, Plain
 from numax.core.tensor import Static, transpose
 from numax.linalg import inner, kron, matmul, matrix_power
-from numax.linalg.array import inner as array_inner
-from numax.linalg.array import kron as array_kron
-from numax.linalg.array import matrix_power as array_matrix_power
+from numax.linalg import inner
+from numax.linalg import kron
+from numax.linalg import matrix_power
 
 comptime dtype = DType.float64
 comptime P = Plain[DType.float64, 1]
@@ -97,7 +97,7 @@ def test_array_inner_agrees_with_the_tensor_tier() raises:
     for i in range(9):
         bb[i] = P.constant(bvalues[i])
 
-    var got = array_inner[P, 3](aa, bb)
+    var got = inner[P, 3](aa, bb)
     for i in range(9):
         assert_almost_equal(got[i].v, Float64(want[i]), atol=1e-12)
 
@@ -155,7 +155,7 @@ def test_array_kron_agrees_with_the_tensor_tier() raises:
         aa[i] = P.constant(av[i])
         bb[i] = P.constant(bv[i])
 
-    var got = array_kron[P, 2, 2](aa, bb)
+    var got = kron[P, 2, 2](aa, bb)
     for i in range(16):
         assert_almost_equal(got[i].v, Float64(want[i]), atol=1e-12)
 
@@ -226,7 +226,7 @@ def test_array_matrix_power_agrees_with_the_tensor_tier() raises:
     for i in range(9):
         aa[i] = P.constant(av[i])
 
-    var got = array_matrix_power[P, 3, 5](aa)
+    var got = matrix_power[P, 3, 5](aa)
     for i in range(9):
         assert_almost_equal(got[i].v, Float64(want[i]), atol=1e-9)
 

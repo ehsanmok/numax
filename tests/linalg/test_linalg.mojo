@@ -17,7 +17,7 @@ from std.testing import (
 
 from numax import Compensated, Dual, FloatLike, Plain
 from numax.linalg import NORM_FRO, NORM_INF
-from numax.linalg.array import (
+from numax.linalg import (
     asum,
     axpy,
     back_substitution,

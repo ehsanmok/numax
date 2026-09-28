@@ -75,7 +75,7 @@ from ...core.dual import Dual
 from ...core.gradient import Gradient
 from ...core.numeric import FloatLike
 from ...core.plain import Plain
-from ...linalg.array.cholesky import cholesky, cholesky_solve
+from ...linalg._array.cholesky import cholesky, cholesky_solve
 
 # Every driver takes `dtype`, `float64` by default. At a narrower dtype the
 # default tolerances are raised to what that dtype can resolve -- four ulps

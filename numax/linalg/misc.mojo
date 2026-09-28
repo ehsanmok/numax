@@ -5,7 +5,7 @@
 reductions -- `ReduceSum` under the `rowwise` scaffolder for the folds,
 `elementwise` for the magnitudes and the diagonal gather -- so they thread
 on CPU and tier on GPU, and only the scalar comes back.
-`numax.linalg.array.misc` has the tier-1 loops of the same two names, and
+`numax.linalg.misc` has the tier-1 loops of the same two names, and
 `cond`, which stays `Array`-only because `svd` does.
 
 MAX ships no norm of any kind and no `trace`, so what is delegated is the
@@ -34,6 +34,11 @@ from ..core.rowwise import max_axis, reduce_all, sum_axis
 
 from .blas import _target, asum as _asum, nrm2 as _nrm2
 from .eigen import svdvals
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.misc import cond as _array_cond
+from ._array.misc import norm as _array_norm
+from ._array.misc import trace as _array_trace
 
 
 comptime NORM_FRO = 0
@@ -350,3 +355,26 @@ def cond[
     comptime n = dim[T, 1]
     var s = svdvals[gpu=gpu](a).to_host()
     return s[0] / s[n - 1]
+
+
+def cond[T: FloatLike, n: Int, sweeps: Int = 12](a: Array[T, n * n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.misc.cond`."""
+    return _array_cond[T=T, n=n, sweeps=sweeps](a)
+
+
+def norm[
+    T: FloatLike, n: Int, ord: Int = NORM_FRO
+](a: Array[T, n * n]) -> T where ord == NORM_FRO or ord == 1 or ord == NORM_INF:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.misc.norm`."""
+    return _array_norm[T=T, n=n, ord=ord](a)
+
+
+def trace[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.misc.trace`."""
+    return _array_trace[T=T, n=n](a)

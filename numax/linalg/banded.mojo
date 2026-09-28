@@ -5,7 +5,7 @@ family.
 are host-side.** A banded elimination has no `O(n^3)` term: its work is
 `O(n * bandwidth^2)`, spread over `n` sequential column steps that each
 touch a `bandwidth x bandwidth` corner. There is no GEMM to hand anything
-to, which is the same reason `numax.linalg.array.tridiagonal_solve` stays
+to, which is the same reason `numax.linalg.tridiagonal_solve` stays
 where it is. So this is an **entry surface** -- it adds names a SciPy user
 reaches for and a shape numax could not express, not a faster path to an
 answer numax already had.

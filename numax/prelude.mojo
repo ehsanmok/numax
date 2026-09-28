@@ -268,7 +268,7 @@ from .special.logsumexp import logsumexp
 from .special.beta import beta, betaln
 
 # Dense linear algebra over `Tensor`. The `Array` tier is
-# `numax.linalg.array` and shares these names, so it stays out of the
+# `numax.linalg`'s `Array` tier and shares these names, so it stays out of the
 # prelude for the same reason the builtin-shadowing reductions do.
 from .linalg import (
     Polar,

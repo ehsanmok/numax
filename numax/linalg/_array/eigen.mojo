@@ -87,7 +87,7 @@ def hessenberg[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     on) does not have to redo it.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.hessenberg: n is past the 64 the register tier"
+        "numax.linalg.hessenberg: n is past the 64 the register tier"
         " compiles in reasonable time; use numax.linalg.hessenberg over a"
         " Tensor"
     )
@@ -278,7 +278,7 @@ def eigvals[
     No MAX equivalent exists at any size -- MAX ships no eigensolver.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.eigvals: n is past the 64 the register tier"
+        "numax.linalg.eigvals: n is past the 64 the register tier"
         " compiles in reasonable time; use numax.linalg.eigvals over a Tensor"
     )
     var h = hessenberg[T, n](a)
@@ -346,7 +346,7 @@ def eigh[
     `eigh`.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.eigh: n is past the 64 the register tier compiles"
+        "numax.linalg.eigh: n is past the 64 the register tier compiles"
         " in reasonable time; use numax.linalg.eigh over a Tensor"
     )
     # `work` is driven toward diagonal; `vectors` accumulates the rotations.
@@ -418,7 +418,7 @@ def svd[
     yet, and doing it half-way would be worse than not doing it.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.svd: n is past the 64 the register tier compiles"
+        "numax.linalg.svd: n is past the 64 the register tier compiles"
         " in reasonable time; use numax.linalg.svd over a Tensor"
     )
     # Columns of `work` get orthogonalized; `v` accumulates the rotations.

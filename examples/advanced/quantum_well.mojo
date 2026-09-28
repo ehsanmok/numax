@@ -4,7 +4,7 @@ function -- and all four again, one well per GPU thread.
 `-psi''/2 + w^2 x^2 psi / 2 = E psi`, in units where `hbar = m = 1` so that
 `E0 = w/2`, is a symmetric tridiagonal eigenproblem on a grid of `n` points, so
 `ground_energy` builds the matrix and takes the lowest eigenvalue of
-`numax.linalg.array.eigh`. It is written once against
+`numax.linalg.eigh`. It is written once against
 `FloatLike` and never mentions a dtype, a device, or a derivative rule, which
 is what lets the same function answer four different questions here:
 
@@ -49,7 +49,7 @@ from max.gpu.host import DeviceContext
 
 from numax.core.numeric import min_of
 from numax.core.functional import map
-from numax.linalg.array import eigh
+from numax.linalg import eigh
 from numax.optimize import newton
 from numax.prelude import *
 

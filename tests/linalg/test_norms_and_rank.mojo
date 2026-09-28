@@ -27,7 +27,7 @@ from max.gpu.host import DeviceContext
 from numax import Plain
 from numax.core.tensor import Static
 from numax.linalg import NORM_INF, NORM_NEG_INF, norm, nrm2
-from numax.linalg.array import eigh, eigvalsh, matrix_rank, svd, svdvals
+from numax.linalg import eigh, eigvalsh, matrix_rank, svd, svdvals
 
 comptime dtype = DType.float64
 comptime P = Plain[DType.float64, 1]

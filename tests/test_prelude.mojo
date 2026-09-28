@@ -5,8 +5,7 @@ promises -- one call per subsystem, which fails to compile if a name is
 missing from the prelude. And that the star-import does *not* take the
 builtins with it: `min`, `max`, `sum`, `abs`, `all`, `any` and `round` must
 still mean what Mojo means by them in a file that wrote
-`from numax.prelude import *
-from numax.linalg.array import det as array_det`, which is why the tensor reductions of those
+`from numax.prelude import *`, which is why the tensor reductions of those
 names are deliberately left out.
 """
 
@@ -18,7 +17,7 @@ from std.testing import (
 )
 
 from numax.prelude import *
-from numax.linalg.array import det as array_det
+from numax.linalg import det
 
 comptime dtype = DType.float64
 comptime P = Plain[dtype]
@@ -70,7 +69,7 @@ def test_linalg_and_the_bridge_are_reachable() raises:
     )
 
     var lifted = to_array[P](i3)
-    assert_almost_equal(array_det[P, 3](lifted).v, Scalar[dtype](1.0))
+    assert_almost_equal(det[P, 3](lifted).v, Scalar[dtype](1.0))
 
 
 def test_the_norm_selectors_are_reachable() raises:

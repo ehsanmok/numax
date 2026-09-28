@@ -42,7 +42,7 @@ from numax.linalg import (
     pascal,
     toeplitz,
 )
-from numax.linalg.array import eigvals
+from numax.linalg import eigvals
 from numax.signal import convolve
 
 comptime dtype = DType.float64

@@ -90,7 +90,7 @@ root package re-exports all of them, so both spellings work:
 from numax.prelude import *                # the common surface, one line
 from numax import Dual, cholesky, quad     # flat, everything in one place
 from numax.linalg import cholesky          # or by subsystem
-from numax.linalg.array import cholesky    # ... or by tier
+from numax.linalg import cholesky
 ```
 
 `numax.prelude` leaves out the names that would shadow a Mojo builtin
@@ -102,7 +102,7 @@ reach them.
 |---|---|
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows`/`map_blocks` -- is `numax.core.functional`. The NumPy-named surface shares one launch policy rather than one per routine: a private launcher picks `max.algorithm.elementwise` on a device, a threaded walk on a large host tensor and a serial SIMD loop on a small one, and because `elementwise` takes a run-time extent a `Dynamic` reaches the GPU there |
 | `numax.special` | Γ and B with their incomplete forms, `erf`/`erfc`/`erfinv`/`erfcinv`, Bessel at integer (`j0`...`y1`) and arbitrary order (`jv`/`yv`/`iv`/`kv`, `spherical_jn`/`spherical_yn`), Airy, Struve, the exponential integrals `expi`/`exp1`/`expn`, `sici`/`fresnel`, `zeta`, `hyp1f1`/`hyp2f1`, Owen's T, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, `factorial`/`comb`/`perm`/`poch`, the information-theoretic `xlogy`/`rel_entr`/`kl_div`/`entr`, activations, and `logsumexp` over `Tensor` through MAX's `OnlineLogSumExp` monoid. Every one is tier 1: fixed iteration, launchable inside a kernel, with its error bound checked by `pixi run accuracy` |
-| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner`/`tensordot`/`cross` are MAX kernels or one GEMM each, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace`/`tensorsolve`/`tensorinv` build on those. The spectral decompositions are here too: `sytrd`, `eigvalsh`/`eigh`, `svdvals`/`svd` (rectangular, sorted) with `pinv`/`cond`/`matrix_rank` on top, `hessenberg`, `eigvals` (a real/imaginary pair), `schur`, and the matrix functions on the Schur form -- `expm`, `sqrtm`, `logm`, `funm`, `cosm`/`sinm`, `fractional_matrix_power`. `kron`/`matrix_power`, the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `pascal`, `hadamard`, `helmert`, `fiedler`, `leslie`, `block_diag`, `khatri_rao`, `convolution_matrix`, ...) and the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) sit beside them. `numax.linalg.array` is the `FloatLike`-generic tier, one import away because it shares these names -- the same factorizations, spectra and solves register-resident, where the point is differentiating through them |
+| `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner`/`tensordot`/`cross` are MAX kernels or one GEMM each, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace`/`tensorsolve`/`tensorinv` build on those. The spectral decompositions are here too: `sytrd`, `eigvalsh`/`eigh`, `svdvals`/`svd` (rectangular, sorted) with `pinv`/`cond`/`matrix_rank` on top, `hessenberg`, `eigvals` (a real/imaginary pair), `schur`, and the matrix functions on the Schur form -- `expm`, `sqrtm`, `logm`, `funm`, `cosm`/`sinm`, `fractional_matrix_power`. `kron`/`matrix_power`, the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `pascal`, `hadamard`, `helmert`, `fiedler`, `leslie`, `block_diag`, `khatri_rao`, `convolution_matrix`, ...) and the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) sit beside them. `numax.linalg`'s `Array` tier is the `FloatLike`-generic tier, one import away because it shares these names -- the same factorizations, spectra and solves register-resident, where the point is differentiating through them |
 | `numax.optimize` | `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, box bounds), `root`, `nnls`/`lsq_linear` and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize`'s `Array` tier is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
 | `numax.integrate` | `trapezoid`/`simpson`/`cumulative_trapezoid` over sampled `Tensor`s with `scipy.integrate`'s signatures; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively; `numax.integrate`'s `Array` tier is the `FloatLike` tier that integrates a function -- Gauss-Legendre, Simpson and trapezoid at a fixed node count, `rk4`/`dopri5` at a fixed step -- and differentiates at `Dual` |
 | `numax.interpolate` | `interp`, `horner`, and non-uniform cubic splines -- `CubicSpline` with SciPy's boundary conditions, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- over a `Tensor` of query points, any derivative order, `integrate`; the least-squares `Chebyshev.fit(x, y)` and `chebval`; 2-D `RegularGridInterpolator`; and, over `Array[T, n]`, the `FloatLike` tier's Horner, cubic splines and Chebyshev fits of a function, which differentiate at `Dual` |
@@ -115,7 +115,7 @@ reach them.
 
 **Tier 1** is everything with a fixed iteration count and no per-lane
 branching, and therefore launchable inside a GPU thread: the special
-functions, `numax.linalg.array`, the fixed-step algorithms. **Tier 2**
+functions, `numax.linalg`'s `Array` tier, the fixed-step algorithms. **Tier 2**
 is `numax.linalg`'s `Tensor` tier (host-orchestrated, though `gpu=True` still
 runs MAX's GPU kernels), `optimize`, the adaptive half of `integrate`,
 `sorting` and `io`: `Plain`-only, free to loop or branch on data. `ops`,
@@ -390,7 +390,7 @@ from .special.owens import owens_t
 from .special.struve import struve
 
 # Dense linear algebra over `Tensor` -- `numax.linalg`. The `Array` tier is
-# `numax.linalg.array` and shares these names, so it is not re-exported.
+# `numax.linalg`'s `Array` tier and shares these names, so it is not re-exported.
 from .linalg import (
     Polar,
     RQ,

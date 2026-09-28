@@ -1,7 +1,7 @@
 """Products and BLAS-1: `numpy.linalg`'s `matmul`/`dot`/`outer` and the
 level-1 routines `scipy.linalg.blas` wraps.
 
-**The `Tensor` tier.** `numax.linalg.array.blas` is the same names over
+**The `Tensor` tier.** `numax.linalg.blas` is the same names over
 `Array[T, n*n]`, `FloatLike`-generic and tier 1, which is what lets one
 call factor a matrix per SIMD lane inside a kernel; past roughly 8x8 this
 tier is the faster one and `docs/performance.md` has the crossover.
@@ -61,6 +61,18 @@ from ..core.tensor import (
     _dyn_shape,
     _dyn_shape_from,
 )
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.blas import asum as _array_asum
+from ._array.blas import axpy as _array_axpy
+from ._array.blas import dot as _array_dot
+from ._array.blas import inner as _array_inner
+from ._array.blas import kron as _array_kron
+from ._array.blas import matmul as _array_matmul
+from ._array.blas import matrix_power as _array_matrix_power
+from ._array.blas import matvec as _array_matvec
+from ._array.blas import nrm2 as _array_nrm2
+from ._array.blas import outer as _array_outer
 
 
 @always_inline
@@ -917,3 +929,87 @@ def tensordot[
         row_major(_dyn_shape_from[rank](extents)),
         c.on_host(),
     )
+
+
+def asum[T: FloatLike, n: Int](a: Array[T, n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.asum`."""
+    return _array_asum[T=T, n=n](a)
+
+
+def axpy[
+    T: FloatLike, n: Int
+](alpha: T, x: Array[T, n], y: Array[T, n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.axpy`."""
+    return _array_axpy[T=T, n=n](alpha, x, y)
+
+
+def dot[T: FloatLike, n: Int](a: Array[T, n], b: Array[T, n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.dot`."""
+    return _array_dot[T=T, n=n](a, b)
+
+
+def inner[
+    T: FloatLike, n: Int
+](a: Array[T, n * n], b: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.inner`."""
+    return _array_inner[T=T, n=n](a, b)
+
+
+def kron[
+    T: FloatLike, m: Int, n: Int
+](a: Array[T, m * m], b: Array[T, n * n]) -> Array[T, (m * n) * (m * n)]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.kron`."""
+    return _array_kron[T=T, m=m, n=n](a, b)
+
+
+def matmul[
+    T: FloatLike, n: Int
+](a: Array[T, n * n], b: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.matmul`."""
+    return _array_matmul[T=T, n=n](a, b)
+
+
+def matrix_power[
+    T: FloatLike, n: Int, power: Int
+](a: Array[T, n * n]) -> Array[T, n * n] where power >= 0:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.matrix_power`."""
+    return _array_matrix_power[T=T, n=n, power=power](a)
+
+
+def matvec[
+    T: FloatLike, n: Int
+](a: Array[T, n * n], x: Array[T, n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.matvec`."""
+    return _array_matvec[T=T, n=n](a, x)
+
+
+def nrm2[T: FloatLike, n: Int](a: Array[T, n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.nrm2`."""
+    return _array_nrm2[T=T, n=n](a)
+
+
+def outer[
+    T: FloatLike, n: Int
+](a: Array[T, n], b: Array[T, n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.blas.outer`."""
+    return _array_outer[T=T, n=n](a, b)

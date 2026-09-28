@@ -33,7 +33,7 @@ handing a structured operator to code that wants a matrix.
 
 `companion` turns a polynomial into the matrix whose eigenvalues are its
 roots, which is how `numpy.roots` is implemented and what
-`numax.linalg.array.eigvals` can then be pointed at. `convolution_matrix`
+`numax.linalg.eigvals` can then be pointed at. `convolution_matrix`
 does the same job for `numax.signal.convolve`: it is the matrix `C` with
 `C @ v == convolve(a, v)`. `block_diag` and `khatri_rao` are assembly.
 
@@ -233,7 +233,7 @@ def companion[
 
     Its eigenvalues are the polynomial's roots, which is how `numpy.roots`
     is implemented and what makes this the bridge to
-    `numax.linalg.array.eigvals` -- build the companion, take its
+    `numax.linalg.eigvals` -- build the companion, take its
     eigenvalues, and those are the roots.
 
     `a[0]` must be nonzero, since the first row divides by it. A leading

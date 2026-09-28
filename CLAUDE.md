@@ -261,17 +261,20 @@ therefore per operation family and never per operation: `numax/linalg/` is
 `blas`, `triangular`, `cholesky`, `lu`, `qr`, `basic`, `misc`, `panel` and a
 private `common`, the shape `scipy.linalg` uses behind its flat namespace.
 
-The two tiers are the one axis the split *does* follow, and it is a package
-boundary rather than a module one: `numax/linalg/array/` mirrors that same
-family split for the `Array` tier, so `cholesky` is defined in
-`linalg/cholesky.mojo` over `Tensor` and in `linalg/array/cholesky.mojo` over
-`Array`, once each. That is what lets the flat surface — `numax`,
-`numax.prelude`, `numax.linalg` — export the `Tensor` tier alone and mean one
-thing by `solve`. The cost is real and documented in
-`numax/linalg/array/__init__.mojo`: a file wanting both tiers of a name has to
-alias one (`from numax.linalg.array import cholesky as chol_a`). Nothing
-re-exports across the boundary, and a new name goes in one tier's module, that
-tier's `__init__.mojo`, and — for the `Tensor` tier only — the flat surface.
+The two tiers share names, and one name is one function. `cholesky` over
+`Tensor` lives in `linalg/cholesky.mojo`; the register-tier body lives in
+the private `linalg/_array/cholesky.mojo`, and `linalg/cholesky.mojo`
+carries a second `cholesky` overload over `Array[T, n * n]` that forwards
+there. Overload resolution picks the tier from the argument, a caller of
+one tier pays no compile time for the other, and `mojo doc` shows both
+(probe T0, `findings.mdc`). So `numax`, `numax.prelude` and each
+subpackage export one `solve` meaning both, and the register tier's own
+names (`lu`, `qr`, `brentq`, `rk4`, ...) are exported from their
+subpackage. A new register-tier routine goes in `_array/`; if it shares a
+name with the `Tensor` tier, the forwarding overload goes beside the
+`Tensor` definition, never in a second module, which would trip Mojo's
+multiple-modules deprecation. Nothing imports an `_array` package from
+outside numax.
 Check `rg "def <name>" numax/` before adding a name that sounds generic.
 
 **The root docstring and the README say the same thing.** `numax/__init__.mojo`

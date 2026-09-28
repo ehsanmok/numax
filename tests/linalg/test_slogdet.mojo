@@ -26,7 +26,7 @@ from max.gpu.host import DeviceContext
 from numax import Plain
 from numax.core.tensor import Static
 from numax.linalg import det, lu_factor, slogdet
-from numax.linalg.array import slogdet as array_slogdet
+from numax.linalg import slogdet
 
 comptime dtype = DType.float64
 comptime P = Plain[DType.float64, 1]
@@ -122,7 +122,7 @@ def test_the_two_tiers_agree() raises:
     var want = slogdet(a)
 
     var values = [2.0, -1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 2.0, -2.0]
-    var got = array_slogdet[DType.float64, 3](_as_array(values))
+    var got = slogdet[DType.float64, 3](_as_array(values))
 
     assert_almost_equal(got[0].v, Float64(want[0]), atol=0.0)
     assert_almost_equal(got[1].v, Float64(want[1]), atol=1e-9)
@@ -130,7 +130,7 @@ def test_the_two_tiers_agree() raises:
 
 def test_the_array_tier_reports_a_singular_matrix_too() raises:
     var values = [1.0, 2.0, 3.0, 2.0, 4.0, 6.0, 7.0, 8.0, 10.0]
-    var got = array_slogdet[DType.float64, 3](_as_array(values))
+    var got = slogdet[DType.float64, 3](_as_array(values))
     assert_equal(got[0].v, 0.0)
     assert_true(got[1].v < -1e300)
 

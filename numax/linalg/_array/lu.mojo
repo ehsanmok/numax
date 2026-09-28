@@ -36,7 +36,7 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     `matmul`. It pivots, so it also factors matrices this cannot start on.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.lu: n is past the 64 the register tier compiles"
+        "numax.linalg.lu: n is past the 64 the register tier compiles"
         " in reasonable time; use numax.linalg.lu_factor over a Tensor"
     )
     var out = _zeros[T, n * n]()
@@ -173,7 +173,7 @@ def lu_factor[
     See `PivotedLU` for what pivoting costs and what it buys.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.lu_factor: n is past the 64 the register tier"
+        "numax.linalg.lu_factor: n is past the 64 the register tier"
         " compiles in reasonable time; use numax.linalg.lu_factor over a Tensor"
     )
     var out = _zeros[Plain[dtype, 1], n * n]()
@@ -250,7 +250,7 @@ def slogdet[
     `.slogdet()` on it when a solve is wanted from the same factorization;
     that method's docstring says when to prefer this over `det`.
 
-    `slogdet_cholesky` in `numax.linalg.array.cholesky` is cheaper when the
+    `slogdet_cholesky` in `numax.linalg.cholesky` is cheaper when the
     matrix is known symmetric positive definite: it needs only the factor's
     diagonal and no sign at all, a determinant of such a matrix being
     positive by construction.

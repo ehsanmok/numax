@@ -4,7 +4,7 @@
 MAX ships no LU at any size, so everything here is numax's.
 
 **The `Tensor` tier**, which is `LU` and the `lu_factor` that
-returns it. `numax.linalg.array.lu` has the other two of the three forms
+returns it. `numax.linalg.lu` has the other two of the three forms
 this operation takes, and the reason there are three is that pivoting is a
 branch on data: `lu` there is tier 1 and unpivoted, so it runs at any
 conformer inside a GPU thread and fails on a matrix with a zero pivot even
@@ -54,6 +54,13 @@ from .panel import (
     trsm_left_lower_unit,
 )
 from .triangular import _trsm, _trsv
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.lu import det as _array_det
+from ._array.lu import PivotedLU
+from ..core.plain import Plain
+from ._array.lu import lu_factor as _array_lu_factor
+from ._array.lu import slogdet as _array_slogdet
 
 
 struct LU[dtype: DType, n: Int, gpu: Bool = False](
@@ -644,3 +651,32 @@ def det[
     comptime n = dim[T, 0]
     var factorization = lu_factor[gpu=gpu, block=block](a)
     return factorization.det()
+
+
+def det[T: FloatLike, n: Int](a: Array[T, n * n]) -> T:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.lu.det`."""
+    return _array_det[T=T, n=n](a)
+
+
+def lu_factor[
+    dtype: DType, n: Int
+](a: Array[Plain[dtype, 1], n * n]) -> PivotedLU[
+    dtype, n
+] where dtype.is_floating_point():
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.lu.lu_factor`."""
+    return _array_lu_factor[dtype=dtype, n=n](a)
+
+
+def slogdet[
+    dtype: DType, n: Int
+](a: Array[Plain[dtype, 1], n * n]) -> Tuple[
+    Plain[dtype, 1], Plain[dtype, 1]
+] where dtype.is_floating_point():
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.lu.slogdet`."""
+    return _array_slogdet[dtype=dtype, n=n](a)

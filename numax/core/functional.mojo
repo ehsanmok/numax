@@ -600,7 +600,7 @@ def map_blocks[
 
     `map` hands a lane one scalar, which is the whole surface an
     elementwise kernel needs and no surface at all for the audience
-    `numax.linalg.array` is written for -- thousands of independent 4x4
+    `numax.linalg`'s `Array` tier is written for -- thousands of independent 4x4
     solves, 3x3 eigenproblems or 6-state integrations. This is that walk:
     `step` receives one lane's entire problem as an `Array` of raw `SIMD`
     and returns its entire answer, so the body is free to wrap the block

@@ -43,7 +43,7 @@ def cholesky[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     is not positive definite, which this one cannot.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.cholesky: n is past the 64 the register tier"
+        "numax.linalg.cholesky: n is past the 64 the register tier"
         " compiles in reasonable time; use numax.linalg.cholesky over a Tensor"
     )
     var out = _zeros[T, n * n]()

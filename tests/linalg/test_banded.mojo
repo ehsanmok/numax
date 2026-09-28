@@ -7,7 +7,7 @@ index arithmetic a test written from the same reasoning would share.
 - `solve_banded` against the dense `numax.linalg.solve` on the matrix the
   band describes, built with `numax.linalg.toeplitz` or by hand.
 - `solve_banded` at `l == u == 1` against
-  `numax.linalg.array.tridiagonal_solve`, which is the seam the per-feature
+  `numax.linalg.tridiagonal_solve`, which is the seam the per-feature
   gate asks about: a new spelling of an existing primitive must agree with
   it.
 - `solveh_banded` against `solve_banded` on the same matrix expanded to the
@@ -35,7 +35,7 @@ from numax.linalg import (
     solveh_banded,
     toeplitz,
 )
-from numax.linalg.array import tridiagonal_solve
+from numax.linalg import tridiagonal_solve
 
 comptime dtype = DType.float64
 comptime P = Plain[DType.float64, 1]

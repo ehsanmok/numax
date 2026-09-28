@@ -3,7 +3,7 @@
 
 **The `Tensor` tier**, and **tier 2**: the blocked `solve_triangular`
 here is what `LU.solve`, `cholesky_solve` and `QR.solve`
-finish with. `numax.linalg.array.triangular` has the tier-1 `Array`
+finish with. `numax.linalg.triangular` has the tier-1 `Array`
 substitutions and `tridiagonal_solve`.
 
 MAX has no triangular solve at any size -- no `trsm` outside the private

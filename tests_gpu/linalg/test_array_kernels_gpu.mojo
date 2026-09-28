@@ -21,7 +21,7 @@ from numax.core.numeric import FloatLike
 from numax.core.plain import Plain
 from numax.core.tensor import Static
 from numax.integrate import dopri5_step, rk4
-from numax.linalg.array import (
+from numax.linalg import (
     eigh,
     eigvals,
     expm,

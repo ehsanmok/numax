@@ -3,7 +3,7 @@
 
 **The `Tensor` tier**, and **tier 2**: `qr_factor` is blocked, so its
 panel is a `panel.mojo` kernel and its trailing update is three products
-through `linalg.matmul`. `numax.linalg.array.qr` is the tier-1 tier, where
+through `linalg.matmul`. `numax.linalg.qr` is the tier-1 tier, where
 a QR differentiates and `qr` returns `(R, Q)` outright.
 
 **MAX's counterpart is denied**, and it is MAX's only factorization.
@@ -55,6 +55,9 @@ from .panel import (
     pack_reflectors,
 )
 from .triangular import _solve_triangular_vector, solve_triangular
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.qr import lstsq as _array_lstsq
 
 
 comptime _MIN_GEMM_COLS = 2
@@ -856,3 +859,12 @@ def rq[
     return RQ[T.dtype, n](
         _reverse_both[gpu=gpu](rb_t), _reverse_rows[gpu=gpu](qb_t)
     )
+
+
+def lstsq[
+    T: FloatLike, m: Int, n: Int
+](a: Array[T, m * n], b: Array[T, m]) -> Array[T, n] where m >= n:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.qr.lstsq`."""
+    return _array_lstsq[T=T, m=m, n=n](a, b)

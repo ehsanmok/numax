@@ -60,7 +60,7 @@ def qr[
     than one import away.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.qr: n is past the 64 the register tier compiles"
+        "numax.linalg.qr: n is past the 64 the register tier compiles"
         " in reasonable time; use numax.linalg.qr_factor over a Tensor"
     )
     var r = _zeros[T, n * n]()

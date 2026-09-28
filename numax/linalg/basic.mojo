@@ -1,6 +1,6 @@
 """General solves and inverses: `scipy.linalg._basic`.
 
-**The `Tensor` tier**, with `numax.linalg.array.basic` holding the
+**The `Tensor` tier**, with `numax.linalg.basic` holding the
 `FloatLike`-generic one -- unpivoted LU plus two substitutions for
 `solve`, and a `pinv` over one-sided Jacobi where this one goes through
 `numax.linalg.svd`.
@@ -43,6 +43,11 @@ from ..core.tensor import (
 from .blas import inner
 from .eigen import svd
 from .lu import lu_factor
+from std.collections import Array
+from ..core.numeric import FloatLike
+from ._array.basic import inverse as _array_inverse
+from ._array.basic import pinv as _array_pinv
+from ._array.basic import solve as _array_solve
 
 
 def solve[
@@ -492,3 +497,28 @@ def tensorinv[
         row_major(_dyn_shape_from[rank](extents)),
         inv.on_host(),
     )
+
+
+def inverse[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.basic.inverse`."""
+    return _array_inverse[T=T, n=n](a)
+
+
+def pinv[
+    T: FloatLike, n: Int, sweeps: Int = 12, rcond: Float64 = 1e-12
+](a: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.basic.pinv`."""
+    return _array_pinv[T=T, n=n, sweeps=sweeps, rcond=rcond](a)
+
+
+def solve[
+    T: FloatLike, n: Int
+](a: Array[T, n * n], b: Array[T, n]) -> Array[T, n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.basic.solve`."""
+    return _array_solve[T=T, n=n](a, b)

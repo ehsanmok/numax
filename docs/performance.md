@@ -258,7 +258,7 @@ the writeup.
 
 ## Cross the tiers past N (dense linalg)
 
-`numax.linalg.array`'s `Array[T, n*n]` tier keeps its matrices in
+`numax.linalg`'s `Array` tier's `Array[T, n*n]` tier keeps its matrices in
 registers -- a compile-time size that keeps them GPU-launchable (one matrix
 per SIMD lane, callable from inside `map[gpu=True]`) and lets `T` be `Dual`
 or `Compensated`, at the cost of both compile time and register pressure
@@ -282,7 +282,7 @@ against the 4-wide batched form, and is ~130x ahead by `n = 64`. See
 the full writeup.
 
 Crossing is `to_tensor` and then the same function name from
-`numax.linalg` rather than `numax.linalg.array`. What that gets differs by
+`numax.linalg` rather than `numax.linalg`'s `Array` tier. What that gets differs by
 operation:
 
 - `matmul`, `matvec`, `batched_matmul` are MAX kernels outright, so the

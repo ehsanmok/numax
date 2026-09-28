@@ -68,7 +68,7 @@ still not here.
 
 `sqrtm` for a **symmetric positive definite** matrix needs no Schur form
 at all, since `eigh` already diagonalizes one, and it lives in
-`numax.linalg.array.matfuncs` beside its tier.
+`numax.linalg.matfuncs` beside its tier.
 """
 
 from std.collections import Array
@@ -87,6 +87,8 @@ from .blas import matmul
 from .eigen import schur
 from .lu import lu_factor
 from .misc import _matrix_norm, norm
+from ._array.matfuncs import expm as _array_expm
+from ._array.matfuncs import sqrtm as _array_sqrtm
 
 
 comptime _B0 = 64764752532480000.0
@@ -139,7 +141,7 @@ def expm[
     """The matrix exponential of `a`. `scipy.linalg.expm`.
 
     **Tier 2**: the squaring count comes from `norm(a)`, which is a branch
-    on data. `numax.linalg.array.expm` is the tier-1 sibling that takes the
+    on data. `numax.linalg.expm` is the tier-1 sibling that takes the
     count as a parameter instead and therefore differentiates.
 
     Scaling and squaring with a degree-13 Pade approximant, which is
@@ -757,7 +759,7 @@ def sqrtm[
     eigenvalues are fine -- then `Z U Z^T`. Real for a matrix with no
     eigenvalue on the closed negative real axis; where there is one the
     scalar `sqrt` at `Plain` is NaN and so is the result, which is at least
-    loud. `numax.linalg.array.sqrtm` is the symmetric positive definite
+    loud. `numax.linalg.sqrtm` is the symmetric positive definite
     route through `eigh` for matrices small enough to live in registers.
     """
     comptime n = dim[T, 0]
@@ -882,3 +884,21 @@ def fractional_matrix_power[
     var l = logm[gpu=gpu](a)
     var scaled = multiply(l, Scalar[T.dtype](t))
     return expm[gpu=gpu](scaled)
+
+
+def expm[
+    T: FloatLike, n: Int, squarings: Int = 8
+](a: Array[T, n * n]) -> Array[T, n * n] where squarings >= 0:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.matfuncs.expm`."""
+    return _array_expm[T=T, n=n, squarings=squarings](a)
+
+
+def sqrtm[
+    T: FloatLike, n: Int, sweeps: Int = 12
+](a: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer. The algorithm and its bound are documented
+    at `numax.linalg._array.matfuncs.sqrtm`."""
+    return _array_sqrtm[T=T, n=n, sweeps=sweeps](a)

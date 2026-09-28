@@ -133,7 +133,7 @@ def matmul[
     thread -- one matrix per SIMD lane, if `T` is itself a vector.
     """
     comptime assert n <= _ARRAY_MAX_N, (
-        "numax.linalg.array.matmul: n is past the 64 the register tier compiles"
+        "numax.linalg.matmul: n is past the 64 the register tier compiles"
         " in reasonable time; use numax.linalg.matmul over a Tensor"
     )
     var out = _zeros[T, n * n]()

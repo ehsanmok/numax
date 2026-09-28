@@ -40,7 +40,7 @@ replacing an expensive kernel with a cheap one inside a hot loop.
 from std.collections import Array
 from std.math import cos as _cos_f64
 
-from ...linalg.array.triangular import tridiagonal_solve
+from ...linalg._array.triangular import tridiagonal_solve
 from ...core.numeric import FloatLike, blend, ge_indicator, max_of, min_of
 
 comptime _PI = 3.14159265358979323846
@@ -105,7 +105,7 @@ def cubic_spline_moments[
     interval: with `h_i = x[i+1] - x[i]` and secant `D_i`, the interior
     row is `h[i-1] M[i-1] + 2(h[i-1] + h[i]) M[i] + h[i] M[i+1] = 6(D_i -
     D_{i-1})`, still tridiagonal, still diagonally dominant, still fixed
-    work through `numax.linalg.array.tridiagonal_solve`. Tier 1: nothing
+    work through `numax.linalg.tridiagonal_solve`. Tier 1: nothing
     here searches, so non-uniform knots cost this tier nothing at
     construction. Pass the result to the `cubic_spline_eval` overload that
     also takes `x`.
