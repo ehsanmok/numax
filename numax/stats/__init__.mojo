@@ -13,6 +13,7 @@ from numax.stats import mean, variance, norm, uniform, seed
 | `descriptive` | `skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `trim_mean`, `describe` -- SciPy's bias corrections and conventions, host-side |
 | `hypothesis` | `ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu`, `kruskal`, `levene`, `bartlett`, `skewtest`, `kurtosistest`, `normaltest`, `jarque_bera`, `fisher_exact`, `binomtest`, `chi2_contingency` -- each a statistic and a tail of `t`/`chi2`/`f`/`norm`; all but `ks_1samp` run their sums, ranks and counts on the device at `gpu=True` |
 | `density` | `ecdf`, a 1-D `gaussian_kde` |
+| `resampling` | `bootstrap` (percentile, basic, BCa) and `permutation_test` (independent, samples, pairings; exact when small) over a batched statistic, on the device at `gpu=True` |
 | `multivariate` | `multivariate_normal` -- `logpdf`/`pdf` through the Cholesky factor, `rvs`, `entropy` |
 | `nanfunctions` | `nansum`, `nanprod`, `nanmean`, `nanvar`, `nanstd`, `nanmin`, `nanmax`, `nanargmin`, `nanargmax` -- `isnan`, `select` and the plain reductions, composed |
 | `distributions` | `norm`, `gamma`, `beta`, `chi2`, `t`, `f`, `expon`, `binom`, `poisson`, `lognorm`, `weibull_min`, `cauchy`, `laplace`, `rayleigh`, `logistic`, `pareto`, `uniform_dist`, `bernoulli`, `geom`, `nbinom`, `hypergeom` -- each a namespace with the eight `scipy.stats` methods, `.pdf`/`.pmf`, `.logpdf`/`.logpmf`, `.cdf`, `.logcdf`, `.sf`, `.logsf`, `.ppf` and `.isf`, spelled the way `scipy.stats` spells them |
@@ -154,6 +155,13 @@ from .hypothesis import (
     wilcoxon,
 )
 from .density import ECDFResult, ecdf, gaussian_kde
+from .resampling import (
+    BootstrapResult,
+    ConfidenceInterval,
+    PermutationTestResult,
+    bootstrap,
+    permutation_test,
+)
 from .multivariate import multivariate_normal
 from .nanfunctions import (
     nanargmax,
