@@ -68,10 +68,12 @@ from nn.gather_scatter import (
 from nn.topk import top_k as _max_top_k
 from std.collections import Array
 
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
+from max.algorithm.functional import elementwise
+from std.utils import IndexList
 from layout.tile_layout import TensorLayout, row_major
 from .tensorlike import TensorLike, dim, is_row_major
-from ._drive import _check_device, _notice
+from ._drive import _check_device, _flat_out, _flat_unchecked, _notice
 from .logic import _count_nonzero_device
 from .tensor import (
     Dynamic,
@@ -728,8 +730,105 @@ def take[T: TensorLike](a: T, indices: List[Int]) raises -> Dynamic[T.dtype, 1]:
     return asarray(out^, a.context())
 
 
-def select[
+def _select_device[
     C: TensorLike, T: TensorLike
+](condition: C, x: T, y: T) raises -> Tensor[T.dtype, T.LayoutType]:
+    """`select` on the device at one layout: one launch, `x` where the
+    mask is true and `y` elsewhere. All three contiguous, on a GPU."""
+    var ctx = x.context()
+    var result = Tensor[T.dtype, T.LayoutType]._uninitialized(
+        ctx, x.tile().layout
+    )
+    var n = x.size()
+    if n == 0:
+        return result^
+    var cp = _flat_unchecked(condition)
+    var xp = _flat_unchecked(x)
+    var yp = _flat_unchecked(y)
+    var dst = _flat_out(result)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var cp, var xp, var yp, var dst}:
+        var pick = xp[coord] if cp[coord][0] else yp[coord]
+        dst.store[1](coord, pick[0])
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(n), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def _select_broadcast_device[
+    rank: Int, A: TensorLike, B: TensorLike, C: TensorLike
+](
+    condition: A,
+    x: B,
+    y: C,
+    extents: List[Int],
+    c_strides: List[Int],
+    x_strides: List[Int],
+    y_strides: List[Int],
+) raises -> Dynamic[B.dtype, rank]:
+    """The broadcasting `select` on the device: one thread per result
+    element, each operand read through its stretched strides (zero on a
+    broadcast axis), so no operand is materialized at the result's shape.
+    """
+    var ctx = x.context()
+    var ext = IndexList[rank]()
+    var cs = IndexList[rank]()
+    var xs_ = IndexList[rank]()
+    var ys_ = IndexList[rank]()
+    var total = 1
+    for d in range(rank):
+        ext[d] = extents[d]
+        cs[d] = c_strides[d]
+        xs_[d] = x_strides[d]
+        ys_[d] = y_strides[d]
+        total *= extents[d]
+    var result = Dynamic[B.dtype, rank]._uninitialized(
+        ctx, row_major(_dyn_shape_from[rank](extents))
+    )
+    if total == 0:
+        return result^
+    var cp = condition.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var xp = x.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var yp = (
+        y.tile()
+        .ptr.unsafe_bitcast[Scalar[B.dtype]]()
+        .unsafe_origin_cast[ImmutAnyOrigin]()
+    )
+    var dst = _flat_out(result)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {
+        var cp, var xp, var yp, var dst, var ext, var cs, var xs_, var ys_
+    }:
+        var rem = coord_to_index_list(coord)[0]
+        var ci = 0
+        var xi = 0
+        var yi = 0
+        comptime for k in range(rank):
+            comptime d = rank - 1 - k
+            var at = rem % ext[d]
+            rem //= ext[d]
+            ci += at * cs[d]
+            xi += at * xs_[d]
+            yi += at * ys_[d]
+        if cp[unsafe_offset=ci]:
+            dst.store[1](coord, xp[unsafe_offset=xi])
+        else:
+            dst.store[1](coord, yp[unsafe_offset=yi])
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
+    ctx.synchronize()
+    return result^
+
+
+def select[
+    C: TensorLike, T: TensorLike, gpu: Bool = False
 ](condition: C, x: T, y: T) raises -> Tensor[T.dtype, T.LayoutType] where (
     C.dtype == DType.bool and C.LayoutType == T.LayoutType
 ):
@@ -760,6 +859,15 @@ def select[
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     var n = x.size()
+    if (
+        _check_device[C, gpu](condition)
+        and _check_device[T, gpu](x)
+        and _check_device[T, gpu](y)
+    ):
+        comptime if gpu:
+            return _select_device(condition, x, y)
+    else:
+        _notice[gpu]("select")
     var mask = condition.to_host()
     var x_values = x.to_host()
     var y_values = y.to_host()
@@ -773,6 +881,7 @@ def select[
     A: TensorLike,
     B: TensorLike,
     C: TensorLike,
+    gpu: Bool = False,
 ](condition: A, x: B, y: C) raises -> Dynamic[
     B.dtype,
     A.LayoutType.rank if (
@@ -817,6 +926,18 @@ def select[
     var count = 1
     for d in range(rank):
         count *= extents[d]
+
+    if (
+        _check_device[A, gpu](condition)
+        and _check_device[B, gpu](x)
+        and _check_device[C, gpu](y)
+    ):
+        comptime if gpu:
+            return _select_broadcast_device[rank](
+                condition, x, y, extents, c_strides, x_strides, y_strides
+            )
+    else:
+        _notice[gpu]("select")
 
     var mask = condition.to_host()
     var x_values = x.to_host()

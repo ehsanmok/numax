@@ -10,10 +10,10 @@ with the NaNs replaced by `+inf`, `nanmean` divides `nansum` by the count
 of non-NaN elements from `count_nonzero(isnan(x))`. They therefore run
 exactly where those primitives run, at the cost of one mask and one fill
 pass per call, the same NumPy pays. The reduction underneath is now a MAX
-monoid on either target (`numax.stats.statistics`' `sum`/`min`/`max` take a
-`gpu` parameter), but `numax.core.sorting.select` still walks host memory,
-so the composition as a whole is host-side and none of these forwards a
-`gpu` parameter yet; they call the reductions at their default. `nansum`
+monoid on either target, and every piece of the composition -- `isnan`,
+`select`, the fill, the copy, `count_nonzero` -- takes a `gpu` parameter,
+so each of these takes one too and forwards it: at `gpu=True` the whole
+call stays on the device and only the scalar answer comes back. `nansum`
 and `nanprod` inherit the reassociation the monoid brings with it.
 
 NumPy's edge cases are kept where they are well defined -- a tensor of only
@@ -41,39 +41,39 @@ from .statistics import max as _max, min as _min, sum as _sum
 
 
 def _filled[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, fill: Scalar[T.dtype]) raises -> Tensor[T.dtype, T.LayoutType] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """`xs` with every NaN replaced by `fill`."""
-    var mask = isnan(xs)
+    var mask = isnan[gpu=gpu](xs)
     var value = full_like(xs, fill)
     # `select`'s same-layout form wants both branches at one type, and a
     # generic `T` is not `Tensor[T.dtype, T.LayoutType]` to the checker,
-    # and a borrowed `xs` cannot become a `TensorView`; the copy is one host pass
-    # in a path that walks the host anyway.
-    return select(mask, value, copy(xs))
+    # and a borrowed `xs` cannot become a `TensorView`; the copy is one pass
+    # on `xs`'s own device.
+    return select[gpu=gpu](mask, value, copy(xs))
 
 
 def _nan_count[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Int where is_row_major[T] and T.dtype.is_floating_point():
-    return count_nonzero(isnan(xs))
+    return count_nonzero[gpu=gpu](isnan[gpu=gpu](xs))
 
 
 def nansum[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The sum of the non-NaN elements; `0` if there are none.
     `numpy.nansum`."""
     comptime dtype = T.dtype
-    return _sum(_filled(xs, Scalar[dtype](0)))
+    return _sum[gpu=gpu](_filled[gpu=gpu](xs, Scalar[dtype](0)))
 
 
 def nanprod[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
@@ -82,25 +82,25 @@ def nanprod[
     comptime dtype = T.dtype
     from .statistics import prod as _prod
 
-    return _prod(_filled(xs, Scalar[dtype](1)))
+    return _prod[gpu=gpu](_filled[gpu=gpu](xs, Scalar[dtype](1)))
 
 
 def nanmean[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The mean of the non-NaN elements. `numpy.nanmean`. Raises when every
     element is NaN, where NumPy warns and returns NaN."""
     comptime dtype = T.dtype
-    var kept = xs.size() - _nan_count(xs)
+    var kept = xs.size() - _nan_count[gpu=gpu](xs)
     if kept == 0:
         raise Error("nanmean: every element is NaN")
-    return nansum(xs) / Scalar[dtype](kept)
+    return nansum[gpu=gpu](xs) / Scalar[dtype](kept)
 
 
 def nanvar[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, ddof: Int = 0) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
@@ -114,47 +114,49 @@ def nanvar[
     1` elements are not NaN.
     """
     comptime dtype = T.dtype
-    var kept = xs.size() - _nan_count(xs)
+    var kept = xs.size() - _nan_count[gpu=gpu](xs)
     if kept <= ddof:
         raise Error("nanvar: not enough non-NaN elements for ddof ", ddof)
-    var centre = nanmean(xs)
-    var deviation = subtract(xs, centre)
-    var squares = multiply(deviation, deviation)
-    return _sum(_filled(squares, Scalar[dtype](0))) / Scalar[dtype](kept - ddof)
+    var centre = nanmean[gpu=gpu](xs)
+    var deviation = subtract[gpu=gpu](xs, centre)
+    var squares = multiply[gpu=gpu](deviation, deviation)
+    return _sum[gpu=gpu](_filled[gpu=gpu](squares, Scalar[dtype](0))) / Scalar[
+        dtype
+    ](kept - ddof)
 
 
 def nanstd[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T, ddof: Int = 0) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The square root of `nanvar`. `numpy.nanstd`."""
     from std.math import sqrt
 
-    return sqrt(nanvar(xs, ddof))
+    return sqrt(nanvar[gpu=gpu](xs, ddof))
 
 
 def nanmin[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The smallest non-NaN element. `numpy.nanmin`. Raises when every
     element is NaN."""
     comptime dtype = T.dtype
-    if _nan_count(xs) == xs.size():
+    if _nan_count[gpu=gpu](xs) == xs.size():
         raise Error("nanmin: every element is NaN")
-    return _min(_filled(xs, _inf[dtype]()))
+    return _min[gpu=gpu](_filled[gpu=gpu](xs, _inf[dtype]()))
 
 
 def nanmax[
-    T: TensorLike
+    T: TensorLike, gpu: Bool = False
 ](xs: T) raises -> Scalar[T.dtype] where (
     is_row_major[T] and T.dtype.is_floating_point()
 ):
     """The largest non-NaN element. `numpy.nanmax`. Raises when every
     element is NaN."""
     comptime dtype = T.dtype
-    if _nan_count(xs) == xs.size():
+    if _nan_count[gpu=gpu](xs) == xs.size():
         raise Error("nanmax: every element is NaN")
-    return _max(_filled(xs, -_inf[dtype]()))
+    return _max[gpu=gpu](_filled[gpu=gpu](xs, -_inf[dtype]()))
