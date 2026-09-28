@@ -3,8 +3,9 @@
 `zscore`, with NumPy's and SciPy's conventions and SciPy's p-values.
 
 **`cov` and `corrcoef` run where the tensor lives; `pearsonr`,
-`linregress`, `zscore`, `rankdata` and `spearmanr` run on the device at
-`gpu=True`; `kendalltau` is tier 2, host-side, in `Float64`.**
+`linregress`, `zscore`, `rankdata`, `spearmanr` and `kendalltau` run on
+the device at `gpu=True`; on the host all of these are tier 2, in
+`Float64`.**
 
 The split is about what the answer costs, not about taste. `pearsonr`,
 `spearmanr`, `kendalltau`, `linregress` and `zscore` are a handful of sums
@@ -17,8 +18,8 @@ allows. What moves is the data: at `gpu=True`, `pearsonr` and
 `linregress` take their means and centered moments as device sums and
 read back five scalars, and `zscore` standardizes in place on the device.
 `rankdata` ranks on the device from a device sort, and `spearmanr` is
-two device ranks and the same moments. `kendalltau`'s pair count stays
-on the host.
+two device ranks and the same moments. `kendalltau` counts its pairs
+with one lane per element and reads back eleven integers.
 
 `cov` and `corrcoef` are the ones that cannot stay: the covariance of
 `rows` variables over `n` observations is `O(rows^2 n)`, which this module
@@ -106,6 +107,7 @@ from ..core._drive import (
     _target,
 )
 from ..core.plain import Plain
+from ..core.rowwise import sum_axis
 from .distributions import norm, t
 from .statistics import mean as _mean_axis, sum as _tsum
 from ..core.ops import (
@@ -887,9 +889,127 @@ def spearmanr[
     )
 
 
+def _kendall_counts_device[
+    T: TensorLike
+](x: T, y: T) raises -> List[Int] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
+    """`kendalltau`'s eleven integer sums, on the device: concordant,
+    discordant, x-only ties, y-only ties, ties in both, then `sum (c-1)`,
+    `sum (c-1)(2c+5)` and `sum (c-1)(c-2)` over the elements of `x` (`c`
+    the size of the element's group of equal values) and the same three
+    for `y`. Summed per element rather than per group, each group of size
+    `c` contributes exactly `c(c-1)`, `c(c-1)(2c+5)` and `c(c-1)(c-2)`,
+    the host's `_tie_sums` times two for the first.
+
+    One lane per element walks all `n` others -- the host's `O(n^2)`
+    pair loop, with the outer loop parallel -- writing its eleven counts
+    into a column of an `11 x n` `int64` table, and one `sum_axis`
+    collapses the table on the device. Eleven integers come back.
+    """
+    comptime n = dim[T, 0]
+    var ctx = x.context()
+    var table = Static[DType.int64, 11, n]._uninitialized(ctx)
+    var xv = x.tile()
+    var yv = y.tile()
+    var tv = table.tile()
+
+    @always_inline
+    def count[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var xv, var yv, var tv}:
+        var i = coord_to_index_list(coord)[0]
+        var xi = xv[coord][0]
+        var yi = yv[coord][0]
+        var con = Int64(0)
+        var dis = Int64(0)
+        var xtie = Int64(0)
+        var ytie = Int64(0)
+        var both = Int64(0)
+        var cx = Int64(0)
+        var cy = Int64(0)
+        for j in range(n):
+            var xj = xv[Coord(j)][0]
+            var yj = yv[Coord(j)][0]
+            if xj == xi:
+                cx += 1
+            if yj == yi:
+                cy += 1
+            if j > i:
+                var dx = xi - xj
+                var dy = yi - yj
+                if dx == 0 and dy == 0:
+                    both += 1
+                elif dx == 0:
+                    xtie += 1
+                elif dy == 0:
+                    ytie += 1
+                elif (dx > 0) == (dy > 0):
+                    con += 1
+                else:
+                    dis += 1
+        tv.store[1](Coord(0, i), con)
+        tv.store[1](Coord(1, i), dis)
+        tv.store[1](Coord(2, i), xtie)
+        tv.store[1](Coord(3, i), ytie)
+        tv.store[1](Coord(4, i), both)
+        tv.store[1](Coord(5, i), cx - 1)
+        tv.store[1](Coord(6, i), (cx - 1) * (2 * cx + 5))
+        tv.store[1](Coord(7, i), (cx - 1) * (cx - 2))
+        tv.store[1](Coord(8, i), cy - 1)
+        tv.store[1](Coord(9, i), (cy - 1) * (2 * cy + 5))
+        tv.store[1](Coord(10, i), (cy - 1) * (cy - 2))
+
+    elementwise[simd_width=1, target="gpu"](count, Coord(n), ctx)
+    var sums = Static[DType.int64, 11](ctx)
+    sum_axis[axis=1, target="gpu"](table.tile(), sums.tile(), ctx)
+    var raw = sums.to_host()
+    var out = List[Int](capacity=11)
+    for k in range(11):
+        out.append(Int(raw[k]))
+    return out^
+
+
+def _kendall_finish(
+    concordant: Int,
+    discordant: Int,
+    xtie: Int,
+    ytie: Int,
+    both: Int,
+    stats_x: Tuple[Float64, Float64, Float64],
+    stats_y: Tuple[Float64, Float64, Float64],
+    n: Int,
+) raises -> CorrelationResult:
+    """Tau-b and its tie-corrected normal p-value from the pair counts
+    and `_tie_sums`' three group sums per variable."""
+    var total = n * (n - 1) // 2
+    var x_tied = xtie + both
+    var y_tied = ytie + both
+    if x_tied == total or y_tied == total:
+        raise Error("kendalltau: one variable is constant")
+    var tau = Float64(concordant - discordant) / (
+        _sqrt(Float64(total - x_tied)) * _sqrt(Float64(total - y_tied))
+    )
+    tau = min(1.0, max(-1.0, tau))
+
+    # SciPy's variance of `con - dis` with tie corrections: the group sizes
+    # of equal values in each variable enter through three sums.
+    var m = Float64(n) * Float64(n - 1)
+    var variance = (
+        (m * Float64(2 * n + 5) - stats_x[1] - stats_y[1]) / 18.0
+        + 2.0 * stats_x[0] * stats_y[0] / m
+        + stats_x[2] * stats_y[2] / (9.0 * m * Float64(n - 2))
+    )
+    var z = Float64(concordant - discordant) / _sqrt(variance)
+    return CorrelationResult(tau, _normal_two_sided(z))
+
+
 def kendalltau[
     A: TensorLike,
     B: TensorLike,
+    gpu: Bool = False,
 ](x: A, y: B) raises -> CorrelationResult where (
     (A.dtype.is_floating_point() and dim[A, 0] > 1)
     and A.LayoutType.rank == 1
@@ -909,9 +1029,30 @@ def kendalltau[
     approximation with SciPy's tie-corrected variance. SciPy switches to an
     exact enumeration for a small sample with no ties, which this does not
     do, so there and only there its p-value differs by the approximation's
-    error. `O(n^2)` in the pair count, host-side.
+    error. `O(n^2)` in the pair count: a host double loop, or at
+    `gpu=True` with both vectors on a device, one lane per element walking
+    the others (`_kendall_counts_device`), so eleven integers come back
+    and the answer is the host's exactly -- the counts are the same
+    integers, and the finish is shared.
     """
     comptime n = dim[A, 0]
+    if _check_device[A, gpu](x) and _check_device[B, gpu](y):
+        comptime if gpu:
+            var c = _kendall_counts_device(
+                _canonical[n](x), _canonical[n, dtype=A.dtype](y)
+            )
+            return _kendall_finish(
+                c[0],
+                c[1],
+                c[2],
+                c[3],
+                c[4],
+                (Float64(c[5]) / 2.0, Float64(c[6]), Float64(c[7])),
+                (Float64(c[8]) / 2.0, Float64(c[9]), Float64(c[10])),
+                n,
+            )
+    else:
+        _notice[gpu]("kendalltau")
     var xs = _as_float64(x.to_host())
     var ys = _as_float64(y.to_host())
     var concordant = 0
@@ -933,28 +1074,16 @@ def kendalltau[
                 concordant += 1
             else:
                 discordant += 1
-    var total = n * (n - 1) // 2
-    var x_tied = xtie + both
-    var y_tied = ytie + both
-    if x_tied == total or y_tied == total:
-        raise Error("kendalltau: one variable is constant")
-    var tau = Float64(concordant - discordant) / (
-        _sqrt(Float64(total - x_tied)) * _sqrt(Float64(total - y_tied))
+    return _kendall_finish(
+        concordant,
+        discordant,
+        xtie,
+        ytie,
+        both,
+        _tie_sums(xs),
+        _tie_sums(ys),
+        n,
     )
-    tau = min(1.0, max(-1.0, tau))
-
-    # SciPy's variance of `con - dis` with tie corrections: the group sizes
-    # of equal values in each variable enter through three sums.
-    var stats_x = _tie_sums(xs)
-    var stats_y = _tie_sums(ys)
-    var m = Float64(n) * Float64(n - 1)
-    var variance = (
-        (m * Float64(2 * n + 5) - stats_x[1] - stats_y[1]) / 18.0
-        + 2.0 * stats_x[0] * stats_y[0] / m
-        + stats_x[2] * stats_y[2] / (9.0 * m * Float64(n - 2))
-    )
-    var z = Float64(concordant - discordant) / _sqrt(variance)
-    return CorrelationResult(tau, _normal_two_sided(z))
 
 
 def _tie_sums(values: List[Float64]) -> Tuple[Float64, Float64, Float64]:
