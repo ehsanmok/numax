@@ -46,16 +46,21 @@ from std.math import (
     isnan as _std_isnan,
 )
 
-from layout import Coord
+from algorithm.rowwise_types import RowCoord
+from layout import Coord, coord_to_index_list
+from layout.tile_layout import row_major
+from max.algorithm.functional import elementwise
 from layout.tile_layout import TensorLayout
 
 from .tensorlike import TensorLike, is_row_major
-from .tensor import Dynamic, Tensor
+from .rowwise import reduce_all
+from .tensor import Dynamic, Static, Tensor, _dyn_shape
 from ._drive import (
     _BroadcastRank,
     _check_device,
     _flat,
     _flat_out,
+    _flat_unchecked,
     _launch,
     _notice,
     _width,
@@ -382,17 +387,66 @@ def logical_not[
     ](a)
 
 
-def all[T: TensorLike](a: T) raises -> Bool where T.dtype == DType.bool:
+def _count_nonzero_device[T: TensorLike](a: T) raises -> Int:
+    """How many elements of a GPU-context `a` are nonzero, where it lives.
+
+    One launch writes `1` or `0` per element as `int32` and MAX's
+    `ReduceSum` folds them, so a single scalar crosses back rather than the
+    tensor; the device path of `all`, `any`, `count_nonzero`,
+    `any_nonzero` and `all_nonzero`. It gives up the host loop's early
+    exit, which a reduction has no use for. A NaN counts as nonzero, as in
+    NumPy.
+    """
+    var ctx = a.context()
+    var n = a.size()
+    if n == 0:
+        return 0
+    var flags = Dynamic[DType.int32, 1]._uninitialized(
+        ctx, row_major(_dyn_shape[1](n))
+    )
+    var src = _flat_unchecked(a)
+    var dst = _flat_out(flags)
+
+    @always_inline
+    def flag[width: Int, alignment: Int = 1](coord: Coord) {var src, var dst}:
+        var x = src[coord][0]
+        comptime if T.dtype == DType.bool:
+            dst.store[1](coord, Int32(1) if x else Int32(0))
+        else:
+            dst.store[1](coord, Int32(0) if x == 0 else Int32(1))
+
+    elementwise[simd_width=1, target="gpu"](flag, Coord(n), ctx)
+    var total = Static[DType.int32, 1](ctx)
+
+    @always_inline
+    def identity[
+        w: Int
+    ](tile: SIMD[DType.int32, w], idx: RowCoord[1]) {} -> SIMD[DType.int32, w]:
+        return tile
+
+    reduce_all[monoid="sum", target="gpu"](
+        _flat_unchecked(flags), total.tile(), identity, n, Optional(ctx)
+    )
+    return Int(total.to_host()[0])
+
+
+def all[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Bool where T.dtype == DType.bool:
     """Whether every element is true. `numpy.all`.
 
-    A host read, and no `gpu` parameter: the answer is one `Bool`, so it has
-    to cross back over the launch boundary whatever produced the mask, and
-    this short-circuits on the first false -- data-dependent control flow,
-    tier 2 in the strict sense rather than in shape only. This name hides
+    On the host a loop that short-circuits on the first false. At
+    `gpu=True` a device count: one flag launch and one `ReduceSum`, so only
+    the count crosses back rather than the mask. This name hides
     Mojo's builtin `all` in any file that imports it -- the price
     `from numpy import all` charges in Python too, and worth paying for the
     name a NumPy caller actually reaches for.
     """
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _count_nonzero_device(a) == a.size()
+    else:
+        _notice[gpu]("all")
     var values = a.to_host()
     for i in range(a.size()):
         if not values[i]:
@@ -400,10 +454,17 @@ def all[T: TensorLike](a: T) raises -> Bool where T.dtype == DType.bool:
     return True
 
 
-def any[T: TensorLike](a: T) raises -> Bool where T.dtype == DType.bool:
-    """Whether any element is true. `numpy.any`. A host read that
-    short-circuits, tier 2 on the same terms as `all` above, and hiding the
+def any[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> Bool where T.dtype == DType.bool:
+    """Whether any element is true. `numpy.any`. A short-circuiting host
+    loop, or at `gpu=True` the device count `all` describes; it hides the
     builtin `any` in an importing file the same way."""
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _count_nonzero_device(a) > 0
+    else:
+        _notice[gpu]("any")
     var values = a.to_host()
     for i in range(a.size()):
         if values[i]:
@@ -478,13 +539,13 @@ def allclose[
 ) raises -> Bool where (T.dtype.is_floating_point() and is_row_major[T]):
     """Whether every element is within tolerance. `numpy.allclose`.
 
-    The comparison runs where `gpu` says; the fold back to one `Bool` is
-    `all`'s host read.
+    Both halves run where `gpu` says: the comparison, and the fold back to
+    one `Bool` through `all`, so only that `Bool` crosses back.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     var close = isclose[T, gpu=gpu](a, b, rtol, atol)
-    return all(close)
+    return all[gpu=gpu](close)
 
 
 def array_equal[
@@ -493,13 +554,13 @@ def array_equal[
     """Whether every element is exactly equal. `numpy.array_equal`.
 
     Exact, so NaN compares unequal to itself and two tensors of NaN are not
-    equal -- matching NumPy. The comparison runs where `gpu` says and the
-    fold back to one `Bool` is `all`'s host read.
+    equal -- matching NumPy. The comparison and the fold through `all` both
+    run where `gpu` says.
     """
     comptime dtype = T.dtype
     comptime LayoutType = T.LayoutType
     var same = equal[T, gpu=gpu](a, b)
-    return all(same)
+    return all[gpu=gpu](same)
 
 
 # The broadcasting forms, matching `numax.core.ops` and

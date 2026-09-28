@@ -71,6 +71,8 @@ from std.collections import Array
 from layout import Coord, TileTensor
 from layout.tile_layout import TensorLayout, row_major
 from .tensorlike import TensorLike, dim, is_row_major
+from ._drive import _check_device, _notice
+from .logic import _count_nonzero_device
 from .tensor import (
     Dynamic,
     Static,
@@ -405,12 +407,19 @@ def unique[T: TensorLike](a: T) raises -> Dynamic[T.dtype, 1]:
     return asarray(values^, a.context())
 
 
-def count_nonzero[T: TensorLike](a: T) raises -> Int:
+def count_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Int:
     """How many elements of `a` are not zero. `numpy.count_nonzero`.
 
     `-0.0` counts as zero (it compares equal to `0.0`), matching NumPy.
-    NaN counts as nonzero, also matching NumPy, since `nan != 0`.
+    NaN counts as nonzero, also matching NumPy, since `nan != 0`. At
+    `gpu=True` it is a device count, one flag launch and one `ReduceSum`,
+    and so are `any_nonzero` and `all_nonzero` below.
     """
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _count_nonzero_device(a)
+    else:
+        _notice[gpu]("count_nonzero")
     var n = a.size()
     var values = a.to_host()
     var total = 0
@@ -420,7 +429,7 @@ def count_nonzero[T: TensorLike](a: T) raises -> Int:
     return total
 
 
-def any_nonzero[T: TensorLike](a: T) raises -> Bool:
+def any_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Bool:
     """Whether any element is nonzero. `numpy.any`.
 
     Named `any_nonzero` rather than `any` because `any` is a Mojo builtin;
@@ -430,6 +439,11 @@ def any_nonzero[T: TensorLike](a: T) raises -> Bool:
     Short-circuits, which is the point of having it rather than
     `count_nonzero(a) > 0`.
     """
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _count_nonzero_device(a) > 0
+    else:
+        _notice[gpu]("any_nonzero")
     var n = a.size()
     var values = a.to_host()
     for i in range(n):
@@ -438,9 +452,14 @@ def any_nonzero[T: TensorLike](a: T) raises -> Bool:
     return False
 
 
-def all_nonzero[T: TensorLike](a: T) raises -> Bool:
+def all_nonzero[T: TensorLike, gpu: Bool = False](a: T) raises -> Bool:
     """Whether every element is nonzero. `numpy.all`, named for the same
     reason as `any_nonzero`. Short-circuits on the first zero."""
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            return _count_nonzero_device(a) == a.size()
+    else:
+        _notice[gpu]("all_nonzero")
     var n = a.size()
     var values = a.to_host()
     for i in range(n):
