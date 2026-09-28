@@ -306,14 +306,14 @@ def peak_prominences[
             ](tile: SIMD[P.dtype, w], idx: RowCoord[1]) {} -> SIMD[P.dtype, w]:
                 return tile
 
-            reduce_all[monoid="min", target="gpu"](
+            reduce_all[monoid="min", gpu=True](
                 _flat_unchecked(peaks),
                 lo.tile(),
                 identity,
                 count,
                 Optional(ctx),
             )
-            reduce_all[monoid="max", target="gpu"](
+            reduce_all[monoid="max", gpu=True](
                 _flat_unchecked(peaks),
                 hi.tile(),
                 identity,

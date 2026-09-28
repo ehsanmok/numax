@@ -170,10 +170,10 @@ def _device_range[T: TensorLike](xs: T) raises -> Tuple[Float64, Float64]:
     ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return tile
 
-    reduce_all[monoid="min", target="gpu"](
+    reduce_all[monoid="min", gpu=True](
         _flat_unchecked(xs), lo.tile(), identity, xs.size(), Optional(ctx)
     )
-    reduce_all[monoid="max", target="gpu"](
+    reduce_all[monoid="max", gpu=True](
         _flat_unchecked(xs), hi.tile(), identity, xs.size(), Optional(ctx)
     )
     var low = Float64(lo.to_host()[0])
@@ -831,10 +831,10 @@ def _int_range[T: TensorLike](xs: T) raises -> Tuple[Int, Int]:
     ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return tile
 
-    reduce_all[monoid="min", target="gpu"](
+    reduce_all[monoid="min", gpu=True](
         _flat_unchecked(xs), lo.tile(), identity, xs.size(), Optional(ctx)
     )
-    reduce_all[monoid="max", target="gpu"](
+    reduce_all[monoid="max", gpu=True](
         _flat_unchecked(xs), hi.tile(), identity, xs.size(), Optional(ctx)
     )
     return (Int(lo.to_host()[0]), Int(hi.to_host()[0]))

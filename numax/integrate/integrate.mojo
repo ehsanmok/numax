@@ -416,7 +416,7 @@ def _max_abs_ratio[
             ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
                 return tile
 
-            reduce_all[monoid="max", target="gpu"](
+            reduce_all[monoid="max", gpu=True](
                 ratios.tile(), worst.tile(), identity, n, Optional(ctx)
             )
             return Float64(worst.to_host()[0])

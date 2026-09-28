@@ -744,7 +744,7 @@ def _circulant_divide[
     ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
-    reduce_all[monoid="min", target="gpu"](
+    reduce_all[monoid="min", gpu=True](
         magnitudes.tile(), smallest.tile(), identity, n, Optional(ctx)
     )
     if smallest.to_host()[0] == 0:

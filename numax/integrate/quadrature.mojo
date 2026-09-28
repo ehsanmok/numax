@@ -186,7 +186,7 @@ def _sampled_device[
     ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
-    reduce_all[monoid="sum", target="gpu"](
+    reduce_all[monoid="sum", gpu=True](
         terms.tile(), total.tile(), identity, count, Optional(ctx)
     )
     return total.to_host()[0]

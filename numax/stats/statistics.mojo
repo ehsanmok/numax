@@ -276,7 +276,7 @@ def sum[
         _notice[gpu]("sum")
         return _host_fold_axis[axis=axis, combine=_add[dtype]](xs, 0)
     var out = _axis_dst[axis=axis](xs)
-    sum_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+    sum_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
@@ -306,7 +306,7 @@ def prod[
         _notice[gpu]("prod")
         return _host_fold_axis[axis=axis, combine=_mul[dtype]](xs, 1)
     var out = _axis_dst[axis=axis](xs)
-    prod_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+    prod_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
@@ -339,7 +339,7 @@ def min[
             xs, Scalar[dtype].MAX_FINITE
         )
     var out = _axis_dst[axis=axis](xs)
-    min_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+    min_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
@@ -368,7 +368,7 @@ def max[
             xs, Scalar[dtype].MIN_FINITE
         )
     var out = _axis_dst[axis=axis](xs)
-    max_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+    max_axis[dtype, _, _, axis=axis, gpu=gpu](
         _dense(xs), out.tile(), Optional(xs.context())
     )
     return out^
@@ -459,7 +459,7 @@ def _welford_axis[
     tuple is more ceremony than passing two in.
     """
     comptime dtype = T.dtype
-    mean_variance_axis[dtype, _, _, axis=axis, target=_target[gpu]()](
+    mean_variance_axis[dtype, _, _, axis=axis, gpu=gpu](
         xs.tile(), means.tile(), variances.tile(), ddof, Optional(xs.context())
     )
 
@@ -484,7 +484,7 @@ def _reduce_whole[
     ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
-    reduce_all[monoid=monoid, target=_target[gpu]()](
+    reduce_all[monoid=monoid, gpu=gpu](
         _flat(xs), out.tile(), identity, xs.size(), Optional(ctx)
     )
     return out.to_host()[0]
@@ -593,7 +593,7 @@ def _welford[
     )
     var mean_out = Static[dtype, 1](ctx)
     var var_out = Static[dtype, 1](ctx)
-    mean_variance_axis[dtype, _, _, axis=0, target=_target[gpu]()](
+    mean_variance_axis[dtype, _, _, axis=0, gpu=gpu](
         flat, mean_out.tile(), var_out.tile(), ddof, Optional(ctx)
     )
     return (mean_out.to_host()[0], var_out.to_host()[0])
@@ -832,7 +832,7 @@ def _slice_modes_device[
     var best = Dynamic[DType.int64, 1]._uninitialized(
         ctx, row_major(_dyn_shape[1](rows))
     )
-    max_axis[axis=1, target="gpu"](keys.tile(), best.tile(), ctx)
+    max_axis[axis=1, gpu=True](keys.tile(), best.tile(), ctx)
     var out = Dynamic[dtype, 1]._uninitialized(
         ctx, row_major(_dyn_shape[1](rows))
     )
@@ -1035,7 +1035,7 @@ def argmax[
         var out = TileTensor(out_storage, row_major[1]())
         _nn_argmax(flat, 0, out)
         return Int(out[0])
-    return argmax_all[dtype, _target[gpu]()](_flat(xs), xs.context())
+    return argmax_all[dtype, gpu](_flat(xs), xs.context())
 
 
 def argmin[
@@ -1053,7 +1053,7 @@ def argmin[
         var out = TileTensor(out_storage, row_major[1]())
         _nn_argmin(flat, 0, out)
         return Int(out[0])
-    return argmin_all[dtype, _target[gpu]()](_flat(xs), xs.context())
+    return argmin_all[dtype, gpu](_flat(xs), xs.context())
 
 
 def _argn_axis_device[

@@ -104,7 +104,7 @@ def dot[
     ](tile: SIMD[A.dtype, w], idx: RowCoord[1]) {var rhs} -> SIMD[A.dtype, w]:
         return tile * rhs.load[w](idx.coord)
 
-    reduce_all[monoid="sum", target=_target[gpu]()](
+    reduce_all[monoid="sum", gpu=gpu](
         _mut_view(a), out.tile(), times, n, Optional(ctx)
     )
     return out.to_host()[0]
@@ -137,7 +137,7 @@ def nrm2[
     ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return tile * tile
 
-    reduce_all[monoid="sum", target=_target[gpu]()](
+    reduce_all[monoid="sum", gpu=gpu](
         _mut_view(a), out.tile(), square, n, Optional(ctx)
     )
     return _sqrt(out.to_host()[0])
@@ -166,7 +166,7 @@ def asum[
     ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return abs(tile)
 
-    reduce_all[monoid="sum", target=_target[gpu]()](
+    reduce_all[monoid="sum", gpu=gpu](
         _mut_view(a), out.tile(), magnitude, n, Optional(ctx)
     )
     return out.to_host()[0]

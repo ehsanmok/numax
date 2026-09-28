@@ -108,7 +108,7 @@ def trace[
     ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
         return tile
 
-    reduce_all[monoid="sum", target=_target[gpu]()](
+    reduce_all[monoid="sum", gpu=gpu](
         dv, out.tile(), identity, n, Optional(ctx)
     )
 
@@ -189,7 +189,7 @@ def _matrix_norm[
         ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
             return tile * tile
 
-        reduce_all[monoid="sum", target=_target[gpu]()](
+        reduce_all[monoid="sum", gpu=gpu](
             flat, out.tile(), square, n * n, Optional(ctx)
         )
         return _sqrt(out.to_host()[0])
@@ -212,16 +212,16 @@ def _matrix_norm[
     # bound against.
     var sums = Static[T.dtype, n](ctx)
     comptime if ord == 1:
-        sum_axis[axis=0, target=_target[gpu]()](mv, sums.tile(), ctx)
+        sum_axis[axis=0, gpu=gpu](mv, sums.tile(), ctx)
     else:
-        sum_axis[axis=1, target=_target[gpu]()](mv, sums.tile(), ctx)
+        sum_axis[axis=1, gpu=gpu](mv, sums.tile(), ctx)
 
     # `tile()` erases the origin, so `magnitudes` is not kept alive by
     # `mv` and destruction is ASAP. See `numax.linalg.qr`.
     _ = magnitudes^
 
     var out = Static[T.dtype, 1](ctx)
-    max_axis[axis=0, target=_target[gpu]()](sums.tile(), out.tile(), ctx)
+    max_axis[axis=0, gpu=gpu](sums.tile(), out.tile(), ctx)
     return out.to_host()[0]
 
 
@@ -319,7 +319,7 @@ def _vector_norm[
         ](tile: SIMD[T.dtype, w], idx: RowCoord[1]) {} -> SIMD[T.dtype, w]:
             return tile
 
-        reduce_all[monoid=monoid, target=_target[gpu]()](
+        reduce_all[monoid=monoid, gpu=gpu](
             magnitudes.tile(), best.tile(), identity, n, Optional(ctx)
         )
         return best.to_host()[0]

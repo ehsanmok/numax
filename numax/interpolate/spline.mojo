@@ -900,7 +900,7 @@ def _akima_slopes_device[
     ](tile: SIMD[dtype, w], idx: RowCoord[1]) {} -> SIMD[dtype, w]:
         return tile
 
-    reduce_all[monoid="max", target="gpu"](
+    reduce_all[monoid="max", gpu=True](
         fv, lv.as_unsafe_any_origin(), identity, n, Optional(ctx)
     )
 

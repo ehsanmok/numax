@@ -964,7 +964,7 @@ def _kendall_counts_device[
 
     elementwise[simd_width=1, target="gpu"](count, Coord(n), ctx)
     var sums = Static[DType.int64, 11](ctx)
-    sum_axis[axis=1, target="gpu"](table.tile(), sums.tile(), ctx)
+    sum_axis[axis=1, gpu=True](table.tile(), sums.tile(), ctx)
     var raw = sums.to_host()
     var out = List[Int](capacity=11)
     for k in range(11):

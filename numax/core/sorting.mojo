@@ -492,10 +492,10 @@ def _check_index_bounds_device[
     ](tile: SIMD[DType.int64, w], idx: RowCoord[1]) {} -> SIMD[DType.int64, w]:
         return tile
 
-    reduce_all[monoid="min", target="gpu"](
+    reduce_all[monoid="min", gpu=True](
         _flat_unchecked(indices), lo.tile(), identity, count, Optional(ctx)
     )
-    reduce_all[monoid="max", target="gpu"](
+    reduce_all[monoid="max", gpu=True](
         _flat_unchecked(indices), hi.tile(), identity, count, Optional(ctx)
     )
     var smallest = Int(lo.to_host()[0])

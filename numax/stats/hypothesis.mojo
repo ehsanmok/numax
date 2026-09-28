@@ -893,14 +893,14 @@ def _ks_gaps_device[
 
     var top = Static[DType.int64, 2](ctx)
     var tv = top.tile()
-    reduce_all[monoid="max", target="gpu"](
+    reduce_all[monoid="max", gpu=True](
         _flat_unchecked(gaps),
         tv.slice[0:1]().as_unsafe_any_origin(),
         identity,
         n1 + n2,
         Optional(ctx),
     )
-    reduce_all[monoid="max", target="gpu"](
+    reduce_all[monoid="max", gpu=True](
         _flat_unchecked(flipped),
         tv.slice[1:2]().as_unsafe_any_origin(),
         identity,

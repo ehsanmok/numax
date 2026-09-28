@@ -499,7 +499,7 @@ def _count_nonzero_device[T: TensorLike](a: T) raises -> Int:
     ](tile: SIMD[DType.int32, w], idx: RowCoord[1]) {} -> SIMD[DType.int32, w]:
         return tile
 
-    reduce_all[monoid="sum", target="gpu"](
+    reduce_all[monoid="sum", gpu=True](
         _flat_unchecked(flags), total.tile(), identity, n, Optional(ctx)
     )
     return Int(total.to_host()[0])

@@ -139,7 +139,7 @@ def reduce_all[
     & ImplicitlyCopyable,
     //,
     monoid: StaticString,
-    target: StaticString = "cpu",
+    gpu: Bool = False,
 ](
     xs: TileTensor[
         dtype,
@@ -186,6 +186,7 @@ def reduce_all[
     names only what it chooses: `reduce_all[monoid="sum"](...)`, with
     `target=` added for a device.
     """
+    comptime target = "gpu" if gpu else "cpu"
     comptime simd_width = _monoid_width[dtype, monoid, target]()
     var src = xs
     var out = dst
@@ -333,7 +334,7 @@ def _argn_all[
 
 
 def argmax_all[
-    dtype: DType, target: StaticString = "cpu"
+    dtype: DType, gpu: Bool = False
 ](
     xs: TileTensor[
         dtype,
@@ -352,11 +353,12 @@ def argmax_all[
     which is what `nn.argmaxmin` does too. `ctx` allocates the one-element
     index destination, so it is required on both targets.
     """
+    comptime target = "gpu" if gpu else "cpu"
     return _argn_all[dtype, True, target](xs, ctx)
 
 
 def argmin_all[
-    dtype: DType, target: StaticString = "cpu"
+    dtype: DType, gpu: Bool = False
 ](
     xs: TileTensor[
         dtype,
@@ -369,6 +371,7 @@ def argmin_all[
 ) raises -> Int:
     """The index of the smallest element of a rank-1 `xs`.
     `numpy.argmin(a)`, `argmax_all`'s mirror through `ArgMin`."""
+    comptime target = "gpu" if gpu else "cpu"
     return _argn_all[dtype, False, target](xs, ctx)
 
 
@@ -485,7 +488,7 @@ def sum_axis[
     XsLayout: TensorLayout,
     OutLayout: TensorLayout,
     axis: Int,
-    target: StaticString = "cpu",
+    gpu: Bool = False,
 ](
     xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
@@ -513,6 +516,7 @@ def sum_axis[
     The sum is reassociated, so it will differ from
     `reduce_axis[add_combine]` in the last bits. See the module docstring.
     """
+    comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="sum", target=target](xs, dst, ctx)
 
 
@@ -521,7 +525,7 @@ def prod_axis[
     XsLayout: TensorLayout,
     OutLayout: TensorLayout,
     axis: Int,
-    target: StaticString = "cpu",
+    gpu: Bool = False,
 ](
     xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
@@ -546,6 +550,7 @@ def prod_axis[
     accumulator is not widened, because a product's rounding depends on
     the order the factors arrive in.
     """
+    comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="prod", target=target](xs, dst, ctx)
 
 
@@ -554,7 +559,7 @@ def max_axis[
     XsLayout: TensorLayout,
     OutLayout: TensorLayout,
     axis: Int,
-    target: StaticString = "cpu",
+    gpu: Bool = False,
 ](
     xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
@@ -578,6 +583,7 @@ def max_axis[
     order it is folded in, so this agrees with
     `reduce_axis[max_combine]` bit for bit.
     """
+    comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="max", target=target](xs, dst, ctx)
 
 
@@ -586,7 +592,7 @@ def min_axis[
     XsLayout: TensorLayout,
     OutLayout: TensorLayout,
     axis: Int,
-    target: StaticString = "cpu",
+    gpu: Bool = False,
 ](
     xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     dst: TileTensor[
@@ -606,6 +612,7 @@ def min_axis[
     """The smallest element of `xs` along `axis`, into `dst`, on either
     target. `numpy.min(a, axis=k)`, `max_axis`'s mirror through
     `ReduceMin`, and exact for the same reason."""
+    comptime target = "gpu" if gpu else "cpu"
     _fold_axis[axis=axis, monoid="min", target=target](xs, dst, ctx)
 
 
@@ -614,7 +621,7 @@ def mean_variance_axis[
     XsLayout: TensorLayout,
     OutLayout: TensorLayout,
     axis: Int,
-    target: StaticString = "cpu",
+    gpu: Bool = False,
 ](
     xs: TileTensor[dtype, XsLayout, _, Engine=DefaultEngine[element_width=1]],
     means: TileTensor[
@@ -658,6 +665,7 @@ def mean_variance_axis[
     also why the result will not match a two-pass host computation in the
     last bits: this one is the more accurate of the two.
     """
+    comptime target = "gpu" if gpu else "cpu"
     comptime rank = type_of(xs).rank
     comptime simd_width = rowwise.pick_simd_width[
         Welford[dtype, 1], target, 64, dtype
