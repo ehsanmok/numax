@@ -21,7 +21,7 @@ from numax.special import gamma, j0, erf, gaussian
 | `hyper` | `hyp1f1`, `hyp2f1` -- the series, with Kummer's and Pfaff's transformations for the negative side |
 | `information` | `xlogy`, `xlog1py`, `entr`, `rel_entr`, `kl_div`, `logit`, `expit`, `log_expit` -- the `0 log 0` conventions as blends |
 | `logsumexp` | `logsumexp` over an `Array` (tier 1) and over a `Tensor` through MAX's `OnlineLogSumExp` monoid (tier 2, the one delegation here) |
-| `beta` | `beta`, `betainc`, `betaincc` |
+| `beta` | `beta`, `betainc`, `betaincc`, `betaincinv` |
 | `bessel` | `j0`, `j1`, `y0`, `y1` by A&S polynomials; `jv`, `yv`, `iv`, `kv`, `ive`, `kve`, `spherical_jn`, `spherical_yn` of any real order by Temme's method, fixed-depth continued fractions and held-or-taken recurrences |
 | `airy` | `airy` -- `(Ai, Ai', Bi, Bi')`, series in the middle and the Bessel forms on both sides |
 | `struve` | `struve` -- the Bessel-function series over Miller's recurrence to `x = 40`, the asymptotic expansion past it |
@@ -60,7 +60,7 @@ from .bessel import (
     y1,
     yv,
 )
-from .beta import beta, betainc, betaincc, betaln
+from .beta import beta, betainc, betaincc, betaincinv, betaln
 from .elliptic import elliptic_e, elliptic_k
 from .erf import erf, erfc, erfcinv, erfinv
 from .gamma import (

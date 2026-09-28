@@ -1,8 +1,9 @@
-"""The Beta family: `beta(a,b)` and the regularized incomplete beta
-`betainc(x,a,b)`.
+"""The Beta family: `beta(a,b)`, the regularized incomplete beta
+`betainc(x,a,b)`, and its inverse `betaincinv(y,a,b)`.
 
 **This module is tier 1.** The continued fraction runs a fixed 100
-iterations with no convergence test, and its two branches are blended with
+iterations with no convergence test, `betaincinv` runs twelve Halley
+steps against it, and the fraction's two branches are blended with
 each argument clamped to the side where that branch is selected, since the
 discarded one can be infinite and `0 * inf` is NaN.
 
@@ -201,3 +202,106 @@ def betaincc[T: FloatLike](x: T, a: T, b: T) -> T:
     shape next door.
     """
     return T.one() - betainc(x, a, b)
+
+
+def betaincinv[T: FloatLike](y: T, a: T, b: T) -> T:
+    """The inverse of `betainc` in `x`: the `x` in `[0, 1]` with
+    `betainc(x, a, b) == y`, for `a, b > 0`. `scipy.special.betaincinv(a,
+    b, y)`, with the target first to mirror this module's `betainc(x, a,
+    b)` rather than SciPy's order.
+
+    Tier 1. Numerical Recipes' starting guess (*Numerical Recipes*, 3rd
+    ed., 6.4) -- for `a, b >= 1` a normal quantile mapped through the
+    Beta's Cornish-Fisher form, bounded below by the lower tail's leading
+    term `(y a B(a, b))^(1/a)` and above by the mirror of the upper
+    tail's, neither of which overshoots there; otherwise that leading term
+    of whichever tail `y` falls in, split where NR splits. Then twelve Halley steps
+    against `betainc`, with `dI/dx = x^(a-1) (1-x)^(b-1) / B(a, b)` and NR's
+    guards: a step that would leave `(0, 1)` goes halfway to the edge
+    instead. Every guess is evaluated at shapes clamped into its own
+    region, so the choice is a blend and the function runs in a kernel.
+
+    As accurate as `betainc` at the result, which a small shape amplifies:
+    near 0 the root goes as `y^(1/a)`, so `betainc`'s relative error
+    reaches `x` multiplied by `1/a`. `pixi run accuracy` reads `3e-15`
+    relative or better at `(2, 3)` and `(5, 1.5)` for `y` in `[1e-12,
+    0.99]`, `8e-15` at `(0.5, 0.5)`, and `1.3e-13` at `(0.3, 50)`. `betaincinv(0, a, b)` is `0` and
+    `betaincinv(1, a, b)` is `1`.
+
+    Parameters:
+        T: The `FloatLike` conformer, scalar or SIMD, of the inputs.
+
+    Args:
+        y: The target probability, in `[0, 1]`.
+        a: The first shape, `a > 0`.
+        b: The second shape, `b > 0`.
+
+    Returns:
+        The `x` with `betainc(x, a, b) == y`.
+    """
+    var zero = T.constant(0.0)
+    var one = T.one()
+    var half = T.constant(0.5)
+    var two = T.constant(2.0)
+    var at_zero = ge_indicator(zero, y.abs())
+    var at_one = ge_indicator(y, one)
+    var p = y + at_zero * T.constant(0.25) - at_one * half
+    var log_b = lgamma(a) + lgamma(b) - lgamma(a + b)
+
+    # `a, b >= 1`: a normal deviate through the Beta's Cornish-Fisher form.
+    var both = ge_indicator(a, one) * ge_indicator(b, one)
+    var ab = max_of(a, one)
+    var bb = max_of(b, one)
+    var pp = min_of(p, one - p)
+    var t = (-two * pp.ln()).sqrt()
+    var z = (T.constant(2.30753) + t * T.constant(0.27061)) / (
+        one + t * (T.constant(0.99229) + t * T.constant(0.04481))
+    ) - t
+    z = blend(ge_indicator(p, half), z, -z)
+    var al = (z * z - T.constant(3.0)) / T.constant(6.0)
+    var ia = one / (two * ab - one)
+    var ib = one / (two * bb - one)
+    var h = two / (ia + ib)
+    var w = z * (al + h).sqrt() / h - (ib - ia) * (
+        al + T.constant(5.0 / 6.0) - two / (T.constant(3.0) * h)
+    )
+    var guess_normal = ab / (ab + bb * (two * w).exp())
+
+    # The two tails' leading terms: `I_x ~ x^a / (a B)` near 0 and
+    # `1 - I_x ~ (1 - x)^b / (b B)` near 1. For `a, b >= 1` they bound the
+    # root from below and above; they also keep the Cornish-Fisher guess
+    # off exactly 0 or 1.
+    var lead_low = ((p.ln() + a.ln() + log_b) / a).exp()
+    var lead_high = one - (((one - p).ln() + b.ln() + log_b) / b).exp()
+    var bounded = min_of(max_of(guess_normal, lead_low), lead_high)
+
+    # Otherwise: whichever leading term belongs to the tail `p` falls in,
+    # split where NR splits, at the lower tail's share `t_a / (t_a + t_b)`
+    # of `x^a / a` and `(1 - x)^b / b` at the mode-like point `a / (a + b)`.
+    # NR inverts the unnormalized power laws there; the normalized ones
+    # are the same shape and stay right as `y -> 0`.
+    var s = a + b
+    var ta = ((a * (a / s).ln()).exp()) / a
+    var tb = ((b * (b / s).ln()).exp()) / b
+    var total = max_of(ta + tb, T.constant(1e-30))
+    var lower = one - ge_indicator(p, ta / total)
+    var guess_power = blend(lower, lead_low, lead_high)
+
+    var x = blend(both, bounded, guess_power)
+
+    var a1 = a - one
+    var b1 = b - one
+    for _ in range(12):
+        # `1 - x` floored: a root that rounds to 1 would otherwise put
+        # `ln(0)` in the density. The floor never binds below 1, where
+        # `1 - x` is at least an ulp of 1.
+        var gap = max_of(one - x, T.constant(1e-30))
+        var err = betainc(x, a, b) - p
+        var density = (a1 * x.ln() + b1 * gap.ln() - log_b).exp()
+        var u = err / density
+        var step = u / (one - half * min_of(one, u * (a1 / x - b1 / gap)))
+        var next = x - step
+        var below = ge_indicator(zero, next)
+        var above = ge_indicator(next, one)
+        x = blend(below, half * x, blend(above, half * (x + one), next))
+    return blend(at_zero, zero, blend(at_one, one, x))

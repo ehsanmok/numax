@@ -287,7 +287,7 @@ def gammaincinv[T: FloatLike](a: T, y: T) -> T:
     var x = blend(big, guess_big, guess_small)
     var a1 = a - one
     var log_gamma_a = lgamma(a)
-    comptime for _ in range(12):
+    for _ in range(12):
         var err = gammainc(a, x) - p
         var density = (a1 * x.ln() - x - log_gamma_a).exp()
         var u = err / density

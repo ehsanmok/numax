@@ -401,6 +401,21 @@ def build() -> list[Case]:
             )
         )
 
+    for (a, b) in ((0.5, 0.5), (2.0, 3.0), (5.0, 1.5), (0.3, 50.0)):
+        tag = f"{a}_{b}".replace(".", "p")
+        cases.append(
+            Case(
+                f"betaincinv_{tag}",
+                f"betaincinv(y, a={a}, b={b}), y in [1e-12, 0.99]",
+                logarithmic(1e-12, 0.99),
+                lambda y, a=a, b=b: _bisect_log(
+                    lambda x: mp.betainc(a, b, 0, x, regularized=True),
+                    y,
+                    hi=0,
+                ),
+            )
+        )
+
     # --- Orthogonal polynomials and quadrature-adjacent ---------------
     for n in (4, 12):
         cases.append(

@@ -53,6 +53,7 @@ from numax import (
     y0,
     y1,
     betainc,
+    betaincinv,
     chebyshev_t,
     comb,
     digamma,
@@ -679,6 +680,36 @@ def main():
     for i in range(BETAINC_20P0_20P0_N):
         s.observe(xs[i], betainc(p(xs[i]), p(20.0), p(20.0)).v[0], refs[i])
     s.report("betainc a=b=20, x in [0.001,0.999]")
+
+    s = Stats()
+    xs = materialize[BETAINCINV_0P5_0P5_X]()
+    refs = materialize[BETAINCINV_0P5_0P5_REF]()
+    for i in range(BETAINCINV_0P5_0P5_N):
+        s.observe(xs[i], betaincinv(p(xs[i]), p(0.5), p(0.5)).v[0], refs[i])
+    s.report("betaincinv a=0.5,b=0.5 (NR guess + 12 Halley), y in [1e-12,0.99]")
+
+    s = Stats()
+    xs = materialize[BETAINCINV_2P0_3P0_X]()
+    refs = materialize[BETAINCINV_2P0_3P0_REF]()
+    for i in range(BETAINCINV_2P0_3P0_N):
+        s.observe(xs[i], betaincinv(p(xs[i]), p(2.0), p(3.0)).v[0], refs[i])
+    s.report("betaincinv a=2.0,b=3.0 (NR guess + 12 Halley), y in [1e-12,0.99]")
+
+    s = Stats()
+    xs = materialize[BETAINCINV_5P0_1P5_X]()
+    refs = materialize[BETAINCINV_5P0_1P5_REF]()
+    for i in range(BETAINCINV_5P0_1P5_N):
+        s.observe(xs[i], betaincinv(p(xs[i]), p(5.0), p(1.5)).v[0], refs[i])
+    s.report("betaincinv a=5.0,b=1.5 (NR guess + 12 Halley), y in [1e-12,0.99]")
+
+    s = Stats()
+    xs = materialize[BETAINCINV_0P3_50P0_X]()
+    refs = materialize[BETAINCINV_0P3_50P0_REF]()
+    for i in range(BETAINCINV_0P3_50P0_N):
+        s.observe(xs[i], betaincinv(p(xs[i]), p(0.3), p(50.0)).v[0], refs[i])
+    s.report(
+        "betaincinv a=0.3,b=50.0 (NR guess + 12 Halley), y in [1e-12,0.99]"
+    )
 
     # --- Orthogonal polynomials (exact recurrences) -------------------
     section("Orthogonal polynomials -- exact recurrences, no approximation")
