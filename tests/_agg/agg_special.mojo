@@ -156,6 +156,9 @@ from test_beta import (
 from test_beta import (
     test_betaln_is_symmetric_and_differentiable as test_beta__test_betaln_is_symmetric_and_differentiable,
 )
+from test_beta import (
+    test_betainc_lower_tail_reaches_below_the_old_clamp as test_beta__test_betainc_lower_tail_reaches_below_the_old_clamp,
+)
 from test_elliptic import (
     test_elliptic_k_e_at_zero_are_pi_over_two as test_elliptic__test_elliptic_k_e_at_zero_are_pi_over_two,
 )
@@ -537,6 +540,7 @@ def main() raises:
     ]()
     suite.test[test_beta__test_betaln_survives_where_beta_underflows_to_zero]()
     suite.test[test_beta__test_betaln_is_symmetric_and_differentiable]()
+    suite.test[test_beta__test_betainc_lower_tail_reaches_below_the_old_clamp]()
     # tests/special/test_elliptic.mojo
     suite.test[test_elliptic__test_elliptic_k_e_at_zero_are_pi_over_two]()
     suite.test[test_elliptic__test_elliptic_e_at_one_is_one]()

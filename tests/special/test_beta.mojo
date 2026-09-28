@@ -231,5 +231,28 @@ def test_betaln_is_symmetric_and_differentiable() raises:
     )
 
 
+def test_betainc_lower_tail_reaches_below_the_old_clamp() raises:
+    """`I_x ~ x^a / (a B(a, b))` for `x` far below `1e-30`, where the old
+    `[1e-30, 1 - 1e-30]` clamp froze it; SciPy's digits."""
+    assert_almost_equal(
+        betainc(pv(1e-40), pv(0.5), pv(0.5)).v,
+        SIMD[dtype, width](6.366197723675813e-21),
+        atol=0.0,
+        rtol=1e-14,
+    )
+    assert_almost_equal(
+        betainc(pv(8.86928065555035e-118), pv(0.1), pv(0.1)).v,
+        SIMD[dtype, width](1e-12),
+        atol=0.0,
+        rtol=1e-13,
+    )
+    assert_almost_equal(
+        betainc(pv(0.0), pv(0.5), pv(0.5)).v, SIMD[dtype, width](0.0), atol=0.0
+    )
+    assert_almost_equal(
+        betainc(pv(1.0), pv(0.5), pv(0.5)).v, SIMD[dtype, width](1.0), atol=0.0
+    )
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

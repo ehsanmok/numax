@@ -156,9 +156,12 @@ def betainc[T: FloatLike](x: T, a: T, b: T) -> T:
     Both the direct fraction and its mirror image are evaluated, then
     blended on `x` versus `(a+1)/(a+b+2)`. Two clamps make that safe:
 
-    - `x` is clamped into `[eps, 1-eps]` before reaching `ln`, so a caller
-      whose `x` drifted a rounding step outside `[0,1]` gets `ln` of a
-      positive number rather than a NaN.
+    - `x` is clamped into `[0, 1]` before reaching `ln`, so a caller whose
+      `x` drifted a rounding step outside gets an endpoint rather than a
+      NaN. The clamp is exact, not `[eps, 1 - eps]`: at `x = 0` the
+      logarithm is `-inf` and the prefactor `exp(-inf)` is exactly `0` on
+      the side the blend selects, so the lower tail is `I_x ~ x^a / (a B)`
+      all the way down rather than frozen at its value at `eps`.
     - Each fraction's own argument is clamped to the side of the threshold
       where that fraction is the one actually selected (`min_of(x, t)` for
       the direct one, `min_of(1-x, 1-t)` for the mirror). This is a no-op
@@ -173,9 +176,7 @@ def betainc[T: FloatLike](x: T, a: T, b: T) -> T:
     underflows to exactly zero, so `I_0 = 0` and `I_1 = 1` fall out without
     a special case.
     """
-    comptime edge = 1e-30
-
-    var xs = min_of(max_of(x, T.constant(edge)), T.one() - T.constant(edge))
+    var xs = min_of(max_of(x, T.constant(0.0)), T.one())
     var one_minus = T.one() - xs
 
     var log_prefactor = (
