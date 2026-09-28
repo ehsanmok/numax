@@ -1,0 +1,69 @@
+# numax
+
+numax is a numerical computing library for Mojo on MAX: NumPy/SciPy-named
+arrays, linear algebra, FFTs, special functions, statistics, integration,
+interpolation, optimization and signal processing, on CPU and GPU, with
+forward-mode derivatives through the same functions.
+
+## Install and run
+
+- As a dependency (pixi): `numax = { git = "https://github.com/ehsanmok/numax.git" }`
+  under `[dependencies]`, with `channels = ["https://conda.modular.com/max", "conda-forge"]`.
+- Inside a clone of numax, every `mojo` call needs `-I .`:
+  `pixi run mojo -I . file.mojo`, or `pixi run run file.mojo`.
+- `docs/quickstart.md` is the shortest path to a running program.
+
+## Where names live
+
+- `from numax.prelude import *` -- the common surface in one import.
+- `from numax import ...` -- the whole flat surface.
+- One subpackage each: `numax.core` (tensors, elementwise math, logic,
+  sorting), `numax.linalg`, `numax.fft`, `numax.signal`, `numax.stats`,
+  `numax.special`, `numax.integrate`, `numax.interpolate`,
+  `numax.optimize`, `numax.io`.
+- A name is one function across both tiers: `solve(tensor)` is the device
+  tier, `solve[P, 3](array)` the register tier over `Array[T, n]`; the
+  argument picks the overload.
+
+## Making tensors
+
+| Creates | Spelling |
+|---|---|
+| zeros of a shape | `zeros[f32, 2, 3](ctx)`, `Static[f32, 2, 3](ctx)` |
+| a shape from values | `Static[f32, 3]([1.0, 2.0, 3.0], ctx)` |
+| a 1-D sequence | `linspace[5, f32](0, 1, ctx)`, `arange(0.0, 1.0, 0.25, ctx)` |
+| from host data | `asarray(values, ctx)` |
+
+`ctx` (a `DeviceContext`) is always last and optional; leaving it out is
+the host. `f32` is `DType.float32`.
+
+## Traps
+
+1. `Tensor` is `Movable`, not `Copyable`: `var b = a` moves; `copy(a)`
+   copies.
+2. `dim[T, i]` is a compile-time extent in a generic signature;
+   `a.dim[i]()` is the run-time one; `a.size()` is the element count.
+3. Not in the prelude, because they shadow builtins: `sum`, `prod`,
+   `min`, `max` (`from numax.stats import sum`), `abs`, `all`, `any`,
+   `round`, `copysign` (`from numax import abs`). The distributions are
+   namespaces: `from numax.stats import norm`, then `norm.cdf(...)`.
+   `numax/prelude.mojo` lists each one.
+4. `Tensor[...]` / `Static[...]` parameters are positional:
+   `Static[f32, 2, 3]`, never `Static[dtype=f32, ...]`.
+5. `Static[dtype, *dims]` has its shape in the type; `Dynamic[dtype, rank]`
+   has it at run time. A routine whose output size depends on the data
+   (`nonzero`, `unique`, `arange(start, stop)`) returns `Dynamic`.
+6. `gpu=True` is per call; where a tensor lives is per tensor. A mismatch
+   runs on the host and prints one line on stderr; `set_fallback("raise")`
+   turns that into an error.
+7. On Metal (Apple silicon) use `float32`: there is no `double` on the
+   device.
+8. A slice or block is a `TensorView` over the tensor; bind it before
+   using it (`var v = a[1:3]` then `v * 2.0`) -- the inline form does not
+   compile. A box narrower than the row is strided: `copy(v)` makes it
+   contiguous.
+9. The register tier (`Array[T, n * n]`) is for small `n`; past 64 its
+   routines stop with a compile-time message naming the `Tensor`
+   spelling.
+10. Arguments of a `FloatLike` kernel are `T`, not `Float64`: write
+    `T.constant(0.5)` for a literal.

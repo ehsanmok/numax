@@ -121,6 +121,11 @@ jobs:
       - name: Type-check the generic surface
         run: pixi run typecheck
 
+      # Every `mojo` block in `llms.txt` and `docs/quickstart.md` is a
+      # program a reader will paste; each must compile against this tree.
+      - name: Compile the documented snippets
+        run: pixi run doc-check
+
       - name: Run CPU examples
         run: pixi run examples-cpu
 
