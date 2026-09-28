@@ -285,10 +285,11 @@ downstream library writes one.
 | Missing | What numax had to do |
 |---|---|
 | `linalg.transpose` has no working device path (every path it reaches is a host memcpy) | Custom elementwise gather for the GPU case |
-| Quantile, selection, partition | Three-way quickselect |
+| Quantile, selection, partition | Three-way quickselect on the host; a device sort plus a gather of the order statistics on the device |
 | Covariance, correlation | Welford means plus a Gram matrix through `matmul` |
-| Scatter-accumulate (`nn.gather_scatter` stores, never accumulates) | Host-side histograms |
-| General device sort and argsort (only `nn.top_k`) | Host sorts |
+| Scatter-accumulate (`nn.gather_scatter` stores, never accumulates) | Device histograms through `std.atomic` `fetch_add` |
+| A correct general device sort and argsort (`nn.argsort`'s GPU kernel is wrong past 256 elements on Metal; otherwise only `nn.top_k`) | Own bitonic sort over `(value, index)` pairs |
+| `nn.gather_elements` takes a `DeviceContext` but launches `elementwise` at the default CPU target, so it has no device path | Own one-lane-per-element gather for `take_along_axis` |
 | `kron`, `inner`, `matrix_power` | Elementwise or `matmul` |
 | 1-D convolution (`nn.conv` is shaped for multi-channel NHWC; the GPU entry point is GPU-only and the CPU one needs a packed filter) | Direct elementwise dot products, plus an FFT route |
 | Out-of-place broadcast (`TileTensor` broadcast is in-place only) | Stride arithmetic |
