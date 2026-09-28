@@ -852,6 +852,9 @@ from test_operators import (
 from test_operators import (
     test_comparisons_return_bool_masks as test_operators__test_comparisons_return_bool_masks,
 )
+from test_operators import (
+    test_matmul_operator_is_matmul as test_operators__test_matmul_operator_is_matmul,
+)
 from test_ops import test_add_and_subtract as test_ops__test_add_and_subtract
 from test_ops import (
     test_multiply_and_divide as test_ops__test_multiply_and_divide,
@@ -1928,6 +1931,7 @@ def main() raises:
     suite.test[test_operators__test_power_operators]()
     suite.test[test_operators__test_in_place_operators_equal_the_binary_ones]()
     suite.test[test_operators__test_comparisons_return_bool_masks]()
+    suite.test[test_operators__test_matmul_operator_is_matmul]()
     # tests/core/test_ops.mojo
     suite.test[test_ops__test_add_and_subtract]()
     suite.test[test_ops__test_multiply_and_divide]()

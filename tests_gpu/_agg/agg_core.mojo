@@ -81,6 +81,9 @@ from test_operators_gpu import (
 from test_operators_gpu import (
     test_comparisons_stay_on_the_device as test_operators_gpu__test_comparisons_stay_on_the_device,
 )
+from test_operators_gpu import (
+    test_matmul_operator_stays_on_the_device as test_operators_gpu__test_matmul_operator_stays_on_the_device,
+)
 from test_reorder_gpu import (
     test_roll_on_the_device_matches_the_host as test_reorder_gpu__test_roll_on_the_device_matches_the_host,
 )
@@ -198,6 +201,7 @@ def main() raises:
         test_operators_gpu__test_reflected_power_and_in_place_stay_on_the_device
     ]()
     suite.test[test_operators_gpu__test_comparisons_stay_on_the_device]()
+    suite.test[test_operators_gpu__test_matmul_operator_stays_on_the_device]()
     # tests_gpu/core/test_reorder_gpu.mojo
     suite.test[test_reorder_gpu__test_roll_on_the_device_matches_the_host]()
     suite.test[test_reorder_gpu__test_flip_on_the_device_matches_the_host]()

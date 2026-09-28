@@ -1,5 +1,5 @@
-"""`Tensor`'s reflected, in-place, power and comparison operators, each
-against the free function it forwards to.
+"""`Tensor`'s reflected, in-place, power, comparison and `@` operators,
+each against the free function it spells.
 
 The operators are sugar: `2.0 - a` must be `numax.core.ops`'s reflected
 subtract, `a > 0` must be `greater(a, 0)`, `a += b` must leave `a` equal
@@ -21,6 +21,7 @@ from numax.core.logic import (
 )
 from numax.core.ops import add, divide, multiply, power, subtract
 from numax.core.tensor import Static
+from numax.linalg import matmul
 
 comptime f64 = DType.float64
 
@@ -108,6 +109,18 @@ def test_comparisons_return_bool_masks() raises:
     var values = _a().to_host()
     for i in range(6):
         assert_true(got[i] == (values[i] > 0.0))
+
+
+def test_matmul_operator_is_matmul() raises:
+    var a = _a()
+    var b = Static[f64, 3, 4](
+        DeviceContext(api="cpu"),
+        [1.0, 0.5, -1.0, 2.0, 0.0, 3.0, 1.5, -2.0, 4.0, 1.0, 0.25, 0.5],
+    )
+    var product = a @ b
+    assert_equal(product.dim[0](), 2)
+    assert_equal(product.dim[1](), 4)
+    _same(product.to_host(), matmul(a, b).to_host())
 
 
 def main() raises:

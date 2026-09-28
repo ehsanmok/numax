@@ -1,6 +1,6 @@
 """Every `Tensor` operator on GPU-context tensors follows the tensor to its
 device: `+ - * / **`, unary `-`, the reflected and in-place forms and the
-six comparisons. An operator cannot spell `gpu=True`, so it checks residency at run
+six comparisons, and `@`. An operator cannot spell `gpu=True`, so it checks residency at run
 time on a build with an accelerator; every result here must stay on the
 device and equal the host's.
 """
@@ -15,6 +15,7 @@ from std.testing import (
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Static
+from numax.linalg import matmul
 
 comptime f32 = DType.float32
 comptime n = 1000
@@ -107,6 +108,24 @@ def test_comparisons_stay_on_the_device() raises:
     for i in range(n):
         assert_equal(lt[i], hlt[i])
         assert_equal(eq[i], heq[i])
+
+
+def test_matmul_operator_stays_on_the_device() raises:
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var values = List[Scalar[f32]](capacity=64 * 48)
+    for i in range(64 * 48):
+        values.append(Float32((i * 13) % 7) * 0.25 - 0.5)
+    var right = List[Scalar[f32]](capacity=48 * 32)
+    for i in range(48 * 32):
+        right.append(values[i])
+    var a = Static[f32, 64, 48](gpu, values.copy())
+    var b = Static[f32, 48, 32](gpu, right.copy())
+    var ha = Static[f32, 64, 48](cpu, values.copy())
+    var hb = Static[f32, 48, 32](cpu, right.copy())
+    var p = a @ b
+    assert_false(p.on_host())
+    _assert_close(p.to_host(), matmul(ha, hb).to_host())
 
 
 def main() raises:

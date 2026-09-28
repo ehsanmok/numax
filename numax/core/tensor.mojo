@@ -152,6 +152,7 @@ from std.memory import MutOpaquePointer
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.coord import DynamicCoord
 from layout.tile_layout import row_major, TensorLayout
+from linalg.matmul import matmul as _max_matmul
 from linalg.matrix_band_part import matrix_band_part as _max_band_part
 from max.algorithm.functional import elementwise
 from linalg.transpose import transpose as _max_transpose
@@ -1144,6 +1145,56 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             if not self.host_addressable:
                 return _not_equal[gpu=True](self, other)
         return _not_equal(self, other)
+
+    def __matmul__[
+        B: TensorLike
+    ](self, other: B) raises -> Tensor[
+        Self.dtype, _LayoutOf[dim[Self, 0], dim[B, 1]]
+    ] where (
+        Self.LayoutType.rank == 2
+        and Self.LayoutType.all_dims_known
+        and B.dtype == Self.dtype
+        and B.LayoutType.rank == 2
+        and B.LayoutType.all_dims_known
+        and dim[B, 0] == dim[Self, 1]
+    ):
+        """`a @ b`, the matrix product of two compile-time-shaped matrices,
+        on `a`'s device: `numax.linalg.matmul`'s spelling as an operator.
+
+        MAX's `linalg.matmul` does the work, as it does for that function
+        -- one call and MAX's whole dispatch tree -- called here directly
+        because `numax.core` depends on nothing else in numax. It follows
+        the tensor as `__add__` describes: a device `a` multiplies on its
+        device, a `float64` one on the host. A shape mismatch is a compile
+        error, since both extents are in the types.
+        """
+        comptime m = dim[Self, 0]
+        comptime n = dim[B, 1]
+        var ctx = self.context()
+        var result = Tensor[Self.dtype, _LayoutOf[m, n]](ctx)
+        var c = result.tile()
+        var av = self.tile()
+        var bv = other.tile()
+        var a_tile = TileTensor[Self.dtype, Self.LayoutType, MutAnyOrigin](
+            ptr=av.ptr.unsafe_mut_cast[True]().unsafe_origin_cast[
+                MutAnyOrigin
+            ](),
+            layout=av.layout,
+        )
+        var b_tile = TileTensor[Self.dtype, B.LayoutType, MutAnyOrigin](
+            ptr=bv.ptr.unsafe_bitcast[Scalar[Self.dtype]]()
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutAnyOrigin](),
+            layout=bv.layout,
+        )
+        comptime if has_accelerator() and Self.dtype != DType.float64:
+            if not self.host_addressable:
+                _max_matmul[target="gpu"](c, a_tile, b_tile, ctx)
+                ctx.synchronize()
+                return result^
+        _max_matmul[target="cpu"](c, a_tile, b_tile, ctx)
+        ctx.synchronize()
+        return result^
 
     def copy_from_host(mut self, values: List[Scalar[Self.dtype]]) raises:
         """Overwrite every element from a host buffer, row-major.
