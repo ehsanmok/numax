@@ -115,10 +115,11 @@ def _cosine_window[
     """`a0 - a1 cos(2 pi i / d) + a2 cos(4 pi i / d)`, the generalized
     cosine window Hann, Hamming and Blackman are all instances of."""
     var d = _denominator(n, sym)
-    if _on_device[dtype](ctx):
-        var result = Static[dtype, n]._uninitialized(ctx.value())
-        _device_window["cosine"](result, d, a0, a1, a2)
-        return result^
+    comptime if _DEVICE_FILL[dtype]:
+        if _on_device[dtype](ctx):
+            var result = Static[dtype, n]._uninitialized(ctx.value())
+            _device_window["cosine"](result, d, a0, a1, a2)
+            return result^
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         var theta = _TWO_PI * Float64(i) / d
@@ -136,10 +137,11 @@ def boxcar[
     """The rectangular window: all ones. `scipy.signal.windows.boxcar`.
     `sym` is accepted for uniformity and changes nothing."""
     _ = sym
-    if _on_device[dtype](ctx):
-        var result = Static[dtype, n]._uninitialized(ctx.value())
-        _device_window["ones"](result, 1.0)
-        return result^
+    comptime if _DEVICE_FILL[dtype]:
+        if _on_device[dtype](ctx):
+            var result = Static[dtype, n]._uninitialized(ctx.value())
+            _device_window["ones"](result, 1.0)
+            return result^
     return Static[dtype, n](
         List[Scalar[dtype]](length=n, fill=Scalar[dtype](1)), _context(ctx)
     )
@@ -191,10 +193,11 @@ def bartlett[
     """The Bartlett (triangular, zero-ended) window, `1 - |2i/d - 1|`.
     `scipy.signal.windows.bartlett(n, sym)`."""
     var d = _denominator(n, sym)
-    if _on_device[dtype](ctx):
-        var result = Static[dtype, n]._uninitialized(ctx.value())
-        _device_window["bartlett"](result, d)
-        return result^
+    comptime if _DEVICE_FILL[dtype]:
+        if _on_device[dtype](ctx):
+            var result = Static[dtype, n]._uninitialized(ctx.value())
+            _device_window["bartlett"](result, d)
+            return result^
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](1.0 - abs(2.0 * Float64(i) / d - 1.0)))
@@ -242,10 +245,11 @@ def kaiser[
     """
     var d = _denominator(n, sym)
     var scale = 1.0 / _bessel_i0(beta)
-    if _on_device[dtype](ctx):
-        var result = Static[dtype, n]._uninitialized(ctx.value())
-        _device_window["kaiser"](result, d, beta, scale)
-        return result^
+    comptime if _DEVICE_FILL[dtype]:
+        if _on_device[dtype](ctx):
+            var result = Static[dtype, n]._uninitialized(ctx.value())
+            _device_window["kaiser"](result, d, beta, scale)
+            return result^
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         var ratio = 2.0 * Float64(i) / d - 1.0
