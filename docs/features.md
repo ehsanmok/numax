@@ -435,7 +435,7 @@ The grid is borrowed (`mut`), not consumed, since it is queried many times.
 | Surface — over `Array[T, n]`, from `numax.interpolate.array` | Where |
 |---|---|
 | `horner` — polynomial evaluation at one `FloatLike` value | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
-| `CubicSpline`, `Chebyshev` — the `scipy.interpolate`-shaped objects: built once, called many times, `__call__` evaluates. `Chebyshev[T, n].fit[f](a, b)` fits and keeps the coefficients | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
+| `ArrayCubicSpline`, `ArrayChebyshev` — the `scipy.interpolate`-shaped objects: built once, called many times, `__call__` evaluates. `ArrayChebyshev[T, n].fit[f](a, b)` fits and keeps the coefficients | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
 | `cubic_spline_moments`, `cubic_spline_eval` — natural cubic splines over `numax.linalg.array`'s tridiagonal solve, on a uniform grid (`x0`, `h`) or on the knots `x` themselves. The uniform pair is what the `CubicSpline` object wraps; both stay public because they are what a GPU-launchable kernel calls | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
 | `chebyshev_fit`, `chebyshev_eval` — Chebyshev fit of a `FloatLike` function at its nodes, and Clenshaw evaluation | [`interpolate/array/interp.mojo`](../numax/interpolate/array/interp.mojo) |
 

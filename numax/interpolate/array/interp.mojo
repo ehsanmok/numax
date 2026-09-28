@@ -20,7 +20,7 @@ whose lanes bisect.
 
 The scan works on any knots, so both spacings are here: the uniform
 overloads take a grid origin and spacing (`x0`, `h`) and the non-uniform
-ones take the knots `x` themselves. The `CubicSpline` object wraps the
+ones take the knots `x` themselves. The `ArrayCubicSpline` object wraps the
 uniform pair; the non-uniform pair is called directly.
 
 Outside the grid, evaluation clamps to the nearest endpoint rather than
@@ -323,12 +323,12 @@ def _chebyshev_cosine_table[n: Int]() -> Array[Float64, n * n]:
 
 
 @fieldwise_init
-struct CubicSpline[T: FloatLike, n: Int](Copyable):
+struct ArrayCubicSpline[T: FloatLike, n: Int](Copyable):
     """A natural cubic spline through `n` uniformly spaced knots, built
     once and called many times. `scipy.interpolate.CubicSpline`.
 
     ```mojo
-    var spline = CubicSpline[Plain[f64], 5](y, x0, h)
+    var spline = ArrayCubicSpline[Plain[f64], 5](y, x0, h)
     var value = spline(x)
     ```
 
@@ -359,12 +359,12 @@ struct CubicSpline[T: FloatLike, n: Int](Copyable):
 
 
 @fieldwise_init
-struct Chebyshev[T: FloatLike, n: Int](Copyable):
+struct ArrayChebyshev[T: FloatLike, n: Int](Copyable):
     """A Chebyshev series on `[a, b]`, built once and called many times.
     `numpy.polynomial.chebyshev.Chebyshev`.
 
     ```mojo
-    var series = Chebyshev[Plain[f64], 16](
+    var series = ArrayChebyshev[Plain[f64], 16](
         chebyshev_fit[Plain[f64], g, 16](a, b), a, b
     )
     var value = series(x)
@@ -381,7 +381,7 @@ struct Chebyshev[T: FloatLike, n: Int](Copyable):
     @staticmethod
     def fit[f: def[U: FloatLike](U) thin -> U](a: Self.T, b: Self.T) -> Self:
         """Fit `f` on `[a, b]` and keep the coefficients.
-        `Chebyshev[Plain[f64], 16].fit[g](a, b)`."""
+        `ArrayChebyshev[Plain[f64], 16].fit[g](a, b)`."""
         return Self(chebyshev_fit[Self.T, f, Self.n](a, b), a.copy(), b.copy())
 
     def __call__(self, x: Self.T) -> Self.T:

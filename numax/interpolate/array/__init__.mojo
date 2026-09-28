@@ -2,12 +2,11 @@
 register-resident, `FloatLike`-generic tier.
 
 ```mojo
-from numax.interpolate.array import horner, CubicSpline, Chebyshev
+from numax.interpolate.array import horner, ArrayCubicSpline, ArrayChebyshev
 ```
 
 **Opt-in, and one import away rather than in the flat surface.** `horner`
-and `CubicSpline` are the same names `numax.interpolate` exports over
-`Tensor`, so a caller gets one tier per import and the surface never
+is the same name `numax.interpolate` exports over `Tensor`, so a caller gets one tier per import and the surface never
 resolves an overload by a type the reader has to look up. `numax.interpolate`,
 `numax.prelude` and `numax` itself export the `Tensor` tier; this subpackage
 is the other one, the same split `numax.linalg.array`, `numax.fft.array`,
@@ -15,7 +14,7 @@ is the other one, the same split `numax.linalg.array`, `numax.fft.array`,
 
 | Module | Holds |
 | --- | --- |
-| `interp` | `horner`; `cubic_spline_moments`/`cubic_spline_eval` and the `CubicSpline` object over them; `chebyshev_fit`/`chebyshev_eval` and the `Chebyshev` object, which fit a `FloatLike` *function* at Chebyshev nodes |
+| `interp` | `horner`; `cubic_spline_moments`/`cubic_spline_eval` and the `ArrayCubicSpline` object over them; `chebyshev_fit`/`chebyshev_eval` and the `ArrayChebyshev` object, which fit a `FloatLike` *function* at Chebyshev nodes |
 
 ## Why this tier exists at all
 
@@ -39,19 +38,21 @@ buffer of samples, searches it, and fits *data* -- `interp`, non-uniform
 ## The cost of the split, stated plainly
 
 Mojo deprecates importing one name from two modules, so a file that wants
-both tiers of a name has to alias one of them:
+both tiers of `horner` has to alias one of them:
 
 ```mojo
-from numax.interpolate import CubicSpline                  # Tensor
-from numax.interpolate.array import CubicSpline as CubicSplineA  # Array
+from numax.interpolate import horner                    # Tensor
+from numax.interpolate.array import horner as horner_a  # Array
 ```
 
-That is the price of a flat surface that means exactly one thing.
+The two spline and Chebyshev objects carry the tier in their names
+(`ArrayCubicSpline`, `ArrayChebyshev`) and need no alias. That is the
+price of a flat surface that means exactly one thing.
 """
 
 from .interp import (
-    Chebyshev,
-    CubicSpline,
+    ArrayChebyshev,
+    ArrayCubicSpline,
     chebyshev_eval,
     chebyshev_fit,
     cubic_spline_eval,

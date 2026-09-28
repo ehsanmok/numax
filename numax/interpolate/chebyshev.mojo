@@ -9,7 +9,7 @@ same computation NumPy's `chebfit` does -- and evaluation is one
 
 ## Data, not a function
 
-`numax.interpolate.array.Chebyshev` fits a `FloatLike` *function* by
+`numax.interpolate.array.ArrayChebyshev` fits a `FloatLike` *function* by
 sampling it at the Chebyshev nodes, which is the near-minimax construction
 and the one to use when the function is available. This tier has
 *samples* at points the caller did not choose, so it does what NumPy's

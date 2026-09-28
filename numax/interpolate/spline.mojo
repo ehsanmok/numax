@@ -308,7 +308,7 @@ struct CubicSpline[dtype: DType, n: Int](Movable):
     assembles, row for row, through `numax.linalg.solve_banded`; the
     `n = 2` and `n = 3` not-a-knot cases are its special cases too. The
     knots need not be uniform, which is the limit
-    `numax.interpolate.array`'s uniform-grid `CubicSpline` object has and
+    `numax.interpolate.array`'s uniform-grid `ArrayCubicSpline` object has and
     its non-uniform `cubic_spline_moments`/`cubic_spline_eval` overloads
     lift.
     """
