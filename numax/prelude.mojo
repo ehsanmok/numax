@@ -356,6 +356,7 @@ from .linalg import (
     inverse,
     kron,
     logm,
+    lu,
     lu_factor,
     matmul,
     matrix_power,

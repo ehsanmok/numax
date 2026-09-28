@@ -37,7 +37,7 @@ modules matter when reading or extending.
 | `triangular` | `solve_triangular` | `_basic`'s `solve_triangular` |
 | `banded` | `solve_banded`, `solveh_banded`, `cholesky_banded`, `cho_solve_banded`, `solve_toeplitz`, `solve_circulant` | `_banded`, `_solve_toeplitz` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
-| `lu` | `lu_factor`, `LU`, `det`, `slogdet` | `_decomp_lu` |
+| `lu` | `lu` (`P`, `L`, `U`), `PLU`, `lu_factor`, `LU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `QR`, `lstsq`, `rq`, `RQ` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `NORM_FRO`, `NORM_INF`, `NORM_NEG_INF` | `_misc` |
@@ -245,7 +245,7 @@ from .eigen import (
     svdvals,
     sytrd,
 )
-from .lu import LU, det, lu_factor, slogdet
+from .lu import LU, PLU, det, lu, lu_factor, slogdet
 from .matfuncs import (
     cosm,
     expm,
@@ -280,7 +280,6 @@ from ._array import (
     PivotedLU,
     back_substitution,
     forward_substitution,
-    lu,
     qr,
     slogdet_cholesky,
     tridiagonal_solve,

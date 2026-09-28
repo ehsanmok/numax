@@ -29,7 +29,7 @@ Rank deficiency is not detected at any tier. A singular matrix factors to a
 zero pivot; `cond` on the original matrix is the check.
 """
 
-from layout import Coord, TileTensor
+from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import row_major
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
@@ -57,6 +57,7 @@ from .triangular import _trsm, _trsv
 from std.collections import Array
 from ..core.numeric import FloatLike
 from ._array.lu import det as _array_det
+from ._array.lu import lu as _array_lu
 from ._array.lu import PivotedLU
 from ..core.plain import Plain
 from ._array.lu import lu_factor as _array_lu_factor
@@ -825,3 +826,152 @@ def slogdet[
         The pair `(sign, ln|det(a)|)`, from a pivoted LU.
     """
     return _array_slogdet[dtype=dtype, n=n](a)
+
+
+struct PLU[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
+    """What `lu` returns: the three factors of `A = P @ L @ U`, SciPy's
+    `(p, l, u)`, each an `n x n` tensor on the input's device."""
+
+    var p: Static[Self.dtype, Self.n, Self.n]
+    """The permutation matrix, with `A = P @ L @ U`."""
+    var l: Static[Self.dtype, Self.n, Self.n]
+    """The unit lower-triangular factor."""
+    var u: Static[Self.dtype, Self.n, Self.n]
+    """The upper-triangular factor."""
+
+    def __init__(
+        out self,
+        var p: Static[Self.dtype, Self.n, Self.n],
+        var l: Static[Self.dtype, Self.n, Self.n],
+        var u: Static[Self.dtype, Self.n, Self.n],
+    ):
+        """Build from the three factors.
+
+        Args:
+            p: The permutation matrix.
+            l: The unit lower-triangular factor.
+            u: The upper-triangular factor.
+        """
+        self.p = p^
+        self.l = l^
+        self.u = u^
+
+
+def lu[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> PLU[T.dtype, dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and T.LayoutType.all_dims_known
+    and dim[T, 1] == dim[T, 0]
+):
+    """**Tier 2.** The pivoted LU factorization as three matrices, `A = P @
+    L @ U`. `scipy.linalg.lu(a)`.
+
+    `lu_factor`, then its packed factor and row interchanges unpacked on
+    the device: one launch splits the packed matrix into `L` (unit
+    diagonal) and `U`, a one-lane launch replays the `n` interchanges into
+    a permutation vector -- sequential, and `O(n)` -- and one more writes
+    `P` from it. `lu_factor` and `LU` stay the spelling to reach for when
+    the point is to solve: they keep the factors packed and the pivots
+    unresolved, which is what their `solve` wants.
+
+    Parameters:
+        T: The tensor type of `a`, square, with extents known at compile time.
+        gpu: Whether to factor and unpack on `a`'s device.
+        block: The panel width, as `lu_factor`'s.
+
+    Args:
+        a: The square matrix to factor.
+
+    Returns:
+        A `PLU` with `p`, `l` and `u`.
+
+    Raises:
+        If a device allocation, copy or kernel launch fails.
+    """
+    comptime n = dim[T, 0]
+    comptime dtype = T.dtype
+    var factorization = lu_factor[gpu=gpu, block=block](a)
+    var ctx = factorization.factored.context()
+    var p = Static[dtype, n, n](ctx)
+    var l = Static[dtype, n, n](ctx)
+    var u = Static[dtype, n, n](ctx)
+    var perm = Static[DType.int32, n](ctx)
+    var fv = factorization.factored.tile()
+    var pivv = factorization.pivots.tile()
+    var pv = p.tile()
+    var lv = l.tile()
+    var uv = u.tile()
+    var permv = perm.tile()
+
+    @always_inline
+    def split[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var fv, var lv, var uv}:
+        var at = coord_to_index_list(coord)
+        var i = at[0]
+        var j = at[1]
+        var value = fv[Coord(i, j)]
+        var zero = Scalar[dtype](0)
+        if i > j:
+            lv.store[1](Coord(i, j), value)
+            uv.store[1](Coord(i, j), zero)
+        else:
+            lv.store[1](Coord(i, j), Scalar[dtype](1) if i == j else zero)
+            uv.store[1](Coord(i, j), value)
+
+    elementwise[simd_width=1, target=_target[gpu]()](split, Coord(n, n), ctx)
+
+    # `perm[i]` is the row of `A` that row `i` of `L @ U` came from: the
+    # interchanges replayed in order on the identity permutation.
+    @always_inline
+    def replay[w: Int, alignment: Int = 1](coord: Coord) {var pivv, var permv}:
+        for i in range(n):
+            permv.store[1](Coord(i), Int32(i))
+        for j in range(n):
+            var k = Int(pivv[Coord(j)])
+            var held = permv[Coord(j)]
+            permv.store[1](Coord(j), permv[Coord(k)])
+            permv.store[1](Coord(k), held)
+
+    elementwise[simd_width=1, target=_target[gpu]()](replay, Coord(1), ctx)
+
+    # `A = P L U` with `(L U)[i] = A[perm[i]]`, so `P[perm[i], i] = 1`.
+    @always_inline
+    def scatter[w: Int, alignment: Int = 1](coord: Coord) {var permv, var pv}:
+        var at = coord_to_index_list(coord)
+        var r = at[0]
+        var c = at[1]
+        pv.store[1](
+            Coord(r, c),
+            Scalar[dtype](1) if Int(permv[Coord(c)]) == r else Scalar[dtype](0),
+        )
+
+    elementwise[simd_width=1, target=_target[gpu]()](scatter, Coord(n, n), ctx)
+    ctx.synchronize()
+    _ = factorization^
+    _ = perm^
+    return PLU[dtype, n](p^, l^, u^)
+
+
+def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
+    """The `Array`-tier overload: one problem in registers, generic over
+    the `FloatLike` conformer, and unpivoted, packed -- a different result
+    from the `Tensor` tier's `P, L, U`, documented at
+    `numax.linalg._array.lu.lu`.
+
+    Parameters:
+        T: The `FloatLike` conformer of the entries.
+        n: The matrix order.
+
+    Args:
+        a: The `n x n` matrix, row-major.
+
+    Returns:
+        `L` below the diagonal (unit diagonal implicit) and `U` on and
+        above it, packed.
+    """
+    return _array_lu[T=T, n=n](a)
