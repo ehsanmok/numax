@@ -1,4 +1,5 @@
-"""`roll`, `flip`, `repeat` and `tile` at `gpu=True`, against the host.
+"""`roll`, `flip`, `repeat`, `tile` and `rot90` at `gpu=True`, against the
+host.
 
 Each routine reorders elements along an axis, which the device does with
 one gather launch over the result. Every test checks the result stayed on
@@ -10,7 +11,7 @@ from std.testing import TestSuite, assert_equal, assert_false
 
 from max.gpu.host import DeviceContext
 
-from numax.core.tensor import Static, flip, repeat, roll, tile
+from numax.core.tensor import Static, flip, repeat, roll, rot90, tile
 
 comptime f32 = DType.float32
 
@@ -76,6 +77,28 @@ def test_tile_on_the_device_matches_the_host() raises:
     assert_equal(d.dim_at(0), 6)
     assert_equal(d.dim_at(1), 12)
     _assert_same(d.to_host(), tile(_grid(cpu), 2, 3).to_host())
+
+
+def test_rot90_on_the_device_matches_the_host() raises:
+    """All four quarter turns of a non-square matrix, so an odd turn's
+    swapped extents are exercised."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var one = rot90[k=1, gpu=True](_grid(gpu))
+    assert_false(one.on_host())
+    _assert_same(one.to_host(), rot90[k=1](_grid(cpu)).to_host())
+    _assert_same(
+        rot90[k=3, gpu=True](_grid(gpu)).to_host(),
+        rot90[k=3](_grid(cpu)).to_host(),
+    )
+    _assert_same(
+        rot90[k=2, gpu=True](_grid(gpu)).to_host(),
+        rot90[k=2](_grid(cpu)).to_host(),
+    )
+    _assert_same(
+        rot90[k=0, gpu=True](_grid(gpu)).to_host(),
+        rot90[k=0](_grid(cpu)).to_host(),
+    )
 
 
 def main() raises:

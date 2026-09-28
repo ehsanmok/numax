@@ -126,7 +126,8 @@ pack from an arbitrary subset of an existing one.
 parameter, since a copy is a driver call rather than a kernel. The
 reordering ones take `gpu: Bool = False` like the rest of numax, and at
 `gpu=True` are one gather launch each: `transpose`, `tril`, `triu`,
-constant-mode `pad`, `roll`, `flip`, `repeat`, `tile`, `slice`, and every
+constant-mode `pad`, `roll`, `flip`, `rot90`, `repeat`, `tile`, `slice`,
+and every
 join and split (`concatenate`, `stack`, `split`, `array_split`, `vstack`,
 `hstack`, `dstack` and the `_dyn` forms), `broadcast_to`, the `diag`
 family, `vander` and `meshgrid`. A residency mismatch prints
@@ -1117,8 +1118,9 @@ def _flat_map[
     of an `arg x arg` matrix and `0` off it; `"diagonal"` reads
     `a[f * (arg + 1)]`; `"vander"` writes `a[r] ** (arg - 1 - c)` at row
     `r`, column `c` of an `arg`-column matrix, the power built by repeated
-    multiplication as the host walk does. One `elementwise` launch; `a`
-    contiguous and on a GPU context.
+    multiplication as the host walk does. `"rot1"`, `"rot2"` and `"rot3"`
+    are `rot90` by that many quarter turns of an `arg`-column matrix. One
+    `elementwise` launch; `a` contiguous and on a GPU context.
     """
     var ctx = a.context()
     var result = Tensor[T.dtype, L]._uninitialized(ctx, layout)
@@ -1127,14 +1129,22 @@ def _flat_map[
         return result^
     var src = _flat_unchecked(a)
     var dst = _flat_out(result)
+    var n_in = a.size()
 
     @always_inline
     def body[
         width: Int, alignment: Int = 1
-    ](coord: Coord) {var src, var dst, var arg}:
+    ](coord: Coord) {var src, var dst, var arg, var n_in}:
         var f = coord_to_index_list(coord)[0]
         var value = Scalar[T.dtype](0)
-        comptime if kind == "diag":
+        var rows = n_in // arg
+        comptime if kind == "rot1":
+            value = src[Coord((f % rows) * arg + arg - 1 - f // rows)][0]
+        elif kind == "rot2":
+            value = src[Coord(n_in - 1 - f)][0]
+        elif kind == "rot3":
+            value = src[Coord((rows - 1 - f % rows) * arg + f // rows)][0]
+        elif kind == "diag":
             if f // arg == f % arg:
                 value = src[Coord(f // arg)][0]
         elif kind == "diagonal":
@@ -3576,6 +3586,7 @@ def dstack[
 def rot90[
     T: TensorLike,
     k: Int = 1,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 1], dim[T, 0]] where (
     k == 1 or k == 3 and T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
@@ -3596,6 +3607,14 @@ def rot90[
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
     comptime cols = dim[T, 1]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            comptime kind = "rot1" if k == 1 else "rot3"
+            return _flat_map[kind](
+                a, Static[dtype, cols, rows]._static_layout(), cols
+            )
+    else:
+        _notice[gpu]("rot90")
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=rows * cols, fill=0)
     for r in range(rows):
@@ -3612,6 +3631,7 @@ def rot90[
 def rot90[
     T: TensorLike,
     k: Int = 1,
+    gpu: Bool = False,
 ](a: T) raises -> Static[T.dtype, dim[T, 0], dim[T, 1]] where (
     k == 0 or k == 2 and T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
 ):
@@ -3626,6 +3646,18 @@ def rot90[
     comptime dtype = T.dtype
     comptime rows = dim[T, 0]
     comptime cols = dim[T, 1]
+    if _check_device[T, gpu](a):
+        comptime if gpu:
+            comptime if k == 0:
+                return _same_order(
+                    a, Static[dtype, rows, cols]._static_layout()
+                )
+            else:
+                return _flat_map["rot2"](
+                    a, Static[dtype, rows, cols]._static_layout(), cols
+                )
+    else:
+        _notice[gpu]("rot90")
     var source = a.to_host()
     var values = List[Scalar[dtype]](length=rows * cols, fill=0)
     for r in range(rows):

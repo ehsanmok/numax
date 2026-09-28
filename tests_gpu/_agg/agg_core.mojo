@@ -51,6 +51,9 @@ from test_reorder_gpu import (
 from test_reorder_gpu import (
     test_tile_on_the_device_matches_the_host as test_reorder_gpu__test_tile_on_the_device_matches_the_host,
 )
+from test_reorder_gpu import (
+    test_rot90_on_the_device_matches_the_host as test_reorder_gpu__test_rot90_on_the_device_matches_the_host,
+)
 from test_shape_gpu import (
     test_reshape_and_ravel_stay_on_the_device as test_shape_gpu__test_reshape_and_ravel_stay_on_the_device,
 )
@@ -107,6 +110,7 @@ def main() raises:
     suite.test[test_reorder_gpu__test_flip_on_the_device_matches_the_host]()
     suite.test[test_reorder_gpu__test_repeat_on_the_device_matches_the_host]()
     suite.test[test_reorder_gpu__test_tile_on_the_device_matches_the_host]()
+    suite.test[test_reorder_gpu__test_rot90_on_the_device_matches_the_host]()
     # tests_gpu/core/test_shape_gpu.mojo
     suite.test[test_shape_gpu__test_reshape_and_ravel_stay_on_the_device]()
     suite.test[
