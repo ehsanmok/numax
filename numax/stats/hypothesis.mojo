@@ -1,6 +1,7 @@
 """Hypothesis tests over `numax.core.tensor.Tensor`: the three `t` tests,
-`chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, and the `k`-group
-`kruskal`, `levene` and `bartlett`, each returning SciPy's statistic and
+`chisquare`, `ks_1samp`, `f_oneway` and `mannwhitneyu`, the `k`-group
+`kruskal`, `levene` and `bartlett`, and the normality tests `skewtest`,
+`kurtosistest`, `normaltest` and `jarque_bera`, each returning SciPy's statistic and
 p-value.
 
 **Tier 2**: a test statistic is a few sums (or, for the rank tests, a
@@ -73,6 +74,7 @@ from ..core.plain import Plain
 from .distributions import chi2, f, norm, t
 from .statistics import median as _tmedian, sum as _tsum
 from ..core.elementwise import abs as _tabs
+from .descriptive import kurtosis as _kurtosis, skew as _skew
 
 comptime _P = Plain[DType.float64]
 
@@ -1755,3 +1757,194 @@ def bartlett[
     var statistic = numer / denom
     var df = Float64(k - 1)
     return TestResult(statistic, _chi2_tail(statistic, df), df)
+
+
+def _two_sided_normal(z: Float64, alternative: StaticString) -> Float64:
+    """The standard normal tail SciPy's normality tests read."""
+    if alternative == "less":
+        return Float64(norm.cdf[_P](_P(z), _P(0.0), _P(1.0)).v)
+    if alternative == "greater":
+        return Float64(norm.sf[_P](_P(z), _P(0.0), _P(1.0)).v)
+    return 2.0 * Float64(norm.sf[_P](_P(abs(z)), _P(0.0), _P(1.0)).v)
+
+
+def _skew_z(b2: Float64, n: Float64) -> Float64:
+    """D'Agostino's transform of the sample skewness to a standard normal,
+    SciPy's `skewtest` formula."""
+    var y = b2 * _sqrt(((n + 1.0) * (n + 3.0)) / (6.0 * (n - 2.0)))
+    var beta2 = (
+        3.0
+        * (n * n + 27.0 * n - 70.0)
+        * (n + 1.0)
+        * (n + 3.0)
+        / ((n - 2.0) * (n + 5.0) * (n + 7.0) * (n + 9.0))
+    )
+    var w2 = -1.0 + _sqrt(2.0 * (beta2 - 1.0))
+    var delta = 1.0 / _sqrt(0.5 * _log(w2))
+    var alpha = _sqrt(2.0 / (w2 - 1.0))
+    if y == 0.0:
+        y = 1.0
+    var r = y / alpha
+    return delta * _log(r + _sqrt(r * r + 1.0))
+
+
+def _kurtosis_z(b2: Float64, n: Float64) -> Float64:
+    """Anscombe and Glynn's transform of the sample (Pearson) kurtosis to a
+    standard normal, SciPy's `kurtosistest` formula."""
+    var e = 3.0 * (n - 1.0) / (n + 1.0)
+    var varb2 = (
+        24.0
+        * n
+        * (n - 2.0)
+        * (n - 3.0)
+        / ((n + 1.0) * (n + 1.0) * (n + 3.0) * (n + 5.0))
+    )
+    var x = (b2 - e) / _sqrt(varb2)
+    var sqrtbeta1 = (
+        6.0
+        * (n * n - 5.0 * n + 2.0)
+        / ((n + 7.0) * (n + 9.0))
+        * _sqrt((6.0 * (n + 3.0) * (n + 5.0)) / (n * (n - 2.0) * (n - 3.0)))
+    )
+    var a = 6.0 + 8.0 / sqrtbeta1 * (
+        2.0 / sqrtbeta1 + _sqrt(1.0 + 4.0 / (sqrtbeta1 * sqrtbeta1))
+    )
+    var term1 = 1.0 - 2.0 / (9.0 * a)
+    var denom = 1.0 + x * _sqrt(2.0 / (a - 4.0))
+    var magnitude = ((1.0 - 2.0 / a) / abs(denom)) ** (1.0 / 3.0)
+    var term2 = magnitude if denom > 0 else -magnitude
+    return (term1 - term2) / _sqrt(2.0 / (9.0 * a))
+
+
+def skewtest[
+    T: TensorLike, gpu: Bool = False
+](a: T, alternative: StaticString = "two-sided") raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """Whether the skewness differs from a normal's. `scipy.stats.skewtest`.
+
+    D'Agostino's transform of the biased sample skewness to a standard
+    normal `z`; needs `n >= 8`. The skewness is `numax.stats.skew`, device
+    moments at `gpu=True`.
+
+    Parameters:
+        T: The tensor type of `a`, row-major and floating-point.
+        gpu: Whether the moments run on `a`'s device.
+
+    Args:
+        a: The sample, read flat.
+        alternative: `"two-sided"`, `"less"` or `"greater"`.
+
+    Returns:
+        A `TestResult` with `z`, its normal p-value and `df = 0`.
+
+    Raises:
+        If `a` has fewer than 8 elements or `alternative` is not a known
+        name.
+    """
+    _check_alternative("skewtest", alternative)
+    var n = Float64(a.size())
+    if n < 8:
+        raise Error("skewtest: the sample needs at least 8 values")
+    var z = _skew_z(_skew[gpu=gpu](a), n)
+    return TestResult(z, _two_sided_normal(z, alternative), 0.0)
+
+
+def kurtosistest[
+    T: TensorLike, gpu: Bool = False
+](a: T, alternative: StaticString = "two-sided") raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """Whether the kurtosis differs from a normal's.
+    `scipy.stats.kurtosistest`.
+
+    Anscombe and Glynn's transform of the biased Pearson kurtosis to a
+    standard normal `z`; needs `n >= 5`, and SciPy warns below 20.
+
+    Parameters:
+        T: The tensor type of `a`, row-major and floating-point.
+        gpu: Whether the moments run on `a`'s device.
+
+    Args:
+        a: The sample, read flat.
+        alternative: `"two-sided"`, `"less"` or `"greater"`.
+
+    Returns:
+        A `TestResult` with `z`, its normal p-value and `df = 0`.
+
+    Raises:
+        If `a` has fewer than 5 elements or `alternative` is not a known
+        name.
+    """
+    _check_alternative("kurtosistest", alternative)
+    var n = Float64(a.size())
+    if n < 5:
+        raise Error("kurtosistest: the sample needs at least 5 values")
+    var z = _kurtosis_z(_kurtosis[gpu=gpu](a, False), n)
+    return TestResult(z, _two_sided_normal(z, alternative), 0.0)
+
+
+def normaltest[
+    T: TensorLike, gpu: Bool = False
+](a: T) raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """D'Agostino and Pearson's omnibus test of normality.
+    `scipy.stats.normaltest`.
+
+    `K^2 = z_skew^2 + z_kurtosis^2`, the two transforms `skewtest` and
+    `kurtosistest` make, against `chi2` on 2 degrees of freedom.
+
+    Parameters:
+        T: The tensor type of `a`, row-major and floating-point.
+        gpu: Whether the moments run on `a`'s device.
+
+    Args:
+        a: The sample, read flat, at least 8 long.
+
+    Returns:
+        A `TestResult` with `K^2`, its upper-tail p-value and `df = 2`.
+
+    Raises:
+        If `a` has fewer than 8 elements.
+    """
+    var n = Float64(a.size())
+    if n < 8:
+        raise Error("normaltest: the sample needs at least 8 values")
+    var s = _skew_z(_skew[gpu=gpu](a), n)
+    var k = _kurtosis_z(_kurtosis[gpu=gpu](a, False), n)
+    var statistic = s * s + k * k
+    return TestResult(statistic, _chi2_tail(statistic, 2.0), 2.0)
+
+
+def jarque_bera[
+    T: TensorLike, gpu: Bool = False
+](x: T) raises -> TestResult where (
+    is_row_major[T] and T.dtype.is_floating_point()
+):
+    """The Jarque-Bera test of normality. `scipy.stats.jarque_bera`.
+
+    `JB = n / 6 (S^2 + (K - 3)^2 / 4)` from the biased skewness `S` and
+    Pearson kurtosis `K`, against `chi2` on 2 degrees of freedom -- the
+    large-sample test, less accurate than `normaltest` for small `n`.
+
+    Parameters:
+        T: The tensor type of `x`, row-major and floating-point.
+        gpu: Whether the moments run on `x`'s device.
+
+    Args:
+        x: The sample, read flat.
+
+    Returns:
+        A `TestResult` with `JB`, its upper-tail p-value and `df = 2`.
+
+    Raises:
+        If `x` is empty.
+    """
+    var n = Float64(x.size())
+    if n == 0:
+        raise Error("jarque_bera: the sample is empty")
+    var s = _skew[gpu=gpu](x)
+    var k = _kurtosis[gpu=gpu](x, False)
+    var statistic = n / 6.0 * (s * s + (k - 3.0) * (k - 3.0) / 4.0)
+    return TestResult(statistic, _chi2_tail(statistic, 2.0), 2.0)
