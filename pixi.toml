@@ -240,6 +240,10 @@ test-map-blocks = "mojo -I . tests/core/test_map_blocks.mojo"
 # building, so a new test file cannot silently stop running.
 tests = "bash tools/run_test_aggregates.sh"
 tests-gen = "python3 tools/gen_test_aggregates.py"
+# `mojo doc` walks every public generic signature, which tests cannot:
+# Mojo instantiates generics lazily, so a body no test calls is never
+# type-checked. The JSON goes to the ignored target/; only the exit code matters.
+typecheck = "mkdir -p target && mojo doc -I . numax -o target/typecheck.json"
 # The `gpu=True` comparisons in `tests_gpu/`: every device routine against
 # its host answer at float32 (Metal has no double). Needs a real device, so
 # it is a local gate; CI compiles the same aggregates for `sm_80` below.

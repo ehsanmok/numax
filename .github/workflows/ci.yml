@@ -115,6 +115,12 @@ jobs:
           df -h . | tail -1
           exit $rc
 
+      # Tests type-check only the generic code they instantiate; `mojo doc`
+      # walks the whole public surface, so a signature no test reaches still
+      # has to compile.
+      - name: Type-check the generic surface
+        run: pixi run typecheck
+
       - name: Run CPU examples
         run: pixi run examples-cpu
 

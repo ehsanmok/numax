@@ -29,6 +29,7 @@ pixi run run tests/core/test_dual.mojo   # arbitrary file with -I . supplied
 pixi run examples-cpu             # every example that does not need a GPU
 pixi run examples                 # + the GPU ones (needs real Metal/CUDA)
 pixi run accuracy                 # max error per function vs. checked-in mpmath refs
+pixi run typecheck                # mojo doc over the whole generic surface
 pixi run bench                    # map vs. a hand-rolled raw-SIMD loop
 pixi run -e dev format            # mojo format over numax examples tests tests_gpu bench
 pixi run -e dev format-check      # format + git diff --exit-code
@@ -90,8 +91,8 @@ to get first is what one clean CI run writes there.
 Mojo instantiates generics lazily, so tests do **not** type-check
 uninstantiated generic code — and this library is almost entirely generic.
 `mojo doc -I . numax` walks the whole public generic surface and catches
-breakage tests cannot. Run it after touching generic signatures. (CI does not
-yet run it.)
+breakage tests cannot. Run it after touching generic signatures:
+`pixi run typecheck`, which CI runs as its own step.
 
 ## Architecture
 
