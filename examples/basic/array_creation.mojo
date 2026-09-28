@@ -1,16 +1,12 @@
-"""`numax.core.tensor`: NumPy-named creation and manipulation over `TileTensor`.
+"""`numax.core.tensor`: NumPy-named creation and manipulation.
 
-MAX's `layout` package ships `TileTensor` itself but no NumPy-named factory
-functions -- `numax.core.tensor` is the thin gap-filling layer over it. Every
-function here is `Plain`-only (no `FloatLike` conformer involvement): this
-is the axis-2 (NumPy/SciPy parity) half of `numax`, not the axis-1
-(composable-type) half `basic/gaussian.mojo` demonstrates.
-
-`zeros`/`ones`/`full`/`eye`/`linspace`/`logspace` build a new `Tensor`
-(an owned buffer plus a compile-time row-major layout -- see
-`numax/core/tensor.mojo`'s own docstring for why a bare `TileTensor` can't be
-returned from a factory function); `transpose`/`squeeze`/`stack` show the
-three manipulation gaps this module fills.
+`zeros`/`ones`/`full`/`eye`/`linspace`/`logspace` build a new `Tensor` --
+an owned buffer with its shape in its type -- and `transpose`/`squeeze`/
+`stack`/`reshape`/`concatenate`/`split` rearrange one. Elements are read
+and written with `a[i]` and `a[r, c]`. Every function here is `Plain`-only
+(no `FloatLike` conformer involvement): this is the NumPy/SciPy-parity
+half of `numax`, not the composable-type half `basic/gaussian.mojo`
+demonstrates.
 """
 
 
