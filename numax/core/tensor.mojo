@@ -89,6 +89,14 @@ its endpoints as `Float64` rather than `Scalar[dtype]`: a `Scalar[dtype]`
 argument lets the *literals* infer `dtype`, and inference outranks a
 default, so `linspace[5](0, 1)` would quietly hand back an integer tensor.
 
+**Where the factories fill.** `zeros`, `ones`, `full` and `empty` are
+one `enqueue_memset` on either device. `eye`, `identity`, `tri`,
+`linspace`, `logspace`, `arange` and `arange_n` fill on a GPU context
+where the buffer lives, one launch each, on a build with an accelerator
+and below `float64`; elsewhere they fill a host `List` and upload it.
+`geomspace` always fills on the host: its values are successive products,
+which a per-element kernel would reproduce only to rounding.
+
 **Which functions need a `DeviceContext`.** The root factories (`zeros`,
 `ones`, `full`, `empty`, `eye`, `linspace`, `logspace`, `arange_n`) take one,
 because they allocate with no input tensor to inherit a device from.
@@ -402,7 +410,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         """A tensor on `ctx`'s device holding `values`, row-major.
 
         `values` must have exactly `layout.size()` entries; this is the
-        escape hatch the host-filled factory functions below funnel through.
+        escape hatch the factory functions below fall back to on a host context
+        (and at `float64` or `bool`, where they cannot fill on the device).
         """
         self.layout = layout
         self.buffer = ctx.enqueue_create_buffer[Self.dtype](layout.size())
@@ -1235,6 +1244,58 @@ def _broadcast_gather[
     return result^
 
 
+comptime _DEVICE_FILL[dtype: DType] = (
+    has_accelerator() and dtype != DType.float64 and dtype != DType.bool
+)
+"""Whether a factory may fill on the device: a build with an accelerator,
+below `float64` (Metal compiles no `double` kernel, and numax names no
+architecture to ask) and not at `bool` (whose stores the pinned toolchain
+rejects in some kernels). A factory that may, and whose context is a GPU,
+fills there instead of uploading a host `List`."""
+
+
+def _index_fill[
+    dtype: DType, L: TensorLayout, //, kind: StaticString
+](
+    mut result: Tensor[dtype, L],
+    a: Float64,
+    b: Float64,
+    n: Int,
+    base: Float64 = 10,
+) raises:
+    """Fill `result` on its device from each element's flat index `f`:
+    `"linear"` is `a + f * b`, `"log"` is `base ** (a + f * b)`, `"eye"` is
+    `1` where `f // n == f % n`, and `"tri"` is `1` where `f % n <= f // n`.
+    One `elementwise` launch."""
+    var total = result.size()
+    if total == 0:
+        return
+    var ctx = result.context()
+    var dst = _flat_out(result)
+    var lo = Scalar[dtype](a)
+    var step = Scalar[dtype](b)
+    var power_base = Scalar[dtype](base)
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var dst, var lo, var step, var power_base, var n}:
+        var f = coord_to_index_list(coord)[0]
+        var value: Scalar[dtype]
+        comptime if kind == "linear":
+            value = lo + Scalar[dtype](f) * step
+        elif kind == "log":
+            value = power_base ** (lo + Scalar[dtype](f) * step)
+        elif kind == "eye":
+            value = Scalar[dtype](1) if f // n == f % n else Scalar[dtype](0)
+        else:
+            value = Scalar[dtype](1) if f % n <= f // n else Scalar[dtype](0)
+        dst.store[1](coord, value)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(total), ctx)
+    ctx.synchronize()
+
+
 def ones[
     dtype: DType, *dims: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, *dims]:
@@ -1317,6 +1378,12 @@ def eye[
     n: Int, dtype: DType = DType.float64
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
     """The `n`x`n` identity matrix."""
+    comptime if _DEVICE_FILL[dtype]:
+        var device = _context(ctx)
+        if device.api() != "cpu":
+            var result = Static[dtype, n, n]._uninitialized(device)
+            _index_fill["eye"](result, 0, 0, n)
+            return result^
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for i in range(n):
         values[i * n + i] = 1
@@ -1383,6 +1450,14 @@ def linspace[
     a default. Every factory below is shaped the same way for the same
     reason.
     """
+    comptime if _DEVICE_FILL[dtype] and num > 1:
+        var device = _context(ctx)
+        if device.api() != "cpu":
+            var result = Static[dtype, num]._uninitialized(device)
+            _index_fill["linear"](
+                result, start, (stop - start) / Float64(num - 1), 0
+            )
+            return result^
     var lo = Scalar[dtype](start)
     var values = List[Scalar[dtype]](capacity=num)
     comptime if num == 1:
@@ -1407,6 +1482,14 @@ def logspace[
 
     Count first, `dtype` defaulted -- see `linspace` for why the arguments
     are `Float64`."""
+    comptime if _DEVICE_FILL[dtype] and num > 1:
+        var device = _context(ctx)
+        if device.api() != "cpu":
+            var result = Static[dtype, num]._uninitialized(device)
+            _index_fill["log"](
+                result, start, (stop - start) / Float64(num - 1), 0, base
+            )
+            return result^
     var lo = Scalar[dtype](start)
     var b = Scalar[dtype](base)
     var values = List[Scalar[dtype]](capacity=num)
@@ -1435,6 +1518,12 @@ def arange_n[
     `numax.core.tensor.linspace` is the one to reach for when the endpoints
     are what matter.
     """
+    comptime if _DEVICE_FILL[dtype]:
+        var device = _context(ctx)
+        if device.api() != "cpu":
+            var result = Static[dtype, num]._uninitialized(device)
+            _index_fill["linear"](result, start, step, 0)
+            return result^
     var first = Scalar[dtype](start)
     var by = Scalar[dtype](step)
     var values = List[Scalar[dtype]](capacity=num)
@@ -1466,6 +1555,14 @@ def arange[
     if Float64(n) < span:
         n += 1
     n = max(n, 0)
+    comptime if _DEVICE_FILL[dtype]:
+        var device = _context(ctx)
+        if device.api() != "cpu":
+            var result = Dynamic[dtype, 1]._uninitialized(
+                device, row_major(_dyn_shape[1](n))
+            )
+            _index_fill["linear"](result, start, step, 0)
+            return result^
     var values = List[Scalar[dtype]](capacity=n)
     for i in range(n):
         values.append(Scalar[dtype](start + Float64(i) * step))
@@ -2692,6 +2789,12 @@ def tri[
     dtype: DType, n: Int
 ](ctx: Optional[DeviceContext] = None) raises -> Static[dtype, n, n]:
     """An `n`x`n` matrix of ones at and below the diagonal. `numpy.tri`."""
+    comptime if _DEVICE_FILL[dtype]:
+        var device = _context(ctx)
+        if device.api() != "cpu":
+            var result = Static[dtype, n, n]._uninitialized(device)
+            _index_fill["tri"](result, 0, 0, n)
+            return result^
     var values = List[Scalar[dtype]](length=n * n, fill=0)
     for r in range(n):
         for c in range(r + 1):
