@@ -11,7 +11,7 @@ register tier's own names are exported here too:
 
 | Tier | Holds | Good for |
 | --- | --- | --- |
-| `Tensor`, `Plain`-only, tier 2 | samples the caller already holds: `trapezoid(y, dx)`, `simpson(y, x)`, `cumulative_trapezoid`, `cumulative_simpson`, `romb` -- `scipy.integrate`'s own signatures; and a system whose state is a `Tensor`: `rk4_system`, `dopri5`, `solve_ivp`, every stage an `elementwise` launch on the state's device |
+| `Tensor`, `Plain`-only, tier 2 | samples the caller already holds: `trapezoid(y, dx)`, `simpson(y, x)`, `cumulative_trapezoid`, `cumulative_simpson`, `romb` -- `scipy.integrate`'s own signatures; and a system whose state is a `Tensor`: `rk4_system`, `dopri5`, `solve_ivp` (with `t_eval`, `dense_output` and an `event` returning an `IVPSolution`), every stage an `elementwise` launch on the state's device |
 | `Array[T, n]` and `FloatLike`, tier 1 | a `FloatLike` integrand: `gauss_legendre[f](a, b)`, `simpson[f](a, b)`, `trapezoid[f](a, b)`, and the fixed-step `rk4`/`dopri5` |
 
 It also carries the adaptive scalar
@@ -31,6 +31,8 @@ than a formula.
 """
 
 from .integrate import (
+    DenseOutput,
+    IVPSolution,
     ScalarIVPResult,
     QuadResult,
     IVPResult,

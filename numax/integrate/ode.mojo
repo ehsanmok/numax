@@ -209,24 +209,57 @@ struct Step[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
         self.y_hat = y_hat^
 
 
-def dopri5_step[
+struct _Stages[dtype: DType, n: Int](Movable where dtype.is_floating_point()):
+    """One Dormand-Prince step with its seven stages kept: what dense
+    output interpolates from and events are located on. `dopri5_step`
+    keeps only the two solutions."""
+
+    var y5: Static[Self.dtype, Self.n]
+    var y4: Static[Self.dtype, Self.n]
+    var k1: Static[Self.dtype, Self.n]
+    var k2: Static[Self.dtype, Self.n]
+    var k3: Static[Self.dtype, Self.n]
+    var k4: Static[Self.dtype, Self.n]
+    var k5: Static[Self.dtype, Self.n]
+    var k6: Static[Self.dtype, Self.n]
+    var k7: Static[Self.dtype, Self.n]
+
+    def __init__(
+        out self,
+        var y5: Static[Self.dtype, Self.n],
+        var y4: Static[Self.dtype, Self.n],
+        var k1: Static[Self.dtype, Self.n],
+        var k2: Static[Self.dtype, Self.n],
+        var k3: Static[Self.dtype, Self.n],
+        var k4: Static[Self.dtype, Self.n],
+        var k5: Static[Self.dtype, Self.n],
+        var k6: Static[Self.dtype, Self.n],
+        var k7: Static[Self.dtype, Self.n],
+    ):
+        self.y5 = y5^
+        self.y4 = y4^
+        self.k1 = k1^
+        self.k2 = k2^
+        self.k3 = k3^
+        self.k4 = k4^
+        self.k5 = k5^
+        self.k6 = k6^
+        self.k7 = k7^
+
+
+def _dopri5_stages[
     T: TensorLike,
     f: def(
         Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
     ) raises thin -> Static[T.dtype, dim[T, 0]],
     gpu: Bool = False,
-](t: Float64, y_in: T, h: Float64) raises -> Step[T.dtype, dim[T, 0]] where (
+](t: Float64, y_in: T, h: Float64) raises -> _Stages[T.dtype, dim[T, 0]] where (
     T.dtype.is_floating_point()
     and T.LayoutType.rank == 1
     and T.LayoutType.all_dims_known
 ):
-    """One Dormand-Prince 5(4) step of the system, returning both
-    embedded solutions. The `Tensor` form of
-    `numax.integrate.dopri5_step`, from the same tableau.
-
-    Public but low-level: `dopri5` drives it at a fixed step and
-    `solve_ivp` with adaptive control, so the tableau lives in one place.
-    """
+    """One Dormand-Prince 5(4) step keeping every stage; the tableau's one
+    home, which `dopri5_step` calls."""
     comptime dtype = T.dtype
     comptime n = dim[T, 0]
     var ctx = y_in.context()
@@ -282,7 +315,32 @@ def dopri5_step[
     _axpy_into[gpu=gpu](y4, k6, hs * Scalar[dtype](_BH6), ctx)
     _axpy_into[gpu=gpu](y4, k7, hs * Scalar[dtype](_BH7), ctx)
 
-    return Step[dtype, n](y5^, y4^)
+    return _Stages[dtype, n](y5^, y4^, k1^, k2^, k3^, k4^, k5^, k6^, k7^)
+
+
+def dopri5_step[
+    T: TensorLike,
+    f: def(
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
+    gpu: Bool = False,
+](t: Float64, y_in: T, h: Float64) raises -> Step[T.dtype, dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
+    """One Dormand-Prince 5(4) step of the system, returning both
+    embedded solutions. The `Tensor` form of
+    `numax.integrate.dopri5_step`, from the same tableau.
+
+    Public but low-level: `dopri5` drives it at a fixed step and
+    `solve_ivp` with adaptive control, so the tableau lives in one place
+    (`_dopri5_stages`, which also keeps the stages for dense output).
+    """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    var stages = _dopri5_stages[f=f, gpu=gpu](t, y_in, h)
+    return Step[dtype, n](copy(stages.y5), copy(stages.y4))
 
 
 def dopri5[

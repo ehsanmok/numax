@@ -527,6 +527,8 @@ from .optimize.root import RootResult, root
 # Quadrature and ODE solvers -- `numax.integrate`.
 from .integrate.integrate import (
     ScalarIVPResult,
+    DenseOutput,
+    IVPSolution,
     QuadResult,
     IVPResult,
     dblquad,

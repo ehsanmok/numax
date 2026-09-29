@@ -52,8 +52,11 @@ from ..core.numeric import FloatLike
 from ..core.plain import Plain
 from ._array.ode import dopri5_step
 from .ode import dopri5_step as _tensor_dopri5_step
+from .ode import _axpy_into, _dopri5_stages, _Stages
+from .ode import _target as _ode_target
 from ..core.tensorlike import TensorLike, dim
-from ..core.tensor import _same_order, Static, copy
+from ..core.tensor import _same_order, Dynamic, Static, _dyn_shape, copy
+from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 from algorithm.rowwise_types import RowCoord
 from layout import Coord, coord_to_index_list
@@ -825,3 +828,724 @@ def dblquad[
             inner += weight_j * f(_P(xi), _P(yj)).v[0]
         total += weight_i * inner
     return total * span_x * span_y
+
+
+# ------------------------------------------------ dense output and events
+
+comptime _DENSE_P: Array[Float64, 28] = [
+    1.0,
+    -8048581381.0 / 2820520608.0,
+    8663915743.0 / 2820520608.0,
+    -12715105075.0 / 11282082432.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    131558114200.0 / 32700410799.0,
+    -68118460800.0 / 10900136933.0,
+    87487479700.0 / 32700410799.0,
+    0.0,
+    -1754552775.0 / 470086768.0,
+    14199869525.0 / 1410260304.0,
+    -10690763975.0 / 1880347072.0,
+    0.0,
+    127303824393.0 / 49829197408.0,
+    -318862633887.0 / 49829197408.0,
+    701980252875.0 / 199316789632.0,
+    0.0,
+    -282668133.0 / 205662961.0,
+    2019193451.0 / 616988883.0,
+    -1453857185.0 / 822651844.0,
+    0.0,
+    40617522.0 / 29380423.0,
+    -110615467.0 / 29380423.0,
+    69997945.0 / 29380423.0,
+]
+"""SciPy `RK45.P`: Shampine's fourth-order continuous extension of the
+Dormand-Prince pair, `7 x 4` row-major. Stage `i`'s weight at the
+fraction `x` of a step is `sum_j P[i][j] x^(j+1)`."""
+
+
+def _dense_weights(x: Float64) -> SIMD[DType.float64, 8]:
+    """The seven stage weights of the continuous extension at `x`."""
+    var out = SIMD[DType.float64, 8](0)
+    comptime for i in range(7):
+        var acc = 0.0
+        var power = x
+        comptime for j in range(4):
+            comptime c = _DENSE_P[i * 4 + j]
+            acc += c * power
+            power *= x
+        out[i] = acc
+    return out
+
+
+def _interpolate[
+    dtype: DType, n: Int, gpu: Bool
+](
+    mut y_old: Static[dtype, n],
+    mut stages: _Stages[dtype, n],
+    t_old: Float64,
+    h: Float64,
+    t: Float64,
+    ctx: DeviceContext,
+) raises -> Static[dtype, n] where dtype.is_floating_point():
+    """The step's continuous extension at `t`: `y_old + h sum_i b_i(x) k_i`,
+    seven axpys on the state's device."""
+    var b = _dense_weights((t - t_old) / h)
+    var y = copy(y_old)
+    _axpy_into[gpu=gpu](y, stages.k1, Scalar[dtype](h * b[0]), ctx)
+    _axpy_into[gpu=gpu](y, stages.k3, Scalar[dtype](h * b[2]), ctx)
+    _axpy_into[gpu=gpu](y, stages.k4, Scalar[dtype](h * b[3]), ctx)
+    _axpy_into[gpu=gpu](y, stages.k5, Scalar[dtype](h * b[4]), ctx)
+    _axpy_into[gpu=gpu](y, stages.k6, Scalar[dtype](h * b[5]), ctx)
+    _axpy_into[gpu=gpu](y, stages.k7, Scalar[dtype](h * b[6]), ctx)
+    return y^
+
+
+struct _RowBuffer[dtype: DType, n: Int, gpu: Bool](Movable):
+    """A growable `rows x n` matrix on the state's device: states appended
+    one row at a time, capacity doubled by a device copy when full."""
+
+    var data: Dynamic[Self.dtype, 2]
+    var rows: Int
+    var capacity: Int
+
+    def __init__(out self, ctx: DeviceContext) raises:
+        self.capacity = 16
+        self.rows = 0
+        self.data = Dynamic[Self.dtype, 2](
+            row_major(_dyn_shape[2](self.capacity, Self.n)), ctx
+        )
+
+    def push(mut self, mut v: Static[Self.dtype, Self.n]) raises:
+        """Append `v` as the next row."""
+        var ctx = v.context()
+        if self.rows == self.capacity:
+            var grown = Dynamic[Self.dtype, 2](
+                row_major(_dyn_shape[2](2 * self.capacity, Self.n)), ctx
+            )
+            var src = self.data.tile()
+            var dst = grown.tile()
+            var used = self.rows * Self.n
+
+            @always_inline
+            def move[
+                w: Int, alignment: Int = 1
+            ](coord: Coord) {var src, var dst}:
+                var e = coord_to_index_list(coord)[0]
+                dst.ptr[unsafe_offset=e] = src.ptr[unsafe_offset=e]
+
+            elementwise[simd_width=1, target=_ode_target[Self.gpu]()](
+                move, Coord(used), ctx
+            )
+            ctx.synchronize()
+            self.data = grown^
+            self.capacity *= 2
+        var dst = self.data.tile()
+        var vs = v.tile()
+        var base = self.rows * Self.n
+
+        @always_inline
+        def write[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var dst, var vs, var base}:
+            var e = coord_to_index_list(coord)[0]
+            dst.ptr[unsafe_offset=base + e] = vs.ptr[unsafe_offset=e]
+
+        elementwise[simd_width=1, target=_ode_target[Self.gpu]()](
+            write, Coord(Self.n), ctx
+        )
+        ctx.synchronize()
+        self.rows += 1
+
+    def columns(mut self, ctx: DeviceContext) raises -> Dynamic[Self.dtype, 2]:
+        """The rows as columns: an `n x rows` matrix, SciPy's `sol.y`
+        layout."""
+        var count = self.rows
+        var out = Dynamic[Self.dtype, 2](
+            row_major(_dyn_shape[2](Self.n, max(count, 1))), ctx
+        )
+        if count == 0:
+            return Dynamic[Self.dtype, 2](
+                row_major(_dyn_shape[2](Self.n, 0)), ctx
+            )
+        var src = self.data.tile()
+        var dst = out.tile()
+
+        @always_inline
+        def flip[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var src, var dst, var count}:
+            var e = coord_to_index_list(coord)[0]
+            var i = e // count
+            var j = e % count
+            dst.ptr[unsafe_offset=e] = src.ptr[unsafe_offset=j * Self.n + i]
+
+        elementwise[simd_width=1, target=_ode_target[Self.gpu]()](
+            flip, Coord(Self.n * count), ctx
+        )
+        ctx.synchronize()
+        return out^
+
+
+struct DenseOutput[dtype: DType, n: Int, gpu: Bool = False](Movable):
+    """The continuous solution `solve_ivp(..., dense_output=True)` returns,
+    SciPy's `OdeSolution`: `sol(t)` evaluates the fourth-order continuous
+    extension of the step that contains `t`.
+
+    Each accepted step keeps its start, its size, its initial state and
+    its seven stages -- eight rows of a device matrix -- so evaluating is
+    a host binary search over the step starts and one weighted sum on the
+    state's device. Empty unless `dense_output` was asked for.
+    """
+
+    var _starts: List[Float64]
+    var _steps: List[Float64]
+    var _rows: _RowBuffer[Self.dtype, Self.n, Self.gpu]
+
+    def __init__(out self, ctx: DeviceContext) raises:
+        self._starts = List[Float64]()
+        self._steps = List[Float64]()
+        self._rows = _RowBuffer[Self.dtype, Self.n, Self.gpu](ctx)
+
+    def _record(
+        mut self,
+        t_old: Float64,
+        h: Float64,
+        mut y_old: Static[Self.dtype, Self.n],
+        mut stages: _Stages[Self.dtype, Self.n],
+    ) raises:
+        self._starts.append(t_old)
+        self._steps.append(h)
+        self._rows.push(y_old)
+        self._rows.push(stages.k1)
+        self._rows.push(stages.k2)
+        self._rows.push(stages.k3)
+        self._rows.push(stages.k4)
+        self._rows.push(stages.k5)
+        self._rows.push(stages.k6)
+        self._rows.push(stages.k7)
+
+    def __call__(mut self, t: Float64) raises -> Static[Self.dtype, Self.n]:
+        """The solution at `t`, which must lie in the integrated span.
+
+        Args:
+            t: The time to evaluate at.
+
+        Returns:
+            The interpolated state, on the state's device.
+
+        Raises:
+            If no step was recorded, or `t` is outside the span.
+        """
+        var count = len(self._starts)
+        if count == 0:
+            raise Error("DenseOutput: empty; pass dense_output=True")
+        var forward = self._steps[0] > 0
+        var first = self._starts[0]
+        var last = self._starts[count - 1] + self._steps[count - 1]
+        var lo_t = first if forward else last
+        var hi_t = last if forward else first
+        if t < lo_t or t > hi_t:
+            raise Error(
+                "DenseOutput: t = ", t, " is outside [", lo_t, ", ", hi_t, "]"
+            )
+        # The last step whose start is not past `t` in the direction of
+        # integration.
+        var lo = 0
+        var hi = count - 1
+        while lo < hi:
+            var mid = (lo + hi + 1) // 2
+            var past = (self._starts[mid] > t) if forward else (
+                self._starts[mid] < t
+            )
+            if past:
+                hi = mid - 1
+            else:
+                lo = mid
+        var s = lo
+        var h = self._steps[s]
+        var b = _dense_weights((t - self._starts[s]) / h)
+        var ctx = self._rows.data.context()
+        var out = Static[Self.dtype, Self.n](ctx)
+        var src = self._rows.data.tile()
+        var dst = out.tile()
+        var base = 8 * s * Self.n
+        var w1 = Scalar[Self.dtype](h * b[0])
+        var w3 = Scalar[Self.dtype](h * b[2])
+        var w4 = Scalar[Self.dtype](h * b[3])
+        var w5 = Scalar[Self.dtype](h * b[4])
+        var w6 = Scalar[Self.dtype](h * b[5])
+        var w7 = Scalar[Self.dtype](h * b[6])
+
+        @always_inline
+        def combine[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {
+            var src,
+            var dst,
+            var base,
+            var w1,
+            var w3,
+            var w4,
+            var w5,
+            var w6,
+            var w7,
+        }:
+            var i = coord_to_index_list(coord)[0]
+            var r = base + i
+            var v = (
+                src.ptr[unsafe_offset=r]
+                + w1 * src.ptr[unsafe_offset=r + Self.n]
+                + w3 * src.ptr[unsafe_offset=r + 3 * Self.n]
+                + w4 * src.ptr[unsafe_offset=r + 4 * Self.n]
+                + w5 * src.ptr[unsafe_offset=r + 5 * Self.n]
+                + w6 * src.ptr[unsafe_offset=r + 6 * Self.n]
+                + w7 * src.ptr[unsafe_offset=r + 7 * Self.n]
+            )
+            dst.ptr[unsafe_offset=i] = v
+
+        elementwise[simd_width=1, target=_ode_target[Self.gpu]()](
+            combine, Coord(Self.n), ctx
+        )
+        ctx.synchronize()
+        return out^
+
+
+struct IVPSolution[dtype: DType, n: Int, gpu: Bool = False](Movable):
+    """What the recording `solve_ivp` returns, SciPy's `OdeResult`.
+
+    `y` is `n x m`, SciPy's layout, one column per time in `t`; the event
+    fields hold the located crossings, `y_events` a column per crossing.
+    `status` is SciPy's: `0` reached the end, `1` stopped at a terminal
+    event, `-1` ran out of steps.
+    """
+
+    var t: List[Float64]
+    """The output times: the `t_eval` points the integration reached."""
+    var y: Dynamic[Self.dtype, 2]
+    """The states at `t`, `n x len(t)`, on the state's device."""
+    var t_events: List[Float64]
+    """The times the event function crossed zero, in order."""
+    var y_events: Dynamic[Self.dtype, 2]
+    """The states at `t_events`, `n x len(t_events)`."""
+    var status: Int
+    """`0`: reached `t1`; `1`: a terminal event; `-1`: out of steps."""
+    var accepted: Int
+    """Accepted steps."""
+    var rejected: Int
+    """Rejected steps."""
+    var sol: DenseOutput[Self.dtype, Self.n, Self.gpu]
+    """The continuous solution, when `dense_output` was asked for."""
+
+    def __init__(
+        out self,
+        var t: List[Float64],
+        var y: Dynamic[Self.dtype, 2],
+        var t_events: List[Float64],
+        var y_events: Dynamic[Self.dtype, 2],
+        status: Int,
+        accepted: Int,
+        rejected: Int,
+        var sol: DenseOutput[Self.dtype, Self.n, Self.gpu],
+    ):
+        """Build from the parts.
+
+        Args:
+            t: The output times.
+            y: The states at them.
+            t_events: The event times.
+            y_events: The states at them.
+            status: SciPy's status code.
+            accepted: Accepted steps.
+            rejected: Rejected steps.
+            sol: The continuous solution.
+        """
+        self.t = t^
+        self.y = y^
+        self.t_events = t_events^
+        self.y_events = y_events^
+        self.status = status
+        self.accepted = accepted
+        self.rejected = rejected
+        self.sol = sol^
+
+
+def _no_event[
+    dtype: DType, n: Int
+](t: Scalar[dtype], y: Static[dtype, n], ctx: DeviceContext) raises -> Scalar[
+    dtype
+]:
+    return Scalar[dtype](1)
+
+
+def _crossed(g: Float64, g_new: Float64, direction: Int) -> Bool:
+    """SciPy's `find_active_events` for one event."""
+    var up = g <= 0.0 and g_new >= 0.0
+    var down = g >= 0.0 and g_new <= 0.0
+    if direction > 0:
+        return up
+    if direction < 0:
+        return down
+    return up or down
+
+
+def _solve_ivp_recording[
+    dtype: DType,
+    n: Int,
+    f: def(
+        Scalar[dtype], Static[dtype, n], DeviceContext
+    ) raises thin -> Static[dtype, n],
+    has_event: Bool,
+    event: def(
+        Scalar[dtype], Static[dtype, n], DeviceContext
+    ) raises thin -> Scalar[dtype],
+    terminal: Bool,
+    direction: Int,
+    dense_output: Bool,
+    gpu: Bool,
+](
+    t0: Float64,
+    var y: Static[dtype, n],
+    t1: Float64,
+    t_eval: List[Float64],
+    rtol: Float64,
+    atol: Float64,
+    max_steps: Int,
+) raises -> IVPSolution[dtype, n, gpu] where dtype.is_floating_point():
+    var ctx = y.context()
+    var forward = t1 >= t0
+    var span = abs(t1 - t0)
+    var t = t0
+    var h = (1.0 if forward else -1.0) * span / 100.0
+    var accepted = 0
+    var rejected = 0
+    var status = -1
+    var ts = List[Float64]()
+    var ys = _RowBuffer[dtype, n, gpu](ctx)
+    var tev = List[Float64]()
+    var yev = _RowBuffer[dtype, n, gpu](ctx)
+    var sol = DenseOutput[dtype, n, gpu](ctx)
+    var next_eval = 0
+    var g_old = 0.0
+    comptime if has_event:
+        g_old = Float64(event(Scalar[dtype](t), y, ctx))
+
+    # A `t_eval` point at `t0` is reported before the first step.
+    while next_eval < len(t_eval) and t_eval[next_eval] == t0:
+        ts.append(t0)
+        ys.push(y)
+        next_eval += 1
+
+    if t0 == t1:
+        status = 0
+    else:
+        for _ in range(max_steps):
+            if abs(h) > abs(t1 - t):
+                h = t1 - t
+            var stages = _dopri5_stages[f=f, gpu=gpu](t, y, h)
+            var ratio = _max_abs_ratio[gpu=gpu](
+                y, stages.y5, stages.y4, rtol, atol
+            )
+            if ratio <= 1.0:
+                accepted += 1
+                var t_old = t
+                var t_new = t + h
+                var stop = t_new
+                var terminate = False
+                comptime if has_event:
+                    var g_new = Float64(
+                        event(Scalar[dtype](t_new), stages.y5, ctx)
+                    )
+                    if _crossed(g_old, g_new, direction):
+                        # Brent on the step's continuous extension, SciPy's
+                        # `solve_event_equation` with `xtol = rtol = 4 eps`.
+                        var a = t_old
+                        var b = t_new
+                        var fa = g_old
+                        var fb = g_new
+                        var c = a
+                        var fc = fa
+                        var d = b - a
+                        var e = d
+                        comptime eps = 2.220446049250313e-16
+                        for _ in range(200):
+                            if (fb > 0.0 and fc > 0.0) or (
+                                fb < 0.0 and fc < 0.0
+                            ):
+                                c = a
+                                fc = fa
+                                d = b - a
+                                e = d
+                            if abs(fc) < abs(fb):
+                                a = b
+                                b = c
+                                c = a
+                                fa = fb
+                                fb = fc
+                                fc = fa
+                            var tol = 2.0 * 4.0 * eps * abs(b) + 0.5 * 4.0 * eps
+                            var m = 0.5 * (c - b)
+                            if abs(m) <= tol or fb == 0.0:
+                                break
+                            if abs(e) >= tol and abs(fa) > abs(fb):
+                                var s = fb / fa
+                                var p: Float64
+                                var q: Float64
+                                if a == c:
+                                    p = 2.0 * m * s
+                                    q = 1.0 - s
+                                else:
+                                    var qa = fa / fc
+                                    var r = fb / fc
+                                    p = s * (
+                                        2.0 * m * qa * (qa - r)
+                                        - (b - a) * (r - 1.0)
+                                    )
+                                    q = (qa - 1.0) * (r - 1.0) * (s - 1.0)
+                                if p > 0.0:
+                                    q = -q
+                                else:
+                                    p = -p
+                                if 2.0 * p < min(
+                                    3.0 * m * q - abs(tol * q), abs(e * q)
+                                ):
+                                    e = d
+                                    d = p / q
+                                else:
+                                    d = m
+                                    e = d
+                            else:
+                                d = m
+                                e = d
+                            a = b
+                            fa = fb
+                            if abs(d) > tol:
+                                b += d
+                            else:
+                                b += tol if m > 0.0 else -tol
+                            var yb = _interpolate[gpu=gpu](
+                                y, stages, t_old, h, b, ctx
+                            )
+                            fb = Float64(event(Scalar[dtype](b), yb, ctx))
+                        var root = b
+                        tev.append(root)
+                        var y_root = _interpolate[gpu=gpu](
+                            y, stages, t_old, h, root, ctx
+                        )
+                        yev.push(y_root)
+                        comptime if terminal:
+                            terminate = True
+                            stop = root
+                    g_old = g_new
+                # The `t_eval` points this step covers, up to where it
+                # stops.
+                while next_eval < len(t_eval):
+                    var te = t_eval[next_eval]
+                    var covered = (te <= stop) if forward else (te >= stop)
+                    if not covered:
+                        break
+                    ts.append(te)
+                    var ye = _interpolate[gpu=gpu](y, stages, t_old, h, te, ctx)
+                    ys.push(ye)
+                    next_eval += 1
+                comptime if dense_output:
+                    sol._record(t_old, h, y, stages)
+                if terminate:
+                    t = stop
+                    y = _interpolate[gpu=gpu](y, stages, t_old, h, stop, ctx)
+                    status = 1
+                    break
+                t = t_new
+                y = copy(stages.y5)
+                if abs(t - t1) <= 0.0:
+                    status = 0
+                    break
+            else:
+                rejected += 1
+            var scale: Float64
+            if ratio <= 0.0:
+                scale = 5.0
+            else:
+                scale = 0.9 * (1.0 / ratio) ** 0.2
+                scale = min(5.0, max(0.2, scale))
+            h = h * scale
+    var y_out = ys.columns(ctx)
+    var yev_out = yev.columns(ctx)
+    return IVPSolution[dtype, n, gpu](
+        ts^, y_out^, tev^, yev_out^, status, accepted, rejected, sol^
+    )
+
+
+def _eval_times[E: TensorLike](t_eval: E) raises -> List[Float64]:
+    var values = t_eval.to_host()
+    var out = List[Float64](capacity=len(values))
+    for i in range(len(values)):
+        out.append(Float64(values[i]))
+    return out^
+
+
+def solve_ivp[
+    T: TensorLike,
+    E: TensorLike,
+    f: def(
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
+    dense_output: Bool = False,
+    gpu: Bool = False,
+](
+    t0: Float64,
+    y0: T,
+    t1: Float64,
+    t_eval: E,
+    rtol: Float64 = 1e-8,
+    atol: Float64 = 1e-10,
+    max_steps: Int = 10000,
+) raises -> IVPSolution[T.dtype, dim[T, 0], gpu] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and E.LayoutType.rank == 1
+):
+    """Integrate the system and report the solution at the times `t_eval`.
+    `scipy.integrate.solve_ivp(fun, (t0, t1), y0, t_eval=t_eval,
+    dense_output=dense_output)`.
+
+    The same controller and steps as the final-state `solve_ivp`; each
+    accepted step's `t_eval` points are evaluated on its continuous
+    extension, SciPy RK45's fourth-order interpolant (`_DENSE_P`), seven
+    axpys on the state's device -- so the requested times cost no extra
+    steps and do not change the ones taken. `t_eval` must be sorted in the
+    direction of integration and inside `[t0, t1]`, as SciPy requires.
+    With `dense_output`, `sol` evaluates the same interpolant at any time
+    in the span afterwards.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y0`.
+        E: The rank-1 tensor type of `t_eval`.
+        f: The right-hand side `f(t, y, ctx)`.
+        dense_output: Whether to keep every step for `sol`.
+        gpu: Whether the stages, the error ratio and the interpolation run
+            on the state's device.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`.
+        t1: The final time.
+        t_eval: The output times.
+        rtol: The relative error tolerance per component and step.
+        atol: The absolute error tolerance per component and step.
+        max_steps: The cap on attempted steps.
+
+    Returns:
+        An `IVPSolution` with `t`, `y` (`n x len(t)`), the step counts,
+        `status`, and `sol` when asked.
+
+    Raises:
+        If `f` raises, or a tensor copy, launch or transfer fails.
+    """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    return _solve_ivp_recording[
+        dtype,
+        n,
+        f,
+        False,
+        _no_event[dtype, n],
+        False,
+        0,
+        dense_output,
+        gpu,
+    ](
+        t0,
+        _same_order(y0, Static[dtype, n]._static_layout()),
+        t1,
+        _eval_times(t_eval),
+        rtol,
+        atol,
+        max_steps,
+    )
+
+
+def solve_ivp[
+    T: TensorLike,
+    E: TensorLike,
+    f: def(
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Static[T.dtype, dim[T, 0]],
+    event: def(
+        Scalar[T.dtype], Static[T.dtype, dim[T, 0]], DeviceContext
+    ) raises thin -> Scalar[T.dtype],
+    terminal: Bool = False,
+    direction: Int = 0,
+    dense_output: Bool = False,
+    gpu: Bool = False,
+](
+    t0: Float64,
+    y0: T,
+    t1: Float64,
+    t_eval: E,
+    rtol: Float64 = 1e-8,
+    atol: Float64 = 1e-10,
+    max_steps: Int = 10000,
+) raises -> IVPSolution[T.dtype, dim[T, 0], gpu] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and E.LayoutType.rank == 1
+):
+    """Integrate the system with an event function, reporting its zero
+    crossings and optionally stopping at the first. `scipy.integrate.solve_ivp`
+    with `events=event`, `event.terminal`, `event.direction`.
+
+    After each accepted step the event is evaluated at its end; a sign
+    change is a crossing under SciPy's rule (`direction > 0` counts only
+    rising, `< 0` only falling, `0` either), and it is located by Brent's
+    method on the step's continuous extension to `4 eps`, as SciPy's
+    `brentq` locates it. Each crossing's time and state are recorded; with
+    `terminal` the integration stops there, `status = 1`, and the
+    `t_eval` points past it are not reported. One event function; SciPy's
+    list of several is the upgrade, as is `max_events`.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y0`.
+        E: The rank-1 tensor type of `t_eval`.
+        f: The right-hand side `f(t, y, ctx)`.
+        event: The event function `g(t, y, ctx)`, whose zeros are sought.
+        terminal: Whether the first crossing stops the integration.
+        direction: `1` counts only rising crossings, `-1` only falling,
+            `0` both.
+        dense_output: Whether to keep every step for `sol`.
+        gpu: Whether the stages and interpolation run on the device.
+
+    Args:
+        t0: The initial time.
+        y0: The state at `t0`.
+        t1: The final time.
+        t_eval: The output times.
+        rtol: The relative error tolerance per component and step.
+        atol: The absolute error tolerance per component and step.
+        max_steps: The cap on attempted steps.
+
+    Returns:
+        An `IVPSolution` with the output, the event crossings in
+        `t_events`/`y_events`, and `status`.
+
+    Raises:
+        If `f` or `event` raises, or a tensor copy, launch or transfer fails.
+    """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    return _solve_ivp_recording[
+        dtype, n, f, True, event, terminal, direction, dense_output, gpu
+    ](
+        t0,
+        _same_order(y0, Static[dtype, n]._static_layout()),
+        t1,
+        _eval_times(t_eval),
+        rtol,
+        atol,
+        max_steps,
+    )
