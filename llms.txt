@@ -2,7 +2,9 @@
 
 numax is a numerical computing library for Mojo on MAX: NumPy/SciPy-named
 arrays, linear algebra, FFTs, special functions, statistics, integration,
-interpolation, optimization and signal processing, on CPU and GPU, with
+interpolation, optimization (constrained and linear programming too),
+signal processing, spatial search, clustering and n-d image processing,
+on CPU and GPU, with
 forward-mode derivatives through the same functions.
 
 ## Install and run
@@ -20,7 +22,8 @@ forward-mode derivatives through the same functions.
 - One subpackage each: `numax.core` (tensors, elementwise math, logic,
   sorting), `numax.linalg`, `numax.fft`, `numax.signal`, `numax.stats`,
   `numax.special`, `numax.integrate`, `numax.interpolate`,
-  `numax.optimize`, `numax.io`.
+  `numax.optimize`, `numax.spatial`, `numax.cluster`, `numax.ndimage`,
+  `numax.io`.
 - A name is one function across both tiers: `solve(tensor)` is the device
   tier, `solve[P, 3](array)` the register tier over `Array[T, n]`; the
   argument picks the overload.
@@ -67,3 +70,10 @@ the host. `f32` is `DType.float32`.
    spelling.
 10. Arguments of a `FloatLike` kernel are `T`, not `Float64`: write
     `T.constant(0.5)` for a literal.
+11. `numax.ndimage` is imported by subpackage only (`from numax.ndimage
+    import gaussian_filter`): its `convolve`/`correlate` are the n-d image
+    filters, and the flat `numax` names are `numax.signal`'s 1-D ones.
+12. Constraints are structs, as in SciPy: `Bounds(lb, ub)`,
+    `LinearConstraint(a, lb, ub)`, and `NonlinearConstraint[dtype, n, m,
+    fun, jac](lb, ub)` with `fun`/`jac` compile-time functions. Passing
+    constraints to `minimize` selects `method="slsqp"`.
