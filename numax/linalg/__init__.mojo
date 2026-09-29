@@ -43,6 +43,7 @@ modules matter when reading or extending.
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `NORM_FRO`, `NORM_INF`, `NORM_NEG_INF` | `_misc` |
 | `eigen` | `sytrd`, `Tridiagonal`, `eigvalsh`, `eigh` (and their `(a, b)` pencil forms), `Eigh`, `gebrd`, `Bidiagonal`, `svdvals`, `svd`, `SVD`, `matrix_rank`, `hessenberg`, `Hessenberg`, `eigvals`, `Eigenvalues`, `schur`, `Schur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
 | `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `tanm`, `fractional_matrix_power` | `_matfuncs` |
+| `solvers` | `solve_sylvester`, `solve_continuous_lyapunov`, `solve_discrete_lyapunov` -- Bartels-Stewart over `schur` and a per-column `trsyl` kernel | `_solvers` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie` | `_special_matrices` |
 | `panel` | the unblocked tile kernels the factorizations step with | LAPACK's `*2` routines |
 
@@ -258,6 +259,11 @@ from .matfuncs import (
 )
 from .misc import cond, NORM_FRO, NORM_INF, NORM_NEG_INF, norm, trace
 from .qr import QR, RQ, lstsq, qr_factor, rq
+from .solvers import (
+    solve_continuous_lyapunov,
+    solve_discrete_lyapunov,
+    solve_sylvester,
+)
 from .special_matrices import (
     block_diag,
     circulant,

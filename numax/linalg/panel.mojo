@@ -2478,3 +2478,158 @@ def pack_vector[
         dst.store[1](Coord(i), a[Coord(offset + i)])
 
     elementwise[simd_width=1, target=target](copy, Coord(count), ctx)
+
+
+@always_inline
+def _small_solve[
+    dtype: DType
+](m: SIMD[dtype, 16], b: SIMD[dtype, 4], d: Int) -> SIMD[
+    dtype, 4
+] where dtype.is_floating_point():
+    """Solve the `d x d` system (`d <= 4`) held row-major with stride 4 in
+    `m`, by Gaussian elimination with partial pivoting, in registers. A
+    zero pivot is floored as `getrf_panel` floors one, so a singular
+    Sylvester operator gives large finite entries rather than a fault."""
+    var a = m
+    var x = b
+    for col in range(d):
+        var best = col
+        var best_mag = abs(a[col * 4 + col])
+        for r in range(col + 1, d):
+            var mag = abs(a[r * 4 + col])
+            if mag > best_mag:
+                best_mag = mag
+                best = r
+        if best != col:
+            for c in range(4):
+                var held = a[col * 4 + c]
+                a[col * 4 + c] = a[best * 4 + c]
+                a[best * 4 + c] = held
+            var hb = x[col]
+            x[col] = x[best]
+            x[best] = hb
+        var pivot = a[col * 4 + col]
+        if pivot == 0:
+            pivot = Scalar[dtype](1e-30)
+            a[col * 4 + col] = pivot
+        for r in range(col + 1, d):
+            var f = a[r * 4 + col] / pivot
+            for c in range(col, d):
+                a[r * 4 + c] = a[r * 4 + c] - f * a[col * 4 + c]
+            x[r] = x[r] - f * x[col]
+    var r = d - 1
+    while r >= 0:
+        var acc = x[r]
+        for c in range(r + 1, d):
+            acc -= a[r * 4 + c] * x[c]
+        x[r] = acc / a[r * 4 + r]
+        r -= 1
+    return x
+
+
+def trsyl_column[
+    dtype: DType,
+    RLayout: TensorLayout,
+    SLayout: TensorLayout,
+    YLayout: TensorLayout,
+    WLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    r: _View[dtype, RLayout],
+    s: _View[dtype, SLayout],
+    y: _View[dtype, YLayout],
+    work: _View[dtype, WLayout],
+    k: Int32,
+    n: Int32,
+    m: Int32,
+) where dtype.is_floating_point():
+    """Column block `k` of the quasi-triangular Sylvester equation
+    `R Y + Y S = F`, in place. LAPACK's `trsyl`, one column block at a
+    time.
+
+    `R` (`n x n`) and `S` (`m x m`) are real Schur forms: upper triangular
+    but for `2 x 2` diagonal blocks. `y` holds `F` on entry; columns
+    before `k` are already solved and read as `Y`. The launch reads its
+    own role off `S`'s subdiagonal: the second column of a `2 x 2` block
+    of `S` returns at once, since the first solved it, so the host drives
+    `k = 0 .. m-1` without reading `S`.
+
+    Two phases. The right-hand side is `F[:, k:k+w] - Y[:, :k] S[:k,
+    k:k+w]`, parallel over rows. Then `R`'s blocks are walked from the
+    bottom: each is a strided dot product over the rows already solved,
+    reduced through thread 0 as `getrf_panel` reduces its pivot scan, and
+    thread 0 then solves the block's `h w`-unknown system
+    (`(I (x) R_ii + S_kk^T (x) I) vec(Y) = vec(B)`, at most `4 x 4`) with
+    `_small_solve`. `O(n^2)` per column on one block; `O(n^2 m)` over the
+    whole solve.
+
+    `work` needs `4 * _PANEL_THREADS` entries for the partial sums. Launch
+    on the accelerator with `grid_dim=1`, `block_dim=_PANEL_THREADS`; the
+    host path runs it single-threaded.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var k0 = Int(k)
+    var rows = Int(n)
+    var cols = Int(m)
+    var zero = Scalar[dtype](0)
+
+    if k0 > 0 and s[Coord(k0, k0 - 1)] != zero:
+        return
+    var w = 2 if (k0 + 1 < cols and s[Coord(k0 + 1, k0)] != zero) else 1
+
+    var i = t
+    while i < rows:
+        for c in range(w):
+            var acc = y[Coord(i, k0 + c)]
+            for j in range(k0):
+                acc -= y[Coord(i, j)] * s[Coord(j, k0 + c)]
+            y.store[1](Coord(i, k0 + c), acc)
+        i += nt
+    _sync[gpu]()
+
+    var row = rows - 1
+    while row >= 0:
+        var h = 2 if (row > 0 and r[Coord(row, row - 1)] != zero) else 1
+        var top = row - h + 1
+
+        var p = SIMD[dtype, 4](0)
+        var j = row + 1 + t
+        while j < rows:
+            for a in range(h):
+                for c in range(w):
+                    p[a * 2 + c] += r[Coord(top + a, j)] * y[Coord(j, k0 + c)]
+            j += nt
+        for q in range(4):
+            work.store[1](Coord(t * 4 + q), p[q])
+        _sync[gpu]()
+
+        if t == 0:
+            var total = SIMD[dtype, 4](0)
+            for c in range(nt):
+                for q in range(4):
+                    total[q] += work[Coord(c * 4 + q)]
+            # Unknowns in column-major order over the `h x w` block:
+            # index `c * h + a` is `Y[top + a, k0 + c]`.
+            var d = h * w
+            var mat = SIMD[dtype, 16](0)
+            var rhs = SIMD[dtype, 4](0)
+            for c in range(w):
+                for a in range(h):
+                    var e = c * h + a
+                    rhs[e] = y[Coord(top + a, k0 + c)] - total[a * 2 + c]
+                    for c2 in range(w):
+                        for a2 in range(h):
+                            var f = c2 * h + a2
+                            var coef = zero
+                            if c2 == c:
+                                coef += r[Coord(top + a, top + a2)]
+                            if a2 == a:
+                                coef += s[Coord(k0 + c2, k0 + c)]
+                            mat[e * 4 + f] = coef
+            var sol = _small_solve(mat, rhs, d)
+            for c in range(w):
+                for a in range(h):
+                    y.store[1](Coord(top + a, k0 + c), sol[c * h + a])
+        _sync[gpu]()
+        row = top - 1
