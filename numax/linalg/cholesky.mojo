@@ -23,14 +23,23 @@ matrix does not require it. That is a theorem, not luck.
 """
 
 from layout import Coord, TileTensor, coord_to_index_list
-from layout.tile_layout import row_major
+from layout.tile_layout import TensorLayout, row_major
 from linalg.matmul import matmul as _max_matmul
 from max.algorithm.functional import elementwise
+from max.gpu.host import DeviceContext
 from std.sys.info import align_of
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Static, tril, zeros, zeros_dyn
+from ..core.tensor import (
+    Dynamic,
+    Static,
+    _dyn_shape,
+    _same_order,
+    tril,
+    zeros,
+    zeros_dyn,
+)
 
 from .blas import _target
 from .common import _mut_view, _mut_view_as, _Dense
@@ -45,6 +54,167 @@ from std.collections import Array
 from ..core.numeric import FloatLike
 from ._array.cholesky import cholesky as _array_cholesky
 from ._array.cholesky import cholesky_solve as _array_cholesky_solve
+
+
+def _potrf_blocked[
+    dtype: DType,
+    gpu: Bool,
+    block: Int,
+    WLayout: TensorLayout,
+    ILayout: TensorLayout,
+](
+    wv: TileTensor[dtype, WLayout, MutAnyOrigin],
+    iv: TileTensor[DType.int32, ILayout, MutAnyOrigin],
+    n: Int,
+    tile: Int,
+    ctx: DeviceContext,
+) raises where dtype.is_floating_point():
+    """The blocked right-looking factorization in place on `wv`, an `n x n`
+    matrix whose order may be static or run-time: `potrf_diag` on each
+    diagonal block, the panel solve, and the symmetric trailing update in
+    `tile x tile` GEMMs with a subtracting epilogue. `iv` receives the
+    first non-positive pivot, one-based. Both `cholesky` overloads run
+    this; the caller synchronizes and reads `iv`."""
+    # `L21` made dense for the GEMM. `n x block` covers every step's panel,
+    # so it is allocated once rather than per step.
+    var operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
+    # The GEMM's own output, which nothing reads -- the epilogue subtracts
+    # each tile into the trailing block as it is computed. It still has to
+    # be the product's full size, since `matmul` writes `c` regardless.
+    var scratch = zeros_dyn[dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
+
+    var ov = operand.tile()
+    var sv = scratch.tile()
+
+    var k = 0
+    while k < n:
+        var nb = min(block, n - k)
+
+        comptime if gpu:
+            ctx.enqueue_function[
+                potrf_diag[
+                    dtype,
+                    ALayout=type_of(wv).LayoutType,
+                    ILayout=type_of(iv).LayoutType,
+                    gpu=True,
+                ]
+            ](
+                wv,
+                iv,
+                Int32(k),
+                Int32(nb),
+                grid_dim=1,
+                block_dim=_PANEL_THREADS,
+            )
+        else:
+            potrf_diag(wv, iv, Int32(k), Int32(nb))
+
+        trsm_right_lower_t[target=_target[gpu]()](wv, k, nb, n, ctx)
+
+        var m = n - k - nb
+        if m > 0:
+            var base = k + nb
+
+            # `L21` made dense once for the whole trailing update. Every
+            # tile below is a contiguous row range of it, which is itself
+            # dense, so the tiling costs no extra packing.
+            var panel: _Dense[dtype] = TileTensor(
+                ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
+            )
+            pack_block[target=_target[gpu]()](wv, panel, base, k, m, nb, ctx)
+
+            # `A22 -= L21 @ L21^T` is symmetric, so only the lower block
+            # triangle is computed. See the module docstring for why this
+            # is a loop over tiles rather than one GEMM.
+            var tiles = (m + tile - 1) // tile
+            for ti in range(tiles):
+                var row0 = ti * tile
+                var rows = min(tile, m - row0)
+                for tj in range(ti + 1):
+                    var col0 = tj * tile
+                    var cols = min(tile, m - col0)
+
+                    # Two views of the packed panel, because `matmul` takes
+                    # both operands mutably and rejects two live views that
+                    # share an origin.
+                    var left: _Dense[dtype] = TileTensor(
+                        ov.ptr_at_offset(Coord(row0, 0)),
+                        row_major(Coord(rows, nb)),
+                    )
+                    var right: _Dense[dtype] = TileTensor(
+                        ov.ptr_at_offset(Coord(col0, 0)),
+                        row_major(Coord(cols, nb)),
+                    )
+                    var product: _Dense[dtype] = TileTensor(
+                        sv.ptr_at_offset(Coord(0, 0)),
+                        row_major(Coord(rows, cols)),
+                    )
+
+                    var r0 = base + row0
+                    var c0 = base + col0
+
+                    # See `_MIN_GEMM_COLS`: a one-column product takes
+                    # MAX's GEMV path, which reads past a row count off a
+                    # lane multiple. The ragged last column tile is that
+                    # shape, and `rows * nb` is small enough to write
+                    # directly.
+                    if cols < _MIN_GEMM_COLS:
+
+                        @always_inline
+                        def narrow[
+                            w: Int, alignment: Int = 1
+                        ](coord: Coord) {
+                            var wv,
+                            var ov,
+                            var r0,
+                            var c0,
+                            var row0,
+                            var col0,
+                            var nb,
+                        }:
+                            var at = coord_to_index_list(coord)
+                            var to = Coord(r0 + at[0], c0 + at[1])
+                            var total = wv[to]
+                            for t in range(nb):
+                                total -= (
+                                    ov[Coord(row0 + at[0], t)]
+                                    * ov[Coord(col0 + at[1], t)]
+                                )
+                            wv.store[1](to, total)
+
+                        elementwise[simd_width=1, target=_target[gpu]()](
+                            narrow, Coord(rows, cols), ctx
+                        )
+                        continue
+
+                    @__parameter
+                    @always_inline
+                    @__copy_capture(wv, r0, c0)
+                    def subtract[
+                        _dtype: DType,
+                        width: SIMDLength,
+                        *,
+                        alignment: Int = align_of[SIMD[_dtype, width]](),
+                    ](
+                        idx: IndexList[2], value: SIMD[_dtype, width]
+                    ) capturing -> None:
+                        var at = Coord(r0 + idx[0], c0 + idx[1])
+                        wv.store[width](
+                            at,
+                            wv.load[width](at)
+                            - rebind[SIMD[dtype, width]](value),
+                        )
+
+                    _max_matmul[
+                        transpose_b=True,
+                        elementwise_lambda_fn=subtract,
+                        target=_target[gpu](),
+                    ](product, left, right, ctx)
+
+        k += nb
+    ctx.synchronize()
+    _ = operand^
+    _ = scratch^
 
 
 def cholesky[
@@ -195,155 +365,10 @@ def cholesky[
     var ctx = a.context()
     var work = Static[T.dtype, n, n](ctx)
     var info = zeros[DType.int32, 1](ctx)
-    # `L21` made dense for the GEMM. `n x block` covers every step's panel,
-    # so it is allocated once rather than per step.
-    var operand = zeros_dyn[T.dtype, 2](n, block, ctx=ctx)
-    # The GEMM's own output, which nothing reads -- the epilogue subtracts
-    # each tile into the trailing block as it is computed. It still has to
-    # be the product's full size, since `matmul` writes `c` regardless.
-    var scratch = zeros_dyn[T.dtype, 2](min(tile, n), min(tile, n), ctx=ctx)
-
     var wv = work.tile()
     var iv = info.tile()
-    var ov = operand.tile()
-    var sv = scratch.tile()
-
     pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
-
-    var k = 0
-    while k < n:
-        var nb = min(block, n - k)
-
-        comptime if gpu:
-            ctx.enqueue_function[
-                potrf_diag[
-                    T.dtype,
-                    ALayout=type_of(wv).LayoutType,
-                    ILayout=type_of(iv).LayoutType,
-                    gpu=True,
-                ]
-            ](
-                wv,
-                iv,
-                Int32(k),
-                Int32(nb),
-                grid_dim=1,
-                block_dim=_PANEL_THREADS,
-            )
-        else:
-            potrf_diag(wv, iv, Int32(k), Int32(nb))
-
-        trsm_right_lower_t[target=_target[gpu]()](wv, k, nb, n, ctx)
-
-        var m = n - k - nb
-        if m > 0:
-            var base = k + nb
-
-            # `L21` made dense once for the whole trailing update. Every
-            # tile below is a contiguous row range of it, which is itself
-            # dense, so the tiling costs no extra packing.
-            var panel: _Dense[T.dtype] = TileTensor(
-                ov.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
-            )
-            pack_block[target=_target[gpu]()](wv, panel, base, k, m, nb, ctx)
-
-            # `A22 -= L21 @ L21^T` is symmetric, so only the lower block
-            # triangle is computed. See the module docstring for why this
-            # is a loop over tiles rather than one GEMM.
-            var tiles = (m + tile - 1) // tile
-            for ti in range(tiles):
-                var row0 = ti * tile
-                var rows = min(tile, m - row0)
-                for tj in range(ti + 1):
-                    var col0 = tj * tile
-                    var cols = min(tile, m - col0)
-
-                    # Two views of the packed panel, because `matmul` takes
-                    # both operands mutably and rejects two live views that
-                    # share an origin.
-                    var left: _Dense[T.dtype] = TileTensor(
-                        ov.ptr_at_offset(Coord(row0, 0)),
-                        row_major(Coord(rows, nb)),
-                    )
-                    var right: _Dense[T.dtype] = TileTensor(
-                        ov.ptr_at_offset(Coord(col0, 0)),
-                        row_major(Coord(cols, nb)),
-                    )
-                    var product: _Dense[T.dtype] = TileTensor(
-                        sv.ptr_at_offset(Coord(0, 0)),
-                        row_major(Coord(rows, cols)),
-                    )
-
-                    var r0 = base + row0
-                    var c0 = base + col0
-
-                    # See `_MIN_GEMM_COLS`: a one-column product takes
-                    # MAX's GEMV path, which reads past a row count off a
-                    # lane multiple. The ragged last column tile is that
-                    # shape, and `rows * nb` is small enough to write
-                    # directly.
-                    if cols < _MIN_GEMM_COLS:
-
-                        @always_inline
-                        def narrow[
-                            w: Int, alignment: Int = 1
-                        ](coord: Coord) {
-                            var wv,
-                            var ov,
-                            var r0,
-                            var c0,
-                            var row0,
-                            var col0,
-                            var nb,
-                        }:
-                            var at = coord_to_index_list(coord)
-                            var to = Coord(r0 + at[0], c0 + at[1])
-                            var total = wv[to]
-                            for t in range(nb):
-                                total -= (
-                                    ov[Coord(row0 + at[0], t)]
-                                    * ov[Coord(col0 + at[1], t)]
-                                )
-                            wv.store[1](to, total)
-
-                        elementwise[simd_width=1, target=_target[gpu]()](
-                            narrow, Coord(rows, cols), ctx
-                        )
-                        continue
-
-                    @__parameter
-                    @always_inline
-                    @__copy_capture(wv, r0, c0)
-                    def subtract[
-                        _dtype: DType,
-                        width: SIMDLength,
-                        *,
-                        alignment: Int = align_of[SIMD[_dtype, width]](),
-                    ](
-                        idx: IndexList[2], value: SIMD[_dtype, width]
-                    ) capturing -> None:
-                        var at = Coord(r0 + idx[0], c0 + idx[1])
-                        wv.store[width](
-                            at,
-                            wv.load[width](at)
-                            - rebind[SIMD[T.dtype, width]](value),
-                        )
-
-                    _max_matmul[
-                        transpose_b=True,
-                        elementwise_lambda_fn=subtract,
-                        target=_target[gpu](),
-                    ](product, left, right, ctx)
-
-        k += nb
-
-    ctx.synchronize()
-
-    # `tile()` erases the origin, so neither scratch tensor is kept alive
-    # by its view and destruction is ASAP. See `numax.linalg.qr`.
-    _ = operand^
-    _ = scratch^
-
+    _potrf_blocked[T.dtype, gpu, block](wv, iv, n, tile, ctx)
     var flag = Int(info.to_host()[0])
     if flag != 0:
         raise Error(
@@ -356,6 +381,78 @@ def cholesky[
         )
 
     return tril[gpu=gpu](work)
+
+
+def cholesky[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32 if gpu else 64,
+](a: T) raises -> Dynamic[T.dtype, 2] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the lower-triangular `L`
+    with `L @ L.T == a` for a matrix whose order is data.
+    `scipy.linalg.cholesky(a, lower=True)`.
+
+    The same blocked factorization as the static overload -- one helper,
+    `_potrf_blocked`, runs both -- with the trailing update in `128`-wide
+    tiles on the host and one tile on the device, the static overload's
+    defaults.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the factorization on `a`'s device.
+        block: The diagonal block width.
+
+    Args:
+        a: The symmetric positive definite `n x n` matrix; only its lower
+            triangle is read.
+
+    Returns:
+        `L`, `n x n`, zero above the diagonal, on `a`'s device.
+
+    Raises:
+        If `a` is not square, not positive definite (the message names the
+        pivot), or a device operation fails.
+    """
+    var n = a.dim_at(0)
+    if a.dim_at(1) != n:
+        raise Error(
+            "cholesky: the matrix must be square, got ", n, " x ", a.dim_at(1)
+        )
+    var ctx = a.context()
+    var work = rebind_var[Dynamic[T.dtype, 2]](
+        _same_order(a, row_major(_dyn_shape[2](n, n)))
+    )
+    var info = zeros[DType.int32, 1](ctx)
+    var wv = work.tile()
+    var iv = info.tile()
+    _potrf_blocked[T.dtype, gpu, block](wv, iv, n, n if gpu else 128, ctx)
+    var flag = Int(info.to_host()[0])
+    if flag != 0:
+        raise Error(
+            (
+                "cholesky: matrix is not positive definite (non-positive pivot"
+                " at index "
+            ),
+            flag - 1,
+            ")",
+        )
+    var wp = work.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def upper_zero[w: Int, alignment: Int = 1](coord: Coord) {var wp, var n}:
+        var e = coord_to_index_list(coord)[0]
+        if e % n > e // n:
+            wp[unsafe_offset=e] = 0
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        upper_zero, Coord(n * n), ctx
+    )
+    ctx.synchronize()
+    return work^
 
 
 def cholesky_solve[

@@ -1,4 +1,5 @@
-"""The run-time-shape `lu_factor`, `solve` and `det` at `gpu=True`: a
+"""The run-time-shape `lu_factor`, `solve`, `det` and `cholesky` at
+`gpu=True`: a
 `Dynamic` matrix on the device, factored and solved there at `float32`,
 against the host run at the same `dtype`."""
 
@@ -8,7 +9,7 @@ from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Dynamic, _dyn_shape
-from numax.linalg import det, solve
+from numax.linalg import cholesky, det, solve
 
 comptime f32 = DType.float32
 
@@ -45,6 +46,17 @@ def test_dynamic_solve_gpu_matches_host() raises:
     var dd = det[gpu=True](_matrix(8, gpu_ctx))
     var dh = det(_matrix(8, cpu))
     assert_almost_equal(Float64(dd), Float64(dh), rtol=1e-4)
+
+
+def test_dynamic_cholesky_gpu_matches_host() raises:
+    """`n = 70` on the device against the host at `float32`."""
+    var n = 70
+    var gpu_ctx = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var ld = cholesky[gpu=True](_matrix(n, gpu_ctx)).to_host()
+    var lh = cholesky(_matrix(n, cpu)).to_host()
+    for e in range(n * n):
+        assert_almost_equal(Float64(ld[e]), Float64(lh[e]), atol=1e-4)
 
 
 def main() raises:
