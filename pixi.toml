@@ -253,7 +253,9 @@ readme-check = "python3 tools/check_snippets.py README.md"
 # its host answer at float32 (Metal has no double). Needs a real device, so
 # it is a local gate; CI compiles the same aggregates for `sm_80` below.
 tests-gpu = "bash tools/run_test_aggregates.sh tests_gpu"
-tests-gpu-build = { cmd = "bash tools/run_test_aggregates.sh tests_gpu --build-only", env = { AGG_BUILD_FLAGS = "--target-accelerator sm_80", BUILD_DIR = "build/agg_gpu_sm80" } }
+# Serial (`AGG_JOBS = "1"`): each `tests_gpu` part peaks at up to ~5 GB at
+# sm_80, and the macOS runner has 7 GB, so two at once do not fit.
+tests-gpu-build = { cmd = "bash tools/run_test_aggregates.sh tests_gpu --build-only", env = { AGG_BUILD_FLAGS = "--target-accelerator sm_80", BUILD_DIR = "build/agg_gpu_sm80", AGG_JOBS = "1" } }
 
 # For bisecting to one file. A new suite is picked up by the aggregates
 # automatically; this list is optional.

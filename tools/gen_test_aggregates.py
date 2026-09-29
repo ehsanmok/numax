@@ -60,6 +60,34 @@ ROOTS = ("tests", "tests_gpu")
 # matching list that still runs whatever is listed.
 EXCLUDE: set[str] = set()
 
+# Areas too large to compile as one binary on a CI runner, split into
+# parts `agg_<area>__<k>.mojo`, each part an explicit group of files;
+# a file not listed in any group goes to the last part, so a new test is
+# still picked up. Compile memory is roughly additive over an area's
+# files, and `tests_gpu/linalg` as one `--target-accelerator sm_80`
+# binary peaked at 25.7 GB -- past both CI runners (7 GB macOS, 16 GB
+# Linux). Groups are balanced on each file's measured standalone peak
+# (GB, sm_80, 2026-09-29): spectral 5.1, solvers 3.5, generalized_eigh
+# 2.3, linalg 2.2, multishift 2.0, dynamic_lu 1.6, lu_plu 1.5, ldl 1.4,
+# twostage 1.4, banded 1.0, array_kernels 0.9.
+SPLIT: dict[str, list[list[str]]] = {
+    "tests_gpu/linalg": [
+        ["test_spectral_gpu.mojo"],
+        ["test_solvers_gpu.mojo", "test_ldl_gpu.mojo"],
+        [
+            "test_generalized_eigh_gpu.mojo",
+            "test_linalg_gpu.mojo",
+            "test_array_kernels_gpu.mojo",
+        ],
+        [
+            "test_multishift_gpu.mojo",
+            "test_dynamic_lu_gpu.mojo",
+            "test_lu_plu_gpu.mojo",
+        ],
+        ["test_twostage_gpu.mojo", "test_banded_gpu.mojo"],
+    ],
+}
+
 # Matches only `def test_name(`. numax has 1437 test functions and none are
 # parameterized, so a `[` after the name would be a new shape worth
 # noticing rather than quietly skipping -- see the guard in `discover`.
@@ -152,6 +180,33 @@ def render(root: str, area: str, files: list[tuple[str, list[str]]]) -> str:
     return "".join(out)
 
 
+def parts(
+    root: str, areas: dict[str, list[tuple[str, list[str]]]]
+) -> list[tuple[str, str, list[tuple[str, list[str]]]]]:
+    """`(aggregate name, area, files)` for every aggregate: one per area,
+    or one per group for an area in `SPLIT` (named `<area>__<k>`; the run
+    script strips the suffix to find the area's include directory)."""
+    out = []
+    for area, files in areas.items():
+        groups = SPLIT.get(f"{root}/{area}")
+        if groups is None:
+            out.append((area, area, files))
+            continue
+        by_name = {os.path.basename(path): (path, names) for path, names in files}
+        placed: set[str] = set()
+        chunks: list[list[tuple[str, list[str]]]] = []
+        for group in groups:
+            chunk = [by_name[f] for f in group if f in by_name]
+            placed.update(f for f in group if f in by_name)
+            chunks.append(chunk)
+        leftover = [by_name[f] for f in sorted(by_name) if f not in placed]
+        chunks[-1].extend(leftover)
+        for k, chunk in enumerate(chunks, start=1):
+            if chunk:
+                out.append((f"{area}__{k}", area, sorted(chunk)))
+    return out
+
+
 def formatted(body: str) -> str:
     """`body` after `mojo format`.
 
@@ -188,8 +243,8 @@ def generate(root: str, check: bool) -> int:
     os.makedirs(OUT_DIR, exist_ok=True)
 
     written, total_tests = [], 0
-    for area, files in sorted(areas.items()):
-        path = os.path.join(OUT_DIR, f"agg_{area}.mojo")
+    for name, area, files in sorted(parts(root, areas)):
+        path = os.path.join(OUT_DIR, f"agg_{name}.mojo")
         body = render(root, area, files)
         total_tests += sum(len(n) for _, n in files)
         if check:
@@ -201,7 +256,7 @@ def generate(root: str, check: bool) -> int:
                 return 1
         else:
             open(path, "w").write(body)
-        written.append((area, len(files), sum(len(n) for _, n in files)))
+        written.append((name, len(files), sum(len(n) for _, n in files)))
 
     # Drop aggregates for areas that no longer exist.
     keep = {f"agg_{a}.mojo" for a, _, _ in written}

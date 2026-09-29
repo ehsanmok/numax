@@ -63,7 +63,14 @@ buys the one-file spelling used when bisecting.
 `gpu=True`, because a GPU-less CI runner cannot compile the device path;
 `tests_gpu/` compares each `gpu=True` routine against its host answer at
 `float32` (Metal has no `double`). `pixi run tests-gpu` runs it on a machine
-with an accelerator; CI only compiles it for `sm_80` (`tests-gpu-build`).
+with an accelerator; CI only compiles it for `sm_80` (`tests-gpu-build`),
+serially and without line tables, because compile memory adds up over an
+area's files: `tests_gpu/linalg` is split into parts by `SPLIT` in
+`tools/gen_test_aggregates.py` so no part passes ~5 GB on the 7 GB macOS
+runner. A new heavy device suite in a split area goes into a group there.
+Anything a device kernel evaluates at `comptime` must avoid `float64`
+`std.math` transcendentals: an `sm_80` build rejects them even at compile
+time, where Metal does not.
 
 Test files use `std.testing`: `def test_*() raises` functions plus
 `TestSuite.discover_tests[__functions_in_module()]().run()` in `main`. Keep

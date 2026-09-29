@@ -61,16 +61,36 @@ build_one() {
   # Each aggregate imports bare module names, resolved against its own
   # area directory.
   local area="${src##*/agg_}"; area="${area%.mojo}"
+  # A split area's parts are `agg_<area>__<k>`: same include directory.
+  area="${area%%__*}"
   local inc="$ROOT/$area"
   [ "$area" = "_root" ] && inc="$ROOT"
   # Line tables so a crash names the function it died in rather than eight
   # raw addresses -- the reason the per-file CI loop built before running.
+  # Not for `--build-only`: nothing built that way runs, and line tables
+  # nearly tripled the compile's peak memory (13.6 GB against 5.1 for
+  # `tests_gpu/linalg`'s spectral part at sm_80), past a CI runner's.
+  # A binary left by an earlier build would pass the artifact check below
+  # for a build that failed this time.
+  rm -f "$out"
   # shellcheck disable=SC2086
-  if ! mojo build $AGG_BUILD_FLAGS -debug-level=line-tables -I . -I "$inc" "$src" -o "$out" 2>"$out.log"; then
-    echo "BUILD FAILED: $src"; sed -n '1,25p' "$out.log"; return 1
+  local debug="-debug-level=line-tables"
+  [ "$BUILD_ONLY" -eq 1 ] && debug=""
+  # shellcheck disable=SC2086
+  mojo build $AGG_BUILD_FLAGS $debug -I . -I "$inc" "$src" -o "$out" 2>"$out.log"
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    # The log opens with the other modules' warnings, so its head says
+    # nothing about the failure: print the errors and the constraint that
+    # failed, then the tail. A compiler killed for memory writes no error
+    # at all, so the exit status is printed too (137 is SIGKILL).
+    echo "BUILD FAILED: $src (mojo exited with status $status)"
+    grep -E "error:|constraint failed" "$out.log" | head -20
+    echo "── last 15 lines ──"; tail -15 "$out.log"
+    return 1
   fi
 }
-export -f build_one; export BUILD_DIR ROOT AGG_BUILD_FLAGS
+export -f build_one; export BUILD_DIR ROOT AGG_BUILD_FLAGS BUILD_ONLY
 build_failed=()
 if [ "$JOBS" -gt 1 ]; then
   printf '%s\n' "${AGGS[@]}" | xargs -P "$JOBS" -n1 -I FF bash -c 'build_one FF'
