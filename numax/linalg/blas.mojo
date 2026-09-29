@@ -451,7 +451,13 @@ def matvec[
     var xv = _mut_view_as[A.dtype](x)
     var x_col = TileTensor(xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1)))
 
-    comptime if m % lanes == 0 and k % lanes == 0:
+    # The padding below works around the *CPU* GEMV's over-read, sized by
+    # the host's SIMD width; the device GEMV neither needs it nor should be
+    # shaped by the host. It also mattered for a build: on a Zen 3 host
+    # (8 `float32` lanes) the padded `sm_80` kernels failed to instantiate
+    # inside MAX's GPU `elementwise` ("failed to locate witness entry"),
+    # a MAX defect that 4 lanes, or any other host, does not trigger.
+    comptime if gpu or (m % lanes == 0 and k % lanes == 0):
         var result = Static[A.dtype, m](ctx)
         var yv = result.tile()
         var y_col = TileTensor(
