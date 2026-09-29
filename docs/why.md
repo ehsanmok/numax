@@ -134,8 +134,8 @@ and NumPy's and SciPy's names on top, in a language with no JIT.
 - **LAPACK's speed on the spectral decompositions, or pocketfft's on the
   transform.** On `Tensor` at `n = 1024`, `float32`, against Accelerate on
   the processor named in [`performance.md`](performance.md): `eigh` is at
-  0.45 of LAPACK and `eigvalsh` 0.28, `schur` 0.45 and `eigvals` 0.70,
-  `svd` 0.056 and `svdvals` 0.034. What is left in each is named there --
+  0.45 of LAPACK and `eigvalsh` 0.41, `schur` 0.45 and `eigvals` 0.70,
+  `svd` 0.056 and `svdvals` 0.34. What is left in each is named there --
   the reduction's whole-matrix `A v` for the symmetric and singular pairs,
   and for the general ones the `lahr2` reduction now that the host QR is
   LAPACK's multishift algorithm -- in [`parity.md`](parity.md) with their

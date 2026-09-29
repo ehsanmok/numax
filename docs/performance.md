@@ -671,9 +671,9 @@ so the third digit is not a measurement:
 
 | op | numax ms | numax GFLOP/s | LAPACK ms | LAPACK GFLOP/s | numax / LAPACK | was (0.2 draft) |
 |---|---|---|---|---|---|---|
-| `eigvalsh` | 142 | 10.1 | 39.8 | 35.9 | **0.28** | 0.11 |
+| `eigvalsh` | 94 | 15.2 | 39.0 | 36.7 | **0.41** | 0.11 |
 | `eigh` | 199 | 48.5 | 88.8 | 108.9 | **0.45** | 0.015 |
-| `svdvals` | 1,459 | 2.0 | 50.1 | 57.2 | 0.034 | 0.022 |
+| `svdvals` | 151 | 18.9 | 51.2 | 55.9 | **0.34** | 0.022 |
 | `svd` | 1,583 | 14.9 | 89.1 | 265.0 | 0.056 | 0.002 |
 | `eigvals` | 203 | 52.9 | 142.4 | 75.4 | **0.70** | 0.056 |
 | `schur` | 351 | 76.5 | 158.9 | 168.9 | **0.45** | 0.021 |
@@ -693,22 +693,19 @@ the reason the next paragraph gives.
 **What each row is waiting on now**, which is no longer the band
 iteration in any of them:
 
-- **`svd` and `svdvals` are `gebrd`, and `gebrd` is two whole-matrix
-  products per column.** The two rows are 1,583 and 1,459 ms and the
-  reduction is about 1,450 of both, which is why a values-only run is
-  barely cheaper than one that forms `U` and `V`: everything the vectors
-  cost is roughly 120 ms. The `labrd` panel below took the per-column
-  traffic from four passes over the matrix to two, and the two that are
-  left -- `A v` and `A u` -- are the ceiling. They are `matvec` at
-  whole-matrix shape, so the fix is not a wider panel; it is the
-  two-stage dense-to-banded reduction, which is 0.3 work.
-- **`eigvalsh` is `sytrd`, and `sytrd` is the same product once.** 142 ms
-  at the default `block = 32`, and **74.8 ms at `block = 8`** -- a ratio
-  of 0.53 to LAPACK -- because a `latrd` column costs `O(n * block)`
-  whatever it is threaded on while the trailing GEMM a wider panel saves
-  is a few milliseconds at any width. A values-only caller should pass
-  `eigvalsh[..., block=8]`; 32 stays the default because `eigh` pays for
-  the rotation window and `q()` out of the same number.
+- **`svdvals` and `eigvalsh` now reduce in two stages; `svd` and `eigh`
+  still pay the one-stage reduction.** `gebrd` is two whole-matrix
+  products per column (`A v` and `A u`), about 1,450 ms of both SVD rows
+  at `n = 1024`, and `sytrd` is one (`A v`), 142 ms of `eigvalsh`. No
+  panel width removes a whole-matrix `matvec`, so the values-only routines
+  go through `numax/linalg/_twostage.mojo`: block-reflector panels to a
+  band of width 16 with every trailing update a product, then LAPACK's
+  `dgbbrd`/`dsbtrd` bulge chase on the host, at `float64` whatever the
+  input's `dtype`. Re-measured with LAPACK beside them: `svdvals` 1,459 ms
+  to 151 (0.034 to 0.34) and `eigvalsh` 142 to 94 (0.28 to 0.41). The
+  vector routines keep the one-stage reductions, because accumulating
+  stage 2's Givens rotations into `U`/`V` or `Q` is its own `O(n^3)`; that
+  accumulation is what `svd` at 0.056 is waiting on.
 - **`eigh` is the one row where the reduction is no longer most of the
   run**: 199 ms against `eigvalsh`'s 142 at the same block, so the
   vectors -- the windowed rotation GEMMs plus `orgtr`'s panel walk --
@@ -724,11 +721,11 @@ iteration in any of them:
   reduction (about 146 ms); `schur` adds `.q()` and the `Q Z_h` product.
 
 **`float32` residuals are LAPACK's too**, and on three rows better.
-numax's trace gap on `eigvalsh` at `n = 1024` is 0.0041 against
+numax's trace gap on `eigvalsh` at `n = 1024` is 0.067 against
 Accelerate's 0.375, its `eigvals` gap 0.202 against 0.833 and its `schur`
 residual 0.0100 against 0.0188; `svd` is a tie at 0.0106 against 0.0100,
 and the two numax loses are `eigh` at 1.5e-3 against 2.7e-4 and `svdvals`
-at 5.5e-7 against 3.8e-8. All at the same precision, not a wider one: the
+at 7.9e-7 against 3.8e-8. All at the same precision, not a wider one: the
 band iteration runs at the caller's `dtype` throughout (`_tql` is generic
 over it and `sytrd` hands it `List[Scalar[dtype]]`), and there is no
 `float64` promotion anywhere in these routines.

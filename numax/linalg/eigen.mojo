@@ -44,11 +44,13 @@ from std.math import copysign as _copysign, hypot as _hypot, sqrt as _sqrt
 from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
+from ._twostage import _two_stage_bidiagonal, _two_stage_tridiagonal
 from ._multishift import _NMIN, _hseqr
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import (
     Dynamic,
     Static,
+    _dyn_shape,
     _same_order,
     copy as _copy,
     transpose,
@@ -1018,6 +1020,46 @@ def _tql[
             acc.end_sweep(ctx)
 
 
+comptime _TWO_STAGE_BAND = 16
+"""The band width the two-stage reductions pass through: measured best on
+an M3 Pro at `n = 1024`, where a wider band makes the Givens chase of
+stage 2 dearer faster than it makes stage 1's products cheaper."""
+
+comptime _TWO_STAGE_EIGVALSH = 256
+"""Above this order `eigvalsh` takes the two-stage reduction; at or below
+it the one-stage `sytrd` is faster (both measured at `float32`)."""
+
+comptime _TWO_STAGE_SVDVALS = 32
+"""From this width `svdvals` takes the two-stage reduction, which is ahead
+of the one-stage `gebrd` at every size measured."""
+
+
+def _symmetric_from_lower[
+    gpu: Bool, T: TensorLike
+](a: T, n: Int) raises -> Dynamic[T.dtype, 2] where T.LayoutType.rank == 2:
+    """`a`'s lower triangle mirrored into a full symmetric row-major copy:
+    `eigvalsh` reads only the lower triangle, and the two-stage reduction's
+    trailing products want both."""
+    var full = rebind_var[Dynamic[T.dtype, 2]](
+        _same_order(a, row_major(_dyn_shape[2](n, n)))
+    )
+    var fp = full.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+    @always_inline
+    def mirror[w: Int, alignment: Int = 1](coord: Coord) {var fp, var n}:
+        var e = coord_to_index_list(coord)[0]
+        var i = e // n
+        var j = e % n
+        if j > i:
+            fp[unsafe_offset=e] = fp[unsafe_offset=j * n + i]
+
+    elementwise[simd_width=1, target=_target[gpu]()](
+        mirror, Coord(n * n), full.context()
+    )
+    full.context().synchronize()
+    return full^
+
+
 def eigvalsh[
     T: TensorLike,
     gpu: Bool = False,
@@ -1043,17 +1085,24 @@ def eigvalsh[
     for a vector to be accumulated, which is where the `O(n^3)` of a
     host-side `eigh` would hide.
 
-    `block` is `sytrd`'s `latrd` panel width, forwarded -- there is one
-    `block` across this subsystem and it means "panel and window width"
-    everywhere. Here only the panel half of that is live, since no vectors
-    are accumulated, and the whole run is the reduction. That makes this
-    the one routine whose best `block` is *narrow*: the panel's per-column
-    arithmetic runs on the single thread block `numax.linalg.panel`'s
-    kernels launch with, so it grows with the panel while the GEMM it
-    feeds is already saturated. On the M3 Pro at `n = 1024`, `float32`,
-    `block = 8` runs in 68 ms against 98 at the default 32; the default is
-    32 because `eigh`, which pays for the window and for `q()` as well,
-    is fastest there. `docs/performance.md` has the sweep.
+    Above `n = 256` the reduction is **two-stage**
+    (`numax/linalg/_twostage.mojo`): block-reflector panels take the
+    matrix to a band of half-width 16 with the trailing update a product
+    on the device, then LAPACK's `dsbtrd` chases the band to tridiagonal
+    form on the host. That removes the whole-matrix `matvec` per column the
+    one-stage `sytrd` pays; at `n = 1024`, `float32`, on an M3 Pro it is
+    about 94 ms against 142 for `sytrd` at the default `block`. At or below
+    `n = 256`, `sytrd` is faster and runs instead.
+
+    `block` is `sytrd`'s `latrd` panel width there, forwarded -- there is
+    one `block` across this subsystem and it means "panel and window
+    width" everywhere. Only the panel half of that is live, since no
+    vectors are accumulated, and the panel's per-column arithmetic runs on
+    the single thread block `numax.linalg.panel`'s kernels launch with, so
+    a narrow `block` is fastest for this routine alone; the default is 32
+    because `eigh`, which pays for the window and for `q()` as well, is
+    fastest there. The two-stage path's band width is fixed at the
+    measured best.
 
     Ascending, as SciPy returns them. The `Array` tier's `eigvalsh` is
     cyclic Jacobi at a fixed sweep count and returns its values unsorted --
@@ -1080,9 +1129,19 @@ def eigvalsh[
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
-    var reduced = sytrd[gpu=gpu, block=block](a)
-    var d = reduced.d.to_host()
-    var e = reduced.e.to_host()
+    var d: List[Scalar[T.dtype]]
+    var e: List[Scalar[T.dtype]]
+    comptime if n > _TWO_STAGE_EIGVALSH:
+        var full = _symmetric_from_lower[gpu](a, n)
+        var tri = _two_stage_tridiagonal[T.dtype, gpu](
+            full^, n, _TWO_STAGE_BAND
+        )
+        d = tri[0].copy()
+        e = tri[1].copy()
+    else:
+        var reduced = sytrd[gpu=gpu, block=block](a)
+        d = reduced.d.to_host()
+        e = reduced.e.to_host()
     # `vectors=False` pushes nothing, so the batch is three one-element
     # allocations and its `block` never decides anything.
     var acc = _RotationBatch[T.dtype, n, gpu, False](1, ctx)
@@ -3311,16 +3370,22 @@ def svdvals[
     **`gpu=True`** runs the reduction and every `O(n^3)` product on the
     device; `sytrd` says what stays on the host and why.
 
-    `gebrd` reduces `a` to bidiagonal form device-resident and blocked,
-    then `_bdsqr` runs the implicit-shift QR iteration on the two
+    From `n = 32` the reduction to bidiagonal form is **two-stage**
+    (`numax/linalg/_twostage.mojo`): alternating QR and LQ panels take `a`
+    to an upper band of width 16 with every trailing update a product on
+    the device, then LAPACK's `dgbbrd` chases the band to bidiagonal form
+    on the host. That removes the two whole-matrix products per column the
+    one-stage `gebrd` pays, and measured on an M3 Pro at `n = 1024`,
+    `float32`, it took the call from about 1,460 ms to about 150. Below
+    `n = 32`, `gebrd` reduces device-resident and blocked. Either way
+    `_bdsqr` then runs the implicit-shift QR iteration on the two
     diagonals -- `O(n^2)` on the host, no vectors pushed, so the two
     rotation batches it is handed are one-element allocations. Descending,
     as SciPy returns them; the `Array` tier's `svdvals` is one-sided
     Jacobi and comes back unsorted, and a test pins the two as multisets.
 
-    `block` is `gebrd`'s `labrd` panel width, which is the whole of what
-    it decides here: the rotation window it also names costs nothing when
-    no rotation is ever logged.
+    `block` is `gebrd`'s `labrd` panel width below `n = 32`; the two-stage
+    path's band width is fixed at the measured best.
 
     Parameters:
         T: The `TensorLike` type of `a`; an `m x n` matrix, `m >= n >= 1`.
@@ -3341,9 +3406,19 @@ def svdvals[
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
     var ctx = a.context()
-    var reduced = gebrd[gpu=gpu, block=block](a)
-    var d = reduced.d.to_host()
-    var e = reduced.e.to_host()
+    var d: List[Scalar[T.dtype]]
+    var e: List[Scalar[T.dtype]]
+    comptime if n >= _TWO_STAGE_SVDVALS:
+        var dense = _same_order(a, row_major(_dyn_shape[2](m, n)))
+        var bd = _two_stage_bidiagonal[T.dtype, gpu](
+            rebind_var[Dynamic[T.dtype, 2]](dense^), m, n, _TWO_STAGE_BAND
+        )
+        d = bd[0].copy()
+        e = bd[1].copy()
+    else:
+        var reduced = gebrd[gpu=gpu, block=block](a)
+        d = reduced.d.to_host()
+        e = reduced.e.to_host()
     var uacc = _RotationBatch[T.dtype, n, gpu, False, 1, True](block, ctx)
     var vacc = _RotationBatch[T.dtype, n, gpu, False, 1, True](block, ctx)
     _bdsqr[n=n, gpu=gpu, vectors=False](d, e, uacc, vacc, ctx)

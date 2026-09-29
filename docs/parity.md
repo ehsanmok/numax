@@ -297,15 +297,18 @@ has each algorithm and its ceiling.
   per-column `taus.to_host()` synchronization is gone with it. What is
   left is `p = A v`, `sytrd`'s ceiling again. `block == 1` is the
   unblocked reduction and `block == n` one panel, both pinned by tests.
-  **That ceiling is the second 0.3 filing: the two-stage dense-to-banded
-  reduction** (LAPACK's `sytrd_2stage` shape -- dense to banded by GEMMs,
-  then banded to tridiagonal by a bulge chase), which is the only thing
-  that removes a whole-matrix `matvec` per column, because no width of
-  panel does. Measured on an M3 Pro at `n = 1024`, `float32`: `svd` and
-  `svdvals` are 1,583 and 1,459 ms and `gebrd` is about 1,450 of both, so
-  the reduction is 92% of a values-only SVD and the vectors cost 120 ms;
-  `eigvalsh` is 142 ms at `block = 32` and 74.8 at `block = 8`, nearly all
-  of it `sytrd`. `svd` at 0.056 of LAPACK is the row this would move.
+  **The values-only routines lift that ceiling with a two-stage
+  reduction** (`numax/linalg/_twostage.mojo`, LAPACK's `sytrd_2stage`
+  shape): dense to a band of width 16 by block-reflector panels whose
+  trailing updates are products on the device, then band to tridiagonal
+  or bidiagonal by LAPACK's `dsbtrd`/`dgbbrd`, transcribed, on the host at
+  `float64`. `eigvalsh` takes it above `n = 256` and `svdvals` from `n =
+  32`; measured on an M3 Pro at `n = 1024`, `float32`, against Accelerate
+  in the same session, `svdvals` went from 1,459 ms (0.034 of LAPACK) to
+  151 (0.34) and `eigvalsh` from 142 (0.28) to 94 (0.41), with
+  `eigvalsh`'s trace gap 0.067 against Accelerate's 0.375. `svd` and
+  `eigh` keep the one-stage `gebrd`/`sytrd`, because their vectors would
+  need stage 2's rotations accumulated; `svd` at 0.056 is that row.
   Then the QR iteration runs on the host. Above `n = 75` it is LAPACK's
   `dhseqr` path, transcribed from the reference implementation
   (`numax/linalg/_multishift.mojo`): `dlaqr0` driving `dlaqr3`'s
