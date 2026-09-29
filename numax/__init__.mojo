@@ -468,6 +468,7 @@ from .linalg import (
     kron,
     logm,
     lstsq,
+    ldl,
     lu,
     lu_factor,
     matmul,

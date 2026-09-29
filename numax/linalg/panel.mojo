@@ -2633,3 +2633,277 @@ def trsyl_column[
                     y.store[1](Coord(top + a, k0 + c), sol[c * h + a])
         _sync[gpu]()
         row = top - 1
+
+
+comptime _BUNCH_KAUFMAN_ALPHA = 0.6403882032022076
+"""`(1 + sqrt(17)) / 8`, the Bunch-Kaufman threshold that bounds element
+growth by `2.57^(n-1)`; LAPACK's `sytf2` uses the same."""
+
+
+def sytf2_lower[
+    dtype: DType,
+    ALayout: TensorLayout,
+    PLayout: TensorLayout,
+    CLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    a: _View[dtype, ALayout],
+    ipiv: _View[DType.int32, PLayout],
+    control: _View[DType.int32, CLayout],
+    n: Int32,
+) where dtype.is_floating_point():
+    """Bunch-Kaufman `L D L^T` of the symmetric `a`, lower triangle, in
+    place: LAPACK's `sytf2` with `uplo = 'L'`, the whole factorization in
+    one launch.
+
+    At each step thread 0 makes the pivot choice -- the column's largest
+    off-diagonal entry, and when that is not dominated the row's, against
+    the threshold `_BUNCH_KAUFMAN_ALPHA` -- an `O(n)` serial scan, and
+    parks `(kp, kstep)` in `control`. Every thread then takes part in the
+    interchange and in the rank-1 (`1 x 1` pivot) or rank-2 (`2 x 2`)
+    update of the trailing lower triangle, one column per thread. `ipiv`
+    gets LAPACK's convention, 1-based: `ipiv[k] = kp` for a `1 x 1` block
+    interchanged with row `kp`, `ipiv[k] = ipiv[k+1] = -kp` for a `2 x 2`.
+    Ties in the scans go to the first index, as `idamax` breaks them.
+
+    `O(n^3 / 3)` of parallel update and `O(n^2)` of serial scan on one
+    block, the single-SM ceiling `getrf_panel` states. Launch on the
+    accelerator with `grid_dim=1`, `block_dim=_PANEL_THREADS`; the host
+    path runs it single-threaded.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var size = Int(n)
+    var alpha = Scalar[dtype](_BUNCH_KAUFMAN_ALPHA)
+    var k = 0
+    while k < size:
+        if t == 0:
+            var kstep = 1
+            var kp = k
+            var absakk = abs(a[Coord(k, k)])
+            var imax = k
+            var colmax = Scalar[dtype](0)
+            for i in range(k + 1, size):
+                var v = abs(a[Coord(i, k)])
+                if v > colmax:
+                    colmax = v
+                    imax = i
+            if absakk == 0 and colmax == 0:
+                kp = k
+            elif absakk >= alpha * colmax:
+                kp = k
+            else:
+                var rowmax = Scalar[dtype](0)
+                for j in range(k, imax):
+                    var v = abs(a[Coord(imax, j)])
+                    if v > rowmax:
+                        rowmax = v
+                for i in range(imax + 1, size):
+                    var v = abs(a[Coord(i, imax)])
+                    if v > rowmax:
+                        rowmax = v
+                if absakk >= alpha * colmax * (colmax / rowmax):
+                    kp = k
+                elif abs(a[Coord(imax, imax)]) >= alpha * rowmax:
+                    kp = imax
+                else:
+                    kp = imax
+                    kstep = 2
+            control.store[1](Coord(0), Int32(kp))
+            control.store[1](Coord(1), Int32(kstep))
+            if kstep == 1:
+                ipiv.store[1](Coord(k), Int32(kp + 1))
+            else:
+                ipiv.store[1](Coord(k), Int32(-(kp + 1)))
+                ipiv.store[1](Coord(k + 1), Int32(-(kp + 1)))
+        _sync[gpu]()
+
+        var kp = Int(control[Coord(0)])
+        var kstep = Int(control[Coord(1)])
+        var kk = k + kstep - 1
+        if kp != kk:
+            # Rows and columns `kk` and `kp` of the trailing lower triangle.
+            var i = kp + 1 + t
+            while i < size:
+                var held = a[Coord(i, kk)]
+                a.store[1](Coord(i, kk), a[Coord(i, kp)])
+                a.store[1](Coord(i, kp), held)
+                i += nt
+            var j = kk + 1 + t
+            while j < kp:
+                var held = a[Coord(j, kk)]
+                a.store[1](Coord(j, kk), a[Coord(kp, j)])
+                a.store[1](Coord(kp, j), held)
+                j += nt
+            if t == 0:
+                var held = a[Coord(kk, kk)]
+                a.store[1](Coord(kk, kk), a[Coord(kp, kp)])
+                a.store[1](Coord(kp, kp), held)
+                if kstep == 2:
+                    var h2 = a[Coord(k + 1, k)]
+                    a.store[1](Coord(k + 1, k), a[Coord(kp, k)])
+                    a.store[1](Coord(kp, k), h2)
+        _sync[gpu]()
+
+        if kstep == 1:
+            if k < size - 1:
+                var d11 = Scalar[dtype](1) / a[Coord(k, k)]
+                # The rank-1 update of the lower triangle, one column per
+                # thread; the column itself is scaled after every thread
+                # has read it.
+                var j = k + 1 + t
+                while j < size:
+                    var xj = a[Coord(j, k)]
+                    for i in range(j, size):
+                        a.store[1](
+                            Coord(i, j),
+                            a[Coord(i, j)] - d11 * a[Coord(i, k)] * xj,
+                        )
+                    j += nt
+                _sync[gpu]()
+                var i = k + 1 + t
+                while i < size:
+                    a.store[1](Coord(i, k), a[Coord(i, k)] * d11)
+                    i += nt
+        else:
+            if k < size - 2:
+                var d21 = a[Coord(k + 1, k)]
+                var d11 = a[Coord(k + 1, k + 1)] / d21
+                var d22 = a[Coord(k, k)] / d21
+                var tt = Scalar[dtype](1) / (d11 * d22 - Scalar[dtype](1))
+                d21 = tt / d21
+                # Column `j` of the update reads rows `j..n` of the two
+                # pivot columns and writes rows `j..n` of column `j`, so
+                # the columns are independent; the pivot columns take
+                # their multipliers only after every thread is done.
+                var j = k + 2 + t
+                while j < size:
+                    var wk = d21 * (d11 * a[Coord(j, k)] - a[Coord(j, k + 1)])
+                    var wkp1 = d21 * (d22 * a[Coord(j, k + 1)] - a[Coord(j, k)])
+                    for i in range(j, size):
+                        a.store[1](
+                            Coord(i, j),
+                            a[Coord(i, j)]
+                            - a[Coord(i, k)] * wk
+                            - a[Coord(i, k + 1)] * wkp1,
+                        )
+                    j += nt
+                _sync[gpu]()
+                j = k + 2 + t
+                while j < size:
+                    var wk = d21 * (d11 * a[Coord(j, k)] - a[Coord(j, k + 1)])
+                    var wkp1 = d21 * (d22 * a[Coord(j, k + 1)] - a[Coord(j, k)])
+                    a.store[1](Coord(j, k), wk)
+                    a.store[1](Coord(j, k + 1), wkp1)
+                    j += nt
+        _sync[gpu]()
+        k += kstep
+
+
+def ldl_unpack_lower[
+    dtype: DType,
+    ALayout: TensorLayout,
+    PLayout: TensorLayout,
+    LLayout: TensorLayout,
+    DLayout: TensorLayout,
+    OLayout: TensorLayout,
+    SLayout: TensorLayout,
+    gpu: Bool = False,
+](
+    ldu: _View[dtype, ALayout],
+    ipiv: _View[DType.int32, PLayout],
+    lu: _View[dtype, LLayout],
+    d: _View[dtype, DLayout],
+    perm_out: _View[DType.int64, OLayout],
+    scratch: _View[DType.int32, SLayout],
+    n: Int32,
+) where dtype.is_floating_point():
+    """`sytf2_lower`'s packed factor and pivots as SciPy's `ldl` returns
+    them: `(lu, d, perm)` with `a = lu d lu^T` and `lu[perm]` lower
+    triangular. SciPy's own post-processing transcribed --
+    `_ldl_sanitize_ipiv`, `_ldl_get_d_and_l`, `_ldl_construct_tri_factor`
+    -- in one launch.
+
+    The pivot bookkeeping and the `2 x 2` blocks of `d` are `O(n)` serial
+    on thread 0; the split into `lu` and `d` is parallel over entries; the
+    row interchanges that make `lu` a permuted triangle are sequential
+    over pivots and parallel over columns. `scratch` needs `3 n` entries.
+    Launch with `grid_dim=1`, `block_dim=_PANEL_THREADS`; the host path
+    runs it single-threaded.
+    """
+    var t = _lane[gpu]()
+    var nt = _lanes[gpu]()
+    var size = Int(n)
+    var zero = Scalar[dtype](0)
+    var one = Scalar[dtype](1)
+    # scratch[0, n) is SciPy's `swap_`, [n, 2n) its `pivots`, [2n, 3n)
+    # its `perm` before the final argsort.
+    if t == 0:
+        for i in range(size):
+            scratch.store[1](Coord(i), Int32(i))
+            scratch.store[1](Coord(size + i), Int32(0))
+            scratch.store[1](Coord(2 * size + i), Int32(i))
+        var ind = 0
+        while ind < size:
+            var cur = Int(ipiv[Coord(ind)])
+            if cur > 0:
+                if cur != ind + 1:
+                    scratch.store[1](Coord(ind), scratch[Coord(cur - 1)])
+                scratch.store[1](Coord(size + ind), Int32(1))
+                ind += 1
+            else:
+                if -cur != ind + 2:
+                    scratch.store[1](Coord(ind + 1), scratch[Coord(-cur - 1)])
+                scratch.store[1](Coord(size + ind), Int32(2))
+                ind += 2
+    _sync[gpu]()
+
+    var e = t
+    while e < size * size:
+        var i = e // size
+        var j = e % size
+        d.store[1](Coord(i, j), ldu[Coord(i, i)] if i == j else zero)
+        var below = ldu[Coord(i, j)] if i > j else zero
+        lu.store[1](Coord(i, j), one if i == j else below)
+        e += nt
+    _sync[gpu]()
+
+    if t == 0:
+        var blk = 0
+        while blk < size:
+            if Int(scratch[Coord(size + blk)]) == 2:
+                var v = ldu[Coord(blk + 1, blk)]
+                d.store[1](Coord(blk + 1, blk), v)
+                d.store[1](Coord(blk, blk + 1), v)
+                lu.store[1](Coord(blk + 1, blk), zero)
+                blk += 2
+            else:
+                blk += 1
+    _sync[gpu]()
+
+    var ind = size - 1
+    while ind >= 0:
+        var s_ind = Int(scratch[Coord(ind)])
+        if s_ind != ind:
+            var col_s = ind
+            if Int(scratch[Coord(size + ind)]) == 0:
+                col_s -= 1
+            var c = col_s + t
+            while c < size:
+                var held = lu[Coord(s_ind, c)]
+                lu.store[1](Coord(s_ind, c), lu[Coord(ind, c)])
+                lu.store[1](Coord(ind, c), held)
+                c += nt
+            if t == 0:
+                var ps = scratch[Coord(2 * size + s_ind)]
+                scratch.store[1](
+                    Coord(2 * size + s_ind), scratch[Coord(2 * size + ind)]
+                )
+                scratch.store[1](Coord(2 * size + ind), ps)
+        _sync[gpu]()
+        ind -= 1
+
+    var i = t
+    while i < size:
+        perm_out.store[1](Coord(Int(scratch[Coord(2 * size + i)])), Int64(i))
+        i += nt

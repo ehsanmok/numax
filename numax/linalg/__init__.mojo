@@ -37,6 +37,7 @@ modules matter when reading or extending.
 | `triangular` | `solve_triangular` | `_basic`'s `solve_triangular` |
 | `banded` | `solve_banded`, `solveh_banded`, `cholesky_banded`, `cho_solve_banded`, `solve_toeplitz`, `solve_circulant` | `_banded`, `_solve_toeplitz` |
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
+| `ldl` | `ldl`, `LDL` -- Bunch-Kaufman `L D L^T`, SciPy's `(lu, d, perm)` | `_decomp_ldl` |
 | `lu` | `lu` (`P`, `L`, `U`), `PLU`, `lu_factor`, `LU`, `det`, `slogdet` | `_decomp_lu` |
 | `qr` | `qr_factor`, `QR`, `lstsq`, `rq`, `RQ` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
@@ -246,6 +247,7 @@ from .eigen import (
     svdvals,
     sytrd,
 )
+from .ldl import LDL, ldl
 from .lu import LU, PLU, det, lu, lu_factor, slogdet
 from .matfuncs import (
     cosm,
