@@ -500,7 +500,7 @@ from .interpolate.spline import (
     PchipInterpolator,
 )
 from .interpolate.chebyshev import Chebyshev, chebval
-from .interpolate.grid import RegularGridInterpolator
+from .interpolate.grid import RegularGridInterpolator, interpn
 from .fft.fft import (
     Spectrum,
     fft,

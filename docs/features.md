@@ -439,6 +439,7 @@ numax's own.
 | `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` — shape-preserving, Akima's, and prescribed-slope cubics; all four share one `PPoly` form and one evaluation kernel. Akima is NaN outside the knots by default, as SciPy's is | [`interpolate/spline.mojo`](../numax/interpolate/spline.mojo) |
 | `Chebyshev.fit(x, y)`, `chebval` — `numpy.polynomial.chebyshev`'s least-squares fit to *data* on `[min x, max x]`, the Chebyshev Vandermonde solved by `numax.linalg.lstsq`, and Clenshaw evaluation per lane | [`interpolate/chebyshev.mojo`](../numax/interpolate/chebyshev.mojo) |
 | `RegularGridInterpolator` — `scipy.interpolate`'s, in two dimensions: a `rows x cols` value matrix on rectilinear axes, `"linear"` or `"nearest"`, with `bounds_error`, `fill_value` and `extrapolate` (SciPy's `fill_value=None`) | [`interpolate/grid.mojo`](../numax/interpolate/grid.mojo) |
+| `interpn` — `scipy.interpolate.interpn` in up to eight dimensions, linear (the `2^d` cell corners) or nearest, SciPy's out-of-range settings; the axes concatenated in one vector, their lengths read off `values`' shape; one lane per point on the inputs' device, the bounds check a device reduction | [`interpolate/grid.mojo`](../numax/interpolate/grid.mojo) |
 
 Tier 2: one `elementwise` launch over the queries, and inside it a lane
 bisects the knots — the data-dependent branch the `Array` tier cannot make.
