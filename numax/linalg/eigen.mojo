@@ -1810,9 +1810,15 @@ def hessenberg[
 
 
 comptime _MAX_QR_SWEEPS_PER_N = 30
-"""Francis sweeps allowed in total, per matrix dimension -- EISPACK's and
-LAPACK's `30 n`. Reaching it means the Hessenberg matrix carries a NaN or
-an infinity, and the raise says so rather than looping forever."""
+"""Francis sweeps allowed per deflation, per matrix dimension -- LAPACK
+`dlahqr`'s `30 max(10, n)`, a budget for each eigenvalue rather than one
+pool for the whole matrix. Reaching it means the Hessenberg matrix
+carries a NaN or an infinity, and the raise says so rather than looping
+forever."""
+
+comptime _EXCEPTIONAL_EVERY = 10
+"""`dlahqr`'s `KEXSH`: sweeps without a deflation between exceptional
+shifts."""
 
 
 @always_inline
@@ -1890,7 +1896,8 @@ def _hqr[
 
     **Tier 2, host-side.** Each sweep chases a `3 x 3` bulge down the
     active block with Householder reflectors of order three, deflates on a
-    test of the data, and takes an exceptional shift every tenth sweep --
+    test of the data, and takes an exceptional shift every tenth sweep
+    without a deflation, alternating between the block's two ends --
     none of which has a GEMM to hand anything to. Returns the eigenvalues
     as `(real, imaginary)` in LAPACK's order; a complex pair sits in
     consecutive slots with the positive imaginary part first.
@@ -1936,8 +1943,7 @@ def _hqr[
             anorm += abs(h[i * n + j])
 
     var en = n - 1
-    var t = zero
-    var itn = _MAX_QR_SWEEPS_PER_N * n
+    var itmax = _MAX_QR_SWEEPS_PER_N * max(10, n)
     var x: Scalar[dtype]
     var y: Scalar[dtype]
     var w: Scalar[dtype]
@@ -1963,9 +1969,8 @@ def _hqr[
             x = h[en * n + en]
             if l == en:
                 # One root.
-                wr[en] = x + t
+                wr[en] = x
                 wi[en] = zero
-                h[en * n + en] = x + t
                 en -= 1
                 break
             y = h[(en - 1) * n + (en - 1)]
@@ -1975,9 +1980,6 @@ def _hqr[
                 p = Scalar[dtype](0.5) * (y - x)
                 q = p * p + w
                 zz = _sqrt(abs(q))
-                h[en * n + en] = x + t
-                x = x + t
-                h[(en - 1) * n + (en - 1)] = y + t
                 if q >= zero:
                     # A real pair: split the block with one rotation.
                     zz = p + _copysign(zz, p)
@@ -2025,23 +2027,46 @@ def _hqr[
                 en -= 2
                 break
 
-            if itn == 0:
+            if its >= itmax:
                 raise Error(
                     "eigvals/schur: the QR iteration did not converge in ",
-                    _MAX_QR_SWEEPS_PER_N * n,
-                    " sweeps; the matrix likely holds a NaN or an infinity",
+                    itmax,
+                    (
+                        " sweeps on one eigenvalue; the matrix likely holds a"
+                        " NaN or an infinity"
+                    ),
                 )
-            if its == 10 or its == 20:
-                # Exceptional shift.
-                t += x
-                for i in range(en + 1):
-                    h[i * n + i] = h[i * n + i] - x
+            its += 1
+            # LAPACK's `dlahqr` shift schedule. Every tenth sweep without a
+            # deflation takes an exceptional shift, alternating between the
+            # top of the active block and its bottom, so a cycle the
+            # Wilkinson shifts fall into is broken wherever it sits and
+            # broken again if it re-forms; the other sweeps use the
+            # trailing `2 x 2`'s eigenvalues, and when those are real, the
+            # one nearer `h[en, en]` twice.
+            if its % (2 * _EXCEPTIONAL_EVERY) == 0:
                 s = abs(h[en * n + (en - 1)]) + abs(h[(en - 1) * n + (en - 2)])
-                x = Scalar[dtype](0.75) * s
+                x = Scalar[dtype](0.75) * s + h[en * n + en]
                 y = x
                 w = Scalar[dtype](-0.4375) * s * s
-            its += 1
-            itn -= 1
+            elif its % _EXCEPTIONAL_EVERY == 0:
+                s = abs(h[(l + 1) * n + l]) + abs(h[(l + 2) * n + (l + 1)])
+                x = Scalar[dtype](0.75) * s + h[l * n + l]
+                y = x
+                w = Scalar[dtype](-0.4375) * s * s
+            else:
+                var half = Scalar[dtype](0.5) * (y - x)
+                var disc = half * half + w
+                if disc > zero:
+                    var root = _sqrt(disc)
+                    var mid = Scalar[dtype](0.5) * (x + y)
+                    var near = mid + root
+                    var far = mid - root
+                    if abs(far - x) < abs(near - x):
+                        near = far
+                    x = near
+                    y = near
+                    w = zero
 
             # Two consecutive small subdiagonals let the sweep start below
             # `l`: the first column of the shift polynomial, and where it is
