@@ -370,7 +370,12 @@ Three things to read out of those, in order of how much they matter:
    `block = 32` and `n = 1024` that is 32 dependent launches around 32
    panels, and the panels are `O(n * block^2)` of work that no GEMM
    touches. cuSOLVER's advantage is a parallel panel, not a better GEMM.
-   That is the next optimization, and it is a real one: 6-12x on the GPU.
+   On Metal the first-order cost inside the panel turned out to be its
+   own reductions, not its single block: the serial thread-0 folds are
+   now threadgroup trees (the Metal section below), which took a 2,048
+   LU from 90 ms to 36 without a second block. A multi-block panel needs
+   a grid-wide barrier per column, which Metal does not offer; split into
+   launches it would cost more per column than the panel now does.
 3. **The best block size is small, and for QR it shrinks with `n`.**
    Measured at `n = 1024`: `cholesky` 22.99 ms at `block=32` against 29.66
    at 16 and 30.11 at 64; `lu_factor` 41.43 ms at 16 against 43.87 at 8 and
@@ -622,25 +627,39 @@ cell above. Each cell is `numax GFLOP/s / PyTorch-MPS GFLOP/s`:
 
 | `n` | `cholesky` | `lu_factor` | `solve` | `qr_factor` |
 |---|---|---|---|---|
-| 256 | 0.41 | 0.38 | 0.43 | 0.72 |
-| 512 | 0.43 | 0.35 | 0.55 | **1.48** |
-| 1,024 | 0.54 | 0.35 | 0.81 | -- |
-| 2,048 | 0.55 | 0.37 | **1.18** | -- |
+| 256 | 0.41 | 0.75 | 0.84 | 0.79 |
+| 512 | 0.43 | 0.80 | **1.29** | **1.65** |
+| 1,024 | 0.54 | **1.03** | **2.08** | -- |
+| 2,048 | 0.55 | 0.83 | **2.65** | -- |
 
 and the absolute numbers (GFLOP/s, numax then PyTorch MPS):
 
 | `n` | `cholesky` | `lu_factor` | `solve` | `matmul` ceiling |
 |---|---|---|---|---|
-| 256 | 3.3 / 8.1 | 1.2 / 3.1 | 1.0 / 2.4 | 137 / 144 |
-| 512 | 15.2 / 35.2 | 4.8 / 13.9 | 4.3 / 7.8 | 734 / 612 |
-| 1,024 | 65.0 / 120.7 | 18.9 / 53.5 | 16.9 / 21.0 | 1,867 / 1,813 |
-| 2,048 | 182.2 / 329.5 | 66.1 / 176.3 | 59.7 / 50.4 | 2,986 / 4,936 |
+| 256 | 3.3 / 8.1 | 2.7 / 3.6 | 2.2 / 2.6 | 137 / 144 |
+| 512 | 15.2 / 35.2 | 12.0 / 14.9 | 10.8 / 8.4 | 734 / 612 |
+| 1,024 | 65.0 / 120.7 | 59.4 / 57.7 | 45.0 / 21.6 | 1,867 / 1,813 |
+| 2,048 | 182.2 / 329.5 | 160.5 / 192.6 | 133.1 / 50.2 | 2,986 / 4,936 |
 
 The same shape, more steeply: numax's Metal `cholesky` goes from 3.3 to
 182.2 GFLOP/s across three doublings, a **55x** rise, because the panel's
 single-thread-block kernel and its per-step launch latency are a fixed
-cost that `n^3` of GEMM eventually buries. `solve` passes PyTorch at
-`n = 2048` and `qr_factor` is 1.48x ahead at 512.
+cost that `n^3` of GEMM eventually buries.
+
+**The `lu_factor`, `solve` and `qr_factor` cells were re-measured after
+the panels' reductions moved into threadgroup memory**, numax and
+PyTorch-MPS in the same session (another process held one CPU core
+throughout, which is why the `cholesky` column, which the change does
+not touch, keeps its earlier cleaner run). The single-block panels had
+thread 0 fold every thread's candidate serially -- in `getrf_panel` by
+re-reading each candidate's magnitude from global memory, 256 dependent
+loads per column -- and a Metal `getrf_panel` over a 16-column panel was
+0.66 ms, about 40 microseconds a column. A halving tree over
+`(magnitude, row)` pairs in threadgroup memory (`_block_sum` for the
+norms in `geqr2_panel`, `sytd2_column` and `gebd2`) took it to 0.22 ms,
+and `lu_factor` at `n = 2048` from 90 ms to 36: `lu_factor` went from
+0.35-0.38 of PyTorch to 0.75-1.03, `solve` passes it from `n = 512` and
+is 2.65x ahead at 2048, and `qr_factor` is 1.65x ahead at 512.
 
 **The two `qr_factor` cells are blank on purpose.** PyTorch's MPS
 `linalg_qr` is limited to `min(m, n) <= 512` and silently falls back to

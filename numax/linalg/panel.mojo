@@ -47,8 +47,17 @@ block / 2)` overall, all on one SM while the rest of the device idles.
 Smaller `block` shrinks it; the upgrade is a recursive panel (LAPACK's
 `getrf2`), which splits the panel until it fits one block and recovers the
 parallelism through GEMM. Nothing above changes when that lands.
+
+Inside the block, every cross-thread fold -- `getrf_panel`'s pivot choice
+and the column norms of `geqr2_panel`, `sytd2_column` and `gebd2_*`
+(`_block_sum`) -- is a halving tree in threadgroup memory. They were
+serial passes by thread 0 over a global scratch row, and on Metal that
+pass, not the single block, was most of an LU: a 16-column
+`getrf_panel` went from 0.66 ms to 0.22 at `n = 2048`
+(`docs/performance.md`).
 """
 
+from std.memory import stack_allocation
 from layout import Coord, TileTensor, coord_to_index_list
 from layout.tile_layout import TensorLayout, row_major
 from linalg.matmul import matmul as _max_matmul
@@ -56,7 +65,7 @@ from layout.tile_tensor import DefaultEngine
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from max.algorithm.functional import elementwise, parallelize
-from max.gpu import barrier
+from max.gpu import AddressSpace, barrier
 from max.gpu.host import DeviceContext
 from max.gpu import block_dim, thread_idx
 from std.math import sqrt
@@ -149,6 +158,37 @@ def _sync[gpu: Bool]():
     """A block-wide barrier on the accelerator, nothing on the host."""
     comptime if gpu:
         barrier()
+
+
+@always_inline
+def _block_sum[
+    dtype: DType, gpu: Bool
+](partial: Scalar[dtype], t: Int, nt: Int) -> Scalar[dtype]:
+    """The block's sum of every thread's `partial`, returned to every
+    thread. On the device a halving tree in threadgroup memory (`nt` a
+    power of two, at most `_PANEL_THREADS`): the serial pass by thread 0
+    over a global scratch row it replaces cost a column's worth of
+    dependent loads per call. On the host `nt` is 1 and `partial` is
+    already the sum."""
+    comptime if gpu:
+        var buffer = stack_allocation[
+            _PANEL_THREADS, Scalar[dtype], address_space=AddressSpace.SHARED
+        ]()
+        buffer[unsafe_offset=t] = partial
+        _sync[gpu]()
+        var stride = nt // 2
+        while stride > 0:
+            if t < stride:
+                buffer[unsafe_offset=t] = (
+                    buffer[unsafe_offset=t] + buffer[unsafe_offset=t + stride]
+                )
+            _sync[gpu]()
+            stride = stride // 2
+        var total = buffer[unsafe_offset=0]
+        _sync[gpu]()
+        return total
+    else:
+        return partial
 
 
 @always_inline
@@ -307,22 +347,52 @@ def getrf_panel[
                 best_magnitude = magnitude
                 best = i
             i += nt
-        pivots.store[1](Coord(scratch + t), Int32(best))
-        _sync[gpu]()
-
-        if t == 0:
-            var winner = Int(pivots[Coord(scratch)])
-            var winning_magnitude = abs(a[Coord(winner, col)])
-            for c in range(1, nt):
-                var candidate = Int(pivots[Coord(scratch + c)])
-                var magnitude = abs(a[Coord(candidate, col)])
-                if magnitude > winning_magnitude:
-                    winning_magnitude = magnitude
-                    winner = candidate
-            pivots.store[1](Coord(col), Int32(winner))
-            if winning_magnitude == 0 and info[Coord(0)] == 0:
-                info.store[1](Coord(0), Int32(col + 1))
-        _sync[gpu]()
+        comptime if gpu:
+            # A halving tree over the block in threadgroup memory, each
+            # magnitude beside its row so the verdict needs no global
+            # loads; ties go to the lower row -- the host scan's (and
+            # LAPACK's) first-maximum rule.
+            var mags = stack_allocation[
+                _PANEL_THREADS, Scalar[dtype], address_space=AddressSpace.SHARED
+            ]()
+            var rows_of = stack_allocation[
+                _PANEL_THREADS, Int32, address_space=AddressSpace.SHARED
+            ]()
+            mags[unsafe_offset=t] = best_magnitude
+            rows_of[unsafe_offset=t] = Int32(best)
+            _sync[gpu]()
+            var stride = nt // 2
+            while stride > 0:
+                if t < stride:
+                    var other = mags[unsafe_offset=t + stride]
+                    var mine = mags[unsafe_offset=t]
+                    var other_row = rows_of[unsafe_offset=t + stride]
+                    if other > mine or (
+                        other == mine and other_row < rows_of[unsafe_offset=t]
+                    ):
+                        mags[unsafe_offset=t] = other
+                        rows_of[unsafe_offset=t] = other_row
+                _sync[gpu]()
+                stride = stride // 2
+            if t == 0:
+                pivots.store[1](Coord(col), rows_of[unsafe_offset=0])
+                if mags[unsafe_offset=0] == 0 and info[Coord(0)] == 0:
+                    info.store[1](Coord(0), Int32(col + 1))
+            _sync[gpu]()
+        else:
+            pivots.store[1](Coord(scratch + t), Int32(best))
+            if t == 0:
+                var winner = Int(pivots[Coord(scratch)])
+                var winning_magnitude = abs(a[Coord(winner, col)])
+                for c in range(1, nt):
+                    var candidate = Int(pivots[Coord(scratch + c)])
+                    var magnitude = abs(a[Coord(candidate, col)])
+                    if magnitude > winning_magnitude:
+                        winning_magnitude = magnitude
+                        winner = candidate
+                pivots.store[1](Coord(col), Int32(winner))
+                if winning_magnitude == 0 and info[Coord(0)] == 0:
+                    info.store[1](Coord(0), Int32(col + 1))
 
         var pivot_row = Int(pivots[Coord(col)])
         if pivot_row != col:
@@ -555,17 +625,7 @@ def sytd2_column[
         var value = a[Coord(i, k0)]
         partial += value * value
         i += nt
-    scratch.store[1](Coord(t), partial)
-    _sync[gpu]()
-
-    if t == 0:
-        var total = Scalar[dtype](0)
-        for c in range(nt):
-            total += scratch[Coord(c)]
-        scratch.store[1](Coord(nt), total)
-    _sync[gpu]()
-
-    var below = scratch[Coord(nt)]
+    var below = _block_sum[dtype, gpu](partial, t, nt)
     var alpha = a[Coord(first, k0)]
 
     # Already tridiagonal in this column: the reflector is the identity,
@@ -1627,16 +1687,7 @@ def gebd2_col[
         var value = a[Coord(i, k0)]
         partial += value * value
         i += nt
-    scratch.store[1](Coord(t), partial)
-    _sync[gpu]()
-    if t == 0:
-        var total = Scalar[dtype](0)
-        for c in range(nt):
-            total += scratch[Coord(c)]
-        scratch.store[1](Coord(nt), total)
-    _sync[gpu]()
-
-    var below = scratch[Coord(nt)]
+    var below = _block_sum[dtype, gpu](partial, t, nt)
     var alpha = a[Coord(k0, k0)]
 
     if below == 0:
@@ -1713,16 +1764,7 @@ def gebd2_row[
         var value = a[Coord(k0, j)]
         partial += value * value
         j += nt
-    scratch.store[1](Coord(t), partial)
-    _sync[gpu]()
-    if t == 0:
-        var total = Scalar[dtype](0)
-        for c in range(nt):
-            total += scratch[Coord(c)]
-        scratch.store[1](Coord(nt), total)
-    _sync[gpu]()
-
-    var beyond = scratch[Coord(nt)]
+    var beyond = _block_sum[dtype, gpu](partial, t, nt)
     var alpha = a[Coord(k0, first)]
 
     if beyond == 0:
@@ -1959,25 +2001,16 @@ def geqr2_panel[
     for j in range(n_b):
         var col = k0 + j
 
-        # ||x|| over the sub-column strictly below the diagonal, reduced
-        # through thread 0 -- the same shape as `getrf_panel`'s pivot scan.
+        # ||x|| over the sub-column strictly below the diagonal, reduced by
+        # `_block_sum`'s tree -- the same shape as `getrf_panel`'s pivot
+        # scan.
         var partial = Scalar[dtype](0)
         var i = col + 1 + t
         while i < rows:
             var value = a[Coord(i, col)]
             partial += value * value
             i += nt
-        scratch.store[1](Coord(t), partial)
-        _sync[gpu]()
-
-        if t == 0:
-            var total = Scalar[dtype](0)
-            for c in range(nt):
-                total += scratch[Coord(c)]
-            scratch.store[1](Coord(nt), total)
-        _sync[gpu]()
-
-        var below = scratch[Coord(nt)]
+        var below = _block_sum[dtype, gpu](partial, t, nt)
         var alpha = a[Coord(col, col)]
 
         # A column already in reflected form has nothing below the
