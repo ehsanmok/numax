@@ -588,6 +588,7 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 | Surface | Tier | Where |
 |---|---|---|
 | `cdist`, `pdist`, `squareform` — euclidean, squared euclidean, cityblock, chebyshev, minkowski, cosine and correlation, SciPy's definitions; one lane per pair on the inputs' device, the direct differences rather than the cancelling GEMM expansion | 2 | [`spatial/distance.mojo`](../numax/spatial/distance.mojo) |
+| `KDTree` — median-split build on the host, then `query[k]` (`KDQuery`, nearest first) and `query_ball_point` (`BallPoints`, compressed rows, each run sorted) as device kernels, one lane per query point walking the tree with a fixed-size stack; Euclidean | 2 | [`spatial/kdtree.mojo`](../numax/spatial/kdtree.mojo) |
 
 ## `numax.io`
 

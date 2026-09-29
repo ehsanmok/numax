@@ -540,6 +540,7 @@ from .integrate.integrate import (
 )
 from .integrate.bvp import BVPResult, solve_bvp
 from .spatial.distance import cdist, pdist, squareform
+from .spatial.kdtree import BallPoints, KDQuery, KDTree
 from .integrate.ode import Step, dopri5, dopri5_step, rk4_system
 from .integrate.quadrature import (
     cumulative_simpson,
