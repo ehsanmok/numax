@@ -492,6 +492,7 @@ from .interpolate.interp import (
     polyval,
     roots,
 )
+from .interpolate.bspline import BSpline, make_interp_spline
 from .interpolate.spline import (
     Akima1DInterpolator,
     CubicHermiteSpline,
