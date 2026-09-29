@@ -600,9 +600,20 @@ is measuring a factorization.
 
 `qr_factor` is the row that does not improve. It sits between 0.58 and
 0.81 with no trend, and at `n = 4096` it is the only routine still under
-60 GFLOP/s. Its default `block = 16` is the reason the file's own
-docstring gives -- the best block for QR *shrinks* with `n` while the
-others hold -- and the `q()`/`solve()` rebuild of `T` is the rest.
+60 GFLOP/s. **It is not the block default.** A sweep on the same M3 Pro,
+`float32`, best of four, idle machine (GFLOP/s):
+
+| `n` | `block = 4` | 8 | **16** | 32 |
+|---|---|---|---|---|
+| 512 | 15.0 | 17.9 | **22.3** | 13.8 |
+| 1,024 | 21.9 | 31.7 | **33.9** | 21.1 |
+| 2,048 | 28.5 | 47.3 | **53.6** | 35.2 |
+
+`16` is the best width at every size, so the EPYC finding that the best
+QR block shrinks with `n` does not carry to this machine, and the default
+stays. What holds the row down is the one-block `geqr2_panel`, whose
+`O(m * block^2)` every reflector pays in full whatever the width -- the
+multi-SM panel work, not a tuning constant.
 
 **Metal -- the same M3 Pro's 18-core GPU, `float32`, `bench-linalg-gpu`
 against PyTorch 2.13.0 on MPS (`bench-torch-linalg`).** A separate
