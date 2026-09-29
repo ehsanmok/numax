@@ -142,7 +142,12 @@ jobs:
       # run, so a device-path signature drift fails here rather than on the
       # next machine with an accelerator.
       - name: Compile GPU tests
-        run: pixi run tests-gpu-build
+        run: |
+          # The host CPU is printed because an sm_80 build failed on the
+          # Linux runner ("failed to locate witness entry") and in no clean
+          # linux/amd64 container; its feature set is the prime suspect.
+          (lscpu 2>/dev/null | grep -E "Model name|avx512" | cut -c1-200) || sysctl -n machdep.cpu.brand_string || true
+          pixi run tests-gpu-build
 
       - name: Run CPU benchmark
         run: pixi run bench

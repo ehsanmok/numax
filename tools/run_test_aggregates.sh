@@ -86,6 +86,10 @@ build_one() {
     # at all, so the exit status is printed too (137 is SIGKILL).
     echo "BUILD FAILED: $src (mojo exited with status $status)"
     grep -E "error:|constraint failed" "$out.log" | head -20
+    # The note chain under the first error names the numax function the
+    # instantiation failed in; the error lines alone do not.
+    echo "── first error, with its notes ──"
+    awk '/ error: / && !seen { seen = 1 } seen { print; if (++n >= 80) exit }' "$out.log"
     echo "── last 15 lines ──"; tail -15 "$out.log"
     return 1
   fi
