@@ -45,6 +45,9 @@ from test_lu_plu_gpu import (
 from test_solvers_gpu import (
     test_solvers_on_the_device_match_the_host as test_solvers_gpu__test_solvers_on_the_device_match_the_host,
 )
+from test_solvers_gpu import (
+    test_care_on_the_device_matches_the_host as test_solvers_gpu__test_care_on_the_device_matches_the_host,
+)
 from test_spectral_gpu import (
     test_eigvalsh_on_the_device_matches_the_host as test_spectral_gpu__test_eigvalsh_on_the_device_matches_the_host,
 )
@@ -106,6 +109,7 @@ def main() raises:
     suite.test[test_lu_plu_gpu__test_lu_on_the_device_matches_the_host]()
     # tests_gpu/linalg/test_solvers_gpu.mojo
     suite.test[test_solvers_gpu__test_solvers_on_the_device_match_the_host]()
+    suite.test[test_solvers_gpu__test_care_on_the_device_matches_the_host]()
     # tests_gpu/linalg/test_spectral_gpu.mojo
     suite.test[
         test_spectral_gpu__test_eigvalsh_on_the_device_matches_the_host

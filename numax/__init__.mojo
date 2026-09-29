@@ -490,6 +490,7 @@ from .linalg import (
     solve,
     solve_banded,
     solve_circulant,
+    solve_continuous_are,
     solve_continuous_lyapunov,
     solve_discrete_lyapunov,
     solve_sylvester,

@@ -1,5 +1,5 @@
-"""`solve_sylvester`, `solve_continuous_lyapunov` and
-`solve_discrete_lyapunov` at `gpu=True`, against the host, at `float32`:
+"""`solve_sylvester`, `solve_continuous_lyapunov`,
+`solve_discrete_lyapunov` and `solve_continuous_are` at `gpu=True`, against the host, at `float32`:
 the Schur forms, the per-column `trsyl_column` launches and the products
 all run on the device, on matrices whose Schur forms have `2 x 2` blocks
 on both sides."""
@@ -9,9 +9,10 @@ from std.testing import TestSuite, assert_almost_equal, assert_false
 
 from max.gpu.host import DeviceContext
 
-from numax.core.tensor import Static
+from numax.core.tensor import Static, eye
 from numax.linalg import (
     matmul,
+    solve_continuous_are,
     solve_continuous_lyapunov,
     solve_discrete_lyapunov,
     solve_sylvester,
@@ -96,6 +97,27 @@ def test_solvers_on_the_device_match_the_host() raises:
         ).to_host(),
         1e-4,
     )
+
+
+def test_care_on_the_device_matches_the_host() raises:
+    """The sign iteration's LUs, products and closing QR on the device:
+    the same `X` as the host, to `float32` rounding."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var dx = solve_continuous_are[gpu=True](
+        _rot[10](gpu, 0.9, 0.5, 1.0),
+        _rot[10](gpu, 0.4, 2.0, 0.5),
+        eye[10, f32](ctx=gpu),
+        eye[10, f32](ctx=gpu),
+    )
+    assert_false(dx.on_host())
+    var hx = solve_continuous_are(
+        _rot[10](cpu, 0.9, 0.5, 1.0),
+        _rot[10](cpu, 0.4, 2.0, 0.5),
+        eye[10, f32](ctx=cpu),
+        eye[10, f32](ctx=cpu),
+    )
+    _close(dx.to_host(), hx.to_host(), 1e-4)
 
 
 def main() raises:

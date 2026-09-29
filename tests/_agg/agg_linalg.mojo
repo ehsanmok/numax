@@ -460,6 +460,9 @@ from test_solvers import (
 from test_solvers import (
     test_discrete_residual as test_solvers__test_discrete_residual,
 )
+from test_solvers import (
+    test_care_matches_scipy as test_solvers__test_care_matches_scipy,
+)
 from test_special_matrices import (
     test_toeplitz_two_argument_form as test_special_matrices__test_toeplitz_two_argument_form,
 )
@@ -1224,6 +1227,7 @@ def main() raises:
         test_solvers__test_sylvester_residual_with_blocks_on_both_sides
     ]()
     suite.test[test_solvers__test_discrete_residual]()
+    suite.test[test_solvers__test_care_matches_scipy]()
     # tests/linalg/test_special_matrices.mojo
     suite.test[test_special_matrices__test_toeplitz_two_argument_form]()
     suite.test[test_special_matrices__test_toeplitz_symmetric_form]()

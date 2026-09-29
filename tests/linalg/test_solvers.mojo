@@ -1,6 +1,6 @@
-"""Tests for `solve_sylvester`, `solve_continuous_lyapunov` and
-`solve_discrete_lyapunov` against SciPy's solutions, and the residual of
-each equation on matrices whose Schur forms have `2 x 2` blocks on both
+"""Tests for `solve_sylvester`, `solve_continuous_lyapunov`,
+`solve_discrete_lyapunov` and `solve_continuous_are` against SciPy's
+solutions, and the residual of each equation on matrices whose Schur forms have `2 x 2` blocks on both
 sides, so every one of `trsyl_column`'s block shapes -- `1 x 1` through
 `2 x 2` against `2 x 2` -- is exercised."""
 
@@ -11,6 +11,7 @@ from std.testing import TestSuite, assert_almost_equal
 from numax.core.tensor import Static, transpose
 from numax.linalg import (
     matmul,
+    solve_continuous_are,
     solve_continuous_lyapunov,
     solve_discrete_lyapunov,
     solve_sylvester,
@@ -135,6 +136,48 @@ def test_discrete_residual() raises:
     var qv = _qs().to_host()
     for i in range(9):
         assert_almost_equal(xv[i] - axa[i], qv[i], atol=1e-13)
+
+
+def test_care_matches_scipy() raises:
+    # A triple integrator with unit weights, and a two-input system with
+    # coupled weights: scipy.linalg.solve_continuous_are.
+    var a = Static[f64, 3, 3](
+        [0.0, 1.0, 0.0, 0.0, 0.0, 1.0, -1.0, -2.0, -3.0], _cpu()
+    )
+    var b = Static[f64, 3, 1]([0.0, 0.0, 1.0], _cpu())
+    var q = Static[f64, 3, 3](
+        [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], _cpu()
+    )
+    var r = Static[f64, 1, 1]([1.0], _cpu())
+    _close(
+        solve_continuous_are(a, b, q, r).to_host(),
+        [
+            2.1870824521318517,
+            1.8829148652376184,
+            0.4142135623730948,
+            1.8829148652376184,
+            3.808370011372004,
+            0.9607143952896295,
+            0.4142135623730948,
+            0.9607143952896295,
+            0.4527422131661174,
+        ],
+        1e-13,
+    )
+    var a2 = Static[f64, 2, 2]([1.0, 2.0, -3.0, 0.5], _cpu())
+    var b2 = Static[f64, 2, 2]([1.0, 0.5, 0.0, 1.0], _cpu())
+    var q2 = Static[f64, 2, 2]([2.0, 0.3, 0.3, 1.0], _cpu())
+    var r2 = Static[f64, 2, 2]([1.5, 0.2, 0.2, 0.8], _cpu())
+    _close(
+        solve_continuous_are(a2, b2, q2, r2).to_host(),
+        [
+            3.005527846867029,
+            0.046965179081539514,
+            0.046965179081539514,
+            1.3959298980547403,
+        ],
+        1e-13,
+    )
 
 
 def main() raises:
