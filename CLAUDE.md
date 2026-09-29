@@ -242,7 +242,7 @@ pointer and a host read segfaults. `to_array`/`to_tensor` is the seam to the
 
 Subpackages mirror NumPy/SciPy names: `core`, `linalg`, `optimize`,
 `integrate`, `interpolate`, `special`, `stats`, `fft`, `signal`, `io`,
-`spatial`.
+`spatial`, `ndimage`.
 `core` depends on nothing else in numax; every other subpackage depends on
 `core`. The few cross-subpackage edges are deliberate: `stats` → `special`
 (incomplete gamma/beta), `stats` → `linalg` (Cholesky and `matmul`, for
@@ -302,6 +302,9 @@ for the rest of the importing file rather than overloading it, so a star import
 would silently break `min(1, 2)` in the caller's own code. Those stay one
 qualified import away. The nine `scipy.stats` distribution namespaces are out
 of the prelude too (`gamma`/`beta` would collide with the special functions).
+`numax.ndimage` is out of the root and the prelude altogether: its
+`convolve`/`correlate` are `numax.signal`'s names with a different meaning,
+so it stays one qualified import away.
 Keep this property when adding names.
 
 ## Mojo 1.0 constraints

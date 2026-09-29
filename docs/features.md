@@ -593,6 +593,12 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 | `cdist`, `pdist`, `squareform` — euclidean, squared euclidean, cityblock, chebyshev, minkowski, cosine and correlation, SciPy's definitions; one lane per pair on the inputs' device, the direct differences rather than the cancelling GEMM expansion | 2 | [`spatial/distance.mojo`](../numax/spatial/distance.mojo) |
 | `KDTree` — median-split build on the host, then `query[k]` (`KDQuery`, nearest first) and `query_ball_point` (`BallPoints`, compressed rows, each run sorted) as device kernels, one lane per query point walking the tree with a fixed-size stack; Euclidean | 2 | [`spatial/kdtree.mojo`](../numax/spatial/kdtree.mojo) |
 
+## `numax.ndimage`
+
+| Surface | Tier | Where |
+|---|---|---|
+| `correlate`, `convolve`, `correlate1d`, `convolve1d`, `uniform_filter`, `gaussian_filter`, `gaussian_filter1d` (derivative order to 3), `median_filter`, `minimum_filter`, `maximum_filter` — rank 1 to 8, SciPy's five boundary modes (`reflect`, `mirror`, `nearest`, `wrap`, `constant`) folded into the index and its origin convention; one lane per output element on the input's device, the separable filters a pass per axis | 2 | [`ndimage/filters.mojo`](../numax/ndimage/filters.mojo) |
+
 ## `numax.io`
 
 `nmx.save` and `numpy.save` take any `TensorLike`, so a `TensorView` of a sub-block writes as a file of that block's shape.
