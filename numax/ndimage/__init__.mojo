@@ -7,6 +7,8 @@ from numax.ndimage import gaussian_filter, median_filter, convolve
 | Module | Contents |
 |---|---|
 | `interpolation` | `map_coordinates`, `shift`, `zoom`, `spline_filter`, `spline_filter1d` -- B-spline orders 0 to 5 with SciPy's prefilter and its interpolation modes |
+| `measurements` | `label` (`Labeled`) -- min-label propagation with pointer jumping, SciPy's numbering |
+| `morphology` | `binary_erosion`, `binary_dilation`, `distance_transform_edt` -- the default structuring element at any connectivity, and Felzenszwalb's separable exact EDT |
 | `filters` | `correlate`, `convolve`, `correlate1d`, `convolve1d`, `uniform_filter`, `gaussian_filter`, `gaussian_filter1d`, `median_filter`, `minimum_filter`, `maximum_filter` -- SciPy's five boundary modes and origin convention, rank 1 to 8, one lane per output element on the input's device |
 
 Not re-exported at the root or in the prelude: `convolve` and `correlate`
@@ -19,6 +21,8 @@ Tier 2 over tensors. `filters.mojo` records the MAX gate: MAX's `conv`,
 cannot express ndimage's modes.
 """
 
+from .measurements import Labeled, label
+from .morphology import binary_dilation, binary_erosion, distance_transform_edt
 from .interpolation import (
     map_coordinates,
     shift,
