@@ -11,7 +11,7 @@ register tier's own names are exported here too:
 
 | Tier | Holds | Good for |
 | --- | --- | --- |
-| `Tensor`, `Plain`-only, tier 2 | samples the caller already holds: `trapezoid(y, dx)`, `simpson(y, x)`, `cumulative_trapezoid` -- `scipy.integrate`'s own signatures; and a system whose state is a `Tensor`: `rk4_system`, `dopri5`, `solve_ivp`, every stage an `elementwise` launch on the state's device |
+| `Tensor`, `Plain`-only, tier 2 | samples the caller already holds: `trapezoid(y, dx)`, `simpson(y, x)`, `cumulative_trapezoid`, `cumulative_simpson`, `romb` -- `scipy.integrate`'s own signatures; and a system whose state is a `Tensor`: `rk4_system`, `dopri5`, `solve_ivp`, every stage an `elementwise` launch on the state's device |
 | `Array[T, n]` and `FloatLike`, tier 1 | a `FloatLike` integrand: `gauss_legendre[f](a, b)`, `simpson[f](a, b)`, `trapezoid[f](a, b)`, and the fixed-step `rk4`/`dopri5` |
 
 It also carries the adaptive scalar
@@ -42,7 +42,13 @@ from .integrate import (
     solve_ivp_stiff,
 )
 from .ode import Step, dopri5, dopri5_step, rk4_system
-from .quadrature import cumulative_trapezoid, simpson, trapezoid
+from .quadrature import (
+    cumulative_simpson,
+    cumulative_trapezoid,
+    romb,
+    simpson,
+    trapezoid,
+)
 from ._array import (
     dopri5_with_error,
     gauss_legendre,

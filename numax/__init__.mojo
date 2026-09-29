@@ -537,7 +537,13 @@ from .integrate.integrate import (
     solve_ivp_stiff,
 )
 from .integrate.ode import Step, dopri5, dopri5_step, rk4_system
-from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
+from .integrate.quadrature import (
+    cumulative_simpson,
+    cumulative_trapezoid,
+    romb,
+    simpson,
+    trapezoid,
+)
 
 # Interpolation -- `numax.interpolate`. `horner` carries both tiers'
 # overloads; the `FloatLike` spline and Chebyshev fit are `numax.interpolate`

@@ -399,11 +399,11 @@ through to a different algorithm.
 
 ## `numax.integrate`
 
-`solve_ivp`, `rk4_system`, `dopri5` and `dopri5_step` take their state through the `TensorLike` bound and copy it once into the owned `Static` the callback receives; `trapezoid`, `simpson` and `cumulative_trapezoid` take samples the same way.
+`solve_ivp`, `rk4_system`, `dopri5` and `dopri5_step` take their state through the `TensorLike` bound and copy it once into the owned `Static` the callback receives; `trapezoid`, `simpson`, `cumulative_trapezoid`, `cumulative_simpson` and `romb` take samples the same way.
 
 | Surface | Tier | Where |
 |---|---|---|
-| `trapezoid`, `simpson`, `cumulative_trapezoid` over sampled `Tensor`s — `trapezoid(y, dx)`, `simpson(y, x)`, exactly `scipy.integrate`'s signatures, SciPy's even-count Simpson correction included | 2 | [`integrate/quadrature.mojo`](../numax/integrate/quadrature.mojo) |
+| `trapezoid`, `simpson`, `cumulative_trapezoid`, `cumulative_simpson`, `romb` over sampled `Tensor`s — `trapezoid(y, dx)`, `simpson(y, x)`, exactly `scipy.integrate`'s signatures, SciPy's even-count Simpson correction and its per-interval cumulative Simpson included; `romb` on `2^k + 1` samples, its level sums one device launch | 2 | [`integrate/quadrature.mojo`](../numax/integrate/quadrature.mojo) |
 | `gauss_legendre`, `simpson`, `trapezoid` over a `FloatLike` function — fixed node count; the Gauss-Legendre nodes are Legendre roots found by numax's own Newton solver | 1 | [`integrate/_array/quadrature.mojo`](../numax/integrate/_array/quadrature.mojo) (`numax.integrate`'s `Array` tier) |
 | `rk4_system`, `dopri5`, `dopri5_step`, `solve_ivp` over a `Tensor` state — every stage an `elementwise` launch on the state's device, `gpu=True` on the accelerator; `solve_ivp` shares the scalar controller and takes the same steps at `n == 1` | 2 | [`integrate/ode.mojo`](../numax/integrate/ode.mojo) |
 | `rk4`, `rk4_system`, `dopri5_step`, `dopri5_with_error`, `dopri5` over a `FloatLike` right-hand side — fixed-step, one state or `n` register-resident components, with the embedded error estimate | 1 | [`integrate/_array/ode.mojo`](../numax/integrate/_array/ode.mojo) (`numax.integrate`'s `Array` tier) |

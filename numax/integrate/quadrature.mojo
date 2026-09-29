@@ -1,5 +1,5 @@
-"""Integration of sampled values: `scipy.integrate`'s `trapezoid`, `simpson`
-and `cumulative_trapezoid`, over `Tensor`.
+"""Integration of sampled values: `scipy.integrate`'s `trapezoid`, `simpson`,
+`cumulative_trapezoid`, `cumulative_simpson` and `romb`, over `Tensor`.
 
 **This module is tier 2**: `Plain`-only, host-side. Each rule walks a host
 copy of the samples, on the same terms as `numax.core.elementwise` -- the
@@ -269,6 +269,358 @@ def _cumulative_device[
 
     elementwise[simd_width=1, target="gpu"](body, Coord(m), ctx)
     return _scan_device["sum"](terms, Static[dtype, m]._static_layout(), m, 1)
+
+
+@always_inline
+def _simpson_interval[
+    dtype: DType
+](
+    f1: Scalar[dtype],
+    f2: Scalar[dtype],
+    f3: Scalar[dtype],
+    h21: Scalar[dtype],
+    h32: Scalar[dtype],
+    second: Bool,
+) -> Scalar[dtype] where dtype.is_floating_point():
+    """The integral over one interval of the quadratic through three
+    consecutive samples, SciPy's `_cumulative_simpson_unequal_intervals`:
+    over the first interval `[x1, x2]`, or with `second` over `[x2, x3]`,
+    which is the same formula on the reversed triple. At equal spacing it
+    reduces to `h / 3 (5/4 f1 + 2 f2 - f3 / 4)`."""
+    var a = f3 if second else f1
+    var c = f1 if second else f3
+    var x21 = h32 if second else h21
+    var x32 = h21 if second else h32
+    var x31 = x21 + x32
+    var r1 = x21 / x31
+    var r2 = r1 * (x21 / x32)
+    return x21 / 6 * ((3 - r1) * a + (3 + r2 + r1) * f2 - r2 * c)
+
+
+def _cumulative_simpson[
+    has_x: Bool, initial: Bool, m: Int, T: TensorLike, X: TensorLike
+](y: T, x: X, dx: Scalar[T.dtype]) raises -> Static[T.dtype, m] where (
+    X.dtype == T.dtype and T.dtype.is_floating_point()
+):
+    """On the device: one launch writes each interval's share (after a
+    leading `0` when `initial`), and the device scan accumulates them."""
+    comptime dtype = T.dtype
+    var count = y.size()
+    var ctx = y.context()
+    _require_contiguous(y)
+    comptime if has_x:
+        _require_contiguous(x)
+        if x.size() != count:
+            raise Error(
+                "integrate: x has ", x.size(), " points for ", count, " samples"
+            )
+    var terms = Static[dtype, m]._uninitialized(ctx)
+    var yp = y.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+    var xp = (
+        x.tile()
+        .ptr.unsafe_bitcast[Scalar[dtype]]()
+        .unsafe_origin_cast[ImmutAnyOrigin]()
+    )
+    var tp = terms.tile()
+
+    @always_inline
+    def body[
+        width: Int, alignment: Int = 1
+    ](coord: Coord) {var yp, var xp, var tp, var dx, var count}:
+        var q = coord_to_index_list(coord)[0]
+        var i = q - 1 if initial else q
+        var term = Scalar[dtype](0)
+        if i >= 0:
+            # Interval `i`'s share, as SciPy assembles its `sub_integrals`:
+            # the first-interval form from the triple at `i` for an even
+            # `i`, the second-interval form from the triple at `i - 1` for
+            # an odd one and for the last, which has no triple after it.
+            var first = i % 2 == 0 and i < count - 2
+            var base = i if first else i - 1
+            if count == 2:
+                var h = dx
+                comptime if has_x:
+                    h = xp[unsafe_offset=1] - xp[unsafe_offset=0]
+                term = h * (yp[unsafe_offset=0] + yp[unsafe_offset=1]) / 2
+            else:
+                var h21 = dx
+                var h32 = dx
+                comptime if has_x:
+                    h21 = xp[unsafe_offset=base + 1] - xp[unsafe_offset=base]
+                    h32 = (
+                        xp[unsafe_offset=base + 2] - xp[unsafe_offset=base + 1]
+                    )
+                term = _simpson_interval(
+                    yp[unsafe_offset=base],
+                    yp[unsafe_offset=base + 1],
+                    yp[unsafe_offset=base + 2],
+                    h21,
+                    h32,
+                    not first,
+                )
+        tp.store[1](coord, term)
+
+    elementwise[simd_width=1, target="gpu"](body, Coord(m), ctx)
+    return _scan_device["sum"](terms, Static[dtype, m]._static_layout(), m, 1)
+
+
+def _cumulative_simpson_host[
+    has_x: Bool, initial: Bool, m: Int, T: TensorLike, X: TensorLike
+](y: T, x: X, dx: Scalar[T.dtype]) raises -> Static[T.dtype, m] where (
+    X.dtype == T.dtype and T.dtype.is_floating_point()
+):
+    """The host walk of `_cumulative_simpson`, over host copies, so a
+    device `y` that fell back here is read through `to_host`."""
+    comptime dtype = T.dtype
+    var ys = y.to_host()
+    var count = len(ys)
+    var h = List[Scalar[dtype]](capacity=count)
+    comptime if has_x:
+        var xs = x.to_host()
+        if len(xs) != count:
+            raise Error(
+                "integrate: x has ", len(xs), " points for ", count, " samples"
+            )
+        for i in range(count - 1):
+            h.append(
+                rebind[Scalar[dtype]](xs[i + 1]) - rebind[Scalar[dtype]](xs[i])
+            )
+    else:
+        for _ in range(count - 1):
+            h.append(dx)
+    var out = List[Scalar[dtype]](capacity=m)
+    var running = Scalar[dtype](0)
+    comptime if initial:
+        out.append(running)
+    for i in range(count - 1):
+        if count == 2:
+            running += h[0] * (ys[0] + ys[1]) / 2
+        else:
+            var first = i % 2 == 0 and i < count - 2
+            var base = i if first else i - 1
+            running += _simpson_interval(
+                ys[base],
+                ys[base + 1],
+                ys[base + 2],
+                h[base],
+                h[base + 1],
+                not first,
+            )
+        out.append(running)
+    return Static[dtype, m](out^, y.context())
+
+
+def cumulative_simpson[
+    T: TensorLike,
+    initial: Bool = False,
+    gpu: Bool = False,
+](y: T, dx: Scalar[T.dtype] = 1) raises -> Static[
+    T.dtype, dim[T, 0] if initial else dim[T, 0] - 1
+] where (
+    (T.dtype.is_floating_point() and dim[T, 0] >= 2)
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
+    """The running Simpson integral of `y` at spacing `dx`.
+    `scipy.integrate.cumulative_simpson(y, dx=dx)`.
+
+    SciPy's construction: each interval's share is the integral over it
+    of the quadratic through it and a neighbor -- the next interval's for
+    the even ones, the previous one's for the odd ones and the last -- so
+    every partial sum is exact for quadratics, not only those ending on an
+    even sample. Two samples fall back to the trapezoid, as SciPy's does.
+    One launch computes the shares and a scan accumulates them, on `y`'s
+    device at `gpu=True`. `initial=True` prepends a zero, as
+    `cumulative_trapezoid`'s does.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y`.
+        initial: Whether to prepend a zero so the result has `y`'s length.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        y: The samples on a uniform grid.
+        dx: The spacing between consecutive samples.
+
+    Returns:
+        The running integrals, of length `n - 1`, or `n` when `initial`.
+
+    Raises:
+        If a copy, launch or scan fails, or on a residency mismatch under
+        the `"raise"` fallback policy.
+    """
+    comptime m = dim[T, 0] if initial else dim[T, 0] - 1
+    if _check_device[T, gpu](y):
+        comptime if gpu:
+            return _cumulative_simpson[False, initial, m](y, y, dx)
+    else:
+        _notice[gpu]("cumulative_simpson")
+    return _cumulative_simpson_host[False, initial, m](y, y, dx)
+
+
+def cumulative_simpson[
+    A: TensorLike,
+    B: TensorLike,
+    initial: Bool = False,
+    gpu: Bool = False,
+](y: A, x: B) raises -> Static[
+    A.dtype, dim[A, 0] if initial else dim[A, 0] - 1
+] where (
+    (A.dtype.is_floating_point() and dim[A, 0] >= 2 and B.LayoutType.rank == 1)
+    and A.LayoutType.rank == 1
+    and A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+):
+    """The running Simpson integral of `y` at the points `x`.
+    `scipy.integrate.cumulative_simpson(y, x=x)`.
+
+    As the uniform overload, with each share the unequal-interval form of
+    SciPy's `_cumulative_simpson_unequal_intervals`. `x` must be strictly
+    increasing, as SciPy requires; it is not checked.
+
+    Parameters:
+        A: The rank-1, static-extent floating-point tensor type of `y`.
+        B: The rank-1 tensor type of `x`, of `y`'s dtype.
+        initial: Whether to prepend a zero so the result has `y`'s length.
+        gpu: Whether the rule runs on `y`'s device; a residency mismatch
+            falls back to the host with a notice.
+
+    Args:
+        y: The samples.
+        x: The sample points, one per element of `y`.
+
+    Returns:
+        The running integrals, of length `n - 1`, or `n` when `initial`.
+
+    Raises:
+        If `x` and `y` differ in length, if either is not contiguous, if a
+        launch or scan fails, or on a residency mismatch under the
+        `"raise"` fallback policy.
+    """
+    comptime m = dim[A, 0] if initial else dim[A, 0] - 1
+    if _check_device[A, gpu](y):
+        comptime if gpu:
+            return _cumulative_simpson[True, initial, m](
+                y, x, Scalar[A.dtype](0)
+            )
+    else:
+        _notice[gpu]("cumulative_simpson")
+    return _cumulative_simpson_host[True, initial, m](y, x, Scalar[A.dtype](0))
+
+
+def romb[
+    T: TensorLike, gpu: Bool = False
+](y: T, dx: Scalar[T.dtype] = 1) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+    and dim[T, 0] >= 1
+):
+    """Romberg integration of `2^k + 1` equally spaced samples.
+    `scipy.integrate.romb(y, dx)`.
+
+    Each refinement level adds the samples at the odd multiples of its
+    spacing, which no coarser level used, so the levels' sums are over
+    disjoint index sets. One launch computes all `k` of them, a lane per
+    level summing its own samples; the host then runs SciPy's Richardson
+    table on those `k + 1` scalars, `O(k^2)` for `k = log2(n - 1)`.
+
+    Parameters:
+        T: The rank-1, static-extent floating-point tensor type of `y`.
+        gpu: Whether the level sums run on `y`'s device; a residency
+            mismatch falls back to the host with a notice.
+
+    Args:
+        y: The samples, `2^k + 1` of them.
+        dx: The spacing between consecutive samples.
+
+    Returns:
+        The Romberg estimate `R[k, k]`.
+
+    Raises:
+        If the sample count is not one plus a power of two, if `y` is not
+        contiguous, or if a device operation fails.
+    """
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    comptime intervals = n - 1
+    if intervals < 0 or (intervals & (intervals - 1)) != 0:
+        raise Error(
+            (
+                "romb: the number of samples must be one plus a non-negative"
+                " power of 2, got "
+            ),
+            n,
+        )
+    var k = 0
+    while (1 << k) < intervals:
+        k += 1
+    var ctx = y.context()
+    var levels = List[Scalar[dtype]](length=k + 1, fill=Scalar[dtype](0))
+    var on_device = False
+    comptime if gpu:
+        if _check_device[T, gpu](y):
+            on_device = True
+            _require_contiguous(y)
+            var sums = Static[dtype, 64]._uninitialized(ctx)
+            var yp = y.tile().ptr.unsafe_origin_cast[ImmutAnyOrigin]()
+            var sp = sums.tile()
+            var top = k
+
+            @always_inline
+            def body[
+                width: Int, alignment: Int = 1
+            ](coord: Coord) {var yp, var sp, var top}:
+                # Lane `l` in `1..k` sums the samples level `l` adds, at
+                # stride `2^(k - l + 1)` from `2^(k - l)`; lane `0` sums the
+                # two ends.
+                var l = coord_to_index_list(coord)[0]
+                var total = Scalar[dtype](0)
+                if l == 0:
+                    total = yp[unsafe_offset=0] + yp[unsafe_offset=1 << top]
+                else:
+                    var step = 1 << (top - l + 1)
+                    var i = 1 << (top - l)
+                    while i < (1 << top):
+                        total += yp[unsafe_offset=i]
+                        i += step
+                sp.store[1](coord, total)
+
+            elementwise[simd_width=1, target="gpu"](body, Coord(k + 1), ctx)
+            ctx.synchronize()
+            var host = sums.to_host()
+            for l in range(k + 1):
+                levels[l] = host[l]
+    if not on_device:
+        if not _check_device[T, gpu](y):
+            _notice[gpu]("romb")
+        var ys = y.to_host()
+        levels[0] = ys[0] + ys[intervals]
+        for l in range(1, k + 1):
+            var step = 1 << (k - l + 1)
+            var i = 1 << (k - l)
+            while i < intervals:
+                levels[l] += ys[i]
+                i += step
+    var ends = levels[0]
+    if intervals == 0:
+        return Scalar[dtype](0)
+    # SciPy's Richardson table, row by row.
+    var h = Scalar[dtype](intervals) * dx
+    var prev = List[Scalar[dtype]]()
+    prev.append(ends / 2 * h)
+    for i in range(1, k + 1):
+        var row = List[Scalar[dtype]]()
+        row.append(Scalar[dtype](0.5) * (prev[0] + h * levels[i]))
+        for j in range(1, i + 1):
+            var p = row[j - 1]
+            row.append(
+                p + (p - prev[j - 1]) / Scalar[dtype]((1 << (2 * j)) - 1)
+            )
+        h /= 2
+        prev = row^
+    return prev[k]
 
 
 def _simpson_general[

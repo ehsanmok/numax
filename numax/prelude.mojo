@@ -475,7 +475,13 @@ from .optimize.linear import lsq_linear, nnls
 from .optimize.minimize import minimize
 from .optimize.root import root
 from .integrate.integrate import dblquad, fixed_quad, quad, quad_vec, solve_ivp
-from .integrate.quadrature import cumulative_trapezoid, simpson, trapezoid
+from .integrate.quadrature import (
+    cumulative_simpson,
+    cumulative_trapezoid,
+    romb,
+    simpson,
+    trapezoid,
+)
 from .integrate.ode import dopri5, rk4_system
 from .interpolate.interp import (
     horner,
