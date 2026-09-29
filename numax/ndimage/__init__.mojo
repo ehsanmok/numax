@@ -6,6 +6,7 @@ from numax.ndimage import gaussian_filter, median_filter, convolve
 
 | Module | Contents |
 |---|---|
+| `interpolation` | `map_coordinates`, `shift`, `zoom`, `spline_filter`, `spline_filter1d` -- B-spline orders 0 to 5 with SciPy's prefilter and its interpolation modes |
 | `filters` | `correlate`, `convolve`, `correlate1d`, `convolve1d`, `uniform_filter`, `gaussian_filter`, `gaussian_filter1d`, `median_filter`, `minimum_filter`, `maximum_filter` -- SciPy's five boundary modes and origin convention, rank 1 to 8, one lane per output element on the input's device |
 
 Not re-exported at the root or in the prelude: `convolve` and `correlate`
@@ -18,6 +19,13 @@ Tier 2 over tensors. `filters.mojo` records the MAX gate: MAX's `conv`,
 cannot express ndimage's modes.
 """
 
+from .interpolation import (
+    map_coordinates,
+    shift,
+    spline_filter,
+    spline_filter1d,
+    zoom,
+)
 from .filters import (
     convolve,
     convolve1d,

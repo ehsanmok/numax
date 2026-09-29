@@ -598,6 +598,7 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 | Surface | Tier | Where |
 |---|---|---|
 | `correlate`, `convolve`, `correlate1d`, `convolve1d`, `uniform_filter`, `gaussian_filter`, `gaussian_filter1d` (derivative order to 3), `median_filter`, `minimum_filter`, `maximum_filter` — rank 1 to 8, SciPy's five boundary modes (`reflect`, `mirror`, `nearest`, `wrap`, `constant`) folded into the index and its origin convention; one lane per output element on the input's device, the separable filters a pass per axis | 2 | [`ndimage/filters.mojo`](../numax/ndimage/filters.mojo) |
+| `map_coordinates`, `shift`, `zoom` (both `grid_mode`s), `spline_filter`, `spline_filter1d` — B-spline interpolation of order 0 to 5, SciPy's prefilter (per-line recursions with its boundary initializations and its twelve-sample prepad for `nearest`/`grid-constant`) and its interpolation modes, `grid-wrap` and `grid-constant` included; one lane per line or per output sample on the input's device | 2 | [`ndimage/interpolation.mojo`](../numax/ndimage/interpolation.mojo) |
 
 ## `numax.io`
 
