@@ -241,7 +241,8 @@ pointer and a host read segfaults. `to_array`/`to_tensor` is the seam to the
 ### Package layout and dependency direction
 
 Subpackages mirror NumPy/SciPy names: `core`, `linalg`, `optimize`,
-`integrate`, `interpolate`, `special`, `stats`, `fft`, `signal`, `io`.
+`integrate`, `interpolate`, `special`, `stats`, `fft`, `signal`, `io`,
+`spatial`.
 `core` depends on nothing else in numax; every other subpackage depends on
 `core`. The few cross-subpackage edges are deliberate: `stats` → `special`
 (incomplete gamma/beta), `stats` → `linalg` (Cholesky and `matmul`, for
