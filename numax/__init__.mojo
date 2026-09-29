@@ -541,6 +541,16 @@ from .integrate.integrate import (
 from .integrate.bvp import BVPResult, solve_bvp
 from .spatial.distance import cdist, pdist, squareform
 from .spatial.kdtree import BallPoints, KDQuery, KDTree
+from .cluster.hierarchy import fcluster, inconsistent, linkage
+from .cluster.vq import (
+    KMeans2Result,
+    KMeansResult,
+    VQResult,
+    kmeans,
+    kmeans2,
+    vq,
+    whiten,
+)
 from .integrate.ode import Step, dopri5, dopri5_step, rk4_system
 from .integrate.quadrature import (
     cumulative_simpson,

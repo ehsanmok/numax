@@ -601,6 +601,13 @@ conformer: sampling is not differentiable, so the trait contract does not fit.
 | `map_coordinates`, `shift`, `zoom` (both `grid_mode`s), `spline_filter`, `spline_filter1d` — B-spline interpolation of order 0 to 5, SciPy's prefilter (per-line recursions with its boundary initializations and its twelve-sample prepad for `nearest`/`grid-constant`) and its interpolation modes, `grid-wrap` and `grid-constant` included; one lane per line or per output sample on the input's device | 2 | [`ndimage/interpolation.mojo`](../numax/ndimage/interpolation.mojo) |
 | `label` (`Labeled`), `binary_erosion`, `binary_dilation`, `distance_transform_edt` — connected components by min-label propagation with pointer jumping (SciPy's raster-order numbering), morphology by the default structuring element at any connectivity with iterations and a border value, and the exact EDT by Felzenszwalb's separable lower envelope, one lane per line; all on the input's device | 2 | [`ndimage/measurements.mojo`](../numax/ndimage/measurements.mojo), [`ndimage/morphology.mojo`](../numax/ndimage/morphology.mojo) |
 
+## `numax.cluster`
+
+| Surface | Tier | Where |
+|---|---|---|
+| `whiten`, `vq`, `kmeans`, `kmeans2` — SciPy's Lloyd loops (`kmeans` drops emptied codes and measures the final codebook, `kmeans2` keeps an empty cluster's centroid), from a given codebook or random distinct observations; the fused assignment and the centroid update one lane per observation or per (code, feature) on the device | 2 | [`cluster/vq.mojo`](../numax/cluster/vq.mojo) |
+| `linkage` (all seven methods, from condensed distances or observations), `inconsistent`, `fcluster` (`inconsistent`, `distance`, `maxclust`) — the merges' distance matrix and its Lance-Williams updates on the device, SciPy's row sorting, union-find relabeling and depth-first cluster numbering on the host | 2 | [`cluster/hierarchy.mojo`](../numax/cluster/hierarchy.mojo) |
+
 ## `numax.io`
 
 `nmx.save` and `numpy.save` take any `TensorLike`, so a `TensorView` of a sub-block writes as a file of that block's shape.
