@@ -36,7 +36,7 @@ zero means.
 """
 
 from std.collections import Array
-from std.math import cos as _cos_f64, pi as _PI
+from std.math import pi as _PI
 
 from ...core.numeric import FloatLike, guard_nonzero
 
@@ -123,6 +123,44 @@ def correlate[
             total = total + a[j] * b[k - 1 - i + j]
         out[i] = total^
     return out^
+
+
+def _cos_f64(x: Float64) -> Float64:
+    """`cos(x)` in `Float64` from `+`, `*` and `/` alone, to within an ulp
+    or two of `std.math.cos` over the window arguments (`|x| <= 4 pi`).
+
+    `std.math.cos` cannot stand in for it: its `float64` overload carries a
+    target constraint, and a window's `comptime` cosines are evaluated in
+    the context of whatever kernel instantiates the window -- so an NVIDIA
+    build refuses them ("`float64` is not supported for `cos`") even
+    though nothing runs on the device. Cody-Waite reduction by `pi / 2`
+    (a two-term constant) to `|r| <= pi / 4`, then the Taylor series of
+    `cos r` or `sin r` by quadrant, fifteen terms, far past `float64`
+    precision at that radius.
+    """
+    comptime half_pi_hi = 1.5707963267948966
+    comptime half_pi_lo = 6.123233995736766e-17
+    var q = x / half_pi_hi
+    var k = Int(q + 0.5) if q >= 0 else -Int(-q + 0.5)
+    var r = (x - Float64(k) * half_pi_hi) - Float64(k) * half_pi_lo
+    var r2 = r * r
+    var c = 1.0
+    var s = r
+    var term_c = 1.0
+    var term_s = r
+    for j in range(1, 16):
+        term_c = -term_c * r2 / Float64((2 * j - 1) * (2 * j))
+        term_s = -term_s * r2 / Float64((2 * j) * (2 * j + 1))
+        c += term_c
+        s += term_s
+    var quadrant = ((k % 4) + 4) % 4
+    if quadrant == 0:
+        return c
+    if quadrant == 1:
+        return -s
+    if quadrant == 2:
+        return -c
+    return s
 
 
 def _cosine_window[
