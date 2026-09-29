@@ -1,14 +1,16 @@
-"""`linprog` at `gpu=True`: the scaled product `A diag(d) A^T`, its LU and
-every solve against it on the device, at `float32`, against the host run
-at the same `dtype` and SciPy's optimum. The problem is `test_linprog`'s
-mixed one: inequalities, equalities and the boxed-variable rows."""
+"""`linprog` and `milp` at `gpu=True`: the scaled product `A diag(d) A^T`,
+its LU and every solve against it on the device, at `float32`, against
+the host run at the same `dtype` and SciPy's optimum. The problems are
+`test_linprog`'s mixed one (inequalities, equalities and the
+boxed-variable rows) and `test_milp`'s knapsack."""
 
+from std.math import inf as _inf
 from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Static
-from numax.optimize import Bounds, linprog
+from numax.optimize import Bounds, LinearConstraint, linprog, milp
 
 comptime f32 = DType.float32
 
@@ -112,6 +114,28 @@ def test_linprog_gpu_matches_host() raises:
     var xh = host.x.to_host()
     for i in range(5):
         assert_almost_equal(Float64(xd[i]), Float64(xh[i]), atol=1e-2)
+
+
+def test_milp_gpu_knapsack() raises:
+    """Every node's relaxation on the device reaches HiGHS's knapsack
+    optimum at `float32`."""
+    var ctx = DeviceContext()
+    var c = Static[f32, 8](
+        [-21.0, -10.0, -19.0, -37.0, -24.0, -7.0, -23.0, -9.0], ctx
+    )
+    var a = Static[f32, 1, 8](
+        [5.0, 5.0, 16.0, 11.0, 13.0, 13.0, 15.0, 3.0], ctx
+    )
+    var lo = Static[f32, 1]([-_inf[f32]()], ctx)
+    var hi = Static[f32, 1]([36.45], ctx)
+    var r = milp[gpu=True](
+        c,
+        integrality=[1],
+        bounds=Bounds(0.0, 1.0),
+        constraints=[LinearConstraint(a, lo, hi)],
+    )
+    assert_equal(r.status, 0)
+    assert_almost_equal(r.fun, -92.0, atol=1e-3)
 
 
 def main() raises:

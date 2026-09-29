@@ -16,8 +16,9 @@ register tier's own names are exported here too:
 
 The `Tensor` tier's results: `minimize` with `MinimizeResult`,
 `root` with `RootResult`, `least_squares`/`curve_fit` with
-`FitResult`, `nnls`/`lsq_linear` with `LinearResult`, and `linprog`
-(over `Bounds`) with `LinprogResult`. The
+`FitResult`, `nnls`/`lsq_linear` with `LinearResult`, `linprog`
+(over `Bounds`) with `LinprogResult`, and `milp` (over `Bounds` and
+`LinearConstraint`) with `MilpResult`. The
 gradient methods take the derivative as a compile-time parameter -- `jac`
 and `jacobian` -- because a `dtype`-monomorphic tensor cannot hold a
 `Gradient`; `"powell"` is the one that takes none. Scalar root finding
@@ -30,6 +31,7 @@ which is the shape a `Tensor` exists to not be.
 from .least_squares import FitResult, curve_fit, least_squares
 from .linear import LinearResult, lsq_linear, nnls
 from .linprog import Bounds, LinprogResult, linprog
+from .milp import LinearConstraint, MilpResult, milp
 from .minimize import MinimizeResult, minimize
 from .root import RootResult, root
 from ._array import (

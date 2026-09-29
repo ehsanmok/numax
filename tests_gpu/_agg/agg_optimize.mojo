@@ -21,6 +21,9 @@ from test_fits_gpu import (
 from test_linprog_gpu import (
     test_linprog_gpu_matches_host as test_linprog_gpu__test_linprog_gpu_matches_host,
 )
+from test_linprog_gpu import (
+    test_milp_gpu_knapsack as test_linprog_gpu__test_milp_gpu_knapsack,
+)
 
 
 def main() raises:
@@ -36,4 +39,5 @@ def main() raises:
     ]()
     # tests_gpu/optimize/test_linprog_gpu.mojo
     suite.test[test_linprog_gpu__test_linprog_gpu_matches_host]()
+    suite.test[test_linprog_gpu__test_milp_gpu_knapsack]()
     suite^.run()

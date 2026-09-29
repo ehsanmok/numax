@@ -331,6 +331,7 @@ front.
 | `root` — `scipy.optimize.root` for a square system, `method="newton"` (the step through `numax.linalg.solve`) or `"lm"` (through `least_squares`), returning `RootResult` | 2 | [`optimize/root.mojo`](../numax/optimize/root.mojo) |
 | `nnls`, `lsq_linear` — `scipy.optimize.nnls` and `lsq_linear(bounds=...)`, the normal equations formed on the device and a projected Newton active-set iteration on the host, returning `LinearResult` | 2 | [`optimize/linear.mojo`](../numax/optimize/linear.mojo) |
 | `linprog`, `Bounds` — `scipy.optimize.linprog(A_ub, b_ub, A_eq, b_eq, bounds)` by SciPy's homogeneous self-dual interior point, the normal matrix formed and factored on the device, returning `LinprogResult` with SciPy's `status` codes | 2 | [`optimize/linprog.mojo`](../numax/optimize/linprog.mojo) |
+| `milp`, `LinearConstraint` — `scipy.optimize.milp(c, integrality, bounds, constraints)` by branch and bound over `linprog`'s relaxation, returning `MilpResult` with SciPy's `status`, node count, dual bound and gap | 2 | [`optimize/milp.mojo`](../numax/optimize/milp.mojo) |
 | `least_squares`, `curve_fit` — Levenberg-Marquardt, the damped step through `numax.linalg.lstsq`'s blocked device-resident QR rather than the normal equations, returning `FitResult` | 2 | [`optimize/least_squares.mojo`](../numax/optimize/least_squares.mojo) |
 
 This tier takes the derivative as an argument — `jac` for `minimize` and

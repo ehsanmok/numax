@@ -733,6 +733,35 @@ def _to_device[
     return asarray(host^, ctx)
 
 
+def _lp_host[
+    dtype: DType, gpu: Bool
+](
+    c: List[Float64],
+    a_ub: List[Float64],
+    b_ub: List[Float64],
+    a_eq: List[Float64],
+    b_eq: List[Float64],
+    bounds: Bounds,
+    tol: Float64,
+    max_iter: Int,
+    ctx: DeviceContext,
+) raises -> Tuple[List[Float64], Int, Int] where dtype.is_floating_point():
+    """The solve on host lists: `x` in the caller's variables, the status
+    and the iteration count. What `linprog` wraps and `milp` calls once
+    per node."""
+    var n = len(c)
+    var s = _standard_form(c, a_ub, b_ub, a_eq, b_eq, bounds)
+    var solved = _ip_hsd[dtype, gpu](s, ctx, tol, max_iter)
+    var xs = solved[0].copy()
+    var x = List[Float64](capacity=n)
+    for j in range(n):
+        var v = s.shift[j] + s.sign[j] * xs[j]
+        if s.twin[j] >= 0:
+            v -= xs[s.twin[j]]
+        x.append(v)
+    return (x^, solved[1], solved[2])
+
+
 def _linprog[
     dtype: DType, gpu: Bool
 ](
@@ -747,15 +776,10 @@ def _linprog[
     ctx: DeviceContext,
 ) raises -> LinprogResult[dtype] where dtype.is_floating_point():
     var n = len(c)
-    var s = _standard_form(c, a_ub, b_ub, a_eq, b_eq, bounds)
-    var solved = _ip_hsd[dtype, gpu](s, ctx, tol, max_iter)
-    var xs = solved[0].copy()
-    var x = List[Float64](capacity=n)
-    for j in range(n):
-        var v = s.shift[j] + s.sign[j] * xs[j]
-        if s.twin[j] >= 0:
-            v -= xs[s.twin[j]]
-        x.append(v)
+    var solved = _lp_host[dtype, gpu](
+        c, a_ub, b_ub, a_eq, b_eq, bounds, tol, max_iter, ctx
+    )
+    var x = solved[0].copy()
     var ax_ub = _ax(a_ub, len(b_ub), n, x)
     var slack = List[Float64](capacity=len(b_ub))
     for i in range(len(b_ub)):
