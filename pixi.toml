@@ -375,6 +375,9 @@ example-spectral = "mojo -I . examples/advanced/spectral.mojo"
 example-stats-surface = "mojo -I . examples/intermediate/stats_surface.mojo"
 example-signal-processing = "mojo -I . examples/intermediate/signal_processing.mojo"
 example-enclosures = "mojo -I . examples/intermediate/enclosures.mojo"
+example-clustering = "mojo -I . examples/intermediate/clustering.mojo"
+example-image-processing = "mojo -I . examples/intermediate/image_processing.mojo"
+example-constrained-optimization = "mojo -I . examples/intermediate/constrained_optimization.mojo"
 examples = { depends-on = [
     "examples-cpu",
     "example-softmax",
@@ -418,6 +421,9 @@ examples-cpu-per-file = { depends-on = [
     "example-enclosures",
     "example-wave-packet",
     "example-interference",
+    "example-clustering",
+    "example-image-processing",
+    "example-constrained-optimization",
 ] }
 bench = "mojo -I . bench/bench_tensor_map.mojo"
 bench-matmul = "mojo -I . bench/bench_matmul.mojo"
