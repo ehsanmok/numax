@@ -39,7 +39,7 @@ modules matter when reading or extending.
 | `cholesky` | `cholesky`, `cholesky_solve` | `_decomp_cholesky` |
 | `ldl` | `ldl`, `LDL` -- Bunch-Kaufman `L D L^T`, SciPy's `(lu, d, perm)` | `_decomp_ldl` |
 | `lu` | `lu` (`P`, `L`, `U`), `PLU`, `lu_factor`, `LU` (and `DynamicLU` for a run-time order), `det`, `slogdet` | `_decomp_lu` |
-| `qr` | `qr_factor`, `QR`, `lstsq`, `rq`, `RQ` | `_decomp_qr` |
+| `qr` | `qr_factor`, `QR` (and `DynamicQR` for run-time extents), `lstsq`, `rq`, `RQ` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `NORM_FRO`, `NORM_INF`, `NORM_NEG_INF` | `_misc` |
 | `eigen` | `sytrd`, `Tridiagonal`, `eigvalsh`, `eigh` (and their `(a, b)` pencil forms), `Eigh`, `gebrd`, `Bidiagonal`, `svdvals`, `svd`, `SVD`, `matrix_rank`, `hessenberg`, `Hessenberg`, `eigvals`, `Eigenvalues`, `schur`, `Schur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
@@ -260,7 +260,7 @@ from .matfuncs import (
     tanm,
 )
 from .misc import cond, NORM_FRO, NORM_INF, NORM_NEG_INF, norm, trace
-from .qr import QR, RQ, lstsq, qr_factor, rq
+from .qr import QR, RQ, DynamicQR, lstsq, qr_factor, rq
 from .solvers import (
     solve_continuous_are,
     solve_continuous_lyapunov,

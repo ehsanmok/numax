@@ -1,4 +1,5 @@
-"""The run-time-shape `lu_factor`, `solve`, `det` and `cholesky` at
+"""The run-time-shape `lu_factor`, `solve`, `det`, `cholesky` and
+`lstsq` at
 `gpu=True`: a
 `Dynamic` matrix on the device, factored and solved there at `float32`,
 against the host run at the same `dtype`."""
@@ -9,7 +10,7 @@ from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Dynamic, _dyn_shape
-from numax.linalg import cholesky, det, solve
+from numax.linalg import cholesky, det, lstsq, solve
 
 comptime f32 = DType.float32
 
@@ -57,6 +58,27 @@ def test_dynamic_cholesky_gpu_matches_host() raises:
     var lh = cholesky(_matrix(n, cpu)).to_host()
     for e in range(n * n):
         assert_almost_equal(Float64(ld[e]), Float64(lh[e]), atol=1e-4)
+
+
+def test_dynamic_lstsq_gpu_matches_host() raises:
+    """A `70 x 40` least-squares solve on the device against the host."""
+    var gpu_ctx = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+
+    def tall(ctx: DeviceContext) raises -> Dynamic[f32, 2]:
+        var values = List[Scalar[f32]](capacity=70 * 40)
+        for i in range(70):
+            for j in range(40):
+                var v = Float64((i * 7 + j * 3) % 5) * 0.25 - 0.5
+                if i == j:
+                    v += 2.0
+                values.append(Scalar[f32](v))
+        return Dynamic[f32, 2](row_major(_dyn_shape[2](70, 40)), values^, ctx)
+
+    var xd = lstsq[gpu=True](tall(gpu_ctx), _vector(70, gpu_ctx)).to_host()
+    var xh = lstsq(tall(cpu), _vector(70, cpu)).to_host()
+    for i in range(40):
+        assert_almost_equal(Float64(xd[i]), Float64(xh[i]), atol=1e-4)
 
 
 def main() raises:

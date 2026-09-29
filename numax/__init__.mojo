@@ -510,6 +510,7 @@ from .linalg import (
     LU,
     DynamicLU,
     QR,
+    DynamicQR,
     tensorsolve,
     SVD,
     Tridiagonal,

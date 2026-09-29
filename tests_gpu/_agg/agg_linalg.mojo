@@ -24,6 +24,9 @@ from test_dynamic_lu_gpu import (
 from test_dynamic_lu_gpu import (
     test_dynamic_cholesky_gpu_matches_host as test_dynamic_lu_gpu__test_dynamic_cholesky_gpu_matches_host,
 )
+from test_dynamic_lu_gpu import (
+    test_dynamic_lstsq_gpu_matches_host as test_dynamic_lu_gpu__test_dynamic_lstsq_gpu_matches_host,
+)
 from test_generalized_eigh_gpu import (
     test_generalized_eigh_on_the_device_matches_the_host as test_generalized_eigh_gpu__test_generalized_eigh_on_the_device_matches_the_host,
 )
@@ -102,6 +105,7 @@ def main() raises:
     # tests_gpu/linalg/test_dynamic_lu_gpu.mojo
     suite.test[test_dynamic_lu_gpu__test_dynamic_solve_gpu_matches_host]()
     suite.test[test_dynamic_lu_gpu__test_dynamic_cholesky_gpu_matches_host]()
+    suite.test[test_dynamic_lu_gpu__test_dynamic_lstsq_gpu_matches_host]()
     # tests_gpu/linalg/test_generalized_eigh_gpu.mojo
     suite.test[
         test_generalized_eigh_gpu__test_generalized_eigh_on_the_device_matches_the_host

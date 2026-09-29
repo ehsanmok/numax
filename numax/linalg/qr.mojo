@@ -37,6 +37,8 @@ from ..core.tensor import (
     _canonical,
     Dynamic,
     Static,
+    _dyn_shape,
+    _same_order,
     transpose,
     zeros,
     zeros_dyn,
@@ -54,7 +56,7 @@ from .panel import (
     pack_block,
     pack_reflectors,
 )
-from .triangular import _solve_triangular_vector, solve_triangular
+from .triangular import _solve_triangular_vector, _trsv, solve_triangular
 from std.collections import Array
 from ..core.numeric import FloatLike
 from ._array.qr import lstsq as _array_lstsq
@@ -993,3 +995,337 @@ def lstsq[
         The length-`n` `x` minimizing `||a x - b||`.
     """
     return _array_lstsq[T=T, m=m, n=n](a, b)
+
+
+struct DynamicQR[dtype: DType, gpu: Bool = False](
+    Movable where dtype.is_floating_point()
+):
+    """A blocked Householder QR of an `m x n` matrix whose extents are
+    run-time values: `QR`'s storage and operations without `m` and `n` in
+    the type. What `qr_factor` returns for a run-time-shaped matrix, and
+    what `lstsq` solves through for one.
+
+    The same `geqr2_panel` and block-reflector updates as `QR`, whose
+    kernels already take their extents at run time.
+    """
+
+    var factored: Dynamic[Self.dtype, 2]
+    """`R` above the diagonal and the reflectors below it, `m x n`."""
+    var taus: Dynamic[Self.dtype, 1]
+    """The `n` reflector scales."""
+    var m: Int
+    """Rows."""
+    var n: Int
+    """Columns."""
+    var block: Int
+    """The panel width the factorization ran at."""
+
+    def __init__(
+        out self,
+        var factored: Dynamic[Self.dtype, 2],
+        var taus: Dynamic[Self.dtype, 1],
+        m: Int,
+        n: Int,
+        block: Int,
+    ):
+        """Wraps a finished factorization; `qr_factor` is what builds one.
+
+        Args:
+            factored: The packed factor.
+            taus: The reflector scales.
+            m: Rows.
+            n: Columns.
+            block: The panel width.
+        """
+        self.factored = factored^
+        self.taus = taus^
+        self.m = m
+        self.n = n
+        self.block = block
+
+    def r(
+        mut self,
+    ) raises -> Dynamic[Self.dtype, 2] where Self.dtype.is_floating_point():
+        """`R`, `n x n` upper triangular, as `QR.r`.
+
+        Returns:
+            A copy of `R` on the factorization's device.
+
+        Raises:
+            If the allocation or the launch fails.
+        """
+        var ctx = self.factored.context()
+        var out = zeros_dyn[Self.dtype, 2](self.n, self.n, ctx=ctx)
+        var fp = self.factored.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var op = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var n = self.n
+
+        @always_inline
+        def upper[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var fp, var op, var n}:
+            var e = coord_to_index_list(coord)[0]
+            if e // n <= e % n:
+                op[unsafe_offset=e] = fp[unsafe_offset=e]
+
+        elementwise[simd_width=1, target=_target[Self.gpu]()](
+            upper, Coord(self.n * self.n), ctx
+        )
+        ctx.synchronize()
+        return out^
+
+    def q(
+        mut self,
+    ) raises -> Dynamic[Self.dtype, 2] where Self.dtype.is_floating_point():
+        """The thin `Q`, `m x n` with orthonormal columns, as `QR.q`.
+
+        Returns:
+            `Q` on the factorization's device.
+
+        Raises:
+            If an allocation or a launch fails.
+        """
+        var ctx = self.factored.context()
+        var out = zeros_dyn[Self.dtype, 2](self.m, self.n, ctx=ctx)
+        var op = out.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var n = self.n
+
+        @always_inline
+        def identity[w: Int, alignment: Int = 1](coord: Coord) {var op, var n}:
+            var i = coord_to_index_list(coord)[0]
+            op[unsafe_offset=i * n + i] = 1
+
+        elementwise[simd_width=1, target=_target[Self.gpu]()](
+            identity, Coord(self.n), ctx
+        )
+        var ov = out.tile()
+        var work = _ReflectorWork[Self.dtype](self.m, self.n, self.block, ctx)
+        var steps = (self.n + self.block - 1) // self.block
+        for step in range(steps):
+            var k = (steps - 1 - step) * self.block
+            var nb = min(self.block, self.n - k)
+            _apply_block_reflector[transposed=False, gpu=Self.gpu](
+                self.factored.tile(),
+                self.taus.tile(),
+                ov,
+                k,
+                nb,
+                self.m,
+                self.m - k,
+                self.n - k,
+                k,
+                k,
+                work,
+                ctx,
+            )
+        ctx.synchronize()
+        return out^
+
+    def solve[
+        B: TensorLike
+    ](mut self, b: B, block: Int = 16) raises -> Dynamic[Self.dtype, 1] where (
+        Self.dtype.is_floating_point()
+        and B.dtype == Self.dtype
+        and B.LayoutType.rank == 1
+    ):
+        """The least-squares solution of `A x ~= b`, as `QR.solve`: `Q^T b`
+        through the reflectors, then a back substitution against the
+        packed `R`, which is read in place.
+
+        Parameters:
+            B: The tensor type of `b`.
+
+        Args:
+            b: The length-`m` right-hand side.
+            block: The substitution's panel width.
+
+        Returns:
+            The length-`n` `x` minimizing `||A x - b||`.
+
+        Raises:
+            If `b` is not `m` long, or a device operation fails.
+        """
+        if b.size() != self.m:
+            raise Error(
+                "lstsq: b has ", b.size(), " entries for ", self.m, " rows"
+            )
+        var ctx = self.factored.context()
+        var wide = rebind_var[Dynamic[Self.dtype, 2]](
+            _same_order(b, row_major(_dyn_shape[2](self.m, 1)))
+        )
+        var wv = wide.tile()
+        var work = _ReflectorWork[Self.dtype](self.m, 1, self.block, ctx)
+        var steps = (self.n + self.block - 1) // self.block
+        for step in range(steps):
+            var k = step * self.block
+            var nb = min(self.block, self.n - k)
+            _apply_block_reflector[transposed=True, gpu=Self.gpu](
+                self.factored.tile(),
+                self.taus.tile(),
+                wv,
+                k,
+                nb,
+                self.m,
+                self.m - k,
+                1,
+                k,
+                0,
+                work,
+                ctx,
+                full_rows=True,
+            )
+        ctx.synchronize()
+        var head = zeros_dyn[Self.dtype, 1](self.n, ctx=ctx)
+        var wp = wide.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var hp = head.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+
+        @always_inline
+        def narrow[w: Int, alignment: Int = 1](coord: Coord) {var wp, var hp}:
+            var i = coord_to_index_list(coord)[0]
+            hp[unsafe_offset=i] = wp[unsafe_offset=i]
+
+        elementwise[simd_width=1, target=_target[Self.gpu]()](
+            narrow, Coord(self.n), ctx
+        )
+        ctx.synchronize()
+        _ = wide^
+        var fv = self.factored.tile()
+        var hv = head.tile()
+        _trsv[
+            Self.dtype,
+            type_of(fv).LayoutType,
+            type_of(hv).LayoutType,
+            upper=True,
+            unit=False,
+            gpu=Self.gpu,
+        ](fv, hv, self.n, block, ctx)
+        ctx.synchronize()
+        return head^
+
+
+def qr_factor[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16,
+](a: T) raises -> DynamicQR[T.dtype, gpu] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: blocked Householder QR of
+    an `m x n` matrix with `m >= n` whose extents are data. LAPACK's
+    `geqrf`.
+
+    The static overload's loop -- `geqr2_panel`, then the block reflector
+    applied to the trailing columns through three GEMMs -- over a
+    run-time-shaped copy of `a`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the panels and the updates on `a`'s device.
+        block: The panel width.
+
+    Args:
+        a: The `m x n` matrix, `m >= n`.
+
+    Returns:
+        A `DynamicQR` carrying `r`, `q` and `solve`.
+
+    Raises:
+        If `m < n` or `n == 0`, or a device operation fails.
+    """
+    var m = a.dim_at(0)
+    var n = a.dim_at(1)
+    if n < 1 or m < n:
+        raise Error("qr_factor: need m >= n >= 1, got ", m, " x ", n)
+    var ctx = a.context()
+    var factored = rebind_var[Dynamic[T.dtype, 2]](
+        _same_order(a, row_major(_dyn_shape[2](m, n)))
+    )
+    var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
+    var fv = factored.tile()
+    var tv = taus.tile()
+    var sv = scratch.tile()
+    var work = _ReflectorWork[T.dtype](m, n, block, ctx)
+    var k = 0
+    while k < n:
+        var nb = min(block, n - k)
+        comptime if gpu:
+            ctx.enqueue_function[
+                geqr2_panel[
+                    T.dtype,
+                    ALayout=type_of(fv).LayoutType,
+                    TauLayout=type_of(tv).LayoutType,
+                    SLayout=type_of(sv).LayoutType,
+                    gpu=True,
+                ]
+            ](
+                fv,
+                tv,
+                sv,
+                Int32(k),
+                Int32(nb),
+                Int32(m),
+                grid_dim=1,
+                block_dim=_PANEL_THREADS,
+            )
+        else:
+            geqr2_panel(fv, tv, sv, Int32(k), Int32(nb), Int32(m))
+        _apply_block_reflector[transposed=True, gpu=gpu](
+            fv,
+            tv,
+            fv,
+            k,
+            nb,
+            m,
+            m - k,
+            n - k - nb,
+            k,
+            k + nb,
+            work,
+            ctx,
+        )
+        k += nb
+    ctx.synchronize()
+    _ = scratch^
+    return DynamicQR[T.dtype, gpu](factored^, taus^, m, n, block)
+
+
+def lstsq[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16,
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and not (A.LayoutType.all_dims_known and B.LayoutType.all_dims_known)
+):
+    """The run-time-shape overload of `lstsq`: `qr_factor` and
+    `DynamicQR.solve`, the `method="qr"` route. `numpy.linalg.lstsq`'s
+    first return value.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, `m x n` with `m >= n`.
+        B: The `TensorLike` type of `b`, length `m`.
+        gpu: Run the factorization and the solve on the device.
+        block: The panel width.
+
+    Args:
+        a: The design matrix.
+        b: The right-hand side.
+
+    Returns:
+        The length-`n` `x` minimizing `||a x - b||`, on `a`'s device.
+
+    Raises:
+        If `m < n`, `b` is not `m` long, or a device operation fails.
+    """
+    var shaped = rebind_var[Dynamic[A.dtype, 2]](
+        _same_order(a, row_major(_dyn_shape[2](a.dim_at(0), a.dim_at(1))))
+    )
+    var factored = qr_factor[gpu=gpu, block=block](shaped)
+    return factored.solve(b, block)

@@ -323,6 +323,7 @@ from .linalg import (
     LU,
     DynamicLU,
     QR,
+    DynamicQR,
     RQ,
     asum,
     axpy,
