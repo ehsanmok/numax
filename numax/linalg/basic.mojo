@@ -36,7 +36,9 @@ from ..core.tensor import (
     Static,
     Tensor,
     _LayoutOf,
+    _dyn_shape,
     _dyn_shape_from,
+    _same_order,
     eye,
 )
 
@@ -101,6 +103,47 @@ def solve[
     comptime n = dim[A, 0]
     var factorization = lu_factor[gpu=gpu, block=block](a)
     return factorization._solve_vector[block=block](b)
+
+
+def solve[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: A, b: B) raises -> Dynamic[A.dtype, 1] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and not (A.LayoutType.all_dims_known and B.LayoutType.all_dims_known)
+):
+    """**Tier 2.** The run-time-shape overload: `x` with `a @ x == b` when
+    either extent is data. `scipy.linalg.solve`.
+
+    `lu_factor`'s run-time-shape overload and `DynamicLU.solve`, the same
+    blocked kernels as the static spelling.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a square rank-2 matrix.
+        B: The `TensorLike` type of `b`, a rank-1 vector of `A.dtype`.
+        gpu: Run the factorization and both substitutions on the device.
+        block: The panel width.
+
+    Args:
+        a: The `n x n` coefficient matrix.
+        b: The length-`n` right-hand side.
+
+    Returns:
+        The length-`n` solution, on `a`'s device.
+
+    Raises:
+        If `a` is not square or `b` is not `n` long, or a device operation
+        fails.
+    """
+    var n = a.dim_at(0)
+    var square = _same_order(a, row_major(_dyn_shape[2](n, a.dim_at(1))))
+    var factored = lu_factor[gpu=gpu, block=block](square)
+    return factored.solve(b, block)
 
 
 def inverse[

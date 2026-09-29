@@ -39,7 +39,15 @@ from std.sys.info import align_of
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Dynamic, Static, copy, zeros, zeros_dyn
+from ..core.tensor import (
+    Dynamic,
+    Static,
+    _dyn_shape,
+    _same_order,
+    copy,
+    zeros,
+    zeros_dyn,
+)
 
 from .blas import _target
 from .common import _mut_view, _mut_view_as, _Dense
@@ -977,18 +985,31 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
     return _array_lu[T=T, n=n](a)
 
 
-struct _LURuntime[dtype: DType, gpu: Bool](
+struct DynamicLU[dtype: DType, gpu: Bool](
     Movable where dtype.is_floating_point()
 ):
     """A pivoted LU of a matrix whose order is a run-time value: `LU`'s
-    storage without the order in the type. What a caller whose system
-    size is data -- `numax.integrate.solve_bvp`'s collocation system,
-    whose mesh grows -- factors through `_lu_factor_runtime`."""
+    storage and operations without the order in the type. `lu_factor`
+    returns it for a `Dynamic` (or any run-time-shaped) square matrix, and
+    a caller whose system size is data -- `numax.integrate.solve_bvp`'s
+    collocation system, whose mesh grows -- factors through it.
+
+    The same blocked factorization as `LU`: the `getrf2` panel, the
+    block-row solve and the trailing update through `matmul`'s epilogue,
+    whose kernels already take their extents at run time. `gpu` is in the
+    type for the reason it is in `LU`'s.
+    """
 
     var factored: Dynamic[Self.dtype, 2]
+    """The packed `n x n` `L`/`U` factor, on the device."""
     var pivots: Dynamic[DType.int32, 1]
+    """LAPACK-style row interchanges; the head `n` entries are meaningful."""
     var info: Dynamic[DType.int32, 1]
+    """Nonzero when a pivot was exactly zero."""
     var n: Int
+    """The order."""
+    var sign: Int
+    """`+1` or `-1`, the parity of the row swaps; `det`'s sign."""
 
     def __init__(
         out self,
@@ -996,22 +1017,68 @@ struct _LURuntime[dtype: DType, gpu: Bool](
         var pivots: Dynamic[DType.int32, 1],
         var info: Dynamic[DType.int32, 1],
         n: Int,
+        sign: Int,
     ):
+        """Wraps a finished factorization; `lu_factor` is what builds one.
+
+        Args:
+            factored: The packed `L`/`U` factor.
+            pivots: The row interchanges.
+            info: The zero-pivot flag.
+            n: The order.
+            sign: The swap parity.
+        """
         self.factored = factored^
         self.pivots = pivots^
         self.info = info^
         self.n = n
+        self.sign = sign
 
     def singular(mut self) raises -> Bool:
-        """Whether a pivot was exactly zero; one scalar read back."""
+        """Whether a pivot was exactly zero; one scalar read back.
+
+        Returns:
+            `True` when the factored matrix is exactly singular.
+
+        Raises:
+            If the read-back fails.
+        """
         return Int(self.info.to_host()[0]) != 0
 
-    def solve(
-        mut self, b: Dynamic[Self.dtype, 1], block: Int = 16
-    ) raises -> Dynamic[Self.dtype, 1] where Self.dtype.is_floating_point():
+    def solve[
+        B: TensorLike
+    ](mut self, b: B, block: Int = 16) raises -> Dynamic[Self.dtype, 1] where (
+        Self.dtype.is_floating_point()
+        and B.dtype == Self.dtype
+        and B.LayoutType.rank == 1
+    ):
         """`A^-1 b`: the interchanges, then the two blocked triangular
-        solves, on the factorization's device."""
-        var x = copy(b)
+        solves, on the factorization's device. `scipy.linalg.lu_solve`.
+
+        Parameters:
+            B: The tensor type of `b`.
+
+        Args:
+            b: The length-`n` right-hand side.
+            block: The substitutions' panel width.
+
+        Returns:
+            The length-`n` solution, on the factorization's device.
+
+        Raises:
+            If `b` is not `n` long, or a device operation fails.
+        """
+        if b.size() != self.n:
+            raise Error(
+                "lu_solve: b has ",
+                b.size(),
+                " entries for an order-",
+                self.n,
+                " factorization",
+            )
+        var x = rebind_var[Dynamic[Self.dtype, 1]](
+            _same_order(b, row_major(_dyn_shape[1](self.n)))
+        )
         var ctx = self.factored.context()
         var fv = self.factored.tile()
         var xv = x.tile()
@@ -1046,13 +1113,86 @@ struct _LURuntime[dtype: DType, gpu: Bool](
         ctx.synchronize()
         return x^
 
+    def _diagonal(
+        mut self,
+    ) raises -> List[Scalar[Self.dtype]] where Self.dtype.is_floating_point():
+        """`U`'s diagonal on the host, gathered on the device first so the
+        transfer is `O(n)`."""
+        var ctx = self.factored.context()
+        var diagonal = Dynamic[Self.dtype, 1](
+            row_major(_dyn_shape[1](self.n)), ctx
+        )
+        var fp = self.factored.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var dp = diagonal.tile().ptr.unsafe_origin_cast[MutAnyOrigin]()
+        var n = self.n
+
+        @always_inline
+        def gather[
+            w: Int, alignment: Int = 1
+        ](coord: Coord) {var fp, var dp, var n}:
+            var i = coord_to_index_list(coord)[0]
+            dp[unsafe_offset=i] = fp[unsafe_offset=i * n + i]
+
+        elementwise[simd_width=1, target=_target[Self.gpu]()](
+            gather, Coord(self.n), ctx
+        )
+        ctx.synchronize()
+        return diagonal.to_host()
+
+    def det(
+        mut self,
+    ) raises -> Scalar[Self.dtype] where Self.dtype.is_floating_point():
+        """`det(A)`: the product of `U`'s diagonal times the swap parity,
+        as `LU.det`.
+
+        Returns:
+            The determinant, `0` when the matrix is singular.
+
+        Raises:
+            If the diagonal gather or its read-back fails.
+        """
+        var values = self._diagonal()
+        var product = Scalar[Self.dtype](self.sign)
+        for i in range(self.n):
+            product *= values[i]
+        return product
+
+    def slogdet(
+        mut self,
+    ) raises -> Tuple[
+        Scalar[Self.dtype], Scalar[Self.dtype]
+    ] where Self.dtype.is_floating_point():
+        """`(sign, ln|det(A)|)`, as `LU.slogdet`; `(0, -inf)` when the
+        matrix is singular.
+
+        Returns:
+            The sign and the log-magnitude of the determinant.
+
+        Raises:
+            If the diagonal gather or its read-back fails.
+        """
+        var values = self._diagonal()
+        var sign = Scalar[Self.dtype](self.sign)
+        var total = Scalar[Self.dtype](0)
+        for i in range(self.n):
+            var entry = values[i]
+            if entry == 0:
+                return (
+                    Scalar[Self.dtype](0),
+                    Scalar[Self.dtype](_log(Float64(0))),
+                )
+            if entry < 0:
+                sign = -sign
+            total += _log(abs(entry))
+        return (sign, total)
+
 
 def _lu_factor_runtime[
     dtype: DType,
     gpu: Bool,
     block: Int = 16 if gpu else 32,
     base: Int = 16,
-](a: Dynamic[dtype, 2]) raises -> _LURuntime[
+](a: Dynamic[dtype, 2]) raises -> DynamicLU[
     dtype, gpu
 ] where dtype.is_floating_point():
     """`lu_factor`'s blocked right-looking factorization -- the recursive
@@ -1144,4 +1284,117 @@ def _lu_factor_runtime[
     _ = left_operand^
     _ = right_operand^
     _ = scratch^
-    return _LURuntime[dtype, gpu](work^, pivots^, info^, n)
+    var recorded = pivots.to_host()
+    var sign = 1
+    for j in range(n):
+        if Int(recorded[j]) != j:
+            sign = -sign
+    return DynamicLU[dtype, gpu](work^, pivots^, info^, n, sign)
+
+
+def _as_dynamic_square[
+    T: TensorLike
+](a: T, name: StaticString) raises -> Dynamic[T.dtype, 2] where (
+    T.LayoutType.rank == 2
+):
+    """`a` as a run-time-shaped row-major copy, raising unless square."""
+    var n = a.dim_at(0)
+    if a.dim_at(1) != n:
+        raise Error(
+            name, ": the matrix must be square, got ", n, " x ", a.dim_at(1)
+        )
+    return _same_order(a, row_major(_dyn_shape[2](n, n)))
+
+
+def lu_factor[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> DynamicLU[T.dtype, gpu] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: factor a square matrix
+    whose order is data, `P @ L @ U`, blocked. `scipy.linalg.lu_factor`.
+
+    The same algorithm and kernels as the static overload; the order lives
+    in `DynamicLU` rather than in the type, so one compiled program
+    factors any size.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the factorization on `a`'s device.
+        block: The panel width.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        A `DynamicLU` carrying `solve`, `det` and `slogdet`.
+
+    Raises:
+        If `a` is not square, or a device operation fails.
+    """
+    return _lu_factor_runtime[T.dtype, gpu, block](
+        _as_dynamic_square(a, "lu_factor")
+    )
+
+
+def det[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> Scalar[T.dtype] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload of `det`: `lu_factor` and
+    `DynamicLU.det`. `scipy.linalg.det`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the factorization on `a`'s device.
+        block: The panel width.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        The determinant, `0` when `a` is singular.
+
+    Raises:
+        If `a` is not square, or a device operation fails.
+    """
+    var factored = lu_factor[gpu=gpu, block=block](a)
+    return factored.det()
+
+
+def slogdet[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 16 if gpu else 32,
+](a: T) raises -> Tuple[Scalar[T.dtype], Scalar[T.dtype]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """The run-time-shape overload of `slogdet`. `numpy.linalg.slogdet`.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the factorization on `a`'s device.
+        block: The panel width.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        The pair `(sign, ln|det(a)|)`; `(0, -inf)` when `a` is singular.
+
+    Raises:
+        If `a` is not square, or a device operation fails.
+    """
+    var factored = lu_factor[gpu=gpu, block=block](a)
+    return factored.slogdet()

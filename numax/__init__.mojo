@@ -508,6 +508,7 @@ from .linalg import (
     Eigh,
     tensorinv,
     LU,
+    DynamicLU,
     QR,
     tensorsolve,
     SVD,

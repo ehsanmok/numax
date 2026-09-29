@@ -57,7 +57,7 @@ from ..core._drive import _check_device, _notice
 from ..core.tensorlike import TensorLike
 from ..core.tensor import Dynamic, _dyn_shape, _same_order, asarray
 from ..linalg.blas import matmul
-from ..linalg.lu import _LURuntime, _lu_factor_runtime
+from ..linalg.lu import DynamicLU, _lu_factor_runtime
 
 
 def _target[gpu: Bool]() -> StaticString:
@@ -410,7 +410,7 @@ struct _Normal[dtype: DType, gpu: Bool](
 
     def factor(
         mut self, d: List[Float64]
-    ) raises -> _LURuntime[
+    ) raises -> DynamicLU[
         Self.dtype, Self.gpu
     ] where Self.dtype.is_floating_point():
         """The LU of `A diag(d) A^T`."""
@@ -449,7 +449,7 @@ def _sym_solve[
 ](
     s: _Standard,
     dinv: List[Float64],
-    mut lu: Optional[_LURuntime[dtype, gpu]],
+    mut lu: Optional[DynamicLU[dtype, gpu]],
     r1: List[Float64],
     r2: List[Float64],
 ) raises -> Tuple[List[Float64], List[Float64]] where dtype.is_floating_point():
@@ -476,7 +476,7 @@ def _sym_solve[
 
 def _solve[
     dtype: DType, gpu: Bool
-](mut lu: _LURuntime[dtype, gpu], r: List[Float64]) raises -> List[
+](mut lu: DynamicLU[dtype, gpu], r: List[Float64]) raises -> List[
     Float64
 ] where dtype.is_floating_point():
     """`M^-1 r` through the device factorization, read back."""
@@ -636,7 +636,7 @@ def _ip_hsd[
         var failed = False
         var p = List[Float64]()
         var q = List[Float64]()
-        var lu = Optional[_LURuntime[dtype, gpu]]()
+        var lu = Optional[DynamicLU[dtype, gpu]]()
         if m > 0:
             lu = normal.factor(dinv)
             if lu.value().singular():
