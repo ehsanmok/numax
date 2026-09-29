@@ -177,11 +177,14 @@ rotation window. Because the reduction's width moves `H` in the last bits
 and the chase's deflation order is not continuous in `H`, two widths may
 return equally valid Schur forms with the diagonal in a different order.
 
-What stays on the host there is `T` itself. The far-from-diagonal row and
-column updates can be deferred only one sweep at a time, so batching them
-means multishift QR with aggressive early deflation (`dhseqr`) -- a
-different algorithm, filed for 0.3, with the measured split in `schur`'s
-own docstring.
+That is the path at or below `n = 75`. Above it the host iteration is
+LAPACK's `dhseqr` itself, transcribed in the private `_multishift` module:
+small-bulge multishift QR with aggressive early deflation, which chases
+many shifts per sweep through a window and applies the window's
+accumulated transformation to the rest of `T` and to a host `Z_h` as one
+product -- the batching of the far-from-diagonal updates the double-shift
+chase could only defer one sweep at a time. `schur` then returns `Q Z_h`
+through one `matmul`; the measured split is in `schur`'s own docstring.
 
 `qr` is the one operation the two tiers spell differently. `qr_factor`
 returns a `QR` rather than a `(R, Q)` tuple, because a `Tuple` of

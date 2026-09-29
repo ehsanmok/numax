@@ -306,26 +306,19 @@ has each algorithm and its ceiling.
   the reduction is 92% of a values-only SVD and the vectors cost 120 ms;
   `eigvalsh` is 142 ms at `block = 32` and 74.8 at `block = 8`, nearly all
   of it `sytrd`. `svd` at 0.056 of LAPACK is the row this would move.
-  Then the Francis double-shift QR
-  iteration -- EISPACK's `hqr2`, LAPACK's `dlahqr` -- runs on the host,
-  `eigvals` reading the eigenvalues off its deflations and `schur` keeping
-  the quasi-triangular `T` and accumulating the chase's transformations
-  into `Z^T` device-resident, brought back through the reduction's `Q`
-  under `transpose_b=True`. What is left on `schur`'s host side is `T`
-  itself: the far-from-diagonal row and column updates can be deferred only
-  one sweep at a time, because the next chase reads rows a deferred update
-  would already have written, so batching them across sweeps needs many
-  shifts per sweep. **Multishift QR with aggressive early deflation
-  (`dhseqr` driving `dlaqr5`) is therefore filed for 0.3**, as a different
-  algorithm rather than a different schedule; the interim is that `T`'s row
-  update runs down three contiguous rows as one SIMD walk while its column
-  update strides by `n` and stays scalar. The size of the filing, measured
-  on an M3 Pro at `n = 1024`, `float32`: `eigvals` is 920 ms of which the
-  blocked `lahr2` reduction is about 146, so five sixths of the call is the
-  host Francis iteration, and `schur` is 1,056 ms on top of that. Those are
-  0.15 and 0.16 of LAPACK where the factorizations reach 0.23 to 0.66, so
-  this one item is most of the remaining spectral gap on the general side. `schur`'s own docstring carries
-  the measured split, and `numax/linalg/__init__.mojo` the reasoning.
+  Then the QR iteration runs on the host. Above `n = 75` it is LAPACK's
+  `dhseqr` path, transcribed from the reference implementation
+  (`numax/linalg/_multishift.mojo`): `dlaqr0` driving `dlaqr3`'s
+  aggressive early deflation and `dlaqr5`'s chain of small bulges, whose
+  accumulated window transformation reaches the rest of `H` (and, for
+  `schur`, the host `Z_h`) as one product per window; at or below it, the
+  Francis double-shift `_hqr`, with `schur`'s transformations batched into
+  `Z^T` device-resident. `schur` returns `Q Z_h` through one `matmul`.
+  Measured on an M3 Pro at `n = 1024`, `float32`, against Accelerate in the
+  same session: `eigvals` went from 920 ms (0.15 of LAPACK) to 203 (0.70)
+  and `schur` from 1,056 (0.16) to 351 (0.45); what is left in `eigvals`
+  is mostly the `lahr2` reduction. `schur`'s own docstring carries the
+  split, and `numax/linalg/__init__.mojo` the reasoning.
 - **FFT.** Only `nn.irfft`: inverse real, last dimension, NVIDIA-only, a thin
   wrapper over the *private* `_cufft` package. No forward FFT anywhere, and
   nothing at all on Metal or AMD, so `numax.fft` over `Tensor` is an

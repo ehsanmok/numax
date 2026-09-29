@@ -675,8 +675,8 @@ so the third digit is not a measurement:
 | `eigh` | 199 | 48.5 | 88.8 | 108.9 | **0.45** | 0.015 |
 | `svdvals` | 1,459 | 2.0 | 50.1 | 57.2 | 0.034 | 0.022 |
 | `svd` | 1,583 | 14.9 | 89.1 | 265.0 | 0.056 | 0.002 |
-| `eigvals` | 920 | 11.7 | 139.2 | 77.1 | **0.15** | 0.056 |
-| `schur` | 1,056 | 25.4 | 165.3 | 162.4 | **0.16** | 0.021 |
+| `eigvals` | 203 | 52.9 | 142.4 | 75.4 | **0.70** | 0.056 |
+| `schur` | 351 | 76.5 | 158.9 | 168.9 | **0.45** | 0.021 |
 
 The last column is the table this section shipped with, and every row
 above it is the same call on the same machine, so the two columns are a
@@ -714,17 +714,19 @@ iteration in any of them:
   vectors -- the windowed rotation GEMMs plus `orgtr`'s panel walk --
   cost about 57 ms for `9n^3` of work. That is the shape the whole
   accumulation design was for.
-- **`schur` and `eigvals` are the host Francis iteration.** `eigvals` is
-  920 ms of which the `lahr2` reduction is about 146, so five sixths of
-  the call is `_hqr` on the host; `schur` adds 136 ms of Schur vectors
-  and its far-from-diagonal `T` update on top. Only multishift QR with
-  aggressive early deflation moves that term, and it is 0.3 work, filed
-  in `docs/parity.md` with these numbers.
+- **`schur` and `eigvals` now run LAPACK's multishift QR.** The two rows
+  were 920 and 1,056 ms (0.15 and 0.16) while the host iteration was the
+  double-shift Francis loop, five sixths of `eigvals`. Above `n = 75` it
+  is now `dhseqr`'s small-bulge multishift QR with aggressive early
+  deflation (`numax/linalg/_multishift.mojo`), whose window updates are
+  products, and the two rows were re-measured with LAPACK's beside them:
+  203 and 351 ms, 0.70 and 0.45. `eigvals` is now mostly the `lahr2`
+  reduction (about 146 ms); `schur` adds `.q()` and the `Q Z_h` product.
 
 **`float32` residuals are LAPACK's too**, and on three rows better.
 numax's trace gap on `eigvalsh` at `n = 1024` is 0.0041 against
-Accelerate's 0.375, its `eigvals` gap 0.106 against 0.833 and its `schur`
-residual 0.0091 against 0.0188; `svd` is a tie at 0.0106 against 0.0100,
+Accelerate's 0.375, its `eigvals` gap 0.202 against 0.833 and its `schur`
+residual 0.0100 against 0.0188; `svd` is a tie at 0.0106 against 0.0100,
 and the two numax loses are `eigh` at 1.5e-3 against 2.7e-4 and `svdvals`
 at 5.5e-7 against 3.8e-8. All at the same precision, not a wider one: the
 band iteration runs at the caller's `dtype` throughout (`_tql` is generic

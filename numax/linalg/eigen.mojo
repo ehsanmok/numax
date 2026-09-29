@@ -44,6 +44,7 @@ from std.math import copysign as _copysign, hypot as _hypot, sqrt as _sqrt
 from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
+from ._multishift import _NMIN, _hseqr
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import (
     Dynamic,
@@ -2195,11 +2196,13 @@ def eigvals[
     device; `sytrd` says what stays on the host and why.
 
     `hessenberg` reduces `a` device-resident with the cubic term in
-    `linalg.matmul`, then the Francis double-shift QR iteration runs on
-    the Hessenberg matrix on the host -- `O(n^2)` per sweep and a few
-    sweeps per eigenvalue, tier 2 by numax's definition and declared so in
-    `_hqr` where it happens. Nothing is accumulated, so this is the cheap
-    half of `schur`. `eigvalsh` is the symmetric route, with real output
+    `linalg.matmul`, then the QR iteration runs on the Hessenberg matrix
+    on the host, tier 2 by numax's definition. Above `n = 75` it is
+    LAPACK's small-bulge multishift QR with aggressive early deflation
+    (`numax/linalg/_multishift.mojo`, `dhseqr`'s path), whose sweep
+    updates are window-sized products; at or below it, the Francis
+    double-shift iteration in `_hqr`. Nothing is accumulated, so this is
+    the cheap half of `schur`. `eigvalsh` is the symmetric route, with real output
     and a better algorithm; use it when the matrix is symmetric.
 
     Eigenvalues come out in LAPACK's deflation order, not sorted; a
@@ -2226,8 +2229,8 @@ def eigvals[
         parts in `im`, in deflation order.
 
     Raises:
-        If the Francis QR iteration does not converge within `30 n`
-        sweeps, which means `a` holds a NaN or an infinity, or if a device
+        If the QR iteration does not converge within its iteration budget,
+        which means `a` holds a NaN or an infinity, or if a device
         operation fails.
     """
     comptime n = dim[T, 0]
@@ -2237,6 +2240,19 @@ def eigvals[
     # `wantz=False` makes the batch's `vectors` false, which shrinks every
     # buffer in it to one element; the values-only route pushes nothing and
     # allocates nothing for vectors it never forms.
+    comptime if n > _NMIN:
+        var wr = List[Scalar[T.dtype]](length=n, fill=0)
+        var wi = List[Scalar[T.dtype]](length=n, fill=0)
+        var unused = List[Scalar[T.dtype]](length=1, fill=0)
+        var info = _hseqr[T.dtype](False, False, n, h, wr, wi, unused)
+        if info != 0:
+            raise Error(
+                "eigvals: the multishift QR iteration did not converge;"
+                " the matrix likely holds a NaN or an infinity"
+            )
+        var re = Static[T.dtype, n](wr^, ctx)
+        var im = Static[T.dtype, n](wi^, ctx)
+        return Eigenvalues[T.dtype, n](re^, im^)
     var acc = _RotationBatch[T.dtype, n, gpu, False, 2, True](1, ctx)
     var values = _hqr[wantt=False, wantz=False, N=n, gpu=gpu](h, acc, n, ctx)
     var re = Static[T.dtype, n](values[0].copy(), ctx)
@@ -2321,15 +2337,18 @@ def schur[
     **`gpu=True`** runs the reduction and every `O(n^3)` product on the
     device; `sytrd` says what stays on the host and why.
 
-    Three steps, and the Schur vectors never touch the host in any of
-    them. `hessenberg` reduces `a` device-resident. The Francis iteration
-    triangularizes the Hessenberg matrix on the host, its order-three
-    reflectors and its `2 x 2` split rotations pushed into a
-    `_RotationBatch` that reorders each batch of sweeps into windows of
-    commuting entries and applies every window to `Z^T` as one `matmul`.
-    And the Schur vectors of `a` are `Q Z_h` with `Q` the reduction's
-    factor, which is `inner`'s `transpose_b=True` product against that
-    same `Z^T`, so `Z` is never transposed back.
+    Three steps. `hessenberg` reduces `a` device-resident. Above `n = 75`
+    the multishift QR with aggressive early deflation
+    (`numax/linalg/_multishift.mojo`) triangularizes the Hessenberg matrix
+    on the host with the Hessenberg-level Schur vectors `Z_h` accumulated
+    there too, every window's transformation applied to `T` and `Z_h` as
+    one product, and the Schur vectors of `a` are `Q Z_h`, one `matmul`
+    on the tensor's device. At or below it the Francis iteration runs
+    instead, its order-three reflectors and `2 x 2` split rotations pushed
+    into a `_RotationBatch` that applies each window of commuting entries
+    to `Z^T` as one `matmul`, so `Z` stays on the device throughout; the
+    Schur vectors are then `inner`'s `transpose_b=True` product of `Q`
+    against that `Z^T`.
 
     `block` names three knobs, as `eigh`'s and `svd`'s do. `hessenberg`
     takes it as the **`lahr2` panel width** of the reduction and as the
@@ -2348,24 +2367,15 @@ def schur[
     the same eigenvalues in a different order along the diagonal. A caller
     who needs a reproducible ordering fixes `block`.
 
-    **`ponytail:` `T` is still built on the host, and that is now the
-    whole of the band iteration's cost.** At `n = 1024`, `float32`, on an
-    M3 Pro: `schur` is 1,099 ms, of which the `lahr2`-blocked `hessenberg`
-    is 146 and the Francis iteration the rest -- about 780 ms for the
-    eigenvalues alone and roughly 175 more for carrying the full `T`. The
-    vector accumulation is windowed GEMMs, down from 3,156 ms of scalar
-    host rotations before it was batched.
-
-    That `T` term stays because the far-from-diagonal `wantt` row and
-    column updates can be deferred only one sweep at a time -- the next
-    chase reads rows a deferred update would already have written -- so
-    batching them across sweeps needs many *shifts* per sweep, which is
-    multishift QR with aggressive early deflation (`dhseqr` driving
-    `dlaqr5`): a different algorithm, not a different schedule for this
-    one. Filed for 0.3. The cheap interim is here and took that 153 ms to
-    105: the row update runs down three contiguous rows, so it is one SIMD
-    walk (`_chase_rows`), while the column update strides by `n` and stays
-    scalar.
+    **`ponytail:` the QR iteration is host work.** At `n = 1024`,
+    `float32`, on an M3 Pro, `schur` is about 250 ms, of which the
+    `lahr2`-blocked `hessenberg` and `.q()` are most; the multishift
+    iteration moved the host term from about 520 ms (the double-shift
+    Francis loop carrying the full `T`) to about 100, because its
+    far-from-diagonal updates are window-sized products rather than
+    rank-3 updates per sweep. What stays host-side is the chase inside
+    each window and the early-deflation Schur decompositions, which are
+    sequential by construction.
 
     This is the form every matrix function in `numax.linalg.matfuncs`
     beyond `expm` is built on.
@@ -2384,14 +2394,31 @@ def schur[
         orthogonal Schur vectors `z`, with `a == z t z^T`.
 
     Raises:
-        If the Francis QR iteration does not converge within `30 n`
-        sweeps, which means `a` holds a NaN or an infinity, or if a device
+        If the QR iteration does not converge within its iteration budget,
+        which means `a` holds a NaN or an infinity, or if a device
         operation fails.
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
     var reduced = hessenberg[gpu=gpu, block=block](a)
     var h = reduced.h.to_host()
+    comptime if n > _NMIN:
+        var wr = List[Scalar[T.dtype]](length=n, fill=0)
+        var wi = List[Scalar[T.dtype]](length=n, fill=0)
+        var z = List[Scalar[T.dtype]](length=n * n, fill=0)
+        for i in range(n):
+            z[i * n + i] = 1
+        var info = _hseqr[T.dtype](True, True, n, h, wr, wi, z)
+        if info != 0:
+            raise Error(
+                "schur: the multishift QR iteration did not converge;"
+                " the matrix likely holds a NaN or an infinity"
+            )
+        var t = Static[T.dtype, n, n](h^, ctx)
+        var zt = Static[T.dtype, n, n](z^, ctx)
+        var q = reduced.q()
+        var vectors = matmul[gpu=gpu](q, zt)
+        return Schur[T.dtype, n](t^, vectors^)
     var acc = _RotationBatch[T.dtype, n, gpu, True, 2, True](block, ctx)
     _ = _hqr[wantt=True, wantz=True, N=n, gpu=gpu](h, acc, n, ctx)
     acc.finish(ctx)
