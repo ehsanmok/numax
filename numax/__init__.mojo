@@ -571,6 +571,11 @@ from .interpolate.spline import (
 )
 from .interpolate.chebyshev import Chebyshev, chebval
 from .interpolate.grid import RegularGridInterpolator, interpn
+from .interpolate.scattered import (
+    NearestNDInterpolator,
+    RBFInterpolator,
+    griddata,
+)
 
 # Discrete Fourier transforms -- `numax.fft`, the `Tensor` tier.
 # `circular_convolve` is `Array`-tier only, one import away at

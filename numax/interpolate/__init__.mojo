@@ -11,7 +11,7 @@ register tier. The register tier's own names come from here too.
 
 | Tier | Holds | Good for |
 | --- | --- | --- |
-| `Tensor`, `Plain`-only, tier 2 | `interp` (NumPy's linear lookup), `horner`, the legacy `numpy.poly*` family (`polyval`, `polyder`, `polyint`, `roots`, `polyfit`, all descending-coefficient where `horner` is ascending), and the cubic splines on knots that need not be uniform -- `CubicSpline` with SciPy's `bc_type`s, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- each evaluating any derivative order and integrating; `BSpline` of any degree and `make_interp_spline`; `Chebyshev.fit(x, y)`, the least-squares series through `numax.linalg.lstsq`, with `chebval`; `RegularGridInterpolator` on a 2-D rectilinear grid and `interpn` in up to eight dimensions, linear or nearest | a device buffer of samples queried at a tensor of points |
+| `Tensor`, `Plain`-only, tier 2 | `interp` (NumPy's linear lookup), `horner`, the legacy `numpy.poly*` family (`polyval`, `polyder`, `polyint`, `roots`, `polyfit`, all descending-coefficient where `horner` is ascending), and the cubic splines on knots that need not be uniform -- `CubicSpline` with SciPy's `bc_type`s, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- each evaluating any derivative order and integrating; `BSpline` of any degree and `make_interp_spline`; `Chebyshev.fit(x, y)`, the least-squares series through `numax.linalg.lstsq`, with `chebval`; `RegularGridInterpolator` on a 2-D rectilinear grid and `interpn` in up to eight dimensions, linear or nearest; the scattered-data `NearestNDInterpolator`, `griddata(method="nearest")` and `RBFInterpolator` | a device buffer of samples queried at a tensor of points |
 | `Array[T, n]` and `FloatLike`, tier 1 | `horner`, `cubic_spline_moments`/`cubic_spline_eval` and the natural `ArrayCubicSpline`, `chebyshev_fit`/`chebyshev_eval` and `ArrayChebyshev` for a `FloatLike` function | a handful of knots in registers; differentiates at `Dual` and runs per SIMD lane inside a kernel |
 
 What separates the tiers is the interval
@@ -42,6 +42,7 @@ from .spline import (
 from .chebyshev import Chebyshev, chebval
 from .grid import RegularGridInterpolator, interpn
 from .bspline import BSpline, make_interp_spline
+from .scattered import NearestNDInterpolator, RBFInterpolator, griddata
 from ._array import (
     ArrayChebyshev,
     ArrayCubicSpline,

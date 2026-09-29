@@ -440,6 +440,7 @@ numax's own.
 | `Chebyshev.fit(x, y)`, `chebval` — `numpy.polynomial.chebyshev`'s least-squares fit to *data* on `[min x, max x]`, the Chebyshev Vandermonde solved by `numax.linalg.lstsq`, and Clenshaw evaluation per lane | [`interpolate/chebyshev.mojo`](../numax/interpolate/chebyshev.mojo) |
 | `RegularGridInterpolator` — `scipy.interpolate`'s, in two dimensions: a `rows x cols` value matrix on rectilinear axes, `"linear"` or `"nearest"`, with `bounds_error`, `fill_value` and `extrapolate` (SciPy's `fill_value=None`) | [`interpolate/grid.mojo`](../numax/interpolate/grid.mojo) |
 | `interpn` — `scipy.interpolate.interpn` in up to eight dimensions, linear (the `2^d` cell corners) or nearest, SciPy's out-of-range settings; the axes concatenated in one vector, their lengths read off `values`' shape; one lane per point on the inputs' device, the bounds check a device reduction | [`interpolate/grid.mojo`](../numax/interpolate/grid.mojo) |
+| `RBFInterpolator`, `NearestNDInterpolator`, `griddata` — scattered data in any dimension: SciPy's radial basis interpolant (eight kernels, polynomial tail, smoothing) assembled and factored on the device, the nearest site through `KDTree`, and `griddata(method="nearest")` | [`interpolate/scattered.mojo`](../numax/interpolate/scattered.mojo) |
 
 Tier 2: one `elementwise` launch over the queries, and inside it a lane
 bisects the knots — the data-dependent branch the `Array` tier cannot make.

@@ -501,6 +501,11 @@ from .interpolate.spline import (
 )
 from .interpolate.chebyshev import Chebyshev, chebval
 from .interpolate.grid import RegularGridInterpolator, interpn
+from .interpolate.scattered import (
+    NearestNDInterpolator,
+    RBFInterpolator,
+    griddata,
+)
 from .fft.fft import (
     Spectrum,
     fft,

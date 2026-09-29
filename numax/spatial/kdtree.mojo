@@ -235,7 +235,7 @@ struct KDTree[dtype: DType, gpu: Bool = False](Movable):
 
     def query[
         count: Int = 1, Q: TensorLike = Dynamic[Self.dtype, 2]
-    ](mut self, x: Q) raises -> KDQuery[Self.dtype] where (
+    ](self, x: Q) raises -> KDQuery[Self.dtype] where (
         Q.dtype == Self.dtype
         and Q.LayoutType.rank == 2
         and Self.dtype.is_floating_point()
@@ -384,7 +384,7 @@ struct KDTree[dtype: DType, gpu: Bool = False](Movable):
 
     def query_ball_point[
         Q: TensorLike
-    ](mut self, x: Q, r: Float64) raises -> BallPoints where (
+    ](self, x: Q, r: Float64) raises -> BallPoints where (
         Q.dtype == Self.dtype
         and Q.LayoutType.rank == 2
         and Self.dtype.is_floating_point()
@@ -441,7 +441,7 @@ struct KDTree[dtype: DType, gpu: Bool = False](Movable):
     def _ball[
         fill: Bool
     ](
-        mut self,
+        self,
         mut xs: Dynamic[Self.dtype, 2],
         mut offsets: Dynamic[DType.int64, 1],
         mut out: Dynamic[DType.int64, 1],

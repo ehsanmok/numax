@@ -248,7 +248,8 @@ Subpackages mirror NumPy/SciPy names: `core`, `linalg`, `optimize`,
 (incomplete gamma/beta), `stats` → `linalg` (Cholesky and `matmul`, for
 `Generator.multivariate_normal`), `integrate` → `special` (Legendre roots),
 `optimize` (Newton) and `linalg` (the run-time-order LU `solve_bvp` factors
-its collocation system with), `interpolate` → `linalg` (tridiagonal solve),
+its collocation system with), `interpolate` → `linalg` (tridiagonal solve, the RBF system) and
+`spatial` (`KDTree`, for the scattered-data interpolators),
 `optimize` → `linalg` (Cholesky, for the least-squares normal equations),
 `linalg` → `fft` (`solve_circulant`, which is three transforms and a
 division rather than an elimination), `signal` → `fft` (`fftconvolve`).
