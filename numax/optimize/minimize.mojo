@@ -50,6 +50,12 @@ decision:
   black box -- and takes no `jac`; `f` alone is evaluated, `O(n_vars)`
   line minimizations of a few evaluations each per iteration, on device
   tensors the driver stages.
+- **`"slsqp"`** is the constrained method, reached through its own two
+  overloads -- one taking a list of `LinearConstraint`s and optional
+  `Bounds`, one taking a `NonlinearConstraint` first -- the way SciPy
+  switches to SLSQP when constraints are given. Sequential quadratic
+  programming with a damped BFGS Hessian and an exact dense subproblem;
+  `numax.optimize.slsqp` has the method and its ceiling.
 
 Either way the driver's bookkeeping is a host-side walk over vectors of
 length `n_vars`, so this tier pays for itself when evaluating `f` and `jac`
@@ -87,6 +93,14 @@ from ..core.ops import add, multiply
 from ..linalg.blas import matvec, outer
 
 from .common import _as_tensor
+from .linprog import Bounds
+from .milp import LinearConstraint
+from .slsqp import (
+    NonlinearConstraint,
+    _no_constraint,
+    _no_constraint_jac,
+    _slsqp,
+)
 from std.collections import Array
 from ._array.optimize import ArrayMinimizeResult
 from ..core.numeric import FloatLike
@@ -911,6 +925,178 @@ def minimize[
             method,
             "'; expected 'bfgs', 'l-bfgs', 'cg' or 'powell'.",
         )
+
+
+def minimize[
+    T: TensorLike,
+    f: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Scalar[
+        T.dtype
+    ],
+    jac: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, dim[T, 0]
+    ],
+    method: StaticString = "slsqp",
+](
+    x0: T,
+    constraints: List[LinearConstraint],
+    bounds: Optional[Bounds] = None,
+    tol: Optional[Float64] = None,
+    max_iter: Optional[Int] = None,
+) raises -> MinimizeResult[T.dtype, dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
+    """Minimize `f` subject to linear constraints and bounds.
+    `scipy.optimize.minimize(..., method="SLSQP", constraints=...,
+    bounds=...)` over `Tensor`.
+
+    Sequential quadratic programming, `numax.optimize.slsqp`'s module
+    docstring has the method and its ceiling. SciPy picks SLSQP whenever
+    constraints are given, and so does this overload: `method` defaults
+    to `"slsqp"`, the only one it takes. Pass an empty list for bounds
+    alone. `f` and `jac` are evaluated on `x0`'s device; iterates never
+    leave `bounds`.
+
+    Parameters:
+        T: The tensor type of `x0`, a static rank-1 floating-point vector.
+        f: The objective.
+        jac: Its gradient.
+        method: `"slsqp"`.
+
+    Args:
+        x0: The starting point, moved into `bounds` if outside.
+        constraints: The linear constraints, each `lb <= A x <= ub`.
+        bounds: The per-variable bounds; none when omitted.
+        tol: Kraft's accuracy `acc` on the predicted change, the step and
+            the constraint violation; `1e-8` by default at `float64`,
+            tighter than SciPy's `ftol=1e-6` because the method converges
+            superlinearly and the extra digits cost an iteration or two,
+            and `1e-5` at `float32`, where `f` itself is that coarse.
+        max_iter: The iteration cap; `100` by default, SciPy's.
+
+    Returns:
+        A `MinimizeResult` with the final point, `f` there, the
+        infinity-norm of the Lagrangian's gradient, the iteration count,
+        and whether a stopping test was met.
+
+    Raises:
+        On mismatched constraint shapes, `lb > ub`, or if `f` or `jac`
+        raises.
+    """
+    comptime assert (
+        method == "slsqp" or method == "SLSQP"
+    ), "minimize: the constraint overloads take method='slsqp' only"
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    var ctx = x0.context()
+    var run = _slsqp[
+        dtype,
+        n,
+        0,
+        f,
+        jac,
+        _no_constraint[dtype, n],
+        _no_constraint_jac[dtype, n],
+    ](
+        _to_list(x0),
+        List[Float64](),
+        List[Float64](),
+        constraints,
+        bounds,
+        ctx,
+        tol.value() if tol else (1e-8 if dtype == DType.float64 else 1e-5),
+        max_iter.value() if max_iter else 100,
+    )
+    return MinimizeResult[dtype, n](
+        _as_tensor[dtype, n](run[0], ctx), run[1], run[2], run[3], run[4]
+    )
+
+
+def minimize[
+    T: TensorLike,
+    f: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Scalar[
+        T.dtype
+    ],
+    jac: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, dim[T, 0]
+    ],
+    m: Int,
+    cf: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, m
+    ],
+    cj: def(Static[T.dtype, dim[T, 0]], DeviceContext) raises thin -> Static[
+        T.dtype, m, dim[T, 0]
+    ],
+    method: StaticString = "slsqp",
+](
+    x0: T,
+    constraints: NonlinearConstraint[T.dtype, dim[T, 0], m, cf, cj],
+    linear: List[LinearConstraint] = List[LinearConstraint](),
+    bounds: Optional[Bounds] = None,
+    tol: Optional[Float64] = None,
+    max_iter: Optional[Int] = None,
+) raises -> MinimizeResult[T.dtype, dim[T, 0]] where (
+    T.dtype.is_floating_point()
+    and T.LayoutType.rank == 1
+    and T.LayoutType.all_dims_known
+):
+    """Minimize `f` subject to nonlinear constraints, and optionally
+    linear ones and bounds. `scipy.optimize.minimize(..., method="SLSQP",
+    constraints=[NonlinearConstraint(...), LinearConstraint(...)],
+    bounds=...)` over `Tensor`.
+
+    The linear-constraint overload with a `NonlinearConstraint` in front:
+    its `m` rows are one vector function, so several constraint functions
+    are stacked into one. `numax.optimize.slsqp`'s module docstring has
+    the method and its ceiling.
+
+    Parameters:
+        T: The tensor type of `x0`, a static rank-1 floating-point vector.
+        f: The objective.
+        jac: Its gradient.
+        m: The nonlinear constraint count, inferred from `constraints`.
+        cf: The constraint function, inferred from `constraints`.
+        cj: Its Jacobian, inferred from `constraints`.
+        method: `"slsqp"`.
+
+    Args:
+        x0: The starting point, moved into `bounds` if outside.
+        constraints: The nonlinear constraints, `lb <= cf(x) <= ub`.
+        linear: The linear constraints, each `lb <= A x <= ub`.
+        bounds: The per-variable bounds; none when omitted.
+        tol: Kraft's accuracy `acc`; `1e-8` by default at `float64` and
+            `1e-5` at `float32`.
+        max_iter: The iteration cap; `100` by default.
+
+    Returns:
+        A `MinimizeResult` with the final point, `f` there, the
+        infinity-norm of the Lagrangian's gradient, the iteration count,
+        and whether a stopping test was met.
+
+    Raises:
+        On mismatched constraint shapes, `lb > ub`, or if `f`, `jac`, `cf`
+        or `cj` raises.
+    """
+    comptime assert (
+        method == "slsqp" or method == "SLSQP"
+    ), "minimize: the constraint overloads take method='slsqp' only"
+    comptime dtype = T.dtype
+    comptime n = dim[T, 0]
+    var ctx = x0.context()
+    var run = _slsqp[dtype, n, m, f, jac, cf, cj](
+        _to_list(x0),
+        constraints.lb,
+        constraints.ub,
+        linear,
+        bounds,
+        ctx,
+        tol.value() if tol else (1e-8 if dtype == DType.float64 else 1e-5),
+        max_iter.value() if max_iter else 100,
+    )
+    return MinimizeResult[dtype, n](
+        _as_tensor[dtype, n](run[0], ctx), run[1], run[2], run[3], run[4]
+    )
 
 
 def _descend[

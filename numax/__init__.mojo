@@ -523,6 +523,7 @@ from .optimize.least_squares import FitResult, curve_fit, least_squares
 from .optimize.linear import LinearResult, lsq_linear, nnls
 from .optimize.linprog import Bounds, LinprogResult, linprog
 from .optimize.milp import LinearConstraint, MilpResult, milp
+from .optimize.slsqp import NonlinearConstraint
 from .optimize.minimize import MinimizeResult, minimize
 from .optimize.root import RootResult, root
 

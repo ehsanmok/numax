@@ -11,7 +11,7 @@ register tier's own names are exported here too:
 
 | Tier | Holds | Good for |
 | --- | --- | --- |
-| `Tensor`, `Plain`-only, tier 2 | objectives and fits sized for a tensor: `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, with or without box bounds) keeps BFGS's inverse Hessian on the device, `root` solves its Newton step through `numax.linalg.solve`, a fit's damped step goes through `numax.linalg.lstsq`'s blocked device-resident QR, and `nnls`/`lsq_linear` form their normal equations there |
+| `Tensor`, `Plain`-only, tier 2 | objectives and fits sized for a tensor: `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, with or without box bounds, and `slsqp` under `LinearConstraint`/`NonlinearConstraint`/`Bounds`) keeps BFGS's inverse Hessian on the device, `linprog` and `milp` form their normal matrices there, `root` solves its Newton step through `numax.linalg.solve`, a fit's damped step goes through `numax.linalg.lstsq`'s blocked device-resident QR, and `nnls`/`lsq_linear` form their normal equations there |
 | `Array[T, n]`, `FloatLike`-generic | a handful of scalars, one problem per thread if need be: `minimize` over an `Array` (`bfgs`, `cg`, `nelder_mead`), `root`, `least_squares`/`curve_fit`, `minimize_scalar` (`brent`, `golden`, `fminbound`), `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`) and the fixed-iteration `newton`/`halley`/`bisection` -- the only tier that takes no Jacobian, since it reads one off `Gradient` exactly |
 
 The `Tensor` tier's results: `minimize` with `MinimizeResult`,
@@ -32,6 +32,7 @@ from .least_squares import FitResult, curve_fit, least_squares
 from .linear import LinearResult, lsq_linear, nnls
 from .linprog import Bounds, LinprogResult, linprog
 from .milp import LinearConstraint, MilpResult, milp
+from .slsqp import NonlinearConstraint
 from .minimize import MinimizeResult, minimize
 from .root import RootResult, root
 from ._array import (
