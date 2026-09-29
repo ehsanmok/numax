@@ -538,6 +538,7 @@ from .integrate.integrate import (
     solve_ivp,
     solve_ivp_stiff,
 )
+from .integrate.bvp import BVPResult, solve_bvp
 from .integrate.ode import Step, dopri5, dopri5_step, rk4_system
 from .integrate.quadrature import (
     cumulative_simpson,

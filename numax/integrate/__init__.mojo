@@ -14,6 +14,10 @@ register tier's own names are exported here too:
 | `Tensor`, `Plain`-only, tier 2 | samples the caller already holds: `trapezoid(y, dx)`, `simpson(y, x)`, `cumulative_trapezoid`, `cumulative_simpson`, `romb` -- `scipy.integrate`'s own signatures; and a system whose state is a `Tensor`: `rk4_system`, `dopri5`, `solve_ivp` (with `t_eval`, `dense_output` and an `event` returning an `IVPSolution`), every stage an `elementwise` launch on the state's device |
 | `Array[T, n]` and `FloatLike`, tier 1 | a `FloatLike` integrand: `gauss_legendre[f](a, b)`, `simpson[f](a, b)`, `trapezoid[f](a, b)`, and the fixed-step `rk4`/`dopri5` |
 
+`solve_bvp` (`bvp`) is SciPy's collocation solver for two-point
+boundary-value problems over `Tensor` states, every phase a device
+kernel at `gpu=True`.
+
 It also carries the adaptive scalar
 drivers -- `quad`, `quad_vec`, the scalar `solve_ivp`, `solve_ivp_stiff` --
 plus the fixed-order `fixed_quad` and the product-rule `dblquad` --
@@ -43,6 +47,7 @@ from .integrate import (
     solve_ivp,
     solve_ivp_stiff,
 )
+from .bvp import BVPResult, solve_bvp
 from .ode import Step, dopri5, dopri5_step, rk4_system
 from .quadrature import (
     cumulative_simpson,

@@ -39,7 +39,7 @@ from std.sys.info import align_of
 from std.utils import IndexList
 
 from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
-from ..core.tensor import Static, zeros, zeros_dyn
+from ..core.tensor import Dynamic, Static, copy, zeros, zeros_dyn
 
 from .blas import _target
 from .common import _mut_view, _mut_view_as, _Dense
@@ -975,3 +975,173 @@ def lu[T: FloatLike, n: Int](a: Array[T, n * n]) -> Array[T, n * n]:
         above it, packed.
     """
     return _array_lu[T=T, n=n](a)
+
+
+struct _LURuntime[dtype: DType, gpu: Bool](
+    Movable where dtype.is_floating_point()
+):
+    """A pivoted LU of a matrix whose order is a run-time value: `LU`'s
+    storage without the order in the type. What a caller whose system
+    size is data -- `numax.integrate.solve_bvp`'s collocation system,
+    whose mesh grows -- factors through `_lu_factor_runtime`."""
+
+    var factored: Dynamic[Self.dtype, 2]
+    var pivots: Dynamic[DType.int32, 1]
+    var info: Dynamic[DType.int32, 1]
+    var n: Int
+
+    def __init__(
+        out self,
+        var factored: Dynamic[Self.dtype, 2],
+        var pivots: Dynamic[DType.int32, 1],
+        var info: Dynamic[DType.int32, 1],
+        n: Int,
+    ):
+        self.factored = factored^
+        self.pivots = pivots^
+        self.info = info^
+        self.n = n
+
+    def singular(mut self) raises -> Bool:
+        """Whether a pivot was exactly zero; one scalar read back."""
+        return Int(self.info.to_host()[0]) != 0
+
+    def solve(
+        mut self, b: Dynamic[Self.dtype, 1], block: Int = 16
+    ) raises -> Dynamic[Self.dtype, 1] where Self.dtype.is_floating_point():
+        """`A^-1 b`: the interchanges, then the two blocked triangular
+        solves, on the factorization's device."""
+        var x = copy(b)
+        var ctx = self.factored.context()
+        var fv = self.factored.tile()
+        var xv = x.tile()
+        var pv = self.pivots.tile()
+        comptime if Self.gpu:
+            ctx.enqueue_function[
+                laswp[
+                    Self.dtype,
+                    XLayout=type_of(xv).LayoutType,
+                    PLayout=type_of(pv).LayoutType,
+                    gpu=True,
+                ]
+            ](xv, pv, Int32(self.n), grid_dim=1, block_dim=1)
+        else:
+            laswp(xv, pv, Int32(self.n))
+        _trsv[
+            Self.dtype,
+            type_of(fv).LayoutType,
+            type_of(xv).LayoutType,
+            upper=False,
+            unit=True,
+            gpu=Self.gpu,
+        ](fv, xv, self.n, block, ctx)
+        _trsv[
+            Self.dtype,
+            type_of(fv).LayoutType,
+            type_of(xv).LayoutType,
+            upper=True,
+            unit=False,
+            gpu=Self.gpu,
+        ](fv, xv, self.n, block, ctx)
+        ctx.synchronize()
+        return x^
+
+
+def _lu_factor_runtime[
+    dtype: DType,
+    gpu: Bool,
+    block: Int = 16 if gpu else 32,
+    base: Int = 16,
+](a: Dynamic[dtype, 2]) raises -> _LURuntime[
+    dtype, gpu
+] where dtype.is_floating_point():
+    """`lu_factor`'s blocked right-looking factorization -- the recursive
+    `getrf2` panel, the block-row solve, the trailing update through
+    `matmul`'s epilogue -- over a square matrix whose order is a run-time
+    value. The same kernels, which already take their extents at run time;
+    only the allocations are sized from `a` rather than from the type."""
+    var n = a.dim[0]()
+    var ctx = a.context()
+    var work = copy(a)
+    var pivots = zeros_dyn[DType.int32, 1](n + _PANEL_THREADS, ctx=ctx)
+    var info = zeros_dyn[DType.int32, 1](1, ctx=ctx)
+    var left_operand = zeros_dyn[dtype, 2](n, block, ctx=ctx)
+    var right_operand = zeros_dyn[dtype, 2](block, n, ctx=ctx)
+    var scratch = zeros_dyn[dtype, 2](n, n, ctx=ctx)
+
+    var wv = work.tile()
+    var pv = pivots.tile()
+    var iv = info.tile()
+    var lv = left_operand.tile()
+    var rv = right_operand.tile()
+    var sv = scratch.tile()
+
+    var k = 0
+    while k < n:
+        var nb = min(block, n - k)
+        var panel_left: _Dense[dtype] = TileTensor(
+            lv.ptr_at_offset(Coord(0, 0)), row_major(Coord(n, block))
+        )
+        var panel_right: _Dense[dtype] = TileTensor(
+            rv.ptr_at_offset(Coord(0, 0)), row_major(Coord(block, n))
+        )
+        var panel_product: _Dense[dtype] = TileTensor(
+            sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(n, n))
+        )
+        getrf2[
+            ALayout=type_of(wv).LayoutType,
+            PLayout=type_of(pv).LayoutType,
+            ILayout=type_of(iv).LayoutType,
+            gpu=gpu,
+        ](
+            wv,
+            pv,
+            iv,
+            panel_left,
+            panel_right,
+            panel_product,
+            k,
+            nb,
+            n,
+            base,
+            ctx,
+        )
+        trsm_left_lower_unit[target=_target[gpu]()](wv, k, nb, n, ctx)
+        var m = n - k - nb
+        if m > 0:
+            var start = k + nb
+            var left: _Dense[dtype] = TileTensor(
+                lv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, nb))
+            )
+            var right: _Dense[dtype] = TileTensor(
+                rv.ptr_at_offset(Coord(0, 0)), row_major(Coord(nb, m))
+            )
+            pack_block[target=_target[gpu]()](wv, left, start, k, m, nb, ctx)
+            pack_block[target=_target[gpu]()](wv, right, k, start, nb, m, ctx)
+            var product: _Dense[dtype] = TileTensor(
+                sv.ptr_at_offset(Coord(0, 0)), row_major(Coord(m, m))
+            )
+
+            @__parameter
+            @always_inline
+            @__copy_capture(wv, start)
+            def subtract[
+                _dtype: DType,
+                width: SIMDLength,
+                *,
+                alignment: Int = align_of[SIMD[_dtype, width]](),
+            ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
+                var at = Coord(start + idx[0], start + idx[1])
+                wv.store[width](
+                    at, wv.load[width](at) - rebind[SIMD[dtype, width]](value)
+                )
+
+            _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
+                product, left, right, ctx
+            )
+        k += nb
+    ctx.synchronize()
+    _ = left_operand^
+    _ = right_operand^
+    _ = scratch^
+    return _LURuntime[dtype, gpu](work^, pivots^, info^, n)
