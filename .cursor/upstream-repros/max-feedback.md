@@ -790,6 +790,50 @@ real edge value from an all-infinite slice. The fix upstream is one line
 per monoid: `neg_inf` / `inf` for floating-point dtypes, keeping
 `min_finite` / `max_finite` for integers.
 
+## 3.12 `TileTensor.load`/`store` on a GPU target assume the alignment of the whole vector
+
+`layout.TileTensor.load[w]` and `store[w]` default `alignment` to
+`align_of[SIMD[dtype, w]]()` on a GPU target. A wide access at an element
+offset or row stride that is not a multiple of `w` is therefore a
+`CUDA_ERROR_MISALIGNED_ADDRESS` on NVIDIA, while Metal and the host accept
+it. Any routine that reads a sub-block of a matrix at an arbitrary corner
+(blocked factorizations, packing, epilogues) hits it.
+
+Repro: `3.12-tile-load-assumes-vector-alignment.mojo`, a one-thread kernel
+loading four floats at column 1 of a 37-wide row. Environment: A10G, sm_86,
+max-core 26.6. `compute-sanitizer --tool memcheck` names the kernel.
+
+A second trap in the same area: `max.algorithm.elementwise` hands the body
+`alignment = gcd(simd_width, shape[-1])`, which is a count of lanes, not
+bytes, so forwarding it to a load from an offset view is wrong as well.
+
+numax's workaround: compare the access address against the vector
+alignment at run time and take `alignment=align_of[Scalar[dtype]]()` only
+when it does not meet it, in `pack_block`, the trsm dot product and every
+trailing-update epilogue (passing element alignment unconditionally turned
+scalar loads into a 20% loss on the A10G Cholesky). The fix upstream is to default to element alignment unless the caller
+states more, or to document that `alignment` is the caller's promise.
+
+## 3.13 Float32 `sin`, `cos` and `log` on NVIDIA lower to fast approximations
+
+`std.math.sin` at float32 on an NVIDIA target is `sin.approx.ftz.f32`:
+about 1e-6 absolute error, and a tiny argument can return exactly 0
+(`sin(1e-10)` is `0.0`; `sin(1e-5)` is `9.92485e-06`, 0.75% off). Measured
+on the A10G: `cos` 1.1e-6 absolute, `log` 2.9e-5 relative, `tanh` 1e-5
+relative; `exp`, `erf` and `sqrt` are fine. Float64 `sin` is unsupported on
+the device. The host returns the correctly rounded value, so the same
+source gives different answers per target.
+
+Repro: `3.13-nvidia-f32-sin-approx.mojo`.
+
+Cost downstream: `sin(eps) / eps` was `0` and `ln|sin(pi x)|` was `-inf`
+at integers only on the device, which surfaced as NaN in `lgamma`-based
+distributions and a wrong `firwin` center tap. numax now avoids both
+shapes (`firwin` takes the comptime center tap directly; `lgamma` floors
+`|sin(pi x)|`), but accuracy of the remaining float32 device results is
+the approximation's. A precise default with a separately spelled fast
+variant is the request.
+
 ## Filing notes
 
 Two entries need hardware this project does not have, and say so in their

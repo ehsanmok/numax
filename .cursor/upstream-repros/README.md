@@ -15,7 +15,7 @@ Two documents, split by who owns the fix:
 | | |
 |---|---|
 | [`mojo-feedback.md`](mojo-feedback.md) | the language and standard library -- 8 entries |
-| [`max-feedback.md`](max-feedback.md) | the kernel library and its APIs -- 19 entries |
+| [`max-feedback.md`](max-feedback.md) | the kernel library and its APIs -- 21 entries |
 
 `mojo-feedback.md` also carries a section, **"What these gaps prevent"**,
 for two capabilities that are inexpressible rather than merely unwritten:
