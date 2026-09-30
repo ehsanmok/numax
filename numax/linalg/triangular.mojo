@@ -29,7 +29,7 @@ from ..core.tensorlike import TensorLike, TensorView, dim, is_row_major
 from ..core.tensor import Static, zeros_dyn
 
 from .blas import _target
-from .common import _mut_view, _mut_view_as, _Dense
+from .common import _mut_view, _mut_view_as, _Dense, _vector_aligned
 from .panel import (
     _View,
     gemv_sub,
@@ -200,9 +200,18 @@ def _trsm[
             alignment: Int = align_of[SIMD[_dtype, width]](),
         ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
             var at = Coord(row0 + idx[0], idx[1])
-            b.store[width](
-                at, b.load[width](at) - rebind[SIMD[dtype, width]](value)
-            )
+            if _vector_aligned[_dtype, width](
+                Int(b.ptr), Int(b.layout.stride[0]().value()), at
+            ):
+                b.store[width](
+                    at, b.load[width](at) - rebind[SIMD[dtype, width]](value)
+                )
+            else:
+                b.store[width, alignment=align_of[Scalar[_dtype]]()](
+                    at,
+                    b.load[width, alignment=align_of[Scalar[_dtype]]()](at)
+                    - rebind[SIMD[dtype, width]](value),
+                )
 
         _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
             product, left, right, ctx

@@ -39,7 +39,7 @@ from std.utils import IndexList
 
 from ..core.tensor import Dynamic, _dyn_shape
 from .blas import _target, matmul
-from .common import _Dense
+from .common import _Dense, _vector_aligned
 from .panel import pack_block
 from ._multishift import _dlartg
 
@@ -342,9 +342,18 @@ def _subtract_product[
         alignment: Int = align_of[SIMD[_dtype, width]](),
     ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
         var at = Coord(r0 + idx[0], c0 + idx[1])
-        av.store[width](
-            at, av.load[width](at) - rebind[SIMD[dtype, width]](value)
-        )
+        if _vector_aligned[_dtype, width](
+            Int(av.ptr), Int(av.layout.stride[0]().value()), at
+        ):
+            av.store[width](
+                at, av.load[width](at) - rebind[SIMD[dtype, width]](value)
+            )
+        else:
+            av.store[width, alignment=align_of[Scalar[_dtype]]()](
+                at,
+                av.load[width, alignment=align_of[Scalar[_dtype]]()](at)
+                - rebind[SIMD[dtype, width]](value),
+            )
 
     _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
         pv, xv, yv, ctx

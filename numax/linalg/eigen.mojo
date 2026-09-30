@@ -61,7 +61,13 @@ from ..core.ops import add, multiply
 from .cholesky import cholesky
 from .triangular import solve_triangular
 from .blas import _target, dot, inner, matmul, matvec
-from .common import _mut_view, _mut_view_as, _Dense, _device_identity
+from .common import (
+    _mut_view,
+    _mut_view_as,
+    _Dense,
+    _device_identity,
+    _vector_aligned,
+)
 from .panel import (
     _PANEL_THREADS,
     gebd2_col,
@@ -515,9 +521,18 @@ def _subtract_panel[
         alignment: Int = align_of[SIMD[_dtype, lanes]](),
     ](idx: IndexList[2], value: SIMD[_dtype, lanes]) capturing -> None:
         var at = Coord(row_base + idx[0], col_base + idx[1])
-        target.store[lanes](
-            at, target.load[lanes](at) - rebind[SIMD[dtype, lanes]](value)
-        )
+        if _vector_aligned[_dtype, lanes](
+            Int(target.ptr), Int(target.layout.stride[0]().value()), at
+        ):
+            target.store[lanes](
+                at, target.load[lanes](at) - rebind[SIMD[dtype, lanes]](value)
+            )
+        else:
+            target.store[lanes, alignment=align_of[Scalar[_dtype]]()](
+                at,
+                target.load[lanes, alignment=align_of[Scalar[_dtype]]()](at)
+                - rebind[SIMD[dtype, lanes]](value),
+            )
 
     var la: _Dense[dtype] = TileTensor(
         left.ptr_at_offset(Coord(row_base, 0)), row_major(Coord(rows, width))

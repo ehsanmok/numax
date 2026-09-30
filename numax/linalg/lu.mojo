@@ -50,7 +50,7 @@ from ..core.tensor import (
 )
 
 from .blas import _target
-from .common import _mut_view, _mut_view_as, _Dense
+from .common import _mut_view, _mut_view_as, _Dense, _vector_aligned
 from .panel import (
     _PANEL_THREADS,
     getrf2,
@@ -653,10 +653,20 @@ def lu_factor[
                 alignment: Int = align_of[SIMD[_dtype, width]](),
             ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
                 var at = Coord(base + idx[0], base + idx[1])
-                wv.store[width](
-                    at,
-                    wv.load[width](at) - rebind[SIMD[T.dtype, width]](value),
-                )
+                if _vector_aligned[_dtype, width](
+                    Int(wv.ptr), Int(wv.layout.stride[0]().value()), at
+                ):
+                    wv.store[width](
+                        at,
+                        wv.load[width](at)
+                        - rebind[SIMD[T.dtype, width]](value),
+                    )
+                else:
+                    wv.store[width, alignment=align_of[Scalar[_dtype]]()](
+                        at,
+                        wv.load[width, alignment=align_of[Scalar[_dtype]]()](at)
+                        - rebind[SIMD[T.dtype, width]](value),
+                    )
 
             _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
                 product, left, right, ctx
@@ -1272,9 +1282,19 @@ def _lu_factor_runtime[
                 alignment: Int = align_of[SIMD[_dtype, width]](),
             ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
                 var at = Coord(start + idx[0], start + idx[1])
-                wv.store[width](
-                    at, wv.load[width](at) - rebind[SIMD[dtype, width]](value)
-                )
+                if _vector_aligned[_dtype, width](
+                    Int(wv.ptr), Int(wv.layout.stride[0]().value()), at
+                ):
+                    wv.store[width](
+                        at,
+                        wv.load[width](at) - rebind[SIMD[dtype, width]](value),
+                    )
+                else:
+                    wv.store[width, alignment=align_of[Scalar[_dtype]]()](
+                        at,
+                        wv.load[width, alignment=align_of[Scalar[_dtype]]()](at)
+                        - rebind[SIMD[dtype, width]](value),
+                    )
 
             _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
                 product, left, right, ctx

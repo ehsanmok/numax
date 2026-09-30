@@ -42,7 +42,7 @@ from ..core.tensor import (
 )
 
 from .blas import _target
-from .common import _mut_view, _mut_view_as, _Dense
+from .common import _mut_view, _mut_view_as, _Dense, _vector_aligned
 from .panel import _PANEL_THREADS, pack_block, potrf_diag, trsm_right_lower_t
 from .qr import _MIN_GEMM_COLS
 from .triangular import (
@@ -199,11 +199,24 @@ def _potrf_blocked[
                         idx: IndexList[2], value: SIMD[_dtype, width]
                     ) capturing -> None:
                         var at = Coord(r0 + idx[0], c0 + idx[1])
-                        wv.store[width](
-                            at,
-                            wv.load[width](at)
-                            - rebind[SIMD[dtype, width]](value),
-                        )
+                        if _vector_aligned[_dtype, width](
+                            Int(wv.ptr), Int(wv.layout.stride[0]().value()), at
+                        ):
+                            wv.store[width](
+                                at,
+                                wv.load[width](at)
+                                - rebind[SIMD[dtype, width]](value),
+                            )
+                        else:
+                            wv.store[
+                                width, alignment=align_of[Scalar[_dtype]]()
+                            ](
+                                at,
+                                wv.load[
+                                    width, alignment=align_of[Scalar[_dtype]]()
+                                ](at)
+                                - rebind[SIMD[dtype, width]](value),
+                            )
 
                     _max_matmul[
                         transpose_b=True,

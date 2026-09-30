@@ -72,7 +72,7 @@ from std.math import sqrt
 from std.sys.info import align_of, simd_width_of
 from std.utils import IndexList
 
-from .common import _Dense
+from .common import _Dense, _vector_aligned
 
 
 comptime _PANEL_THREADS = 256
@@ -564,9 +564,18 @@ def getrf2[
             alignment: Int = align_of[SIMD[_dtype, width]](),
         ](idx: IndexList[2], value: SIMD[_dtype, width]) capturing -> None:
             var at = Coord(r0 + idx[0], r0 + idx[1])
-            a.store[width](
-                at, a.load[width](at) - rebind[SIMD[dtype, width]](value)
-            )
+            if _vector_aligned[_dtype, width](
+                Int(a.ptr), Int(a.layout.stride[0]().value()), at
+            ):
+                a.store[width](
+                    at, a.load[width](at) - rebind[SIMD[dtype, width]](value)
+                )
+            else:
+                a.store[width, alignment=align_of[Scalar[_dtype]]()](
+                    at,
+                    a.load[width, alignment=align_of[Scalar[_dtype]]()](at)
+                    - rebind[SIMD[dtype, width]](value),
+                )
 
         _max_matmul[
             elementwise_lambda_fn=subtract, target="gpu" if gpu else "cpu"
@@ -2332,9 +2341,23 @@ def trsm_right_lower_t[
 
     comptime lanes = simd_width_of[dtype]()
 
+    comptime element_bytes = align_of[Scalar[dtype]]()
+    comptime vector_bytes = align_of[SIMD[dtype, lanes]]()
+
+    var base = Int(a.ptr)
+    var stride = Int(a.layout.stride[0]().value())
+
     @always_inline
     def solve_row(index: Int) {var}:
         var row = k + nb + index
+        # A wide access is only as aligned as the block's corner and its row
+        # stride make it, and NVIDIA faults on one that is not, so the
+        # vector-aligned loop runs only when every address it forms is.
+        var wide = (
+            stride % lanes == 0
+            and _vector_aligned[dtype, lanes](base, stride, Coord(row, k))
+            and _vector_aligned[dtype, lanes](base, stride, Coord(k, k))
+        )
         for j in range(nb):
             # The dot product of this row's finished prefix against row
             # `k + j` of `L`. Both walk `p` along a row, so both are
@@ -2342,11 +2365,22 @@ def trsm_right_lower_t[
             # around it carries a dependence.
             var acc = SIMD[dtype, lanes](0)
             var p = 0
-            while p + lanes <= j:
-                acc += a.load[lanes](Coord(row, k + p)) * a.load[lanes](
-                    Coord(k + j, k + p)
-                )
-                p += lanes
+            if wide:
+                while p + lanes <= j:
+                    acc += a.load[lanes, alignment=vector_bytes](
+                        Coord(row, k + p)
+                    ) * a.load[lanes, alignment=vector_bytes](
+                        Coord(k + j, k + p)
+                    )
+                    p += lanes
+            else:
+                while p + lanes <= j:
+                    acc += a.load[lanes, alignment=element_bytes](
+                        Coord(row, k + p)
+                    ) * a.load[lanes, alignment=element_bytes](
+                        Coord(k + j, k + p)
+                    )
+                    p += lanes
             var total = a[Coord(row, k + j)] - acc.reduce_add()
             while p < j:
                 total = total - a[Coord(row, k + p)] * a[Coord(k + j, k + p)]
@@ -2462,19 +2496,48 @@ def pack_block[
     transposing `A` first. `rows` and `cols` describe `dst` either way.
     """
 
+    comptime element = align_of[Scalar[dtype]]()
+    var src_base = Int(a.ptr)
+    var dst_base = Int(dst.ptr)
+    var src_stride = Int(a.layout.stride[0]().value())
+    var dst_stride = Int(dst.layout.stride[0]().value())
+
     @always_inline
     def copy[
         w: Int, alignment: Int = 1
-    ](coord: Coord) {var a, var dst, var row0, var col0}:
+    ](coord: Coord) {
+        var a,
+        var dst,
+        var row0,
+        var col0,
+        var src_base,
+        var dst_base,
+        var src_stride,
+        var dst_stride,
+    }:
         var at = coord_to_index_list(coord)
         var i = at[0]
         var j = at[1]
         comptime if trans:
             dst.store[1](coord, a[Coord(col0 + j, row0 + i)])
         else:
-            dst.store[w, alignment=alignment](
-                coord, a.load[w, alignment=alignment](Coord(row0 + i, col0 + j))
-            )
+            # Not the `alignment` elementwise passes: that is a count of
+            # lanes, and says nothing about `a`'s corner or either row
+            # stride. NVIDIA faults on a wide access that claims more than
+            # the addresses give, so check them; Metal and the host tolerate
+            # it.
+            comptime vector = align_of[SIMD[dtype, w]]()
+            var at_src = Coord(row0 + i, col0 + j)
+            if _vector_aligned[dtype, w](
+                src_base, src_stride, at_src
+            ) and _vector_aligned[dtype, w](dst_base, dst_stride, coord):
+                dst.store[w, alignment=vector](
+                    coord, a.load[w, alignment=vector](at_src)
+                )
+            else:
+                dst.store[w, alignment=element](
+                    coord, a.load[w, alignment=element](at_src)
+                )
 
     # The untransposed copy walks `j` contiguously in both source and
     # destination, so it takes the native width; the body was already

@@ -19,6 +19,7 @@ from ..core.tensorlike import TensorLike
 from max.algorithm.functional import elementwise
 from max.gpu.host import DeviceContext
 from std.collections import Array
+from std.sys.info import align_of, size_of
 
 from ..core.numeric import FloatLike
 
@@ -104,3 +105,20 @@ def _device_identity[
     elementwise[simd_width=1, target="gpu" if gpu else "cpu"](
         seed, Coord(rows, cols), ctx
     )
+
+
+@always_inline
+def _vector_aligned[
+    dtype: DType, width: Int
+](base: Int, stride: Int, at: Coord) -> Bool:
+    """Whether a `width`-wide access at `at` meets its vector alignment, for
+    a row-major view at address `base` with row stride `stride` (elements).
+
+    NVIDIA faults on a vector load or store that claims more alignment than
+    its address gives, and a block's corner and row stride decide that; Metal
+    and the host tolerate it. Callers branch on this and take an
+    element-aligned access otherwise.
+    """
+    var rc = coord_to_index_list(at)
+    var address = base + (rc[0] * stride + rc[1]) * size_of[Scalar[dtype]]()
+    return address % align_of[SIMD[dtype, width]]() == 0

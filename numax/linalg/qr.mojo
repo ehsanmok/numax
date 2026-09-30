@@ -47,7 +47,7 @@ from ..core.tensor import (
 
 from .basic import pinv
 from .blas import _target, matvec
-from .common import _mut_view, _mut_view_as, _Dense
+from .common import _mut_view, _mut_view_as, _Dense, _vector_aligned
 from .panel import (
     _PANEL_THREADS,
     _View,
@@ -290,9 +290,18 @@ def _apply_block_reflector[
             alignment: Int = align_of[SIMD[_dtype, lanes]](),
         ](idx: IndexList[2], value: SIMD[_dtype, lanes]) capturing -> None:
             var at = Coord(row0 + idx[0], col0 + idx[1])
-            c.store[lanes](
-                at, c.load[lanes](at) - rebind[SIMD[dtype, lanes]](value)
-            )
+            if _vector_aligned[_dtype, lanes](
+                Int(c.ptr), Int(c.layout.stride[0]().value()), at
+            ):
+                c.store[lanes](
+                    at, c.load[lanes](at) - rebind[SIMD[dtype, lanes]](value)
+                )
+            else:
+                c.store[lanes, alignment=align_of[Scalar[_dtype]]()](
+                    at,
+                    c.load[lanes, alignment=align_of[Scalar[_dtype]]()](at)
+                    - rebind[SIMD[dtype, lanes]](value),
+                )
 
         _max_matmul[elementwise_lambda_fn=subtract, target=_target[gpu]()](
             product, v, y, ctx
