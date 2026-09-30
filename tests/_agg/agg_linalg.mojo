@@ -73,6 +73,15 @@ from test_dynamic_eigen import (
     test_eigh_dynamic_is_an_eigendecomposition as test_dynamic_eigen__test_eigh_dynamic_is_an_eigendecomposition,
 )
 from test_dynamic_eigen import (
+    test_svdvals_dynamic_matches_static_bit_for_bit as test_dynamic_eigen__test_svdvals_dynamic_matches_static_bit_for_bit,
+)
+from test_dynamic_eigen import (
+    test_svd_dynamic_matches_static_bit_for_bit as test_dynamic_eigen__test_svd_dynamic_matches_static_bit_for_bit,
+)
+from test_dynamic_eigen import (
+    test_svd_dynamic_reconstructs as test_dynamic_eigen__test_svd_dynamic_reconstructs,
+)
+from test_dynamic_eigen import (
     test_one_by_one as test_dynamic_eigen__test_one_by_one,
 )
 from test_dynamic_eigen import (
@@ -1124,6 +1133,13 @@ def main() raises:
         test_dynamic_eigen__test_eigh_dynamic_matches_static_bit_for_bit
     ]()
     suite.test[test_dynamic_eigen__test_eigh_dynamic_is_an_eigendecomposition]()
+    suite.test[
+        test_dynamic_eigen__test_svdvals_dynamic_matches_static_bit_for_bit
+    ]()
+    suite.test[
+        test_dynamic_eigen__test_svd_dynamic_matches_static_bit_for_bit
+    ]()
+    suite.test[test_dynamic_eigen__test_svd_dynamic_reconstructs]()
     suite.test[test_dynamic_eigen__test_one_by_one]()
     suite.test[test_dynamic_eigen__test_dynamic_spectral_shape_checks]()
     # tests/linalg/test_dynamic_lu.mojo

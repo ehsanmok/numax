@@ -2722,19 +2722,13 @@ def _left_products[
     A: TensorLike,
     B: TensorLike,
     gpu: Bool = False,
-](a: A, v: B) raises -> Static[A.dtype, dim[A, 1]] where (
-    A.LayoutType.rank == 2
-    and A.LayoutType.all_dims_known
-    and B.dtype == A.dtype
-    and B.LayoutType.rank == 1
-    and B.LayoutType.all_dims_known
-    and dim[B, 0] == dim[A, 0]
+](a: A, v: B, m: Int, n: Int) raises -> Dynamic[A.dtype, 1] where (
+    A.LayoutType.rank == 2 and B.dtype == A.dtype and B.LayoutType.rank == 1
 ):
-    """`v^T A` as an `n`-vector: `v` read as a `1 x m` row against `A`."""
-    comptime m = dim[A, 0]
-    comptime n = dim[A, 1]
+    """`v^T A` as an `n`-vector: `v` read as a `1 x m` row against the
+    `m x n` `A`."""
     var ctx = a.context()
-    var result = zeros[A.dtype, n](ctx)
+    var result = zeros_dyn[A.dtype, 1](n, ctx=ctx)
     var row: _Dense[A.dtype] = TileTensor(
         _mut_view_as[A.dtype](v).ptr_at_offset(Coord(0)), row_major(Coord(1, m))
     )
@@ -2749,15 +2743,13 @@ def _left_products[
 def _column_of[
     T: TensorLike,
     gpu: Bool = False,
-](dense: T, k: Int) raises -> Static[T.dtype, dim[T, 0]] where (
-    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
+](dense: T, k: Int, m: Int) raises -> Dynamic[T.dtype, 1] where (
+    T.LayoutType.rank == 2
 ):
     """Column `k` of a dense `m x n` as its own vector, gathered on the
     device."""
-    comptime m = dim[T, 0]
-    comptime n = dim[T, 1]
     var ctx = dense.context()
-    var out = zeros[T.dtype, m](ctx)
+    var out = zeros_dyn[T.dtype, 1](m, ctx=ctx)
     var src = _mut_view(dense)
     var dst = out.tile()
 
@@ -2775,15 +2767,13 @@ def _column_of[
 def _row_of[
     T: TensorLike,
     gpu: Bool = False,
-](dense: T, k: Int) raises -> Static[T.dtype, dim[T, 1]] where (
-    T.LayoutType.rank == 2 and T.LayoutType.all_dims_known
+](dense: T, k: Int, n: Int) raises -> Dynamic[T.dtype, 1] where (
+    T.LayoutType.rank == 2
 ):
     """Row `k` of a dense `m x n` as its own vector, on the device -- a
     contiguous copy, so a `pack_block` of one row."""
-    comptime m = dim[T, 0]
-    comptime n = dim[T, 1]
     var ctx = dense.context()
-    var out = zeros[T.dtype, n](ctx)
+    var out = zeros_dyn[T.dtype, 1](n, ctx=ctx)
     var dst: _Dense[T.dtype] = TileTensor(
         out.tile().ptr_at_offset(Coord(0)), row_major(Coord(1, n))
     )
@@ -2864,37 +2854,9 @@ struct Bidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         device synchronizations the per-reflector walk needed. `svdvals`
         never calls this.
         """
-        var ctx = self.left.context()
-        var result = Static[Self.dtype, Self.m, Self.n]._uninitialized(ctx)
-        var out: _Dense[Self.dtype] = TileTensor(
-            result.tile().ptr_at_offset(Coord(0, 0)),
-            row_major(Coord(Self.m, Self.n)),
-        )
-        _device_identity[Self.dtype, Self.gpu](out, Self.m, Self.n, ctx)
-
-        var tv = self.taus_left.tile()
-        var work = _ReflectorWork[Self.dtype](Self.m, Self.n, self.block, ctx)
-        var steps = (Self.n + self.block - 1) // self.block
-        for step in range(steps):
-            var k = (steps - 1 - step) * self.block
-            var nb = min(self.block, Self.n - k)
-            _apply_block_reflector[transposed=False, gpu=Self.gpu](
-                self.left.tile(),
-                tv,
-                out,
-                k,
-                nb,
-                Self.m,
-                Self.m - k,
-                Self.n - k,
-                k,
-                k,
-                work,
-                ctx,
-            )
-
-        ctx.synchronize()
-        return result^
+        return _orgbr_q_run[gpu=Self.gpu](
+            self.left, self.taus_left, Self.m, Self.n, self.block
+        ).as_static[Self.m, Self.n]()
 
     def p(
         mut self,
@@ -2916,15 +2878,67 @@ struct Bidiagonal[dtype: DType, m: Int, n: Int, gpu: Bool = False](
         `k = n - 2` sees a one-element vector and returns `tau = 0`), which
         is why the walk is over `n - 2` of them.
         """
-        var ctx = self.right.context()
-        var packed = Static[Self.dtype, Self.n, Self.n]._uninitialized(ctx)
-        var pv = packed.tile()
-        pack_block[trans=True, target=_target[Self.gpu]()](
-            self.right.tile(), pv, 0, 0, Self.n, Self.n, ctx
+        return _orgbr_p_run[gpu=Self.gpu](
+            self.right, self.taus_right, Self.n, self.block
+        ).as_static[Self.n, Self.n]()
+
+
+def _orgbr_q_run[
+    L: TensorLike,
+    B: TensorLike,
+    gpu: Bool,
+](left: L, taus: B, m: Int, n: Int, block: Int) raises -> Dynamic[
+    L.dtype, 2
+] where (
+    L.dtype.is_floating_point()
+    and L.LayoutType.rank == 2
+    and B.dtype == L.dtype
+    and B.LayoutType.rank == 1
+):
+    """`Bidiagonal.q()`'s walk at run-time extents: the thin `m x n` `Q`
+    from the left reflectors packed in `left`, panels of `block`."""
+    var ctx = left.context()
+    var result = zeros_dyn[L.dtype, 2](m, n, ctx=ctx)
+    var out: _Dense[L.dtype] = TileTensor(
+        result.tile().ptr_at_offset(Coord(0, 0)), row_major(Coord(m, n))
+    )
+    _device_identity[L.dtype, gpu](out, m, n, ctx)
+
+    var lv = _mut_view(left)
+    var tv = _mut_view_as[L.dtype](taus)
+    var work = _ReflectorWork[L.dtype](m, n, block, ctx)
+    var steps = (n + block - 1) // block
+    for step in range(steps):
+        var k = (steps - 1 - step) * block
+        var nb = min(block, n - k)
+        _apply_block_reflector[transposed=False, gpu=gpu](
+            lv, tv, out, k, nb, m, m - k, n - k, k, k, work, ctx
         )
-        return _accumulate_reflectors[gpu=Self.gpu](
-            packed, self.taus_right, Self.n - 2, self.block
-        )
+
+    ctx.synchronize()
+    return result^
+
+
+def _orgbr_p_run[
+    R: TensorLike,
+    B: TensorLike,
+    gpu: Bool,
+](right: R, taus: B, n: Int, block: Int) raises -> Dynamic[R.dtype, 2] where (
+    R.dtype.is_floating_point()
+    and R.LayoutType.rank == 2
+    and B.dtype == R.dtype
+    and B.LayoutType.rank == 1
+):
+    """`Bidiagonal.p()`'s walk at a run-time order: the right reflectors,
+    rows of `right`, transposed into `sytrd`'s packed form and handed to
+    `_accumulate_reflectors_run`."""
+    var ctx = right.context()
+    var packed = zeros_dyn[R.dtype, 2](n, n, ctx=ctx)
+    var pv = packed.tile()
+    pack_block[trans=True, target=_target[gpu]()](
+        _mut_view(right), pv, 0, 0, n, n, ctx
+    )
+    return _accumulate_reflectors_run[gpu=gpu](packed, taus, n, n - 2, block)
 
 
 def gebrd[
@@ -2993,22 +3007,58 @@ def gebrd[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
-    comptime width = min(block, n)
     var ctx = a.context()
-    var work = zeros[T.dtype, m, n](ctx)
-    var left = zeros[T.dtype, m, n](ctx)
-    var right = zeros[T.dtype, n, n](ctx)
-    var taus_left = zeros[T.dtype, n](ctx)
-    var taus_right = zeros[T.dtype, n](ctx)
-    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
+    var left = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
+    var right = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus_left = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var taus_right = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var d = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var e = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _gebrd_run[gpu=gpu](
+        a, m, n, block, left, right, taus_left, taus_right, d, e
+    )
+    return Bidiagonal[T.dtype, m, n, gpu](
+        d^.as_static[n](),
+        e^.as_static[n](),
+        left^.as_static[m, n](),
+        right^.as_static[n, n](),
+        taus_left^.as_static[n](),
+        taus_right^.as_static[n](),
+        block,
+    )
+
+
+def _gebrd_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    m: Int,
+    n: Int,
+    block: Int,
+    mut left: Dynamic[T.dtype, 2],
+    mut right: Dynamic[T.dtype, 2],
+    mut taus_left: Dynamic[T.dtype, 1],
+    mut taus_right: Dynamic[T.dtype, 1],
+    mut d: Dynamic[T.dtype, 1],
+    mut e: Dynamic[T.dtype, 1],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`gebrd`'s blocked reduction of the `m x n` `a`, `m >= n`, at
+    extents known only at run time: the loop both the static overload and
+    the run-time `svd`/`svdvals` run. Writes the caller's zeroed `left`
+    (`m x n`), `right` (`n x n`), `taus_left`, `taus_right`, `d` and `e`
+    (`n` each), as `_sytrd_run` writes its outputs."""
+    var width = min(block, n)
+    var ctx = a.context()
+    var work = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
+    var scratch = zeros_dyn[T.dtype, 1](_PANEL_THREADS + 1, ctx=ctx)
     # The panel's two corrections, the two operands the trailing GEMMs
     # read them against, and the reductions `labrd_y`/`labrd_x` share.
-    var yy = zeros[T.dtype, n, width](ctx)
-    var xx = zeros[T.dtype, m, width](ctx)
-    var vp = zeros[T.dtype, m, width](ctx)
-    var ut = zeros[T.dtype, n, width](ctx)
-    var red = zeros[T.dtype, 2 * width + 2](ctx)
-    var product = zeros[T.dtype, m, n](ctx)
+    var yy = zeros_dyn[T.dtype, 2](n, width, ctx=ctx)
+    var xx = zeros_dyn[T.dtype, 2](m, width, ctx=ctx)
+    var vp = zeros_dyn[T.dtype, 2](m, width, ctx=ctx)
+    var ut = zeros_dyn[T.dtype, 2](n, width, ctx=ctx)
+    var red = zeros_dyn[T.dtype, 1](2 * width + 2, ctx=ctx)
+    var product = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
 
     var wv = work.tile()
     var lv = left.tile()
@@ -3086,8 +3136,8 @@ def gebrd[
             # only the band entries and zeros `gebd2_col` wrote, and `v`
             # vanishes above row `i`, so nothing needs staging; the
             # panel's deferred pairs reach the product inside `labrd_y`.
-            var v = _column_of[gpu=gpu](left, i)
-            var t1 = _left_products[gpu=gpu](work, v)
+            var v = _column_of[gpu=gpu](left, i, m)
+            var t1 = _left_products[gpu=gpu](work, v, m, n)
             labrd_y[target=_target[gpu]()](
                 t1.tile(), lv, xv, yv, rv, redv, tlv, k0, j, m, n, ctx
             )
@@ -3125,7 +3175,7 @@ def gebrd[
                 else:
                     gebd2_row(wv, rv, trv, sv, Int32(i), Int32(n))
 
-                var u = _row_of[gpu=gpu](right, i)
+                var u = _row_of[gpu=gpu](right, i, n)
                 var t2 = matvec[gpu=gpu](work, u)
                 labrd_x[target=_target[gpu]()](
                     t2.tile(), lv, xv, yv, rv, redv, trv, k0, j, m, n, ctx
@@ -3160,15 +3210,15 @@ def gebrd[
     _ = red^
     _ = product^
 
-    var d = zeros[T.dtype, n](ctx)
-    var e = zeros[T.dtype, n](ctx)
     var dv = d.tile()
     var ev = e.tile()
 
     # The band, on the device: `work`'s diagonal and first superdiagonal.
     # `e[n-1]` is the documented unused entry and is written zero.
     @always_inline
-    def band[w: Int, alignment: Int = 1](coord: Coord) {var wv, var dv, var ev}:
+    def band[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var wv, var dv, var ev, var n}:
         var at = coord_to_index_list(coord)[0]
         dv.store[1](coord, wv[Coord(at, at)])
         var above = Scalar[T.dtype](0)
@@ -3183,10 +3233,6 @@ def gebrd[
     # it before `band` runs and the band comes back as heap garbage. See
     # `findings.mdc` on the `.tile()` lifetime bug that `print` hides.
     _ = work^
-
-    return Bidiagonal[T.dtype, m, n, gpu](
-        d^, e^, left^, right^, taus_left^, taus_right^, block
-    )
 
 
 def _golub_kahan[
@@ -3553,8 +3599,8 @@ def _bdsqr[
 
 
 def _top_n_descending[
-    dtype: DType, n: Int
-](values: List[Scalar[dtype]]) -> List[Int]:
+    dtype: DType
+](values: List[Scalar[dtype]], n: Int) -> List[Int]:
     """Indices of the `n` largest entries of `values`, descending.
 
     `svd` and `svdvals` hand it the `n` magnitudes `_bdsqr` left, so for
@@ -3632,10 +3678,24 @@ def svdvals[
     """
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
+    return Static[T.dtype, n](
+        _svdvals_run[gpu=gpu](a, m, n, block), a.context()
+    )
+
+
+def _svdvals_run[
+    T: TensorLike, gpu: Bool
+](a: T, m: Int, n: Int, block: Int) raises -> List[Scalar[T.dtype]] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 2
+):
+    """`svdvals`'s body at extents known only at run time, the one both
+    overloads run: the reduction (`gebrd` below `_TWO_STAGE_SVDVALS`
+    columns, the two stages from it), the bidiagonal QR iteration and the
+    descending sort of the magnitudes."""
     var ctx = a.context()
     var d: List[Scalar[T.dtype]]
     var e: List[Scalar[T.dtype]]
-    comptime if n >= _TWO_STAGE_SVDVALS:
+    if n >= _TWO_STAGE_SVDVALS:
         var dense = _same_order(a, row_major(_dyn_shape[2](m, n)))
         var bd = _two_stage_bidiagonal[T.dtype, gpu](
             rebind_var[Dynamic[T.dtype, 2]](dense^), m, n, _TWO_STAGE_BAND
@@ -3643,9 +3703,17 @@ def svdvals[
         d = bd[0].copy()
         e = bd[1].copy()
     else:
-        var reduced = gebrd[gpu=gpu, block=block](a)
-        d = reduced.d.to_host()
-        e = reduced.e.to_host()
+        var left = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
+        var right = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+        var taus_left = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        var taus_right = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        var dd = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        var de = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        _gebrd_run[gpu=gpu](
+            a, m, n, block, left, right, taus_left, taus_right, dd, de
+        )
+        d = dd.to_host()
+        e = de.to_host()
     var uacc = _RotationBatch[T.dtype, gpu, False, 1, True](n, block, ctx)
     var vacc = _RotationBatch[T.dtype, gpu, False, 1, True](n, block, ctx)
     _bdsqr[gpu=gpu, vectors=False](d, e, uacc, vacc, ctx)
@@ -3657,11 +3725,11 @@ def svdvals[
     var mags = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         mags.append(abs(d[i]))
-    var order = _top_n_descending[n=n](mags)
+    var order = _top_n_descending(mags, n)
     var out = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         out.append(mags[order[i]])
-    return Static[T.dtype, n](out^, ctx)
+    return out^
 
 
 struct SVD[dtype: DType, m: Int, n: Int](
@@ -3690,6 +3758,30 @@ struct SVD[dtype: DType, m: Int, n: Int](
         var u: Static[Self.dtype, Self.m, Self.n],
         var s: Static[Self.dtype, Self.n],
         var v: Static[Self.dtype, Self.n, Self.n],
+    ):
+        self.u = u^
+        self.s = s^
+        self.v = v^
+
+
+struct DynamicSVD[dtype: DType](Movable where dtype.is_floating_point()):
+    """`svd`'s result at run-time extents: `SVD` with `m` and `n` in the
+    values rather than the type, as `DynamicLU` is to `LU`."""
+
+    var u: Dynamic[Self.dtype, 2]
+    """The left singular vectors as columns; `m x n`, the thin form."""
+
+    var s: Dynamic[Self.dtype, 1]
+    """The singular values, descending."""
+
+    var v: Dynamic[Self.dtype, 2]
+    """The right singular vectors as columns; `n x n`."""
+
+    def __init__(
+        out self,
+        var u: Dynamic[Self.dtype, 2],
+        var s: Dynamic[Self.dtype, 1],
+        var v: Dynamic[Self.dtype, 2],
     ):
         self.u = u^
         self.s = s^
@@ -3775,9 +3867,43 @@ def svd[
     comptime m = dim[T, 0]
     comptime n = dim[T, 1]
     var ctx = a.context()
-    var reduced = gebrd[gpu=gpu, block=block](a)
-    var d = reduced.d.to_host()
-    var e = reduced.e.to_host()
+    var u = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
+    var s = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var v = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    _svd_run[gpu=gpu](a, m, n, block, u, s, v)
+    return SVD[T.dtype, m, n](
+        u^.as_static[m, n](), s^.as_static[n](), v^.as_static[n, n]()
+    )
+
+
+def _svd_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    m: Int,
+    n: Int,
+    block: Int,
+    mut u: Dynamic[T.dtype, 2],
+    mut s: Dynamic[T.dtype, 1],
+    mut v: Dynamic[T.dtype, 2],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`svd`'s body at extents known only at run time, the one both
+    overloads run: `gebrd`, the bidiagonal QR iteration with both rotation
+    streams batched into device GEMMs, the descending sort and sign fix as
+    one gather, and `U = Q U_B`, `V = P V_B` as two products. Writes the
+    caller's `u` (`m x n`), `s` (`n`) and `v` (`n x n`)."""
+    var ctx = a.context()
+    var left = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
+    var right = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus_left = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var taus_right = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var diag = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var off = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _gebrd_run[gpu=gpu](
+        a, m, n, block, left, right, taus_left, taus_right, diag, off
+    )
+    var d = diag.to_host()
+    var e = off.to_host()
     var uacc = _RotationBatch[T.dtype, gpu, True, 1, True](n, block, ctx)
     var vacc = _RotationBatch[T.dtype, gpu, True, 1, True](n, block, ctx)
     _bdsqr[gpu=gpu, vectors=True](d, e, uacc, vacc, ctx)
@@ -3787,7 +3913,7 @@ def svd[
     var mags = List[Scalar[T.dtype]](capacity=n)
     for i in range(n):
         mags.append(abs(d[i]))
-    var order = _top_n_descending[n=n](mags)
+    var order = _top_n_descending(mags, n)
 
     var s_host = List[Scalar[T.dtype]](capacity=n)
     var row_host = List[Scalar[DType.int64]](capacity=n)
@@ -3801,22 +3927,20 @@ def svd[
         sign_host.append(
             Scalar[T.dtype](-1) if d[at] < 0 else Scalar[T.dtype](1)
         )
-    var rows = Static[DType.int64, n](row_host^, ctx)
-    var signs = Static[T.dtype, n](sign_host^, ctx)
+    var rows = Dynamic[DType.int64, 1](
+        row_major(_dyn_shape[1](n)), row_host^, ctx
+    )
+    var signs = Dynamic[T.dtype, 1](
+        row_major(_dyn_shape[1](n)), sign_host^, ctx
+    )
 
     # The gather is `eigh`'s: source and destination are both `(n, n)` and
     # only the index tensors are rank 1, which is the cross-shape case
-    # `findings.mdc` records as sound. The batches' `zt` is a run-time
-    # `Dynamic`, so it is read through a compile-time `row_major[n, n]`
-    # view over the same dense buffer.
-    var ub_t = Static[T.dtype, n, n]._uninitialized(ctx)
-    var vb_t = Static[T.dtype, n, n]._uninitialized(ctx)
-    var ut = TileTensor(
-        uacc.zt.tile().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
-    )
-    var vt = TileTensor(
-        vacc.zt.tile().ptr_at_offset(Coord(0, 0)), row_major[n, n]()
-    )
+    # `findings.mdc` records as sound.
+    var ub_t = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var vb_t = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var ut = uacc.zt.tile()
+    var vt = vacc.zt.tile()
     var ub = ub_t.tile()
     var vb = vb_t.tile()
     var rv = rows.tile()
@@ -3841,11 +3965,132 @@ def svd[
     _ = rows^
     _ = signs^
 
-    var q = reduced.q()
-    var p = reduced.p()
-    var u = inner[gpu=gpu](q, ub_t)
-    var v = inner[gpu=gpu](p, vb_t)
-    return SVD[T.dtype, m, n](u^, Static[T.dtype, n](s_host^, ctx), v^)
+    var q = _orgbr_q_run[gpu=gpu](left, taus_left, m, n, block)
+    var p = _orgbr_p_run[gpu=gpu](right, taus_right, n, block)
+    _max_matmul[transpose_b=True, target=_target[gpu]()](
+        u.tile(), q.tile(), ub_t.tile(), ctx
+    )
+    _max_matmul[transpose_b=True, target=_target[gpu]()](
+        v.tile(), p.tile(), vb_t.tile(), ctx
+    )
+    ctx.synchronize()
+    s.copy_from_host(s_host)
+    _ = q^
+    _ = p^
+    _ = ub_t^
+    _ = vb_t^
+
+
+def _runtime_tall[
+    T: TensorLike
+](a: T, name: StaticString) raises -> Tuple[Int, Int] where (
+    T.LayoutType.rank == 2
+):
+    """The extents of the run-time-shaped `a`, raising unless `m >= n >= 1`,
+    the shape the static overloads require in their `where` clause."""
+    var m = a.dim_at(0)
+    var n = a.dim_at(1)
+    if m < n:
+        raise Error(
+            name,
+            ": the matrix must have at least as many rows as columns, got ",
+            m,
+            " x ",
+            n,
+            "; take the transpose's",
+        )
+    if n < 1:
+        raise Error(name, ": the matrix is empty")
+    return (m, n)
+
+
+def svdvals[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> Dynamic[T.dtype, 1] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the singular values of an
+    `m x n` matrix, `m >= n`, whose extents are data, descending.
+    `scipy.linalg.svdvals`.
+
+    The static overload's body at the extents `a` carries -- `gebrd` below
+    32 columns and the two-stage band from there, then the bidiagonal QR
+    iteration -- so one compiled program takes any shape and the two
+    overloads agree to the bit.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the reduction and every `O(n^3)` product on `a`'s device.
+        block: The `gebrd` panel width.
+
+    Args:
+        a: The `m x n` matrix, `m >= n`.
+
+    Returns:
+        A run-time-shaped vector of the `n` singular values, descending.
+
+    Raises:
+        If `a` has fewer rows than columns or is empty, if the bidiagonal
+        QR iteration exceeds its `6 n^2` step budget (`a` holds a NaN or an
+        infinity), or if a device operation fails.
+    """
+    var shape = _runtime_tall(a, "svdvals")
+    var n = shape[1]
+    return Dynamic[T.dtype, 1](
+        row_major(_dyn_shape[1](n)),
+        _svdvals_run[gpu=gpu](a, shape[0], n, block),
+        a.context(),
+    )
+
+
+def svd[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> DynamicSVD[T.dtype] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the thin SVD
+    `A = U diag(s) V^T` of an `m x n` matrix, `m >= n`, whose extents are
+    data. `scipy.linalg.svd(full_matrices=False)`.
+
+    The static overload's body at the extents `a` carries, returning a
+    `DynamicSVD`, so one compiled program takes any shape and the two
+    overloads agree to the bit.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the reduction and every `O(n^3)` product on `a`'s device.
+        block: The `gebrd` panel width, the rotation window and the width
+            `Q` and `P` are formed in.
+
+    Args:
+        a: The `m x n` matrix, `m >= n`.
+
+    Returns:
+        A `DynamicSVD` with the `m x n` left vectors `u`, the singular
+        values `s` descending and the `n x n` right vectors `v` as columns.
+
+    Raises:
+        If `a` has fewer rows than columns or is empty, if the bidiagonal
+        QR iteration exceeds its `6 n^2` step budget (`a` holds a NaN or an
+        infinity), or if a device operation fails.
+    """
+    var shape = _runtime_tall(a, "svd")
+    var m = shape[0]
+    var n = shape[1]
+    var ctx = a.context()
+    var u = zeros_dyn[T.dtype, 2](m, n, ctx=ctx)
+    var s = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var v = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    _svd_run[gpu=gpu](a, m, n, block, u, s, v)
+    return DynamicSVD[T.dtype](u^, s^, v^)
 
 
 def matrix_rank[

@@ -507,6 +507,7 @@ from .linalg import (
     tensordot,
     Eigh,
     DynamicEigh,
+    DynamicSVD,
     tensorinv,
     LU,
     DynamicLU,

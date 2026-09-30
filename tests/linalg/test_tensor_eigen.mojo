@@ -1312,7 +1312,7 @@ def _bdsqr_agrees_with_the_oracle[
     var doubled = _golub_kahan[n=n, gpu=False, vectors=False](
         reduced.d.to_host(), reduced.e.to_host(), acc, ctx
     )
-    var top = _top_n_descending[n=n](doubled)
+    var top = _top_n_descending(doubled, n)
     for i in range(n):
         assert_almost_equal(got[i], abs(doubled[top[i]]), atol=atol)
 

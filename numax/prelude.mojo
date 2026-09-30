@@ -321,6 +321,7 @@ from .special.beta import beta, betaln
 from .linalg import (
     Polar,
     DynamicEigh,
+    DynamicSVD,
     LU,
     DynamicLU,
     QR,

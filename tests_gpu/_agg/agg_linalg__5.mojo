@@ -18,6 +18,9 @@ from test_banded_gpu import (
 from test_dynamic_eigen_gpu import (
     test_dynamic_eigh_gpu_matches_host as test_dynamic_eigen_gpu__test_dynamic_eigh_gpu_matches_host,
 )
+from test_dynamic_eigen_gpu import (
+    test_dynamic_svd_gpu_matches_host as test_dynamic_eigen_gpu__test_dynamic_svd_gpu_matches_host,
+)
 from test_twostage_gpu import (
     test_eigvalsh_two_stage_gpu as test_twostage_gpu__test_eigvalsh_two_stage_gpu,
 )
@@ -37,6 +40,7 @@ def main() raises:
     ]()
     # tests_gpu/linalg/test_dynamic_eigen_gpu.mojo
     suite.test[test_dynamic_eigen_gpu__test_dynamic_eigh_gpu_matches_host]()
+    suite.test[test_dynamic_eigen_gpu__test_dynamic_svd_gpu_matches_host]()
     # tests_gpu/linalg/test_twostage_gpu.mojo
     suite.test[test_twostage_gpu__test_eigvalsh_two_stage_gpu]()
     suite.test[test_twostage_gpu__test_svdvals_two_stage_gpu]()
