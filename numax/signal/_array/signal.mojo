@@ -306,12 +306,18 @@ def firwin[T: FloatLike, n: Int](cutoff: T) -> Array[T, n]:
     # Unrolled, so each tap's offset from the center is a compile-time
     # constant and no `double` survives into a kernel body.
     comptime for i in range(n):
-        # sinc(0) is 1, and the floored denominator delivers exactly that:
-        # `sin(eps)/eps` rounds to 1 rather than dividing by zero.
-        var angle = guard_nonzero(
-            scaled * T.constant(Float64(i) - center), T.constant(1e-30)
-        )
-        taps[i] = angle.sin() / angle * window[i]
+        comptime offset = Float64(i) - center
+        # The center tap is sinc(0) == 1 by definition. It is not left to
+        # `sin(eps) / eps`: NVIDIA's float32 `sin` is `sin.approx.ftz.f32`,
+        # which returns 0 for an `eps` that small, zeroing the tap and
+        # with it the filter's gain.
+        comptime if offset == 0.0:
+            taps[i] = window[i].copy()
+        else:
+            var angle = guard_nonzero(
+                scaled * T.constant(offset), T.constant(1e-30)
+            )
+            taps[i] = angle.sin() / angle * window[i]
         total = total + taps[i]
 
     var gain = guard_nonzero(total, T.constant(1e-30))
