@@ -623,34 +623,49 @@ multi-SM panel work, not a tuning constant.
 **Metal -- the same M3 Pro's 18-core GPU, `float32`, `bench-linalg-gpu`
 against PyTorch 2.13.0 on MPS (`bench-torch-linalg`).** A separate
 processor and a separate baseline, so no cell here may be read against a
-cell above. Each cell is `numax GFLOP/s / PyTorch-MPS GFLOP/s`:
+cell above. Every cell below is one session on an idle machine on AC
+power (2026-09-29, `main` at `ce8efce`, the MAX 26.6 pin), numax first
+and PyTorch straight after. Each cell is `numax GFLOP/s / PyTorch-MPS
+GFLOP/s`:
 
 | `n` | `cholesky` | `lu_factor` | `solve` | `qr_factor` |
 |---|---|---|---|---|
-| 256 | 0.41 | 0.75 | 0.84 | 0.79 |
-| 512 | 0.43 | 0.80 | **1.29** | **1.65** |
-| 1,024 | 0.54 | **1.03** | **2.08** | -- |
-| 2,048 | 0.55 | 0.83 | **2.65** | -- |
+| 256 | 0.26 | 0.86 | 0.82 | 0.76 |
+| 512 | 0.34 | **1.05** | **1.34** | **1.65** |
+| 1,024 | 0.45 | **1.04** | **2.24** | -- |
+| 2,048 | 0.52 | 0.84 | **2.61** | -- |
 
 and the absolute numbers (GFLOP/s, numax then PyTorch MPS):
 
 | `n` | `cholesky` | `lu_factor` | `solve` | `matmul` ceiling |
 |---|---|---|---|---|
-| 256 | 3.3 / 8.1 | 2.7 / 3.6 | 2.2 / 2.6 | 137 / 144 |
-| 512 | 15.2 / 35.2 | 12.0 / 14.9 | 10.8 / 8.4 | 734 / 612 |
-| 1,024 | 65.0 / 120.7 | 59.4 / 57.7 | 45.0 / 21.6 | 1,867 / 1,813 |
-| 2,048 | 182.2 / 329.5 | 160.5 / 192.6 | 133.1 / 50.2 | 2,986 / 4,936 |
+| 256 | 1.9 / 7.4 | 2.6 / 3.0 | 2.0 / 2.4 | 63 / 172 |
+| 512 | 10.8 / 32.0 | 13.2 / 12.6 | 10.1 / 7.5 | 369 / 992 |
+| 1,024 | 50.3 / 111.0 | 55.6 / 53.5 | 42.6 / 19.0 | 1,232 / 2,252 |
+| 2,048 | 159.9 / 307.6 | 151.1 / 179.3 | 127.8 / 48.9 | 2,786 / 4,613 |
 
-The same shape, more steeply: numax's Metal `cholesky` goes from 3.3 to
-182.2 GFLOP/s across three doublings, a **55x** rise, because the panel's
-single-thread-block kernel and its per-step launch latency are a fixed
-cost that `n^3` of GEMM eventually buries.
+The same shape, more steeply: numax's Metal `cholesky` goes from 1.9 to
+159.9 GFLOP/s across three doublings, an **83x** rise, because the
+panel's single-thread-block kernel and its per-step launch latency are a
+fixed cost that `n^3` of GEMM eventually buries. `potrf_diag` has no
+cross-thread fold to turn into a tree, which is why the threadgroup
+change below left it where it was.
 
-**The `lu_factor`, `solve` and `qr_factor` cells were re-measured after
-the panels' reductions moved into threadgroup memory**, numax and
-PyTorch-MPS in the same session (another process held one CPU core
-throughout, which is why the `cholesky` column, which the change does
-not touch, keeps its earlier cleaner run). The single-block panels had
+**The `matmul` ceiling at `n <= 512` is about half the row recorded at
+the MAX 26.5 pin** (137 and 734 GFLOP/s then, 63 and 369 now, repeated
+in a second run), while PyTorch's did not fall. It is not numax's
+`TensorLike` move (`e6de76e`), which changed the tile type `matmul`
+hands `linalg.matmul`: a minimal best-of-60 loop over `matmul[gpu=True]`
+gives 61 and 443 GFLOP/s at `08a161e`, the first commit on MAX 26.6 and
+before that move, against 64 and 489 at `ce8efce`. So the drop arrived
+with the 26.6 pin (or with the machine); the 26.5 environment was not
+rebuilt to separate the two. The factorization cells barely feel it:
+their trailing updates are rank-`block` products, never the square one.
+
+**What moved `lu_factor`, `solve` and `qr_factor` was the panels'
+reductions moving into threadgroup memory** (`f940ce1`, measured then
+in a session where another process held one CPU core; the cells above
+re-measure it idle and agree). The single-block panels had
 thread 0 fold every thread's candidate serially -- in `getrf_panel` by
 re-reading each candidate's magnitude from global memory, 256 dependent
 loads per column -- and a Metal `getrf_panel` over a 16-column panel was
