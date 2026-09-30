@@ -96,8 +96,9 @@ def lgamma[T: FloatLike](x: T) -> T:
     ln|sin(pi*x)| - ln(Gamma(1-x))`, and `1 - x > 0.5` there so
     `_lgamma_positive(1-x)` is valid too. Both `y = max_of(x, 1-x)` (always
     `>= 0.5`, branchless) and the reflection formula itself
-    (`sin`/`abs`/`ln` have no domain issue at `x >= 0.5` either -- they
-    just compute a number this function ends up discarding) are always
+    (`sin`/`abs`/`ln` have no domain issue at `x >= 0.5` either, once the
+    sine's magnitude is floored -- they just compute a number this function
+    ends up discarding) are always
     numerically valid regardless of which side `x` is actually on, which is
     what lets `_ge_half_indicator`'s `0`/`1` blend stand in for a real
     per-lane branch without ever multiplying anything by (or discarding) a
@@ -119,7 +120,15 @@ def lgamma[T: FloatLike](x: T) -> T:
     var lp_y = _lgamma_positive(y)
 
     var sin_pix = (T.constant(3.14159265358979323846) * x).sin()
-    var reflected = T.constant(1.1447298858494002) - sin_pix.abs().ln() - lp_y
+    # Floored so `ln` stays finite where the lane discards this side: at an
+    # integer `x >= 0.5` the sine is 0 whenever `sin` rounds (NVIDIA's
+    # float32 `sin.approx` returns exactly 0 there), and `0 * -inf` in the
+    # blend below would poison the lane.
+    var reflected = (
+        T.constant(1.1447298858494002)
+        - max_of(sin_pix.abs(), T.constant(1e-30)).ln()
+        - lp_y
+    )
 
     return lp_y * s + reflected * (T.one() - s)
 
