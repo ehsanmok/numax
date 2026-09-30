@@ -162,29 +162,36 @@ def _sync[gpu: Bool]():
 
 @always_inline
 def _block_sum[
-    dtype: DType, gpu: Bool
-](partial: Scalar[dtype], t: Int, nt: Int) -> Scalar[dtype]:
+    dtype: DType, gpu: Bool, width: Int = 1
+](partial: SIMD[dtype, width], t: Int, nt: Int) -> SIMD[dtype, width]:
     """The block's sum of every thread's `partial`, returned to every
-    thread. On the device a halving tree in threadgroup memory (`nt` a
-    power of two, at most `_PANEL_THREADS`): the serial pass by thread 0
-    over a global scratch row it replaces cost a column's worth of
-    dependent loads per call. On the host `nt` is 1 and `partial` is
+    thread, lane by lane. On the device a halving tree in threadgroup
+    memory (`nt` a power of two, at most `_PANEL_THREADS`): the serial pass
+    by thread 0 over a global scratch row it replaces cost a column's worth
+    of dependent loads per call. On the host `nt` is 1 and `partial` is
     already the sum."""
     comptime if gpu:
         var buffer = stack_allocation[
-            _PANEL_THREADS, Scalar[dtype], address_space=AddressSpace.SHARED
+            _PANEL_THREADS * width,
+            Scalar[dtype],
+            address_space=AddressSpace.SHARED,
         ]()
-        buffer[unsafe_offset=t] = partial
+        for q in range(width):
+            buffer[unsafe_offset=t * width + q] = partial[q]
         _sync[gpu]()
         var stride = nt // 2
         while stride > 0:
             if t < stride:
-                buffer[unsafe_offset=t] = (
-                    buffer[unsafe_offset=t] + buffer[unsafe_offset=t + stride]
-                )
+                for q in range(width):
+                    buffer[unsafe_offset=t * width + q] = (
+                        buffer[unsafe_offset=t * width + q]
+                        + buffer[unsafe_offset=(t + stride) * width + q]
+                    )
             _sync[gpu]()
             stride = stride // 2
-        var total = buffer[unsafe_offset=0]
+        var total = SIMD[dtype, width](0)
+        for q in range(width):
+            total[q] = buffer[unsafe_offset=q]
         _sync[gpu]()
         return total
     else:
@@ -2565,13 +2572,11 @@ def trsyl_column[
     RLayout: TensorLayout,
     SLayout: TensorLayout,
     YLayout: TensorLayout,
-    WLayout: TensorLayout,
     gpu: Bool = False,
 ](
     r: _View[dtype, RLayout],
     s: _View[dtype, SLayout],
     y: _View[dtype, YLayout],
-    work: _View[dtype, WLayout],
     k: Int32,
     n: Int32,
     m: Int32,
@@ -2590,14 +2595,13 @@ def trsyl_column[
     Two phases. The right-hand side is `F[:, k:k+w] - Y[:, :k] S[:k,
     k:k+w]`, parallel over rows. Then `R`'s blocks are walked from the
     bottom: each is a strided dot product over the rows already solved,
-    reduced through thread 0 as `getrf_panel` reduces its pivot scan, and
-    thread 0 then solves the block's `h w`-unknown system
+    reduced four lanes at a time through `_block_sum`'s threadgroup tree,
+    and thread 0 then solves the block's `h w`-unknown system
     (`(I (x) R_ii + S_kk^T (x) I) vec(Y) = vec(B)`, at most `4 x 4`) with
     `_small_solve`. `O(n^2)` per column on one block; `O(n^2 m)` over the
     whole solve.
 
-    `work` needs `4 * _PANEL_THREADS` entries for the partial sums. Launch
-    on the accelerator with `grid_dim=1`, `block_dim=_PANEL_THREADS`; the
+    Launch on the accelerator with `grid_dim=1`, `block_dim=_PANEL_THREADS`; the
     host path runs it single-threaded.
     """
     var t = _lane[gpu]()
@@ -2633,15 +2637,9 @@ def trsyl_column[
                 for c in range(w):
                     p[a * 2 + c] += r[Coord(top + a, j)] * y[Coord(j, k0 + c)]
             j += nt
-        for q in range(4):
-            work.store[1](Coord(t * 4 + q), p[q])
-        _sync[gpu]()
+        var total = _block_sum[dtype, gpu, 4](p, t, nt)
 
         if t == 0:
-            var total = SIMD[dtype, 4](0)
-            for c in range(nt):
-                for q in range(4):
-                    total[q] += work[Coord(c * 4 + q)]
             # Unknowns in column-major order over the `h x w` block:
             # index `c * h + a` is `Y[top + a, k0 + c]`.
             var d = h * w

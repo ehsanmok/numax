@@ -126,6 +126,7 @@ pixi run bench-stats     # numax stats, CPU -- norm.cdf, histogram, quantile, co
 pixi run bench-core-surface # numax core surface, CPU -- exp, add, scale, compare, sum, and map vs. the named call
 pixi run bench-linalg-gpu # numax factorizations, CUDA/Metal (needs a GPU)
 pixi run bench-blas1-gpu # numax BLAS-1, CUDA/Metal -- separate, see the Metal note
+pixi run bench-solvers-gpu # numax solve_sylvester vs. its two schur calls, CUDA/Metal
 pixi run bench-core-surface-gpu # numax core surface, CUDA/Metal -- both sync shapes (needs a GPU)
 pixi run -e bench-python bench-scipy-linalg # LAPACK, CPU (OpenBLAS or Accelerate)
 pixi run -e bench-python bench-scipy-signal # scipy.signal, CPU

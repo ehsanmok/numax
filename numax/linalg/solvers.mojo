@@ -54,11 +54,9 @@ def _trsyl[
     """Overwrite `y` (holding `F`) with the `Y` of `R Y + Y S = F`, one
     `trsyl_column` launch per column of `S`."""
     var ctx = y.context()
-    var work = Static[dtype, 4 * _PANEL_THREADS](ctx)
     var rv = _mut_view(r)
     var sv = _mut_view(s)
     var yv = y.tile()
-    var wv = work.tile()
     # The Schur forms and `F` come from asynchronous products.
     ctx.synchronize()
     for k in range(m):
@@ -69,14 +67,12 @@ def _trsyl[
                     RLayout=type_of(rv).LayoutType,
                     SLayout=type_of(sv).LayoutType,
                     YLayout=type_of(yv).LayoutType,
-                    WLayout=type_of(wv).LayoutType,
                     gpu=True,
                 ]
             ](
                 rv,
                 sv,
                 yv,
-                wv,
                 Int32(k),
                 Int32(n),
                 Int32(m),
@@ -84,9 +80,8 @@ def _trsyl[
                 block_dim=_PANEL_THREADS,
             )
         else:
-            trsyl_column(rv, sv, yv, wv, Int32(k), Int32(n), Int32(m))
+            trsyl_column(rv, sv, yv, Int32(k), Int32(n), Int32(m))
     ctx.synchronize()
-    _ = work^
 
 
 def _square[

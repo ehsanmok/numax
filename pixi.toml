@@ -452,6 +452,9 @@ bench-linalg-gpu = "mojo -I . bench/bench_linalg_gpu.mojo"
 # together instantiate more GPU kernels than Apple's Metal compiler will put
 # in one metallib. Needs a real device, like its sibling.
 bench-blas1-gpu = "mojo -I . bench/bench_blas1_gpu.mojo"
+# solve_sylvester against its two schur calls, on a device; separate for
+# the same metallib reason. Needs a real device.
+bench-solvers-gpu = "mojo -I . bench/bench_solvers_gpu.mojo"
 # Diagnoses *why* the GPU path lands where it does: bandwidth vs arithmetic,
 # per-thread width, block size, and sync accounting. Metal hardware too.
 bench-roofline = "mojo -I . bench/bench_gpu_roofline.mojo"

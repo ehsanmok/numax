@@ -661,6 +661,14 @@ and `lu_factor` at `n = 2048` from 90 ms to 36: `lu_factor` went from
 0.35-0.38 of PyTorch to 0.75-1.03, `solve` passes it from `n = 512` and
 is 2.65x ahead at 2048, and `qr_factor` is 1.65x ahead at 512.
 
+`trsyl_column`, the per-column kernel behind `solve_sylvester` and the
+Lyapunov solvers, kept the same serial shape after that change: thread 0
+summed every thread's four partial dot products from a global scratch
+row, once per block row of `R`. Through `_block_sum`'s tree, four lanes
+at a time, `solve_sylvester[gpu=True]` at `n = 256`, `float32`, went from
+1,413 ms to 652 on the M3 Pro's GPU, of which the two device `schur`
+calls are about 380 ms either way (`pixi run bench-solvers-gpu`).
+
 **The two `qr_factor` cells are blank on purpose.** PyTorch's MPS
 `linalg_qr` is limited to `min(m, n) <= 512` and silently falls back to
 the CPU above it (it warns, and the warning is in the harness output), so
@@ -1227,6 +1235,7 @@ pixi run bench-stats    # CPU: norm.cdf, histogram, quantile, cov/corrcoef
 pixi run bench-core-surface # CPU: exp, a + b, a * 2, comparison, sum, and map vs. the named call
 pixi run bench-linalg-gpu # the factorizations on a device (CUDA/Metal)
 pixi run bench-blas1-gpu # BLAS-1 on a device; separate, see the Metal note above
+pixi run bench-solvers-gpu # solve_sylvester against its two schur calls, on a device
 pixi run bench-core-surface-gpu # the same core surface on a device, both sync shapes
 pixi run bench-numpy    # cross-language: NumPy, CPU
 pixi run bench-mlx      # cross-language: MLX, CPU + GPU (macOS only)
