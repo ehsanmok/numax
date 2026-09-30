@@ -1759,17 +1759,10 @@ def _store_column[
     A: TensorLike,
     B: TensorLike,
     gpu: Bool = False,
-](dst: A, v: B, k: Int, ctx: DeviceContext) raises where (
-    A.LayoutType.rank == 2
-    and A.LayoutType.all_dims_known
-    and dim[A, 1] == dim[A, 0]
-    and B.dtype == A.dtype
-    and B.LayoutType.rank == 1
-    and B.LayoutType.all_dims_known
-    and dim[B, 0] == dim[A, 0]
+](dst: A, v: B, k: Int, n: Int, ctx: DeviceContext) raises where (
+    A.LayoutType.rank == 2 and B.dtype == A.dtype and B.LayoutType.rank == 1
 ):
-    """`dst[:, k] = v`, on the device."""
-    comptime n = dim[A, 0]
+    """`dst[:, k] = v` for the `n x n` `dst`, on the device."""
     var dv = _mut_view(dst)
     var vv = _mut_view_as[A.dtype](v)
 
@@ -1784,15 +1777,12 @@ def _store_column[
 def _zero_column_below[
     T: TensorLike,
     gpu: Bool = False,
-](a: T, k: Int, first: Int, ctx: DeviceContext) raises where (
+](a: T, k: Int, first: Int, n: Int, ctx: DeviceContext) raises where (
     T.LayoutType.rank == 2
-    and T.LayoutType.all_dims_known
-    and dim[T, 1] == dim[T, 0]
 ):
-    """`a[first.., k] = 0`, on the device: the entries a reflector
-    annihilates, written as the exact zeros they are rather than left to
-    the update that never touches its own column."""
-    comptime n = dim[T, 0]
+    """`a[first.., k] = 0` for the `n x n` `a`, on the device: the entries
+    a reflector annihilates, written as the exact zeros they are rather
+    than left to the update that never touches its own column."""
     var av = _mut_view(a)
 
     @always_inline
@@ -1954,20 +1944,44 @@ def hessenberg[
         If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
-    comptime width = min(block, n)
     var ctx = a.context()
-    var work = zeros[T.dtype, n, n](ctx)
-    var reflectors = zeros[T.dtype, n, n](ctx)
-    var taus = zeros[T.dtype, n](ctx)
-    var vpad = zeros[T.dtype, n](ctx)
-    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
+    var h = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var reflectors = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _gehrd_run[gpu=gpu](a, n, block, h, reflectors, taus)
+    return Hessenberg[T.dtype, n, gpu](
+        h^.as_static[n, n](),
+        reflectors^.as_static[n, n](),
+        taus^.as_static[n](),
+        block,
+    )
+
+
+def _gehrd_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    n: Int,
+    block: Int,
+    mut work: Dynamic[T.dtype, 2],
+    mut reflectors: Dynamic[T.dtype, 2],
+    mut taus: Dynamic[T.dtype, 1],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`hessenberg`'s blocked reduction of the `n x n` `a` at an order
+    known only at run time, the loop the static overload and the run-time
+    `eigvals`/`schur` run. Writes the caller's zeroed `work` (becoming
+    `H`), `reflectors` and `taus`, as `_sytrd_run` writes its outputs."""
+    var width = min(block, n)
+    var ctx = a.context()
+    var vpad = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var scratch = zeros_dyn[T.dtype, 1](_PANEL_THREADS + 1, ctx=ctx)
     # The panel's `Y`, its dense `V` for the trailing GEMM, its triangular
     # factor, and the reductions `lahr2_column`/`lahr2_y` share.
-    var yy = zeros[T.dtype, n, width](ctx)
-    var vp = zeros[T.dtype, n, width](ctx)
-    var tt = zeros[T.dtype, width, width](ctx)
-    var red = zeros[T.dtype, 2 * width + 2](ctx)
-    var product = zeros[T.dtype, n, n](ctx)
+    var yy = zeros_dyn[T.dtype, 2](n, width, ctx=ctx)
+    var vp = zeros_dyn[T.dtype, 2](n, width, ctx=ctx)
+    var tt = zeros_dyn[T.dtype, 2](width, width, ctx=ctx)
+    var red = zeros_dyn[T.dtype, 1](2 * width + 2, ctx=ctx)
+    var product = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
 
     var wv = work.tile()
     var rfv = reflectors.tile()
@@ -2034,8 +2048,8 @@ def hessenberg[
             else:
                 sytd2_column(wv, vv, tv, sv, Int32(i), Int32(n))
 
-            _store_column[gpu=gpu](reflectors, vpad, i, ctx)
-            _zero_column_below[gpu=gpu](work, i, i + 2, ctx)
+            _store_column[gpu=gpu](reflectors, vpad, i, n, ctx)
+            _zero_column_below[gpu=gpu](work, i, i + 2, n, ctx)
 
             # `p = A v` over the whole matrix: `vpad` is zero at and above
             # `i`, so the columns the panel has already finished are never
@@ -2092,8 +2106,6 @@ def hessenberg[
     _ = red^
     _ = product^
     _ = lwork^
-
-    return Hessenberg[T.dtype, n, gpu](work^, reflectors^, taus^, block)
 
 
 comptime _MAX_QR_SWEEPS_PER_N = 30
@@ -2464,6 +2476,27 @@ struct Eigenvalues[dtype: DType, n: Int](
         self.im = im^
 
 
+struct DynamicEigenvalues[dtype: DType](
+    Movable where dtype.is_floating_point()
+):
+    """`eigvals`'s result at a run-time order: `Eigenvalues` with the
+    order in the value rather than the type."""
+
+    var re: Dynamic[Self.dtype, 1]
+    """Real parts, in LAPACK's deflation order -- no particular order."""
+
+    var im: Dynamic[Self.dtype, 1]
+    """Imaginary parts; exactly zero for a real eigenvalue."""
+
+    def __init__(
+        out self,
+        var re: Dynamic[Self.dtype, 1],
+        var im: Dynamic[Self.dtype, 1],
+    ):
+        self.re = re^
+        self.im = im^
+
+
 def eigvals[
     T: TensorLike,
     gpu: Bool = False,
@@ -2521,12 +2554,34 @@ def eigvals[
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
-    var reduced = hessenberg[gpu=gpu, block=block](a)
-    var h = reduced.h.to_host()
+    var re = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var im = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _eigvals_run[gpu=gpu](a, n, block, re, im)
+    return Eigenvalues[T.dtype, n](re^.as_static[n](), im^.as_static[n]())
+
+
+def _eigvals_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    n: Int,
+    block: Int,
+    mut re: Dynamic[T.dtype, 1],
+    mut im: Dynamic[T.dtype, 1],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`eigvals`'s body at an order known only at run time, the one both
+    overloads run: the Hessenberg reduction, then the multishift QR above
+    `_NMIN` or `_hqr` at or below it. Writes the caller's `re` and `im`."""
+    var ctx = a.context()
+    var reduced = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var reflectors = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _gehrd_run[gpu=gpu](a, n, block, reduced, reflectors, taus)
+    var h = reduced.to_host()
     # `wantz=False` makes the batch's `vectors` false, which shrinks every
     # buffer in it to one element; the values-only route pushes nothing and
     # allocates nothing for vectors it never forms.
-    comptime if n > _NMIN:
+    if n > _NMIN:
         var wr = List[Scalar[T.dtype]](length=n, fill=0)
         var wi = List[Scalar[T.dtype]](length=n, fill=0)
         var unused = List[Scalar[T.dtype]](length=1, fill=0)
@@ -2536,14 +2591,13 @@ def eigvals[
                 "eigvals: the multishift QR iteration did not converge;"
                 " the matrix likely holds a NaN or an infinity"
             )
-        var re = Static[T.dtype, n](wr^, ctx)
-        var im = Static[T.dtype, n](wi^, ctx)
-        return Eigenvalues[T.dtype, n](re^, im^)
+        re.copy_from_host(wr)
+        im.copy_from_host(wi)
+        return
     var acc = _RotationBatch[T.dtype, gpu, False, 2, True](n, 1, ctx)
     var values = _hqr[wantt=False, wantz=False, gpu=gpu](h, acc, n, ctx)
-    var re = Static[T.dtype, n](values[0].copy(), ctx)
-    var im = Static[T.dtype, n](values[1].copy(), ctx)
-    return Eigenvalues[T.dtype, n](re^, im^)
+    re.copy_from_host(values[0])
+    im.copy_from_host(values[1])
 
 
 struct Schur[dtype: DType, n: Int](
@@ -2571,40 +2625,23 @@ struct Schur[dtype: DType, n: Int](
         self.z = z^
 
 
-def _q_times_zt[
-    A: TensorLike,
-    B: TensorLike,
-    gpu: Bool = False,
-](q: A, zt: B) raises -> Static[A.dtype, dim[A, 0], dim[A, 0]] where (
-    A.LayoutType.rank == 2
-    and A.LayoutType.all_dims_known
-    and dim[A, 1] == dim[A, 0]
-    and B.dtype == A.dtype
-    and B.LayoutType.rank == 2
-    and not B.LayoutType.all_dims_known
-):
-    """`Q Z`, where `zt` holds `Z^T` in a rotation batch's own buffer.
+struct DynamicSchur[dtype: DType](Movable where dtype.is_floating_point()):
+    """`schur`'s result at a run-time order: `Schur` with the order in the
+    value rather than the type."""
 
-    `inner`'s body -- `matmul` under `transpose_b=True`, so `Z` is never
-    transposed back -- spelled over a run-time view, because a batch's
-    `zt` is `Dynamic` and copying it into a `Static` just to reach `inner`
-    would be an `n x n` pass for nothing.
-    """
-    comptime n = dim[A, 0]
-    var ctx = q.context()
-    var result = Static[A.dtype, n, n](ctx)
-    var out: _Dense[A.dtype] = TileTensor(
-        result.tile().ptr, row_major(Coord(n, n))
-    )
-    var left: _Dense[A.dtype] = TileTensor(
-        _mut_view(q).ptr, row_major(Coord(n, n))
-    )
-    var right: _Dense[A.dtype] = TileTensor(
-        _mut_view_as[A.dtype](zt).ptr, row_major(Coord(n, n))
-    )
-    _max_matmul[transpose_b=True, target=_target[gpu]()](out, left, right, ctx)
-    ctx.synchronize()
-    return result^
+    var t: Dynamic[Self.dtype, 2]
+    """The real Schur form, quasi-triangular, exact zeros below the band."""
+
+    var z: Dynamic[Self.dtype, 2]
+    """The Schur vectors, orthogonal: `z^T a z == t`."""
+
+    def __init__(
+        out self,
+        var t: Dynamic[Self.dtype, 2],
+        var z: Dynamic[Self.dtype, 2],
+    ):
+        self.t = t^
+        self.z = z^
 
 
 def schur[
@@ -2686,9 +2723,122 @@ def schur[
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
-    var reduced = hessenberg[gpu=gpu, block=block](a)
-    var h = reduced.h.to_host()
-    comptime if n > _NMIN:
+    var t = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var z = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    _schur_run[gpu=gpu](a, n, block, t, z)
+    return Schur[T.dtype, n](t^.as_static[n, n](), z^.as_static[n, n]())
+
+
+def eigvals[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> DynamicEigenvalues[T.dtype] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the eigenvalues of a
+    general square `a` whose order is data, as a `(re, im)` pair.
+    `scipy.linalg.eigvals`.
+
+    The static overload's body at the order `a` carries -- the Hessenberg
+    reduction, then the multishift QR above `n = 75` or the double-shift
+    iteration at or below it -- so one compiled program takes any size
+    and the two overloads agree to the bit.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the reduction and every `O(n^3)` product on `a`'s device.
+        block: The `lahr2` panel width.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        A `DynamicEigenvalues` with the real parts in `re` and the
+        imaginary parts in `im`, a complex pair in consecutive slots.
+
+    Raises:
+        If `a` is not square or is empty, if the QR iteration does not
+        converge (`a` holds a NaN or an infinity), or if a device
+        operation fails.
+    """
+    var n = _runtime_order(a, "eigvals")
+    var ctx = a.context()
+    var re = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var im = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _eigvals_run[gpu=gpu](a, n, block, re, im)
+    return DynamicEigenvalues[T.dtype](re^, im^)
+
+
+def schur[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> DynamicSchur[T.dtype] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the real Schur
+    decomposition `a = Z T Z^T` of a square `a` whose order is data.
+    `scipy.linalg.schur(a, output="real")`.
+
+    The static overload's body at the order `a` carries, returning a
+    `DynamicSchur`, so one compiled program takes any size and the two
+    overloads agree to the bit.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the reduction and every `O(n^3)` product on `a`'s device.
+        block: The `lahr2` panel width, the rotation window and the width
+            `Q` is formed in.
+
+    Args:
+        a: The `n x n` matrix.
+
+    Returns:
+        A `DynamicSchur` with the quasi-triangular `t` and the orthogonal
+        Schur vectors `z`.
+
+    Raises:
+        If `a` is not square or is empty, if the QR iteration does not
+        converge (`a` holds a NaN or an infinity), or if a device
+        operation fails.
+    """
+    var n = _runtime_order(a, "schur")
+    var ctx = a.context()
+    var t = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var z = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    _schur_run[gpu=gpu](a, n, block, t, z)
+    return DynamicSchur[T.dtype](t^, z^)
+
+
+def _schur_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    n: Int,
+    block: Int,
+    mut t: Dynamic[T.dtype, 2],
+    mut vectors: Dynamic[T.dtype, 2],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`schur`'s body at an order known only at run time, the one both
+    overloads run: the Hessenberg reduction, the QR iteration with its
+    Schur vectors (multishift above `_NMIN`, `_hqr` with batched device
+    rotations at or below it), and `Z = Q Z_h` as one product. Writes the
+    caller's `t` and `vectors`."""
+    var ctx = a.context()
+    var reduced = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var reflectors = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _gehrd_run[gpu=gpu](a, n, block, reduced, reflectors, taus)
+    var h = reduced.to_host()
+    var q = _accumulate_reflectors_run[gpu=gpu](
+        reflectors, taus, n, n - 2, block
+    )
+    if n > _NMIN:
         var wr = List[Scalar[T.dtype]](length=n, fill=0)
         var wi = List[Scalar[T.dtype]](length=n, fill=0)
         var z = List[Scalar[T.dtype]](length=n * n, fill=0)
@@ -2700,19 +2850,30 @@ def schur[
                 "schur: the multishift QR iteration did not converge;"
                 " the matrix likely holds a NaN or an infinity"
             )
-        var t = Static[T.dtype, n, n](h^, ctx)
-        var zt = Static[T.dtype, n, n](z^, ctx)
-        var q = reduced.q()
-        var vectors = matmul[gpu=gpu](q, zt)
-        return Schur[T.dtype, n](t^, vectors^)
+        t.copy_from_host(h)
+        # `_hseqr` leaves `Z_h` itself, row-major, so this is a plain
+        # product rather than `_hqr`'s transposed batch.
+        var zh = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+        zh.copy_from_host(z)
+        _max_matmul[target=_target[gpu]()](
+            vectors.tile(), q.tile(), zh.tile(), ctx
+        )
+        ctx.synchronize()
+        _ = zh^
+        _ = q^
+        return
     var acc = _RotationBatch[T.dtype, gpu, True, 2, True](n, block, ctx)
     _ = _hqr[wantt=True, wantz=True, gpu=gpu](h, acc, n, ctx)
     acc.finish(ctx)
-    var t = Static[T.dtype, n, n](h^, ctx)
-    var q = reduced.q()
-    var vectors = _q_times_zt[gpu=gpu](q, acc.zt)
+    t.copy_from_host(h)
+    # `acc.zt` holds `Z_h^T`: `inner`'s `transpose_b=True`, so it is never
+    # transposed back.
+    _max_matmul[transpose_b=True, target=_target[gpu]()](
+        vectors.tile(), q.tile(), acc.zt.tile(), ctx
+    )
+    ctx.synchronize()
     _ = acc^
-    return Schur[T.dtype, n](t^, vectors^)
+    _ = q^
 
 
 # ----------------------------------------------------------------- SVD

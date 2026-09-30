@@ -1,15 +1,17 @@
-"""The run-time-shape `eigvalsh`, `eigh`, `svdvals` and `svd` at
-`gpu=True`: a `Dynamic` matrix on the device, reduced and diagonalized
-there at `float32`, against the host run at the same `dtype`."""
+"""The run-time-shape `eigvalsh`, `eigh`, `svdvals`, `svd`, `eigvals` and
+`schur` at `gpu=True`: a `Dynamic` matrix on the device, reduced and
+diagonalized there at `float32`, against the host run at the same
+`dtype`."""
 
 from std.math import sin
-from std.testing import TestSuite, assert_almost_equal
+from std.builtin.sort import sort
+from std.testing import TestSuite, assert_almost_equal, assert_equal
 
 from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Dynamic, _dyn_shape
-from numax.linalg import eigh, eigvalsh, svd, svdvals
+from numax.linalg import eigh, eigvals, eigvalsh, schur, svd, svdvals
 
 comptime f32 = DType.float32
 
@@ -103,6 +105,51 @@ def test_dynamic_svd_gpu_matches_host() raises:
     var only = svdvals[gpu=True](_tall(m, n, gpu)).to_host()
     for j in range(n):
         assert_almost_equal(Float64(only[j]), Float64(hs[j]), atol=1e-4)
+
+
+def test_dynamic_schur_gpu_matches_host() raises:
+    """Both QR iterations: `_hqr` at `n = 48`, the multishift QR at
+    `n = 90`. `Z T Z^T = A` and `Z^T Z = I` from the device factors, and
+    the device spectrum against the host's as two multisets -- neither
+    factor is unique, and the deflation order need not agree."""
+    var gpu = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    for n in [48, 90]:
+        var a = _tall(n, n, cpu).to_host()
+        var f = schur[gpu=True](_tall(n, n, gpu))
+        var t = f.t.to_host()
+        var z = f.z.to_host()
+        var tzt = List[Float64](length=n * n, fill=0.0)
+        for k in range(n):
+            for j in range(n):
+                var acc = 0.0
+                for l in range(n):
+                    acc += Float64(t[k * n + l]) * Float64(z[j * n + l])
+                tzt[k * n + j] = acc
+        for i in range(n):
+            for j in range(n):
+                var back = 0.0
+                var ztz = 0.0
+                for k in range(n):
+                    back += Float64(z[i * n + k]) * tzt[k * n + j]
+                    ztz += Float64(z[k * n + i]) * Float64(z[k * n + j])
+                assert_almost_equal(back, Float64(a[i * n + j]), atol=2e-3)
+                assert_almost_equal(ztz, 1.0 if i == j else 0.0, atol=1e-4)
+
+        var dw = eigvals[gpu=True](_tall(n, n, gpu))
+        var hw = eigvals(_tall(n, n, cpu))
+        var dre = dw.re.to_host()
+        var hre = hw.re.to_host()
+        var dim_ = dw.im.to_host()
+        var him = hw.im.to_host()
+        assert_equal(len(dre), n)
+        sort(dre)
+        sort(hre)
+        sort(dim_)
+        sort(him)
+        for i in range(n):
+            assert_almost_equal(Float64(dre[i]), Float64(hre[i]), atol=1e-3)
+            assert_almost_equal(Float64(dim_[i]), Float64(him[i]), atol=1e-3)
 
 
 def main() raises:

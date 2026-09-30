@@ -15,7 +15,7 @@ from std.testing import (
 from layout.tile_layout import row_major
 
 from numax.core.tensor import Dynamic, Static, _dyn_shape
-from numax.linalg import eigh, eigvalsh, svd, svdvals
+from numax.linalg import eigh, eigvals, eigvalsh, schur, svd, svdvals
 
 comptime dtype = DType.float64
 
@@ -175,6 +175,67 @@ def test_svd_dynamic_reconstructs() raises:
             assert_almost_equal(Float64(only[j]), Float64(sv[j]), atol=1e-11)
 
 
+def test_eigvals_dynamic_matches_static_bit_for_bit() raises:
+    """Both iterations: the double-shift `_hqr` at `n = 40`, the multishift
+    QR above `n = 75`."""
+    var d40 = eigvals(_rect_dynamic(40, 40))
+    var s40 = eigvals(_rect_static[40, 40]())
+    _same(d40.re.to_host(), s40.re.to_host())
+    _same(d40.im.to_host(), s40.im.to_host())
+    var d90 = eigvals(_rect_dynamic(90, 90))
+    var s90 = eigvals(_rect_static[90, 90]())
+    _same(d90.re.to_host(), s90.re.to_host())
+    _same(d90.im.to_host(), s90.im.to_host())
+
+
+def test_schur_dynamic_matches_static_bit_for_bit() raises:
+    var d40 = schur(_rect_dynamic(40, 40))
+    var s40 = schur(_rect_static[40, 40]())
+    _same(d40.t.to_host(), s40.t.to_host())
+    _same(d40.z.to_host(), s40.z.to_host())
+    var d90 = schur(_rect_dynamic(90, 90))
+    var s90 = schur(_rect_static[90, 90]())
+    _same(d90.t.to_host(), s90.t.to_host())
+    _same(d90.z.to_host(), s90.z.to_host())
+
+
+def test_schur_dynamic_reconstructs() raises:
+    """`Z T Z^T = A`, `Z^T Z = I`, `T` zero below its subdiagonal, and the
+    trace of `T` the sum of `eigvals`' real parts, on both paths."""
+    for n in [12, 80]:
+        var r = schur(_rect_dynamic(n, n))
+        var t = r.t.to_host()
+        var z = r.z.to_host()
+        for i in range(n):
+            for j in range(i - 1):
+                assert_equal(Float64(t[i * n + j]), 0.0)
+        # `T Z^T` once, so the reconstruction is `O(n^3)`.
+        var tzt = List[Float64](length=n * n, fill=0.0)
+        for k in range(n):
+            for j in range(n):
+                var acc = 0.0
+                for l in range(n):
+                    acc += Float64(t[k * n + l]) * Float64(z[j * n + l])
+                tzt[k * n + j] = acc
+        for i in range(n):
+            for j in range(n):
+                var back = 0.0
+                var ztz = 0.0
+                for k in range(n):
+                    back += Float64(z[i * n + k]) * tzt[k * n + j]
+                    ztz += Float64(z[k * n + i]) * Float64(z[k * n + j])
+                assert_almost_equal(back, _rect_entry(i, j), atol=1e-10)
+                assert_almost_equal(ztz, 1.0 if i == j else 0.0, atol=1e-12)
+        var w = eigvals(_rect_dynamic(n, n))
+        var re = w.re.to_host()
+        var trace = 0.0
+        var total = 0.0
+        for i in range(n):
+            trace += Float64(t[i * n + i])
+            total += Float64(re[i])
+        assert_almost_equal(trace, total, atol=1e-10)
+
+
 def test_one_by_one() raises:
     var r = eigh(_dynamic(1))
     assert_almost_equal(Float64(r.values.to_host()[0]), _entry(0, 0))
@@ -194,6 +255,10 @@ def test_dynamic_spectral_shape_checks() raises:
     )
     with assert_raises(contains="eigh: the matrix is empty"):
         _ = eigh(empty)
+    with assert_raises(contains="eigvals: the matrix must be square"):
+        _ = eigvals(rect)
+    with assert_raises(contains="schur: the matrix is empty"):
+        _ = schur(empty)
     with assert_raises(contains="svd: the matrix must have at least as many"):
         _ = svd(rect)
     with assert_raises(contains="svdvals: the matrix must have at least"):
