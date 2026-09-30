@@ -835,6 +835,9 @@ from test_tensor_linalg import (
     test_matmul_dynamic_agrees_with_static as test_tensor_linalg__test_matmul_dynamic_agrees_with_static,
 )
 from test_tensor_linalg import (
+    test_matmul_dynamic_one_column_takes_the_padded_gemv as test_tensor_linalg__test_matmul_dynamic_one_column_takes_the_padded_gemv,
+)
+from test_tensor_linalg import (
     test_matmul_dynamic_rejects_mismatched_shapes as test_tensor_linalg__test_matmul_dynamic_rejects_mismatched_shapes,
 )
 from test_tensor_linalg import (
@@ -1609,6 +1612,9 @@ def main() raises:
         test_tensor_linalg__test_tensor_matmul_agrees_with_array_matmul
     ]()
     suite.test[test_tensor_linalg__test_matmul_dynamic_agrees_with_static]()
+    suite.test[
+        test_tensor_linalg__test_matmul_dynamic_one_column_takes_the_padded_gemv
+    ]()
     suite.test[
         test_tensor_linalg__test_matmul_dynamic_rejects_mismatched_shapes
     ]()

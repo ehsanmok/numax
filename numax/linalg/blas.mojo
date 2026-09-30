@@ -969,6 +969,10 @@ def matmul[
     extents from the layout either way -- a compile-time shape buys kernel
     specialization, not correctness.
 
+    A one-column `b` off a lane multiple takes the padded run-time
+    `matvec` on the host, since that is the GEMV shape MAX's CPU kernel
+    over-reads and a run-time shape cannot exclude it at compile time.
+
     Raises when `a`'s columns and `b`'s rows disagree, which is the check
     the static overload gets from the type system for free.
 
@@ -1003,8 +1007,41 @@ def matmul[
             b.dim[1](),
         )
     var ctx = a.context()
-    var result = zeros_dyn[A.dtype, 2](a.dim[0](), b.dim[1](), ctx=ctx)
+    var m = a.dim[0]()
+    var k = a.dim[1]()
+    var result = zeros_dyn[A.dtype, 2](m, b.dim[1](), ctx=ctx)
     var c = result.tile()
+    comptime lanes = simd_width_of[A.dtype]()
+    # One column is the GEMV shape whose tail MAX's CPU kernel over-reads
+    # (`matvec` above has the whole story), and a run-time shape cannot
+    # rule it out at compile time: `_ge2gb`'s trailing update reaches it
+    # at 33 x 33 and faulted on an AVX-512 runner. Off a lane multiple on
+    # the host, the column goes through the padded run-time `matvec`; the
+    # two copies are `O(m + k)` beside the product's `O(m k)`.
+    if not gpu and b.dim[1]() == 1 and not (m % lanes == 0 and k % lanes == 0):
+        var column = zeros_dyn[A.dtype, 1](k, ctx=ctx)
+        var bv = _mut_view_as[A.dtype](b)
+        var cv = column.tile()
+
+        @always_inline
+        def take[w: Int, alignment: Int = 1](coord: Coord) {var bv, var cv}:
+            var j = coord_to_index_list(coord)[0]
+            cv.store[1](coord, bv[Coord(j, 0)])
+
+        elementwise[simd_width=1, target="cpu"](take, Coord(k), ctx)
+        var y = matvec(a, column)
+        var yv = y.tile()
+
+        @always_inline
+        def put[w: Int, alignment: Int = 1](coord: Coord) {var yv, var c}:
+            var i = coord_to_index_list(coord)[0]
+            c.store[1](Coord(i, 0), yv[coord])
+
+        elementwise[simd_width=1, target="cpu"](put, Coord(m), ctx)
+        ctx.synchronize()
+        _ = column^
+        _ = y^
+        return result^
     _max_matmul[target="gpu" if gpu else "cpu"](
         c, _mut_view(a), _mut_view_as[A.dtype](b), ctx
     )

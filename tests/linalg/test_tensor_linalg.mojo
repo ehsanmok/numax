@@ -141,6 +141,37 @@ def test_matmul_dynamic_agrees_with_static() raises:
         )
 
 
+def test_matmul_dynamic_one_column_takes_the_padded_gemv() raises:
+    """A run-time `b` with one column is the GEMV shape whose tail MAX's
+    CPU kernel over-reads; `_ge2gb` reached it at `33 x 33` and faulted on
+    an AVX-512 runner. At shapes off every lane width the product still
+    equals a host dot product, and an aligned shape takes the direct call
+    to the same answer."""
+    var ctx = _cpu()
+    for shape in [(33, 17), (9, 9), (1, 5), (7, 3), (16, 16)]:
+        var m = shape[0]
+        var k = shape[1]
+        var values = List[Scalar[DType.float64]](capacity=m * k)
+        for i in range(m * k):
+            values.append(Scalar[DType.float64](Float64(i % 7) - 3.0))
+        var xs = List[Scalar[DType.float64]](capacity=k)
+        for i in range(k):
+            xs.append(Scalar[DType.float64](Float64(i) * 0.25 - 1.0))
+        var a = zeros_dyn[DType.float64, 2](m, k, ctx=ctx)
+        var b = zeros_dyn[DType.float64, 2](k, 1, ctx=ctx)
+        a.copy_from_host(values.copy())
+        b.copy_from_host(xs.copy())
+        var c = matmul(a, b)
+        assert_equal(c.dim[0](), m)
+        assert_equal(c.dim[1](), 1)
+        var got = c.to_host()
+        for i in range(m):
+            var want = 0.0
+            for j in range(k):
+                want += Float64(values[i * k + j]) * Float64(xs[j])
+            assert_almost_equal(Float64(got[i]), want, atol=1e-12)
+
+
 def test_matmul_dynamic_rejects_mismatched_shapes() raises:
     """The check the static overload gets from the type system for free."""
     var ctx = _cpu()
