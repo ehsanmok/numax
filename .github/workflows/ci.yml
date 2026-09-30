@@ -126,6 +126,12 @@ jobs:
       - name: Compile the documented snippets
         run: pixi run doc-check
 
+      # The compile-time guards -- an operator between two dtypes or two
+      # shapes that cannot broadcast, an oversized `Array`-tier matrix --
+      # are claims no test can run; each program must fail with its message.
+      - name: Check the compile-time error messages
+        run: pixi run compile-fail-check
+
       - name: Run CPU examples
         run: pixi run examples-cpu
 

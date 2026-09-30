@@ -73,7 +73,11 @@ the host. `f32` is `DType.float32`.
 11. `numax.ndimage` is imported by subpackage only (`from numax.ndimage
     import gaussian_filter`): its `convolve`/`correlate` are the n-d image
     filters, and the flat `numax` names are `numax.signal`'s 1-D ones.
-12. Constraints are structs, as in SciPy: `Bounds(lb, ub)`,
+12. Operators do not promote dtypes: `a + b` between `float32` and
+    `float64` stops at compile time naming `numax.core.ops.astype`, and two
+    compile-time shapes that do not broadcast stop there too. A run-time
+    (`Dynamic`) shape that does not broadcast raises when the call runs.
+13. Constraints are structs, as in SciPy: `Bounds(lb, ub)`,
     `LinearConstraint(a, lb, ub)`, and `NonlinearConstraint[dtype, n, m,
     fun, jac](lb, ub)` with `fun`/`jac` compile-time functions. Passing
     constraints to `minimize` selects `method="slsqp"`.

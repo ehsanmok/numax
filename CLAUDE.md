@@ -31,8 +31,9 @@ pixi run examples                 # + the GPU ones (needs real Metal/CUDA)
 pixi run accuracy                 # max error per function vs. checked-in mpmath refs
 pixi run typecheck                # mojo doc over the whole generic surface
 pixi run doc-check                # compile every mojo block in llms.txt and docs/quickstart.md
+pixi run compile-fail-check       # each tests_compile_fail/ program fails with its `# expect:` message
 pixi run bench                    # map vs. a hand-rolled raw-SIMD loop
-pixi run -e dev format            # mojo format over numax examples tests tests_gpu bench
+pixi run -e dev format            # mojo format over numax examples tests tests_gpu tests_compile_fail bench
 pixi run -e dev format-check      # format + git diff --exit-code
 pixi run -e dev docs-build        # mojodoc → target/doc/
 ```
@@ -356,9 +357,10 @@ code comment.
    commit message makes, not just that the code runs. Where a convenience
    wraps an existing primitive, a test asserts the two spellings agree.
 2. No regression: full `pixi run tests` green (new suite wired into the
-   aggregate), `pixi run examples-cpu`, `pixi run accuracy`, `mojo doc -I .`
-   and `pixi run -e dev format-check` clean. A feature is not done until the
-   whole gate passes, not just its own suite.
+   aggregate), `pixi run examples-cpu`, `pixi run accuracy`, `mojo doc -I .`,
+   `pixi run compile-fail-check` and `pixi run -e dev format-check` clean.
+   A feature is not done until the whole gate passes, not just its own
+   suite.
 3. Anything touching a device path: `pixi run tests-gpu` and `pixi run
    examples` green on a real accelerator, and a `tests_gpu/` test for any
    routine that gains a `gpu=True` path.

@@ -193,6 +193,8 @@ from .tensorlike import (
     is_row_major,
 )
 from ._drive import (
+    _dtype_mismatch,
+    _shapes_broadcast,
     _BroadcastRank,
     _check_device,
     _flat_out,
@@ -2017,12 +2019,18 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     # shape -- through the broadcasting free functions, into a
     # run-time-shaped result. A same-typed operand takes the overloads
     # above, which keep the static shape.
+    #
+    # The dtype is a `comptime assert` in each body rather than a `where`
+    # clause, and two compile-time shapes are checked with
+    # `_shapes_broadcast`, so the two common mistakes stop on a sentence
+    # naming the fix instead of "no matching method" or a call that can
+    # only raise. `tests_compile_fail/` holds both to their messages.
 
     def __add__[
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a + b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.add`'s
         broadcasting overload and follows `a` to its device.
@@ -2042,6 +2050,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["+"]
+        _shapes_broadcast["+", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _add[gpu=True](self, other)
@@ -2051,7 +2061,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a - b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.subtract`'s
         broadcasting overload and follows `a` to its device.
@@ -2071,6 +2081,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["-"]
+        _shapes_broadcast["-", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _subtract[gpu=True](self, other)
@@ -2080,7 +2092,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a * b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.multiply`'s
         broadcasting overload and follows `a` to its device.
@@ -2100,6 +2112,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["*"]
+        _shapes_broadcast["*", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _multiply[gpu=True](self, other)
@@ -2109,7 +2123,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         Self.dtype, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a / b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes. Forwards to `numax.core.ops.divide`'s
         broadcasting overload and follows `a` to its device.
@@ -2129,6 +2143,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["/"]
+        _shapes_broadcast["/", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _divide[gpu=True](self, other)
@@ -2138,7 +2154,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a < b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes, as a `bool` tensor.
 
@@ -2157,6 +2173,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["<"]
+        _shapes_broadcast["<", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less[gpu=True](self, other)
@@ -2166,7 +2184,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a <= b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes, as a `bool` tensor.
 
@@ -2185,6 +2203,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["<="]
+        _shapes_broadcast["<=", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _less_equal[gpu=True](self, other)
@@ -2194,7 +2214,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a > b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes, as a `bool` tensor.
 
@@ -2213,6 +2233,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch[">"]
+        _shapes_broadcast[">", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater[gpu=True](self, other)
@@ -2222,7 +2244,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a >= b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes, as a `bool` tensor.
 
@@ -2241,6 +2263,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch[">="]
+        _shapes_broadcast[">=", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _greater_equal[gpu=True](self, other)
@@ -2250,7 +2274,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a == b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes, as a `bool` tensor.
 
@@ -2269,6 +2293,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["=="]
+        _shapes_broadcast["==", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _equal[gpu=True](self, other)
@@ -2278,7 +2304,7 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         B: TensorLike
     ](self, other: B) raises -> Dynamic[
         DType.bool, _BroadcastRank[Self.LayoutType, B.LayoutType]
-    ] where (B.dtype == Self.dtype and is_row_major[Self] and is_row_major[B]):
+    ] where (is_row_major[Self] and is_row_major[B]):
         """`a != b` against any `TensorLike` `b` of the same dtype, at two
         broadcastable shapes, as a `bool` tensor.
 
@@ -2297,6 +2323,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
             If the shapes do not broadcast, if the device launch fails, or when
             a host fallback runs under the `"raise"` fallback policy.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["!="]
+        _shapes_broadcast["!=", Self.LayoutType, B.LayoutType]()
         comptime if has_accelerator() and Self.dtype != DType.float64:
             if not self.host_addressable:
                 return _not_equal[gpu=True](self, other)
@@ -2309,10 +2337,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
     ] where (
         Self.LayoutType.rank == 2
         and Self.LayoutType.all_dims_known
-        and B.dtype == Self.dtype
         and B.LayoutType.rank == 2
         and B.LayoutType.all_dims_known
-        and dim[B, 0] == dim[Self, 1]
     ):
         """`a @ b`, the matrix product of two compile-time-shaped matrices,
         on `a`'s device: `numax.linalg.matmul`'s spelling as an operator.
@@ -2337,6 +2363,10 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         Raises:
             If allocation, MAX's `matmul` or the device synchronization fails.
         """
+        comptime assert B.dtype == Self.dtype, _dtype_mismatch["@"]
+        comptime assert (
+            dim[B, 0] == dim[Self, 1]
+        ), "a @ b: the inner extents differ -- a's columns must equal b's rows"
         comptime m = dim[Self, 0]
         comptime n = dim[B, 1]
         var ctx = self.context()

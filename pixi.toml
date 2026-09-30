@@ -120,8 +120,8 @@ pre-commit = ">=4.2.0,<5"
 [feature.dev.tasks]
 install-pre-commit = "pre-commit install"
 # In the dev feature because it depends-on `install-pre-commit`.
-format = { cmd = "mojo format numax examples tests tests_gpu bench", depends-on = ["install-pre-commit"] }
-format-check = { cmd = "bash -c 'mojo format numax examples tests tests_gpu bench && git diff --exit-code numax examples tests tests_gpu bench || (echo \"Error: Code is not formatted. Run \\\"pixi run -e dev format\\\" to fix.\" && exit 1)'" }
+format = { cmd = "mojo format numax examples tests tests_gpu tests_compile_fail bench", depends-on = ["install-pre-commit"] }
+format-check = { cmd = "bash -c 'mojo format numax examples tests tests_gpu tests_compile_fail bench && git diff --exit-code numax examples tests tests_gpu tests_compile_fail bench || (echo \"Error: Code is not formatted. Run \\\"pixi run -e dev format\\\" to fix.\" && exit 1)'" }
 # `--open` previews; `docs-build` writes target/doc/ for docs.yaml.
 docs      = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --open'" }
 docs-build = { cmd = "bash -c 'CLI=${MOJODOC_CLI:-../mojodoc/packages/cli/dist/index.js}; node \"$CLI\" build ./numax --out-dir target/doc --base-url /numax/'" }
@@ -248,6 +248,9 @@ typecheck = "mkdir -p target && mojo doc -I . numax -o target/typecheck.json"
 # compile. `readme-check` runs the same over README.md, which is edited by
 # hand and not gated.
 doc-check = "python3 tools/check_snippets.py llms.txt docs/quickstart.md"
+# Every program in tests_compile_fail/ must fail to build with the message
+# its `# expect:` lines name: the compile-time guards, which no test can run.
+compile-fail-check = "python3 tools/check_compile_fail.py"
 readme-check = "python3 tools/check_snippets.py README.md"
 # The `gpu=True` comparisons in `tests_gpu/`: every device routine against
 # its host answer at float32 (Metal has no double). Needs a real device, so

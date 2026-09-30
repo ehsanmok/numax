@@ -461,6 +461,49 @@ comptime _BroadcastRank[
 """NumPy's broadcast rank: the wider of the two operands'."""
 
 
+def _broadcasts_statically[A: TensorLayout, B: TensorLayout]() -> Bool:
+    """Whether two layouts broadcast under NumPy's rule, as far as the
+    types can tell: `False` only when both shapes are compile-time and
+    some trailing pair of extents differs with neither of them `1`. A
+    run-time extent leaves the question to the run-time check."""
+    comptime if not (A.all_dims_known and B.all_dims_known):
+        return True
+    else:
+        comptime shared = A.rank if A.rank < B.rank else B.rank
+        comptime for k in range(shared):
+            comptime ea = A.static_shape[A.rank - 1 - k]
+            comptime eb = B.static_shape[B.rank - 1 - k]
+            comptime if ea != eb and ea != 1 and eb != 1:
+                return False
+        return True
+
+
+comptime _dtype_mismatch[op: StaticString] = (
+    "a "
+    + op
+    + " b: the operands' dtypes differ; convert one first with"
+    " numax.core.ops.astype"
+)
+"""The message a mixed-operand operator's dtype `comptime assert` carries.
+The assert itself sits in each operator's body rather than in a helper,
+because the prover takes it as the evidence the forwarding call's `B.dtype
+== A.dtype` clause needs only there."""
+
+
+@always_inline
+def _shapes_broadcast[op: StaticString, A: TensorLayout, B: TensorLayout]():
+    """Stop two compile-time shapes that cannot broadcast on a sentence
+    naming the fix, rather than compiling a call that can only raise. `op`
+    is the operator's spelling, for the message."""
+    comptime assert _broadcasts_statically[A, B](), (
+        "a "
+        + op
+        + " b: the shapes do not broadcast (NumPy's rule: trailing extents"
+        " equal, or one of them 1); reshape, expand_dims or broadcast_to an"
+        " operand first"
+    )
+
+
 def _broadcast_plan[
     A: TensorLike, B: TensorLike
 ](a: A, b: B) raises -> Tuple[

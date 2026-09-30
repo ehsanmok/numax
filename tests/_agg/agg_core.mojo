@@ -978,6 +978,15 @@ from test_operators import (
 from test_operators import (
     test_matmul_operator_is_matmul as test_operators__test_matmul_operator_is_matmul,
 )
+from test_operators import (
+    test_the_static_broadcast_check_is_numpys_rule as test_operators__test_the_static_broadcast_check_is_numpys_rule,
+)
+from test_operators import (
+    test_broadcastable_static_shapes_still_compile_and_agree as test_operators__test_broadcastable_static_shapes_still_compile_and_agree,
+)
+from test_operators import (
+    test_a_run_time_shape_mismatch_still_raises as test_operators__test_a_run_time_shape_mismatch_still_raises,
+)
 from test_ops import test_add_and_subtract as test_ops__test_add_and_subtract
 from test_ops import (
     test_multiply_and_divide as test_ops__test_multiply_and_divide,
@@ -2161,6 +2170,11 @@ def main() raises:
     suite.test[test_operators__test_in_place_operators_equal_the_binary_ones]()
     suite.test[test_operators__test_comparisons_return_bool_masks]()
     suite.test[test_operators__test_matmul_operator_is_matmul]()
+    suite.test[test_operators__test_the_static_broadcast_check_is_numpys_rule]()
+    suite.test[
+        test_operators__test_broadcastable_static_shapes_still_compile_and_agree
+    ]()
+    suite.test[test_operators__test_a_run_time_shape_mismatch_still_raises]()
     # tests/core/test_ops.mojo
     suite.test[test_ops__test_add_and_subtract]()
     suite.test[test_ops__test_multiply_and_divide]()

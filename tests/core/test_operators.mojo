@@ -1,5 +1,7 @@
 """`Tensor`'s reflected, in-place, power, comparison and `@` operators,
-each against the free function it spells.
+each against the free function it spells, and the compile-time shape
+check the mixed-operand overloads make (its failures live in
+`tests_compile_fail/`, since a program that does not build cannot run).
 
 The operators are sugar: `2.0 - a` must be `numax.core.ops`'s reflected
 subtract, `a > 0` must be `greater(a, 0)`, `a += b` must leave `a` equal
@@ -7,7 +9,9 @@ to `add(a, b)`. Every test asserts the two spellings agree element for
 element, and that a comparison returns a `bool` tensor of `a`'s shape.
 """
 
-from std.testing import TestSuite, assert_equal, assert_true
+from std.testing import TestSuite, assert_equal, assert_raises, assert_true
+
+from layout.tile_layout import row_major
 
 from max.gpu.host import DeviceContext
 
@@ -20,7 +24,8 @@ from numax.core.logic import (
     not_equal,
 )
 from numax.core.ops import add, divide, multiply, power, subtract
-from numax.core.tensor import Static
+from numax.core._drive import _broadcasts_statically
+from numax.core.tensor import Dynamic, Static, _dyn_shape
 from numax.linalg import matmul
 
 comptime f64 = DType.float64
@@ -121,6 +126,47 @@ def test_matmul_operator_is_matmul() raises:
     assert_equal(product.dim[0](), 2)
     assert_equal(product.dim[1](), 4)
     _same(product.to_host(), matmul(a, b).to_host())
+
+
+def test_the_static_broadcast_check_is_numpys_rule() raises:
+    """`_broadcasts_statically` rejects only what NumPy rejects, and defers
+    to run time whenever an extent is not in the type."""
+    comptime L23 = type_of(row_major[2, 3]())
+    comptime L13 = type_of(row_major[1, 3]())
+    comptime L3 = type_of(row_major[3]())
+    comptime L45 = type_of(row_major[4, 5]())
+    comptime L5 = type_of(row_major[5]())
+    comptime L413 = type_of(row_major[4, 1, 3]())
+    comptime Ldyn = type_of(row_major(_dyn_shape[2](4, 5)))
+    assert_true(_broadcasts_statically[L23, L23]())
+    assert_true(_broadcasts_statically[L23, L13]())
+    assert_true(_broadcasts_statically[L23, L3]())
+    assert_true(_broadcasts_statically[L413, L23]())
+    assert_true(not _broadcasts_statically[L23, L45]())
+    assert_true(not _broadcasts_statically[L23, L5]())
+    assert_true(_broadcasts_statically[L23, Ldyn]())
+
+
+def test_broadcastable_static_shapes_still_compile_and_agree() raises:
+    """A row and a vector against a matrix take the mixed overload, which
+    the check lets through, and agree with the free function."""
+    var row = Static[f64, 1, 3]([10.0, 20.0, 30.0], DeviceContext(api="cpu"))
+    var vec = Static[f64, 3]([1.0, 2.0, 3.0], DeviceContext(api="cpu"))
+    _same((_a() + row).to_host(), add(_a(), row).to_host())
+    _same((_a() * vec).to_host(), multiply(_a(), vec).to_host())
+    _same_mask((_a() > vec).to_host(), greater(_a(), vec).to_host())
+
+
+def test_a_run_time_shape_mismatch_still_raises() raises:
+    """Where an extent is not in the type the check defers, and the
+    broadcasting free function raises naming the axis, as before."""
+    var d = Dynamic[f64, 2](
+        row_major(_dyn_shape[2](4, 5)),
+        List[Scalar[f64]](length=20, fill=1.0),
+        DeviceContext(api="cpu"),
+    )
+    with assert_raises(contains="do not broadcast"):
+        _ = _a() + d
 
 
 def main() raises:
