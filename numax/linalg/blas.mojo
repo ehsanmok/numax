@@ -542,6 +542,128 @@ def matvec[
         return result^
 
 
+def matvec[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](a: A, x: B) raises -> Dynamic[A.dtype, 1] where (
+    is_row_major[B]
+    and A.LayoutType.rank == 2
+    and not A.LayoutType.all_dims_known
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+    and not B.LayoutType.all_dims_known
+):
+    """The matrix-vector product `a @ x` at extents known only at run time.
+
+    The run-time-shaped overload of the one above: the same `linalg.matmul`
+    call with the vectors relaid as columns, and the same growth of both
+    extents to a lane multiple on the host path against MAX's GEMV tail
+    over-read -- decided at run time here, so an aligned call pays nothing
+    and a misaligned one pays one padded copy of `a`. The device path takes
+    the direct call whatever the extents, as the static overload's does.
+
+    Raises when `a`'s columns and `x`'s length disagree, which is the check
+    the static overload gets from the type system.
+
+    Parameters:
+        A: The `TensorLike` type of `a`, a rank-2 tensor whose extents are
+            known only at run time.
+        B: The `TensorLike` type of `x`, a run-time-shaped row-major rank-1
+            tensor of `A`'s dtype.
+        gpu: Launch on the accelerator when `True`, on the host when
+            `False`; the operands must be resident on that device.
+
+    Args:
+        a: The `m x k` matrix.
+        x: The length-`k` vector.
+
+    Returns:
+        A new run-time-shaped length-`m` vector `a @ x` on `a`'s device.
+
+    Raises:
+        If `a`'s column count differs from `x`'s length, or if a buffer
+        allocation or kernel launch on `a`'s device context fails.
+    """
+    var m = a.dim[0]()
+    var k = a.dim[1]()
+    if x.dim[0]() != k:
+        raise Error(
+            "matvec: shape mismatch: a is ",
+            m,
+            "x",
+            k,
+            " and x has ",
+            x.dim[0](),
+            " entries",
+        )
+    comptime lanes = simd_width_of[A.dtype]()
+    var ctx = a.context()
+    var xv = _mut_view_as[A.dtype](x)
+    var result = zeros_dyn[A.dtype, 1](m, ctx=ctx)
+    var rv = result.tile()
+
+    if gpu or (m % lanes == 0 and k % lanes == 0):
+        var x_col = TileTensor(
+            xv.ptr_at_offset(Coord(0)), row_major(Coord(k, 1))
+        )
+        var y_col = TileTensor(
+            rv.ptr_at_offset(Coord(0)), row_major(Coord(m, 1))
+        )
+        _max_matmul[target="gpu" if gpu else "cpu"](
+            y_col, _mut_view(a), x_col, ctx
+        )
+        ctx.synchronize()
+        return result^
+
+    var m_pad = ((m + lanes - 1) // lanes) * lanes
+    var k_pad = ((k + lanes - 1) // lanes) * lanes
+    # Zeroed, so the phantom rows and columns contribute `0 * 0`; the copy
+    # below writes only the real entries.
+    var padded = zeros_dyn[A.dtype, 2](m_pad, k_pad, ctx=ctx)
+    var x_wide = zeros_dyn[A.dtype, 1](k_pad, ctx=ctx)
+    var wide = zeros_dyn[A.dtype, 1](m_pad, ctx=ctx)
+    var av = _mut_view(a)
+    var pv = padded.tile()
+    var xw = x_wide.tile()
+    var wv = wide.tile()
+
+    # Width 1, for the static overload's reason: the source index comes
+    # from the destination coordinate.
+    @always_inline
+    def grow[w: Int, alignment: Int = 1](coord: Coord) {var av, var pv}:
+        pv.store[1](coord, av[coord])
+
+    elementwise[simd_width=1, target=_target[gpu]()](grow, Coord(m, k), ctx)
+
+    @always_inline
+    def grow_x[w: Int, alignment: Int = 1](coord: Coord) {var xv, var xw}:
+        xw.store[1](coord, xv[coord])
+
+    elementwise[simd_width=1, target=_target[gpu]()](grow_x, Coord(k), ctx)
+
+    var x_col = TileTensor(
+        xw.ptr_at_offset(Coord(0)), row_major(Coord(k_pad, 1))
+    )
+    var y_col = TileTensor(
+        wv.ptr_at_offset(Coord(0)), row_major(Coord(m_pad, 1))
+    )
+    _max_matmul[target="gpu" if gpu else "cpu"](y_col, pv, x_col, ctx)
+
+    @always_inline
+    def trim[w: Int, alignment: Int = 1](coord: Coord) {var wv, var rv}:
+        rv.store[1](coord, wv[coord])
+
+    elementwise[simd_width=1, target=_target[gpu]()](trim, Coord(m), ctx)
+    ctx.synchronize()
+    # Every owner above was last named at `.tile()`, and the views are
+    # origin-erased; see the static overload on the queued free.
+    _ = padded^
+    _ = x_wide^
+    _ = wide^
+    return result^
+
+
 def matmul[
     A: TensorLike,
     B: TensorLike,

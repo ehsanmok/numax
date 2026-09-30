@@ -9,7 +9,12 @@ against the triangle it names.
 """
 
 from max.gpu.host import DeviceContext
-from std.testing import TestSuite, assert_almost_equal, assert_raises
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_raises,
+)
 
 from numax import Plain
 from numax.core.tensor import Static, zeros_dyn
@@ -307,6 +312,58 @@ def test_matvec_square_but_not_a_lane_multiple() raises:
         for j in range(6):
             want += Float64(values[i * 6 + j]) * Float64(xs[j])
         assert_almost_equal(Float64(got[i]), want, atol=1e-12)
+
+
+def _dynamic_matvec_matches_static[dtype: DType, m: Int, k: Int]() raises:
+    """The run-time overload against the static one at the same shape:
+    the same `linalg.matmul` call on the same padded operands, so the
+    two agree to the bit, and both against a host dot product."""
+    var ctx = _cpu()
+    var values = List[Scalar[dtype]](capacity=m * k)
+    for i in range(m * k):
+        values.append(Scalar[dtype](Float64(i % 7) - 3.0))
+    var xs = List[Scalar[dtype]](capacity=k)
+    for i in range(k):
+        xs.append(Scalar[dtype](Float64(i) * 0.25 - 1.0))
+    var want = matvec(
+        Static[dtype, m, k](values.copy(), ctx),
+        Static[dtype, k](xs.copy(), ctx),
+    ).to_host()
+
+    var a = zeros_dyn[dtype, 2](m, k, ctx=ctx)
+    var x = zeros_dyn[dtype, 1](k, ctx=ctx)
+    a.copy_from_host(values.copy())
+    x.copy_from_host(xs.copy())
+    var y = matvec(a, x)
+    assert_equal(y.dim[0](), m)
+    var got = y.to_host()
+    for i in range(m):
+        assert_equal(got[i], want[i])
+        var dot_i = 0.0
+        for j in range(k):
+            dot_i += Float64(values[i * k + j]) * Float64(xs[j])
+        assert_almost_equal(Float64(got[i]), dot_i, atol=1e-4)
+
+
+def test_matvec_dynamic_agrees_with_static() raises:
+    """Aligned at every lane width (`16 x 16`), and misaligned in `m`, in
+    `k` and in both, at both widths -- the padding decided at run time is
+    the padding the static overload decides at compile time."""
+    _dynamic_matvec_matches_static[DType.float64, 16, 16]()
+    _dynamic_matvec_matches_static[DType.float64, 6, 4]()
+    _dynamic_matvec_matches_static[DType.float64, 8, 17]()
+    _dynamic_matvec_matches_static[DType.float64, 9, 9]()
+    _dynamic_matvec_matches_static[DType.float64, 1, 5]()
+    _dynamic_matvec_matches_static[DType.float32, 5, 13]()
+    _dynamic_matvec_matches_static[DType.float32, 32, 16]()
+
+
+def test_matvec_dynamic_rejects_mismatched_shapes() raises:
+    var ctx = _cpu()
+    var a = zeros_dyn[DType.float64, 2](3, 4, ctx=ctx)
+    var x = zeros_dyn[DType.float64, 1](5, ctx=ctx)
+    with assert_raises(contains="matvec: shape mismatch"):
+        _ = matvec(a, x)
 
 
 def test_batched_matmul_is_one_product_per_leading_index() raises:

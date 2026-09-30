@@ -10,6 +10,9 @@ with the tree.
 
 from std.testing import TestSuite
 from test_dynamic_lu_gpu import (
+    test_dynamic_matvec_gpu_matches_host as test_dynamic_lu_gpu__test_dynamic_matvec_gpu_matches_host,
+)
+from test_dynamic_lu_gpu import (
     test_dynamic_solve_gpu_matches_host as test_dynamic_lu_gpu__test_dynamic_solve_gpu_matches_host,
 )
 from test_dynamic_lu_gpu import (
@@ -32,6 +35,7 @@ from test_multishift_gpu import (
 def main() raises:
     var suite = TestSuite()
     # tests_gpu/linalg/test_dynamic_lu_gpu.mojo
+    suite.test[test_dynamic_lu_gpu__test_dynamic_matvec_gpu_matches_host]()
     suite.test[test_dynamic_lu_gpu__test_dynamic_solve_gpu_matches_host]()
     suite.test[test_dynamic_lu_gpu__test_dynamic_cholesky_gpu_matches_host]()
     suite.test[test_dynamic_lu_gpu__test_dynamic_lstsq_gpu_matches_host]()

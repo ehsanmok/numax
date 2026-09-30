@@ -1,8 +1,7 @@
-"""The run-time-shape `lu_factor`, `solve`, `det`, `cholesky` and
-`lstsq` at
-`gpu=True`: a
-`Dynamic` matrix on the device, factored and solved there at `float32`,
-against the host run at the same `dtype`."""
+"""The run-time-shape `matvec`, `lu_factor`, `solve`, `det`, `cholesky`
+and `lstsq` at `gpu=True`: a `Dynamic` matrix on the device, factored
+and solved there at `float32`, against the host run at the same
+`dtype`."""
 
 from std.testing import TestSuite, assert_almost_equal
 
@@ -10,7 +9,7 @@ from layout.tile_layout import row_major
 from max.gpu.host import DeviceContext
 
 from numax.core.tensor import Dynamic, _dyn_shape
-from numax.linalg import cholesky, det, lstsq, solve
+from numax.linalg import cholesky, det, lstsq, matvec, solve
 
 comptime f32 = DType.float32
 
@@ -31,6 +30,20 @@ def _vector(n: Int, ctx: DeviceContext) raises -> Dynamic[f32, 1]:
     for i in range(n):
         values.append(Scalar[f32](Float64(i) - 1.5))
     return Dynamic[f32, 1](row_major(_dyn_shape[1](n)), values^, ctx)
+
+
+def test_dynamic_matvec_gpu_matches_host() raises:
+    """`70 x 70`, off a lane multiple, where the host pads and the device
+    takes the direct call."""
+    var n = 70
+    var gpu_ctx = DeviceContext()
+    var cpu = DeviceContext(api="cpu")
+    var yd = matvec[gpu=True](_matrix(n, gpu_ctx), _vector(n, gpu_ctx))
+    var yh = matvec(_matrix(n, cpu), _vector(n, cpu))
+    var d = yd.to_host()
+    var h = yh.to_host()
+    for i in range(n):
+        assert_almost_equal(Float64(d[i]), Float64(h[i]), atol=1e-3)
 
 
 def test_dynamic_solve_gpu_matches_host() raises:

@@ -823,6 +823,12 @@ from test_tensor_linalg import (
     test_matvec_square_but_not_a_lane_multiple as test_tensor_linalg__test_matvec_square_but_not_a_lane_multiple,
 )
 from test_tensor_linalg import (
+    test_matvec_dynamic_agrees_with_static as test_tensor_linalg__test_matvec_dynamic_agrees_with_static,
+)
+from test_tensor_linalg import (
+    test_matvec_dynamic_rejects_mismatched_shapes as test_tensor_linalg__test_matvec_dynamic_rejects_mismatched_shapes,
+)
+from test_tensor_linalg import (
     test_batched_matmul_is_one_product_per_leading_index as test_tensor_linalg__test_batched_matmul_is_one_product_per_leading_index,
 )
 from test_tensor_linalg import (
@@ -1565,6 +1571,10 @@ def main() raises:
         test_tensor_linalg__test_matvec_at_float32_where_a_lane_is_sixteen_wide
     ]()
     suite.test[test_tensor_linalg__test_matvec_square_but_not_a_lane_multiple]()
+    suite.test[test_tensor_linalg__test_matvec_dynamic_agrees_with_static]()
+    suite.test[
+        test_tensor_linalg__test_matvec_dynamic_rejects_mismatched_shapes
+    ]()
     suite.test[
         test_tensor_linalg__test_batched_matmul_is_one_product_per_leading_index
     ]()

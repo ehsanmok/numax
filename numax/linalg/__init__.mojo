@@ -55,7 +55,7 @@ in one public module however many tiers it covers.
 
 ## What is here
 
-`matmul` (compile-time and run-time shapes), `matvec`, `batched_matmul`,
+`matmul` and `matvec` (compile-time and run-time shapes), `batched_matmul`,
 the BLAS-1 five (`dot`, `nrm2`, `asum`, `axpy`, `outer`), blocked
 `cholesky`, `lu_factor` (returning a reusable `LU`), `qr_factor`
 (returning a reusable `QR`), `sytrd` (returning a reusable
