@@ -414,11 +414,15 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         constructor below, or get one from a `numax.core.logic` comparison,
         which is where masks come from in practice.
 
-        The `synchronize` is not optional: `enqueue_memset` only *queues*
-        the fill, and `__getitem__`'s host-pointer fast path does not order
-        itself against queued work the way a host mapping does. Without it,
-        a read immediately after construction can see unwritten memory
-        (caught by `tests/core/test_tensor.mojo`'s zero-content check).
+        On the host the `synchronize` is not optional: `enqueue_memset`
+        only *queues* the fill, and `__getitem__`'s host-pointer fast path
+        does not order itself against queued work the way a host mapping
+        does. Without it, a read immediately after construction can see
+        unwritten memory (caught by `tests/core/test_tensor.mojo`'s
+        zero-content check). A device tensor has no such path -- every
+        host read of it goes through a mapping, and every launch on its
+        context queues behind the fill -- so there the round trip is
+        skipped: on Metal it was about 100 us of every allocation.
 
         Args:
             layout: The layout giving the tensor's shape and strides.
@@ -432,7 +436,8 @@ struct Tensor[dtype_: DType, LayoutType_: TensorLayout](
         self._buffer = device.enqueue_create_buffer[Self.dtype](layout.size())
         self.host_addressable = device.api() == "cpu"
         device.enqueue_memset(self._buffer, Scalar[Self.dtype](0))
-        device.synchronize()
+        if self.host_addressable:
+            device.synchronize()
 
     @staticmethod
     def _uninitialized(
@@ -3043,10 +3048,13 @@ def _filled[
 
     The fill is `enqueue_memset`, so it runs on the device rather than
     staging a host write -- the same reason `zeros` is cheap on both paths.
+    It synchronizes on the host only, for the reason the zeroing
+    constructor gives.
     """
     var device = result.context()
     device.enqueue_memset(result._buffer, fill_value)
-    device.synchronize()
+    if result.host_addressable:
+        device.synchronize()
     return result^
 
 

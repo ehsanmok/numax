@@ -662,6 +662,24 @@ with the 26.6 pin (or with the machine); the 26.5 environment was not
 rebuilt to separate the two. The factorization cells barely feel it:
 their trailing updates are rank-`block` products, never the square one.
 
+**Every device allocation paid a round trip, and the table above predates
+the fix.** The zeroing constructor behind `zeros`, `zeros_dyn` and every
+routine's scratch queued `enqueue_memset` and then synchronized. The
+synchronize exists for a host tensor's direct-pointer reads; a device
+tensor is only read through a mapping, which orders itself, so it was
+about 100 us per allocation on Metal for nothing (a raw
+`enqueue_create_buffer` is ~5 us, a memset ~130 us, an empty synchronize
+~100 us, measured in isolation). Synchronizing on the host only, the
+same `bench-linalg-gpu` straight after the table's session reads, numax
+before and after in GFLOP/s at `n = 256 / 512 / 1,024 / 2,048`:
+`cholesky` 1.9 / 10.8 / 50.3 / 159.9 to 2.3 / 12.4 / 52.4 / 164.0,
+`lu_factor` 2.6 / 13.2 / 55.6 / 151.1 to 3.0 / 15.1 / 60.1 / 161.2,
+`solve` 2.0 / 10.1 / 42.6 / 127.8 to 2.3 / 11.3 / 45.3 / 133.5. The
+gain is largest where allocation is the larger share, small `n`; the
+PyTorch column was not re-run, so read these against numax's own row,
+not as new ratios. What remains at small `n` is per-launch and
+per-memset overhead (`findings.mdc`, "Staging `potrf_diag`").
+
 **What moved `lu_factor`, `solve` and `qr_factor` was the panels'
 reductions moving into threadgroup memory** (`f940ce1`, measured then
 in a session where another process held one CPU core; the cells above
