@@ -320,6 +320,7 @@ from .special.beta import beta, betaln
 # prelude for the same reason the builtin-shadowing reductions do.
 from .linalg import (
     Polar,
+    DynamicEigh,
     LU,
     DynamicLU,
     QR,

@@ -1308,7 +1308,7 @@ def _bdsqr_agrees_with_the_oracle[
 
     var ctx = copy.context()
     var reduced = gebrd(copy)
-    var acc = _RotationBatch[dtype, 2 * n, False, False](32, ctx)
+    var acc = _RotationBatch[dtype, False, False](2 * n, 32, ctx)
     var doubled = _golub_kahan[n=n, gpu=False, vectors=False](
         reduced.d.to_host(), reduced.e.to_host(), acc, ctx
     )

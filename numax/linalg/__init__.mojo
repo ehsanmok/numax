@@ -42,7 +42,7 @@ modules matter when reading or extending.
 | `qr` | `qr_factor`, `QR` (and `DynamicQR` for run-time extents), `lstsq`, `rq`, `RQ` | `_decomp_qr` |
 | `basic` | `solve`, `inverse`, `pinv`, `orth`, `null_space`, `polar`, `Polar` | `_basic` |
 | `misc` | `norm` (matrix and vector), `trace`, `cond`, `NORM_FRO`, `NORM_INF`, `NORM_NEG_INF` | `_misc` |
-| `eigen` | `sytrd`, `Tridiagonal`, `eigvalsh`, `eigh` (and their `(a, b)` pencil forms), `Eigh`, `gebrd`, `Bidiagonal`, `svdvals`, `svd`, `SVD`, `matrix_rank`, `hessenberg`, `Hessenberg`, `eigvals`, `Eigenvalues`, `schur`, `Schur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
+| `eigen` | `sytrd`, `Tridiagonal`, `eigvalsh`, `eigh` (and their `(a, b)` pencil forms), `Eigh` (and `DynamicEigh` for a run-time order), `gebrd`, `Bidiagonal`, `svdvals`, `svd`, `SVD`, `matrix_rank`, `hessenberg`, `Hessenberg`, `eigvals`, `Eigenvalues`, `schur`, `Schur` | `_decomp`, `_decomp_svd`, `_decomp_schur`, plus LAPACK's `sytrd`/`gebrd`/`gehrd`/`hseqr` |
 | `matfuncs` | `expm`, `sqrtm`, `logm`, `funm`, `cosm`, `sinm`, `tanm`, `fractional_matrix_power` | `_matfuncs` |
 | `solvers` | `solve_sylvester`, `solve_continuous_lyapunov`, `solve_discrete_lyapunov` -- Bartels-Stewart over `schur` and a per-column `trsyl` kernel; `solve_continuous_are` by the Hamiltonian's matrix sign function | `_solvers` |
 | `special_matrices` | `toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `block_diag`, `khatri_rao`, `convolution_matrix`, `pascal`, `invpascal`, `hadamard`, `helmert`, `fiedler`, `fiedler_companion`, `leslie` | `_special_matrices` |
@@ -234,6 +234,7 @@ from .cholesky import cholesky, cholesky_solve
 from .eigen import (
     Eigenvalues,
     Bidiagonal,
+    DynamicEigh,
     Eigh,
     Hessenberg,
     SVD,

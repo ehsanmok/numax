@@ -503,8 +503,8 @@ def test_stage2_dsbtrd() raises:
     var tri = _dsbtrd_lower[f64](n, kd, ab, kd + 1)
     var d = tri[0].copy()
     var e = tri[1].copy()
-    var acc = _RotationBatch[f64, n, False, False](1, ctx)
-    _tql[N=n, gpu=False, vectors=False](d, e, acc, ctx)
+    var acc = _RotationBatch[f64, False, False](n, 1, ctx)
+    _tql[gpu=False, vectors=False](d, e, acc, ctx)
     sort(d)
     var w = eigvalsh(Static[f64, n, n](v^, ctx)).to_host()
     for i in range(n):

@@ -84,7 +84,11 @@ SPLIT: dict[str, list[list[str]]] = {
             "test_dynamic_lu_gpu.mojo",
             "test_lu_plu_gpu.mojo",
         ],
-        ["test_twostage_gpu.mojo", "test_banded_gpu.mojo"],
+        [
+            "test_twostage_gpu.mojo",
+            "test_banded_gpu.mojo",
+            "test_dynamic_eigen_gpu.mojo",
+        ],
     ],
 }
 

@@ -161,6 +161,156 @@ struct Tridiagonal[dtype: DType, n: Int, gpu: Bool = False](
         )
 
 
+def _sytrd_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    n: Int,
+    block: Int,
+    mut work: Dynamic[T.dtype, 2],
+    mut taus: Dynamic[T.dtype, 1],
+    mut d: Dynamic[T.dtype, 1],
+    mut e: Dynamic[T.dtype, 1],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`sytrd`'s blocked reduction of the `n x n` symmetric `a`, at an
+    order known only at run time: the static overload and the run-time
+    spectral routines both run this loop. Every kernel it launches
+    already took its extents as values; only the allocations and the
+    `p = A v` product needed the order in the type, and `matvec`'s
+    run-time overload pads exactly as the static one did.
+
+    Writes into the caller's `n x n` `work` (the packed reflectors), and
+    `n`-vectors `taus` (zeroed), `d` and `e`: out-parameters rather than a
+    result struct, since Mojo cannot move one field out of a struct that
+    still owns another (`findings.mdc`)."""
+    var width = min(block, n)
+    var ctx = a.context()
+    var vpad = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var scratch = zeros_dyn[T.dtype, 1](_PANEL_THREADS + 1, ctx=ctx)
+    var left = zeros_dyn[T.dtype, 2](n, 2 * width, ctx=ctx)
+    var right = zeros_dyn[T.dtype, 2](n, 2 * width, ctx=ctx)
+    # `latrd_w`'s reductions and the scalar it folds out of them.
+    var red = zeros_dyn[T.dtype, 1](2 * width + 2, ctx=ctx)
+    var product = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+
+    var wv = work.tile()
+    var tv = taus.tile()
+    var vv = vpad.tile()
+    var sv = scratch.tile()
+    var lv = left.tile()
+    var rv = right.tile()
+    var redv = red.tile()
+    var pv = product.tile()
+
+    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
+
+    var k0 = 0
+    while k0 < n - 2:
+        var nb = min(width, n - 2 - k0)
+
+        # A narrower panel writes only `2 * nb` of the operands' `2 *
+        # width` columns, and the GEMM below reads all of them. Clearing
+        # the rest is this factorization's instance of the scratch-viewed-
+        # at-two-widths trap: only the last panel can be narrow, so this
+        # runs at most once.
+        if nb < width:
+
+            @always_inline
+            def clear[
+                w: Int, alignment: Int = 1
+            ](coord: Coord) {var lv, var rv}:
+                lv.store[1](coord, Scalar[T.dtype](0))
+                rv.store[1](coord, Scalar[T.dtype](0))
+
+            elementwise[simd_width=1, target=_target[gpu]()](
+                clear, Coord(n, 2 * width), ctx
+            )
+
+        for j in range(nb):
+            latrd_column[target=_target[gpu]()](wv, lv, k0, j, width, n, ctx)
+
+            comptime if gpu:
+                ctx.enqueue_function[
+                    sytd2_column[
+                        T.dtype,
+                        ALayout=type_of(wv).LayoutType,
+                        VLayout=type_of(vv).LayoutType,
+                        TauLayout=type_of(tv).LayoutType,
+                        SLayout=type_of(sv).LayoutType,
+                        gpu=True,
+                    ]
+                ](
+                    wv,
+                    vv,
+                    tv,
+                    sv,
+                    Int32(k0 + j),
+                    Int32(n),
+                    grid_dim=1,
+                    block_dim=_PANEL_THREADS,
+                )
+                ctx.synchronize()
+            else:
+                sytd2_column(wv, vv, tv, sv, Int32(k0 + j), Int32(n))
+
+            # `p = A v` over the whole matrix: `vpad` is zero at and above
+            # `k0 + j`, so the panel's own columns -- which hold packed
+            # reflectors, not matrix entries -- are never read, and the
+            # leading block needs no staging. The panel's deferred updates
+            # reach `p` inside `latrd_w` instead of through `work`.
+            var p = matvec[gpu=gpu](work, vpad)
+
+            latrd_w[target=_target[gpu]()](
+                vv, p.tile(), lv, rv, redv, tv, k0, j, width, n, ctx
+            )
+            # `p`'s last mention is `.tile()`, and a view erases the
+            # origin; see `findings.mdc` on the queued free.
+            _ = p^
+
+        _subtract_panel[gpu=gpu](
+            wv,
+            lv,
+            rv,
+            pv,
+            k0 + nb,
+            k0 + nb,
+            n - k0 - nb,
+            n - k0 - nb,
+            2 * width,
+            ctx,
+        )
+        k0 += nb
+
+    # `sv`, `lv`, `rv`, `redv` and `pv` are read by the launches above and
+    # their owners are named nowhere else, so without these Mojo would
+    # destroy them after `.tile()`; see `findings.mdc` on the origin-erased
+    # view and the queued free.
+    _ = scratch^
+    _ = left^
+    _ = right^
+    _ = red^
+    _ = product^
+
+    var dv = d.tile()
+    var ev = e.tile()
+
+    # The band, on the device: `work`'s diagonal and first subdiagonal.
+    # `e[n-1]` is the documented unused entry and is written zero.
+    @always_inline
+    def band[
+        w: Int, alignment: Int = 1
+    ](coord: Coord) {var wv, var dv, var ev, var n}:
+        var at = coord_to_index_list(coord)[0]
+        dv.store[1](coord, wv[Coord(at, at)])
+        var below = Scalar[T.dtype](0)
+        if at + 1 < n:
+            below = wv[Coord(at + 1, at)]
+        ev.store[1](coord, below)
+
+    elementwise[simd_width=1, target=_target[gpu]()](band, Coord(n), ctx)
+    ctx.synchronize()
+
+
 def sytrd[
     T: TensorLike,
     gpu: Bool = False,
@@ -263,136 +413,19 @@ def sytrd[
         If a device allocation, copy or kernel launch fails.
     """
     comptime n = dim[T, 0]
-    comptime width = min(block, n)
     var ctx = a.context()
-    var work = zeros[T.dtype, n, n](ctx)
-    var taus = zeros[T.dtype, n](ctx)
-    var vpad = zeros[T.dtype, n](ctx)
-    var scratch = zeros[T.dtype, _PANEL_THREADS + 1](ctx)
-    var left = zeros[T.dtype, n, 2 * width](ctx)
-    var right = zeros[T.dtype, n, 2 * width](ctx)
-    # `latrd_w`'s reductions and the scalar it folds out of them.
-    var red = zeros[T.dtype, 2 * width + 2](ctx)
-    var product = zeros[T.dtype, n, n](ctx)
-
-    var wv = work.tile()
-    var tv = taus.tile()
-    var vv = vpad.tile()
-    var sv = scratch.tile()
-    var lv = left.tile()
-    var rv = right.tile()
-    var redv = red.tile()
-    var pv = product.tile()
-
-    pack_block[target=_target[gpu]()](_mut_view(a), wv, 0, 0, n, n, ctx)
-
-    var k0 = 0
-    while k0 < n - 2:
-        var nb = min(width, n - 2 - k0)
-
-        # A narrower panel writes only `2 * nb` of the operands' `2 *
-        # width` columns, and the GEMM below reads all of them. Clearing
-        # the rest is this factorization's instance of the scratch-viewed-
-        # at-two-widths trap: only the last panel can be narrow, so this
-        # runs at most once.
-        if nb < width:
-
-            @always_inline
-            def clear[
-                w: Int, alignment: Int = 1
-            ](coord: Coord) {var lv, var rv}:
-                lv.store[1](coord, Scalar[T.dtype](0))
-                rv.store[1](coord, Scalar[T.dtype](0))
-
-            elementwise[simd_width=1, target=_target[gpu]()](
-                clear, Coord(n, 2 * width), ctx
-            )
-
-        for j in range(nb):
-            latrd_column[target=_target[gpu]()](wv, lv, k0, j, width, n, ctx)
-
-            comptime if gpu:
-                ctx.enqueue_function[
-                    sytd2_column[
-                        T.dtype,
-                        ALayout=type_of(wv).LayoutType,
-                        VLayout=type_of(vv).LayoutType,
-                        TauLayout=type_of(tv).LayoutType,
-                        SLayout=type_of(sv).LayoutType,
-                        gpu=True,
-                    ]
-                ](
-                    wv,
-                    vv,
-                    tv,
-                    sv,
-                    Int32(k0 + j),
-                    Int32(n),
-                    grid_dim=1,
-                    block_dim=_PANEL_THREADS,
-                )
-                ctx.synchronize()
-            else:
-                sytd2_column(wv, vv, tv, sv, Int32(k0 + j), Int32(n))
-
-            # `p = A v` over the whole matrix: `vpad` is zero at and above
-            # `k0 + j`, so the panel's own columns -- which hold packed
-            # reflectors, not matrix entries -- are never read, and the
-            # leading block needs no staging. The panel's deferred updates
-            # reach `p` inside `latrd_w` instead of through `work`.
-            var p = matvec[gpu=gpu](work, vpad)
-
-            latrd_w[target=_target[gpu]()](
-                vv, p.tile(), lv, rv, redv, tv, k0, j, width, n, ctx
-            )
-            # `p`'s last mention is `.tile()`, and a view erases the
-            # origin; see `findings.mdc` on the queued free.
-            _ = p^
-
-        _subtract_panel[gpu=gpu](
-            wv,
-            lv,
-            rv,
-            pv,
-            k0 + nb,
-            k0 + nb,
-            n - k0 - nb,
-            n - k0 - nb,
-            2 * width,
-            ctx,
-        )
-        k0 += nb
-
-    # `sv`, `lv`, `rv`, `redv` and `pv` are read by the launches above and
-    # their owners are named nowhere else, so without these Mojo would
-    # destroy them after `.tile()`; see `findings.mdc` on the origin-erased
-    # view and the queued free.
-    _ = scratch^
-    _ = left^
-    _ = right^
-    _ = red^
-    _ = product^
-
-    var d = zeros[T.dtype, n](ctx)
-    var e = zeros[T.dtype, n](ctx)
-    var dv = d.tile()
-    var ev = e.tile()
-
-    # The band, on the device: `work`'s diagonal and first subdiagonal.
-    # `e[n-1]` is the documented unused entry and is written zero.
-    @always_inline
-    def band[w: Int, alignment: Int = 1](coord: Coord) {var wv, var dv, var ev}:
-        var at = coord_to_index_list(coord)[0]
-        dv.store[1](coord, wv[Coord(at, at)])
-        var below = Scalar[T.dtype](0)
-        if at + 1 < n:
-            below = wv[Coord(at + 1, at)]
-        ev.store[1](coord, below)
-
-    elementwise[simd_width=1, target=_target[gpu]()](band, Coord(n), ctx)
-    ctx.synchronize()
-
-    return Tridiagonal[T.dtype, n, gpu](d^, e^, work^, taus^, block)
+    var work = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var d = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var e = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _sytrd_run[gpu=gpu](a, n, block, work, taus, d, e)
+    return Tridiagonal[T.dtype, n, gpu](
+        d^.as_static[n](),
+        e^.as_static[n](),
+        work^.as_static[n, n](),
+        taus^.as_static[n](),
+        block,
+    )
 
 
 def _subtract_panel[
@@ -525,12 +558,11 @@ NaN or an infinity, and the raise says so rather than looping forever.
 
 struct _RotationBatch[
     dtype: DType,
-    N: Int,
     gpu: Bool,
     vectors: Bool,
     reach: Int = 1,
     ascending: Bool = False,
-](Movable where dtype.is_floating_point() and N >= 1 and reach >= 1):
+](Movable where dtype.is_floating_point() and reach >= 1):
     """The plane transformations of up to one batch of consecutive sweeps,
     held until enough of them have accumulated to go out as GEMMs.
 
@@ -594,6 +626,10 @@ struct _RotationBatch[
     var zt: Dynamic[Self.dtype, 2]
     """`Z^T`, `N x N` and device-resident. Row `j` is eigenvector `j`."""
 
+    var order: Int
+    """`N`, the order of the matrix whose vectors are accumulated -- a
+    run-time value, so one compiled batch serves every size."""
+
     var staged: Dynamic[Self.dtype, 2]
     """A dense `2*block x N` copy of the row block under update."""
 
@@ -642,11 +678,12 @@ struct _RotationBatch[
     """`B + reach * K`, the widest group the tag admits -- and the row
     count `staged`, `u_dev` and `ut_host` were sized for."""
 
-    def __init__(out self, block: Int, ctx: DeviceContext) raises:
+    def __init__(out self, order: Int, block: Int, ctx: DeviceContext) raises:
+        self.order = order
         self.block = max(block, 1)
         self.sweeps = max(self.block // Self.reach, 1)
         self.sweep = 0
-        var side = Self.N if Self.vectors else 1
+        var side = order if Self.vectors else 1
         self.window = min(self.block + Self.reach * self.sweeps, side)
         var wide = self.window
         self.zt = zeros_dyn[Self.dtype, 2](side, side, ctx=ctx)
@@ -753,7 +790,7 @@ struct _RotationBatch[
         var count = len(self.rot_index)
         if count == 0:
             return
-        var cols = Self.N
+        var cols = self.order
 
         # Bucket the batch by group, stably, so each group's entries keep
         # the order the sweeps emitted them in. A linear rescan per group
@@ -912,11 +949,11 @@ struct _RotationBatch[
 
 
 def _tql[
-    dtype: DType, N: Int, gpu: Bool, vectors: Bool
+    dtype: DType, gpu: Bool, vectors: Bool
 ](
     mut d: List[Scalar[dtype]],
     mut e: List[Scalar[dtype]],
-    mut acc: _RotationBatch[dtype, N, gpu, vectors],
+    mut acc: _RotationBatch[dtype, gpu, vectors],
     ctx: DeviceContext,
 ) raises where dtype.is_floating_point():
     """Implicit QL with Wilkinson shifts on the symmetric tridiagonal
@@ -1128,10 +1165,21 @@ def eigvalsh[
         fails.
     """
     comptime n = dim[T, 0]
+    return Static[T.dtype, n](_eigvalsh_run[gpu=gpu](a, n, block), a.context())
+
+
+def _eigvalsh_run[
+    T: TensorLike, gpu: Bool
+](a: T, n: Int, block: Int) raises -> List[Scalar[T.dtype]] where (
+    T.dtype.is_floating_point() and T.LayoutType.rank == 2
+):
+    """`eigvalsh`'s body at an order known only at run time, the one both
+    overloads run: the reduction (`sytrd`, or the two stages above
+    `_TWO_STAGE_EIGVALSH`), the QL sweep, the sort."""
     var ctx = a.context()
     var d: List[Scalar[T.dtype]]
     var e: List[Scalar[T.dtype]]
-    comptime if n > _TWO_STAGE_EIGVALSH:
+    if n > _TWO_STAGE_EIGVALSH:
         var full = _symmetric_from_lower[gpu](a, n)
         var tri = _two_stage_tridiagonal[T.dtype, gpu](
             full^, n, _TWO_STAGE_BAND
@@ -1139,15 +1187,19 @@ def eigvalsh[
         d = tri[0].copy()
         e = tri[1].copy()
     else:
-        var reduced = sytrd[gpu=gpu, block=block](a)
-        d = reduced.d.to_host()
-        e = reduced.e.to_host()
+        var work = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+        var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        var dd = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        var de = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+        _sytrd_run[gpu=gpu](a, n, block, work, taus, dd, de)
+        d = dd.to_host()
+        e = de.to_host()
     # `vectors=False` pushes nothing, so the batch is three one-element
     # allocations and its `block` never decides anything.
-    var acc = _RotationBatch[T.dtype, n, gpu, False](1, ctx)
-    _tql[N=n, gpu=gpu, vectors=False](d, e, acc, ctx)
+    var acc = _RotationBatch[T.dtype, gpu, False](n, 1, ctx)
+    _tql[gpu=gpu, vectors=False](d, e, acc, ctx)
     _std_sort(d)
-    return Static[T.dtype, n](d^, ctx)
+    return d^
 
 
 struct Eigh[dtype: DType, n: Int](
@@ -1173,6 +1225,26 @@ struct Eigh[dtype: DType, n: Int](
         out self,
         var values: Static[Self.dtype, Self.n],
         var vectors: Static[Self.dtype, Self.n, Self.n],
+    ):
+        self.values = values^
+        self.vectors = vectors^
+
+
+struct DynamicEigh[dtype: DType](Movable where dtype.is_floating_point()):
+    """`eigh`'s result at a run-time order: `Eigh` with the order in the
+    value rather than the type, as `DynamicLU` is to `LU`."""
+
+    var values: Dynamic[Self.dtype, 1]
+    """The eigenvalues, ascending."""
+
+    var vectors: Dynamic[Self.dtype, 2]
+    """The eigenvectors, one per column, in the order of `values`.
+    Orthonormal."""
+
+    def __init__(
+        out self,
+        var values: Dynamic[Self.dtype, 1],
+        var vectors: Dynamic[Self.dtype, 2],
     ):
         self.values = values^
         self.vectors = vectors^
@@ -1247,12 +1319,37 @@ def eigh[
     """
     comptime n = dim[T, 0]
     var ctx = a.context()
-    var reduced = sytrd[gpu=gpu, block=block](a)
-    var d = reduced.d.to_host()
-    var e = reduced.e.to_host()
+    var values = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var vectors = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    _eigh_run[gpu=gpu](a, n, block, values, vectors)
+    return Eigh[T.dtype, n](values^.as_static[n](), vectors^.as_static[n, n]())
 
-    var acc = _RotationBatch[T.dtype, n, gpu, True](block, ctx)
-    _tql[N=n, gpu=gpu, vectors=True](d, e, acc, ctx)
+
+def _eigh_run[
+    T: TensorLike, gpu: Bool
+](
+    a: T,
+    n: Int,
+    block: Int,
+    mut values: Dynamic[T.dtype, 1],
+    mut vectors: Dynamic[T.dtype, 2],
+) raises where (T.dtype.is_floating_point() and T.LayoutType.rank == 2):
+    """`eigh`'s body at an order known only at run time, the one both
+    overloads run: `sytrd`, the QL sweep with its rotations batched into
+    device GEMMs, the sort as a row gather, and `Q Z` as one product.
+    Writes the caller's `n`-vector `values` and `n x n` `vectors`, the way
+    `_sytrd_run` writes its outputs."""
+    var ctx = a.context()
+    var reflectors = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    var taus = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var diag = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var off = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    _sytrd_run[gpu=gpu](a, n, block, reflectors, taus, diag, off)
+    var d = diag.to_host()
+    var e = off.to_host()
+
+    var acc = _RotationBatch[T.dtype, gpu, True](n, block, ctx)
+    _tql[gpu=gpu, vectors=True](d, e, acc, ctx)
     acc.finish(ctx)
 
     # Sort ascending. `O(n^2)` scalar host work on `n` numbers, beside the
@@ -1273,13 +1370,15 @@ def eigh[
     for j in range(n):
         sorted_values.append(d[order[j]])
         perm_host.append(Scalar[DType.int64](order[j]))
-    var values = Static[T.dtype, n](sorted_values^, ctx)
-    var perm = Static[DType.int64, n](perm_host^, ctx)
+    values.copy_from_host(sorted_values)
+    var perm = Dynamic[DType.int64, 1](
+        row_major(_dyn_shape[1](n)), perm_host^, ctx
+    )
 
     # Row `j` of `zt` is eigenvector `j`, so the sort is a row gather --
     # source and destination are the same shape, which is what keeps a
     # cross-shape `elementwise` read out of it.
-    var zt_sorted = Static[T.dtype, n, n]._uninitialized(ctx)
+    var zt_sorted = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
     var src = acc.zt.tile()
     var dst = zt_sorted.tile()
     var pv = perm.tile()
@@ -1299,9 +1398,117 @@ def eigh[
     _ = acc^
     _ = perm^
 
-    var q = reduced.q()
-    var vectors = inner[gpu=gpu](q, zt_sorted)
-    return Eigh[T.dtype, n](values^, vectors^)
+    var q = _accumulate_reflectors_run[gpu=gpu](
+        reflectors, taus, n, n - 2, block
+    )
+    _max_matmul[transpose_b=True, target=_target[gpu]()](
+        vectors.tile(), q.tile(), zt_sorted.tile(), ctx
+    )
+    ctx.synchronize()
+    _ = q^
+    _ = zt_sorted^
+
+
+def _runtime_order[
+    T: TensorLike
+](a: T, name: StaticString) raises -> Int where T.LayoutType.rank == 2:
+    """The order of the run-time-shaped square `a`, raising unless it is
+    square and non-empty."""
+    var n = a.dim_at(0)
+    if a.dim_at(1) != n:
+        raise Error(
+            name, ": the matrix must be square, got ", n, " x ", a.dim_at(1)
+        )
+    if n < 1:
+        raise Error(name, ": the matrix is empty")
+    return n
+
+
+def eigvalsh[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> Dynamic[T.dtype, 1] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the eigenvalues of a
+    symmetric `a` whose order is data, ascending.
+    `scipy.linalg.eigvalsh`.
+
+    The static overload's body, run at the order `a` carries: the same
+    reduction (`sytrd` at or below `n = 256`, the two-stage band above
+    it), the same QL sweep and the same sort, so one compiled program
+    takes any size and the two overloads agree to the bit.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the reduction and every `O(n^3)` product on `a`'s device.
+        block: The `sytrd` panel width.
+
+    Args:
+        a: The `n x n` symmetric matrix; only its lower triangle and
+            diagonal are read.
+
+    Returns:
+        A run-time-shaped vector of the `n` eigenvalues, ascending.
+
+    Raises:
+        If `a` is not square or is empty, if an eigenvalue fails to
+        converge within the QL sweep budget (`a` holds a NaN or an
+        infinity), or if a device operation fails.
+    """
+    var n = _runtime_order(a, "eigvalsh")
+    return Dynamic[T.dtype, 1](
+        row_major(_dyn_shape[1](n)),
+        _eigvalsh_run[gpu=gpu](a, n, block),
+        a.context(),
+    )
+
+
+def eigh[
+    T: TensorLike,
+    gpu: Bool = False,
+    block: Int = 32,
+](a: T) raises -> DynamicEigh[T.dtype] where (
+    (T.dtype.is_floating_point() and block >= 1)
+    and T.LayoutType.rank == 2
+    and not T.LayoutType.all_dims_known
+):
+    """**Tier 2.** The run-time-shape overload: the eigendecomposition of
+    a symmetric `a` whose order is data. `scipy.linalg.eigh`.
+
+    The static overload's body at the order `a` carries -- `sytrd`, the
+    QL sweep with its rotations batched into device GEMMs, the sort, `Q Z`
+    -- returning a `DynamicEigh`, so one compiled program takes any size
+    and the two overloads agree to the bit.
+
+    Parameters:
+        T: The `TensorLike` type of `a`, a rank-2 run-time-shaped matrix.
+        gpu: Run the reduction and every `O(n^3)` product on `a`'s device.
+        block: The `sytrd` panel width, the rotation window and the width
+            `Q` is formed in.
+
+    Args:
+        a: The `n x n` symmetric matrix; only its lower triangle and
+            diagonal are read.
+
+    Returns:
+        A `DynamicEigh` with the eigenvalues ascending in `values` and the
+        orthonormal eigenvectors as the columns of `vectors`.
+
+    Raises:
+        If `a` is not square or is empty, if an eigenvalue fails to
+        converge within the QL sweep budget (`a` holds a NaN or an
+        infinity), or if a device operation fails.
+    """
+    var n = _runtime_order(a, "eigh")
+    var ctx = a.context()
+    var values = zeros_dyn[T.dtype, 1](n, ctx=ctx)
+    var vectors = zeros_dyn[T.dtype, 2](n, n, ctx=ctx)
+    _eigh_run[gpu=gpu](a, n, block, values, vectors)
+    return DynamicEigh[T.dtype](values^, vectors^)
 
 
 def _standard_form[
@@ -1489,8 +1696,28 @@ def _accumulate_reflectors[
     A caller who only wants eigenvalues never calls this.
     """
     comptime n = dim[A, 0]
+    return _accumulate_reflectors_run[gpu=gpu](
+        reflectors, taus, n, count, block
+    ).as_static[n, n]()
+
+
+def _accumulate_reflectors_run[
+    A: TensorLike,
+    B: TensorLike,
+    gpu: Bool = False,
+](reflectors: A, taus: B, n: Int, count: Int, block: Int) raises -> Dynamic[
+    A.dtype, 2
+] where (
+    A.dtype.is_floating_point()
+    and A.LayoutType.rank == 2
+    and B.dtype == A.dtype
+    and B.LayoutType.rank == 1
+):
+    """`_accumulate_reflectors` at an order known only at run time, the
+    loop the static overload runs: `Q` from `count` packed reflectors of
+    the `n x n` row-major `reflectors`, in panels of `block`."""
     var ctx = reflectors.context()
-    var result = Static[A.dtype, n, n]._uninitialized(ctx)
+    var result = zeros_dyn[A.dtype, 2](n, n, ctx=ctx)
     var out: _Dense[A.dtype] = TileTensor(
         result.tile().ptr, row_major(Coord(n, n))
     )
@@ -1942,10 +2169,10 @@ def _chase_rows[
 
 
 def _hqr[
-    dtype: DType, wantt: Bool, wantz: Bool, N: Int, gpu: Bool
+    dtype: DType, wantt: Bool, wantz: Bool, gpu: Bool
 ](
     mut h: List[Scalar[dtype]],
-    mut acc: _RotationBatch[dtype, N, gpu, wantz, 2, True],
+    mut acc: _RotationBatch[dtype, gpu, wantz, 2, True],
     n: Int,
     ctx: DeviceContext,
 ) raises -> Tuple[
@@ -2312,8 +2539,8 @@ def eigvals[
         var re = Static[T.dtype, n](wr^, ctx)
         var im = Static[T.dtype, n](wi^, ctx)
         return Eigenvalues[T.dtype, n](re^, im^)
-    var acc = _RotationBatch[T.dtype, n, gpu, False, 2, True](1, ctx)
-    var values = _hqr[wantt=False, wantz=False, N=n, gpu=gpu](h, acc, n, ctx)
+    var acc = _RotationBatch[T.dtype, gpu, False, 2, True](n, 1, ctx)
+    var values = _hqr[wantt=False, wantz=False, gpu=gpu](h, acc, n, ctx)
     var re = Static[T.dtype, n](values[0].copy(), ctx)
     var im = Static[T.dtype, n](values[1].copy(), ctx)
     return Eigenvalues[T.dtype, n](re^, im^)
@@ -2478,8 +2705,8 @@ def schur[
         var q = reduced.q()
         var vectors = matmul[gpu=gpu](q, zt)
         return Schur[T.dtype, n](t^, vectors^)
-    var acc = _RotationBatch[T.dtype, n, gpu, True, 2, True](block, ctx)
-    _ = _hqr[wantt=True, wantz=True, N=n, gpu=gpu](h, acc, n, ctx)
+    var acc = _RotationBatch[T.dtype, gpu, True, 2, True](n, block, ctx)
+    _ = _hqr[wantt=True, wantz=True, gpu=gpu](h, acc, n, ctx)
     acc.finish(ctx)
     var t = Static[T.dtype, n, n](h^, ctx)
     var q = reduced.q()
@@ -2970,7 +3197,7 @@ def _golub_kahan[
 ](
     d: List[Scalar[dtype]],
     e: List[Scalar[dtype]],
-    mut acc: _RotationBatch[dtype, 2 * n, gpu, vectors],
+    mut acc: _RotationBatch[dtype, gpu, vectors],
     ctx: DeviceContext,
 ) raises -> List[Scalar[dtype]] where dtype.is_floating_point():
     """The eigenvalues of the Golub-Kahan tridiagonal of the upper
@@ -3007,7 +3234,7 @@ def _golub_kahan[
         ge[2 * i] = d[i]
         if i + 1 < n:
             ge[2 * i + 1] = e[i]
-    _tql[N=size, gpu=gpu, vectors=vectors](gd, ge, acc, ctx)
+    _tql[gpu=gpu, vectors=vectors](gd, ge, acc, ctx)
     acc.finish(ctx)
     return gd^
 
@@ -3111,12 +3338,12 @@ infinity, and the raise says so rather than looping forever."""
 
 
 def _bdsqr[
-    dtype: DType, n: Int, gpu: Bool, vectors: Bool
+    dtype: DType, gpu: Bool, vectors: Bool
 ](
     mut d: List[Scalar[dtype]],
     mut e: List[Scalar[dtype]],
-    mut uacc: _RotationBatch[dtype, n, gpu, vectors, 1, True],
-    mut vacc: _RotationBatch[dtype, n, gpu, vectors, 1, True],
+    mut uacc: _RotationBatch[dtype, gpu, vectors, 1, True],
+    mut vacc: _RotationBatch[dtype, gpu, vectors, 1, True],
     ctx: DeviceContext,
 ) raises where dtype.is_floating_point():
     """The implicit-shift QR iteration on the upper bidiagonal `(d, e)`,
@@ -3419,9 +3646,9 @@ def svdvals[
         var reduced = gebrd[gpu=gpu, block=block](a)
         d = reduced.d.to_host()
         e = reduced.e.to_host()
-    var uacc = _RotationBatch[T.dtype, n, gpu, False, 1, True](block, ctx)
-    var vacc = _RotationBatch[T.dtype, n, gpu, False, 1, True](block, ctx)
-    _bdsqr[n=n, gpu=gpu, vectors=False](d, e, uacc, vacc, ctx)
+    var uacc = _RotationBatch[T.dtype, gpu, False, 1, True](n, block, ctx)
+    var vacc = _RotationBatch[T.dtype, gpu, False, 1, True](n, block, ctx)
+    _bdsqr[gpu=gpu, vectors=False](d, e, uacc, vacc, ctx)
     uacc.finish(ctx)
     vacc.finish(ctx)
 
@@ -3551,9 +3778,9 @@ def svd[
     var reduced = gebrd[gpu=gpu, block=block](a)
     var d = reduced.d.to_host()
     var e = reduced.e.to_host()
-    var uacc = _RotationBatch[T.dtype, n, gpu, True, 1, True](block, ctx)
-    var vacc = _RotationBatch[T.dtype, n, gpu, True, 1, True](block, ctx)
-    _bdsqr[n=n, gpu=gpu, vectors=True](d, e, uacc, vacc, ctx)
+    var uacc = _RotationBatch[T.dtype, gpu, True, 1, True](n, block, ctx)
+    var vacc = _RotationBatch[T.dtype, gpu, True, 1, True](n, block, ctx)
+    _bdsqr[gpu=gpu, vectors=True](d, e, uacc, vacc, ctx)
     uacc.finish(ctx)
     vacc.finish(ctx)
 
