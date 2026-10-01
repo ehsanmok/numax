@@ -59,8 +59,10 @@ the host. `f32` is `DType.float32`.
 6. `gpu=True` is per call; where a tensor lives is per tensor. A mismatch
    runs on the host and prints one line on stderr; `set_fallback("raise")`
    turns that into an error.
-7. On Metal (Apple silicon) use `float32`: there is no `double` on the
-   device.
+7. Use `float32` on a device: Metal has no `double`, and on CUDA every
+   routine routed through `matmul` (factorizations, `solve`, `eigh`, `svd`)
+   is `float32` only at the 26.6 pin. CUDA's `float32` `sin`, `cos` and `log`
+   are the hardware's approximations (about 1e-6 absolute for `cos`).
 8. A slice or block is a `TensorView` over the tensor; bind it before
    using it (`var v = a[1:3]` then `v * 2.0`) -- the inline form does not
    compile. A box narrower than the row is strided: `copy(v)` makes it

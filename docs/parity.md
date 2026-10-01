@@ -452,9 +452,27 @@ returns a dynamically-laid-out `TileTensor`. They are graph-operator kernels.
 
 ## What is still missing
 
-Slicing as a first-class *owned* type, and fancy indexing. Borrowed slicing
-is `TensorView` over `a.tile().tile[...]`/`.slice(...)`, which the `TensorLike`
-bound lets a routine take in place of the tensor.
+Fancy indexing. Slicing is no longer missing: `a[i:j]` and `a[i:j, k:l]`
+return a `TensorView`, `a.block[m, n](r, c)` a view of a compile-time shape,
+and `slice(...)` is the copying spelling that returns an owned `Dynamic`.
+Mask and index-array selection stay function spellings (`take`, `compress`,
+`extract`, `where`), because a `__getitem__` that returns a copy for one
+argument type and a view for another is the ambiguity the surface avoids.
+
+**Device gaps found by the Linux/CUDA pass (A10G, `31138ba`).** None is a
+disposition change, and each is recorded in
+`.cursor/upstream-repros/max-feedback.md`:
+
+- `float64` `linalg.matmul` does not compile for a device at the 26.6 pin
+  (`warp.shuffle`, "unhandled shuffle dtype", reached through the GEMV
+  path), so every `matmul`-backed routine is `float32`-only on a device;
+  the elementwise, reduction and scan paths have no such limit.
+- A `TileTensor` `load`/`store` of width `w` assumes vector alignment on
+  CUDA (3.12). The blocked factorizations check the address at run time
+  rather than forcing element alignment, which measured 20% slower.
+- `float32` `sin`, `cos` and `log` are NVIDIA's `.approx.ftz` forms (3.13);
+  `firwin`'s center tap and `lgamma`'s reflection side are written to avoid
+  the two shapes that break.
 
 **General broadcasting is no longer missing.** `broadcast_shapes` in
 `numax/core/tensor.mojo` is NumPy's right-alignment rule written down once,

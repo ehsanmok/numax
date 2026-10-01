@@ -785,6 +785,34 @@ GEMM, which means the panel term is steeper than the square ceiling alone
 suggests -- but "reaches 12% of the ceiling" is not a claim the square row
 supports. The honest denominator for `cholesky` at `block = 32` is 248.
 
+### Linux x86_64 re-run for 0.3
+
+A second full pass on AMD EPYC 7R32 (64 vCPU, AVX2) with an NVIDIA A10G,
+CUDA 12.8 toolkit, Mojo 1.1 and `max-core` 26.6, every task in
+`docs/performance.md`'s task list, `float32`, CPU and GPU kept apart. The
+tables are in [`docs/performance.md`](../docs/performance.md#linux-x86_64-and-nvidia-a10g-re-run-for-03);
+the short version:
+
+- The Gaussian sweep at 2^26 elements: numax on the A10G 60,939 M elem/s
+  per call and 61,519 amortized, against CuPy's hand-written kernel at
+  60,275 and 61,037, `torch.compile` at 53,734 and 56,199, and torch eager
+  at 19,801. The identity copy is 489.3 GB/s against the Gaussian's 488.7,
+  so the `exp` is free. On the host, `map` is 1,418, `map_threaded` 8,298,
+  NumPy 314, `thermite` 1,334 and `torch.compile` 1,813.
+- Dense linalg on the A10G at `n = 1024`: numax's `matmul` ceiling is 21,848
+  GFLOP/s against PyTorch's 14,924 and its `cholesky`/`lu_factor`/`solve`/
+  `qr_factor` are 50.6/44.6/39.3/17.3 against 598/282/257/269 (cuSOLVER).
+  On the host, `cholesky`/`lu_factor`/`solve`/`qr_factor` are
+  17.3/17.0/15.7/4.0 against SciPy's 52.3/46.1/46.1/15.5, with `lu_factor`
+  ahead of SciPy at `n = 4096` (79.3 against 49.5).
+- Where the host loses: `fft` at 2^20 is a third of pocketfft, `rfft` an
+  eighth, `fftconvolve` 8x slower than SciPy at 4096 x 8, `quantile` a third
+  of NumPy's. Where it wins: `interp` 15.7x, `norm.cdf` 48x, `cov` 4.4x,
+  `welch` 7.4x, `medfilt` 9.2x.
+- `bench-cupy-linalg` does not run on this host (`CUBLAS_STATUS_INVALID_VALUE`
+  from `cupy-cuda12x` on a CUDA 13 driver); its column is from the earlier
+  session.
+
 ### ROCm
 
 Unmeasured, and the tables say nothing about it. numax reaches every

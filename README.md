@@ -18,9 +18,10 @@
 A numerical computing library built on
 [MAX](https://max.modular.com/docs/) -- what NumPy and SciPy provide, on MAX's
 tensors: special functions, dense linear algebra with its spectral
-decompositions, optimization, quadrature and ODE solvers, interpolation, FFTs,
-signal processing, distributions and statistics, and a NumPy-named array
-surface, written in [Mojo](https://mojolang.org) against MAX's `TileTensor` and
+decompositions, optimization (constrained and linear programming too),
+quadrature and ODE solvers, interpolation, FFTs, signal processing, spatial
+search, clustering and n-d image processing, distributions and statistics, and
+a NumPy-named array surface, written in [Mojo](https://mojolang.org) against MAX's `TileTensor` and
 kernel infrastructure. Data lives in a MAX `DeviceBuffer`, so the
 `DeviceContext` you pass decides host or device: the same kernel, any
 accelerator, unmodified.
@@ -38,15 +39,18 @@ and $E_0$ is its lowest eigenvalue, so the whole physics problem is one call to
 
 ```mojo
 from max.gpu.host import DeviceContext
+from numax.core.functional import map
 from numax.core.numeric import min_of
-from numax.core.tensor import map
+from numax.linalg import eigh
+from numax.optimize import newton
 from numax.prelude import *
 
-comptime P = Plain[f64]
+comptime dtype = f32                                # Metal has no double
+comptime P = Plain[dtype]
 comptime n = 24                                     # grid points over [-4, 4]
 comptime dx = 8.0 / (n - 1)
 comptime kinetic = 1.0 / (dx * dx)
-comptime Sweep = Static[f64, 256].LayoutType
+comptime Sweep = Static[dtype, 256]
 
 # Written once against `FloatLike`: no dtype, no device, no derivative rule.
 def ground_energy[T: FloatLike](w: T) -> T:
@@ -68,22 +72,22 @@ def ground_energy[T: FloatLike](w: T) -> T:
 def detuning[T: FloatLike](w: T) -> T:
     return ground_energy(w) - T.one()
 
-def step[w: Int](ws: SIMD[f64, w]) -> SIMD[f64, w]:
-    return ground_energy(Plain[f64, w](ws)).v
+def step[w: Int](ws: SIMD[dtype, w]) -> SIMD[dtype, w]:
+    return ground_energy(Plain[dtype, w](ws)).v
 
 def main() raises:
-    print(ground_energy(P.constant(1.0)))           # 0.4962  the grid's ground state
-    print(ground_energy(Dual[P].seed(1.0)).deriv)   # 0.4923  dE0/dw, no perturbation theory
-    print(newton[f=detuning](P.constant(1.0)))      # 2.0317  the w that puts E0 at 1
+    print(ground_energy(P.constant(1.0)))           # 0.49619117  the grid's ground state
+    print(ground_energy(Dual[P].seed(1.0)).deriv)   # 0.49234969  dE0/dw, no perturbation theory
+    print(newton[f=detuning](P.constant(1.0)))      # 2.031713    the w that puts E0 at 1
 
     var gpu = DeviceContext()                       # CUDA or Metal, whichever is there
-    var ws = linspace[256, f64](0.5, 2.0, ctx=gpu)  # a Tensor, in device memory
-    var es = zeros[f64, 256](gpu)
-    gpu.enqueue_function[map[LayoutType=Sweep, step=step, gpu=True]](
+    var ws = linspace[256, dtype](0.5, 2.0, ctx=gpu)    # a Tensor, in device memory
+    var es = zeros[dtype, 256](gpu)
+    gpu.enqueue_function[map[LayoutType=Sweep.LayoutType, step=step, gpu=True]](
         ws, es, grid_dim=4, block_dim=64            # the tensors themselves; the kernel gets their views
     )                                               # 256 wells, one eigensolve per thread
     gpu.synchronize()
-    print(es.to_host()[255])                        # 0.9846  bit-identical to the CPU path
+    print(es.to_host()[255])                        # 0.98463404  the CPU path agrees
 ```
 
 One function, four answers. At `Plain` it is the ground-state energy. At `Dual`
@@ -94,7 +98,9 @@ from a derivative the caller never supplied. Handed to `map`, the entire 24x24
 eigensolve runs inside a single GPU thread, 256 wells at once. And the other
 three answers run the same way: `dE_0/d\omega` at `Dual` for every well, and
 `newton` from 256 starting guesses, each thread carrying its own chain of
-`Dual` eigensolves, all agreeing with the CPU path to a few `float32` ulp.
+`Dual` eigensolves. The GPU and CPU answers are bit-identical on Metal and
+agree to 1.4e-5 on CUDA, where `float32` math functions are the hardware's
+approximations.
 
 The percent or so between these numbers and the continuum ($E_0 = \omega/2$, so
 $0.5$ and $2.0$) is the 24-point grid, not the library. The derivative is exact
@@ -144,8 +150,10 @@ alternatives compared and what numax does not claim, is
   provide, on MAX's tensors: special functions at arbitrary order, dense
   linear algebra through the spectral decompositions -- `eigh`, `svd`,
   `schur` and the matrix functions on the Schur form -- optimization with
-  bounds, quadrature and ODE solvers, interpolation, FFTs at any length,
-  signal processing from filter design to the spectral estimators, the nine
+  bounds and constraints (`linprog`, `milp`, SLSQP), quadrature and ODE
+  solvers, interpolation, FFTs at any length, signal processing from filter
+  design to the spectral estimators, `cdist` and `KDTree`, `kmeans` and
+  `linkage`, `gaussian_filter` and `label`, the nine
   `scipy.stats` distributions over whole tensors, the statistics surface from
   `quantile` and `histogram` through the hypothesis tests, a NumPy-named
   array surface and `.npy` read/write. Every kernel MAX ships is called, not
@@ -163,13 +171,14 @@ an error bound that `pixi run accuracy` checks against mpmath at 50 digits;
 and `Plain` has its own one-ulp `exp`, `ln` and `erf` at `float64`.
 
 Young and experimental, so APIs may change. Not here yet, each on purpose:
-fancy indexing and owned slicing, dtype promotion (`astype` is explicit),
-decompositions over run-time shapes, reverse-mode autodiff (`Gradient` is
+fancy indexing (`take`, `compress` and `where` are the spellings), dtype
+promotion (`astype` is explicit), reverse-mode autodiff (`Gradient` is
 forward and was measured against a tape), sparse matrices, Krylov solvers
-and distributed execution. One limit is a bug rather than a decision: the
-spectral decompositions have no working device path, so `gpu=True` on
-`eigh`, `svd`, `schur` and their neighbours is a compile error rather than
-a wrong answer. [`docs/why.md`](docs/why.md) says why for each.
+and distributed execution. Two limits are not decisions: `hessenberg`,
+`sytrd`, `gebrd` and the routines built on the spectral ones still take a
+compile-time shape, and on a device everything routed through
+`matmul` is `float32` only, since MAX's GEMV has no `float64` shuffle at the
+26.6 pin. [`docs/why.md`](docs/why.md) says why for each.
 
 ## Install
 
@@ -199,6 +208,7 @@ type, and the `DeviceContext` you hand a factory decides whether that memory
 sits on the host or on a GPU.
 
 ```mojo
+from max.gpu.host import DeviceContext
 from numax.prelude import *
 from numax.stats import sum                         # shadows a builtin, so not in the prelude
 
@@ -217,11 +227,11 @@ def main() raises:
 `Static[f64, 2, 3]` and `Dynamic[f64, 2]` are one struct at two layouts. The
 first has its extents in the type, which is what a GPU launch and the
 algorithm layer both need; the second carries them as values, which is what
-makes a shape read from a file expressible at all. `.dynamic()` and
-`.static_view[2, 3]()` move between the two without copying, and the second
+makes a shape read from a file expressible at all. `.as_dynamic()` and
+`.as_static[2, 3]()` move between the two without copying, and the second
 raises if the extents it asserts are not the ones there.
 
-Everything NumPy has a name for works on `Tensor`, and on a `View` of one
+Everything NumPy has a name for works on `Tensor`, and on a `TensorView` of one
 where the routine reads rather than allocates: creation, elementwise
 math, reductions along an axis, sorting, masking, reshaping, `.npy` files.
 
@@ -231,23 +241,23 @@ the `FloatLike` conformer rather than over a `DType`. That is what makes a
 Cholesky differentiate at `Dual` and run inside one GPU thread, one matrix
 per SIMD lane.
 
-**Six subpackages carry both tiers**, one per import, sharing one set of
-names: `numax.linalg`, `numax.optimize`, `numax.integrate`,
-`numax.interpolate`, `numax.fft` and `numax.signal` are the `Tensor` tier and
-go through MAX, and `numax.linalg.array`, `numax.optimize.array` and their
-siblings are the differentiable register-resident one. `numax.stats` and
-`numax.special` have no `.array` sibling and need none -- `numax.special` is
-already `FloatLike`-generic throughout, and `numax.stats`' distributions are
-too, with a `Tensor` overload beside each rather than a separate package. Pick by what you need
-rather than by what exists: a device-resident matrix or a long recording
+**Six subpackages carry both tiers under one set of names**:
+`numax.linalg`, `numax.optimize`, `numax.integrate`, `numax.interpolate`,
+`numax.fft` and `numax.signal` each export `cholesky`, `solve`, `fft`, `quad`
+and the rest once, and the argument picks the body -- a `Tensor` takes the
+tier that goes through MAX, an `Array[T, n]` the differentiable
+register-resident one. `numax.stats` and `numax.special` have a single tier
+and need no split -- `numax.special` is already `FloatLike`-generic
+throughout, and `numax.stats`' distributions are too, with a `Tensor`
+overload beside each. Pick by what you need rather than by what exists: a device-resident matrix or a long recording
 wants the `Tensor` tier, a derivative through the algorithm wants the `Array`
 tier, and `to_tensor`/`to_array` cross between them. NumPy gets away with one
 array type because it needs neither property.
 
 `TileTensor` is MAX's borrowed view, a pointer and a layout that own nothing.
-`.view()` hands one to a kernel, borrowing the tensor at the mutability of
-the binding, and `View` wraps one with the device it lives on. `Tensor` and
-`View` both conform to `TensorLike`, the bound a routine generic over "owned
+`.tile()` hands one to a kernel, borrowing the tensor at the mutability of
+the binding, and `TensorView` wraps one with the device it lives on. `Tensor`
+and `TensorView` both conform to `TensorLike`, the bound a routine generic over "owned
 or borrowed" is written against: `def f[T: TensorLike](a: T)`, with
 `dim[T, i]` for a compile-time extent and `is_row_major[T]` to refuse a
 strided block where a walk would flatten it. A `Tensor` is also
@@ -257,21 +267,24 @@ receives the view.
 | | Owns its memory | Shape | Where you meet it |
 |---|---|---|---|
 | `Tensor` (`Static`, `Dynamic`) | yes, a MAX `DeviceBuffer` | in the layout type, compile time or run time per dimension | every NumPy-named call |
-| `View` | no, it borrows a `TileTensor` | from the tile it wraps | a sub-block of a tensor handed to a routine, no copy |
-| `TileTensor` | no, it borrows | from the tensor it views | `.view()`, at a kernel boundary |
+| `TensorView` | no, it borrows a `TileTensor` | from the tile it wraps | a sub-block of a tensor handed to a routine, no copy |
+| `TileTensor` | no, it borrows | from the tensor it views | `.tile()`, at a kernel boundary |
 | `Array[T, n]` | it *is* the value, in registers | `n` at compile time | a SciPy-named algorithm you want to differentiate, or to run per SIMD lane |
 
 Crossing is explicit in both directions:
 
 ```mojo
+from numax.prelude import *
+
 comptime P = Plain[f64]
 
-var m = eye[3, f64]()                  # Tensor, 3x3
-var lifted = to_array[P](m)            # Array[P, 9], row-major
-var chol = cholesky[P, 3](lifted)      # algorithms live here
-var back = to_tensor[f64, 3, 3](chol)  # Tensor again
+def main() raises:
+    var m = eye[3, f64]()                  # Tensor, 3x3
+    var lifted = to_array[P](m)            # Array[P, 9], row-major
+    var chol = cholesky[P, 3](lifted)      # algorithms live here
+    var back = to_tensor[f64, 3, 3](chol)  # Tensor again
 
-var direct = solve[P, 3](eye[P, 3](), ones[P, 3]())   # no tensor to lift
+    var direct = solve[P, 3](eye[P, 3](), ones[P, 3]())   # no tensor to lift
 ```
 
 The crossing has two limits worth knowing early, and both are about the
@@ -286,8 +299,11 @@ factorizations: `eigh`, `svd`, `schur` and the matrix functions on the Schur
 form all run there, blocked and device-resident. What that tier does not do
 is differentiate, because a `Tensor` is monomorphic in a `DType` and a
 conformer is a struct -- so the two tiers are a real choice and not a
-staging area. Run-time *extents* for a decomposition are the gap this version
-still leaves open: a `Dynamic` tensor has to name its shape first.
+staging area. A `Dynamic` tensor works there directly for `lu_factor`, `qr_factor`,
+`cholesky`, `solve`, `eigh`, `svd`, `eigvals` and `schur`; only
+`hessenberg`, `sytrd`, `gebrd` and what builds on the spectral routines
+(`pinv`, the matrix functions, the matrix-equation solvers) still need the
+shape named first.
 
 ### Coming from NumPy and SciPy
 
@@ -336,6 +352,8 @@ print(np.linalg.norm(A))
 </td><td>
 
 ```mojo
+from numax.prelude import *
+
 comptime P = Plain[f64]
 
 var A = eye[P, 3]()
@@ -363,15 +381,21 @@ print(integrate.solve_ivp(g, [0, 0.1], [1.0]).y[0, -1])
 </td><td>
 
 ```mojo
+from numax.integrate import gauss_legendre, rk4
+from numax.prelude import *
+
+comptime P = Plain[f64]
+
 def f[U: FloatLike](x: U) -> U:
     return (-(x * x)).exp()
 
 def g[U: FloatLike](t: U, y: U) -> U:
     return -y
 
-print(gauss_legendre[P, f, 16](P.constant(0.0), P.one()))
-print(gamma(P.constant(5.0)), erf(P.one()))
-print(rk4[P, g](P.constant(0.0), P.one(), P.constant(0.1)))
+def main() raises:
+    print(gauss_legendre[P, f, 16](P.constant(0.0), P.one()))
+    print(gamma(P.constant(5.0)), erf(P.one()))
+    print(rk4[P, g](P.constant(0.0), P.one(), P.constant(0.1)))
 ```
 
 </td></tr>
@@ -391,7 +415,10 @@ print(np.sort(xs), np.argsort(xs))
 </td><td>
 
 ```mojo
+from numax.prelude import *
 from numax.stats import norm, sum
+
+comptime P = Plain[f64]
 
 var xs = linspace[5](0.0, 1.0)
 print(sum(xs))
@@ -423,12 +450,17 @@ print(f(0.5), approx_fprime([0.5], f)[0])
 </td><td>
 
 ```mojo
+from numax.prelude import *
+
+comptime P = Plain[f64]
+
 def f[U: FloatLike](x: U) -> U:
     return (-(x * x)).exp()
 
-var d = f(Dual[P].seed(0.5))
-print(d)
-# Dual(0.7788007830714049, -0.7788007830714049)
+def main() raises:
+    var d = f(Dual[P].seed(0.5))
+    print(d)
+    # Dual(0.7788007830714049, -0.7788007830714049)
 ```
 
 </td></tr>
@@ -451,7 +483,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.zeros_like(a)` | `zeros_like(a)` | derived shapes inherit `a`'s device |
 | `np.eye(3)` to hand to `linalg` | `eye[P, 3]()` | same names at the conformer layer, returning `Array` |
 | `a.reshape(2, 3)` | `reshape[rows=2, cols=3](a)`, or `reshape_dyn[rank=2](a, r, c)` | the second takes a shape you computed |
-| `a[1:3, :]`, `np.broadcast_to(a, (2, 3))` | `slice(a, [1, 0], [3, cols])`, `broadcast_to[rank=2](a, 2, 3)` | both copy rather than returning a view |
+| `a[1:3, :]`, `np.broadcast_to(a, (2, 3))` | `a[1:3, :]`, `broadcast_to[rank=2](a, 2, 3)` | the slice is a `TensorView`, no copy (`slice(a, ...)` from `numax.core.tensor` copies); `broadcast_to` copies |
 | `np.pad(a, (before, after), mode)` | `pad[f64, n, before, after, mode](a)` | the widths are compile-time because the padded extent is part of the return type; `gpu=True` is the constant mode only, and the `where` clause makes the other modes a compile error rather than a silent host fallback |
 | `a[a > 0]`, `np.take(a, idx)` | `extract(greater(a, zeros_like(a)), a)`, `take(a, idx)` | the result is sized by the data, so it comes back `Dynamic` |
 | `a + b`, `np.exp(a)`, `np.sort(a)` | `a + b`, `exp(a)`, `sort(a)` | |
@@ -459,14 +491,14 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `a.astype(np.float32)` | `astype[f32](a)` | explicit: there is no dtype promotion |
 | `a.sum()`, `a.mean()`, `np.var(a)` | `sum(a)`, `mean(a)`, `variance(a)` | `sum`/`min`/`max` are outside the prelude |
 | `a.sum(axis=1)`, `a.mean(axis=1)` | `sum[axis=1](a)`, `mean[axis=1](a)` | same name as the whole-tensor form; one axis drops, the rest survive |
-| `np.linalg.solve(A, b)` | `solve(A, b)`, or `solve[P, n](A, b)` from `numax.linalg.array` | the first is blocked pivoted LU with its trailing update in MAX's GEMM; the second differentiates |
-| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr_factor`, `svd`, `eigh` | all four over `Tensor`, and all four in `numax.linalg.array` too. The `Tensor` ones are blocked with their cubic term in MAX's GEMM; the `Array` ones are register-resident and differentiate |
+| `np.linalg.solve(A, b)` | `solve(A, b)`, or `solve[P, n](A, b)` over `Array` | the first is blocked pivoted LU with its trailing update in MAX's GEMM; the second differentiates |
+| `np.linalg.cholesky/qr/svd/eigh` | `cholesky`, `qr_factor`, `svd`, `eigh` | all four over `Tensor`, and all four over `Array` too. The `Tensor` ones are blocked with their cubic term in MAX's GEMM; the `Array` ones are register-resident and differentiate |
 | `np.linalg.eigvals(A)`, `np.linalg.lstsq(A, b)` | `eigvals`, `lstsq`, or `qr_factor(A).solve(b)` | `eigvals` assumes no symmetry and returns `(re, im)` as two tensors, since a `dtype`-monomorphic tensor holds no complex number; every least-squares route factors instead of forming the normal equations |
 | `scipy.linalg.lu_factor` / `lu_solve` | `lu_factor(A).solve(b)` | partial pivoting, so it survives a zero pivot |
 | `np.kron`, `np.linalg.matrix_power`, `np.inner` | `kron`, `matrix_power[dtype, n, p]`, `inner` | `inner` is `a @ b.T` without materializing the transpose |
 | `np.linalg.slogdet` | `slogdet(A)` | `(sign, ln\|det\|)`, for the ordinary matrices whose determinant overflows |
 | `np.linalg.norm(v, ord)` | `norm[dtype, n, ord](v)` | a vector overload beside the matrix one; `ord=0` is `count_nonzero` |
-| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names | over `Tensor`, `eigvalsh` is ascending and `svdvals` descending; the `numax.linalg.array` forms are unsorted and `matrix_rank` there returns a count per SIMD lane |
+| `np.linalg.matrix_rank`, `eigvalsh`, `svdvals` | same names | over `Tensor`, `eigvalsh` is ascending and `svdvals` descending; the `Array` forms are unsorted and `matrix_rank` there returns a count per SIMD lane |
 | `np.linalg.pinv`, `np.linalg.cond` | `pinv`, `cond` | both one SVD and a few lines on top of it; `pinv` takes NumPy's `rcond` |
 | `scipy.linalg.schur`, `hessenberg` | `schur`, `hessenberg` | real Schur form, so a complex pair stays a `2 x 2` block rather than splitting into eigenvalues that are not there |
 | `np.tensordot`, `np.cross` | `tensordot[axes=k]`, `cross` | `tensordot` reshapes to a matrix and hands the contraction to MAX's GEMM; `einsum` stays out |
@@ -475,13 +507,13 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.linalg.solve_banded` / `solveh_banded` / `solve_toeplitz` | same names | SciPy's diagonal-ordered `ab` storage verbatim; host-side by declaration |
 | `scipy.linalg.solve_circulant` | `solve_circulant` | three FFTs and a division, so power-of-two `n` |
 | `scipy.linalg.expm` | `expm(A)` | and `expm[T, n, squarings]` over `Array`, which differentiates at `Dual` |
-| `scipy.linalg.sqrtm`, `logm`, `funm` | `sqrtm`, `logm`, `funm[f=...]`, `cosm`, `sinm`, `fractional_matrix_power` | over `Tensor` these are the general case: the Bjorck-Hammarling and block Parlett recurrences on the real Schur form, so repeated and defective eigenvalues are handled rather than dividing by zero. `funm`'s `f` is any `FloatLike` kernel, which is where the two halves of the library meet. `sqrtm[P, n]` from `numax.linalg.array` is the SPD-only one that differentiates |
+| `scipy.linalg.sqrtm`, `logm`, `funm` | `sqrtm`, `logm`, `funm[f=...]`, `cosm`, `sinm`, `fractional_matrix_power` | over `Tensor` these are the general case: the Bjorck-Hammarling and block Parlett recurrences on the real Schur form, so repeated and defective eigenvalues are handled rather than dividing by zero. `funm`'s `f` is any `FloatLike` kernel, which is where the two halves of the library meet. `sqrtm[P, n]` over `Array` is the SPD-only one that differentiates |
 | `scipy.special.gamma/erf/j0` | `gamma`, `erf`, `j0` | every one documents an error bound, checked by `pixi run accuracy` |
 | `scipy.special.jv/yv/iv/kv`, `airy`, `struve` | same names, plus `spherical_jn`/`spherical_yn`, `ive`/`kve` | arbitrary real order, not just the integer-order `j0`..`y1` |
 | `scipy.special.erfinv`, `zeta`, `expi`, `sici`, `fresnel`, `owens_t` | same names, plus `exp1`/`expn`, `hyp1f1`/`hyp2f1`, `poch`, `factorial`/`comb`/`perm` | tier 1 throughout, so every one compiles into a `map[gpu=True]` body |
 | `scipy.special.logsumexp` | `logsumexp` | over `Tensor`, driving MAX's own `OnlineLogSumExp` monoid through the `rowwise` scaffolder |
 | `scipy.special.xlogy`, `rel_entr`, `kl_div` | same names, plus `entr`, `xlog1py`, `logit` | the information-theoretic set, each with the limit at zero defined the way SciPy defines it |
-| `scipy.integrate.trapezoid` / `simpson` | `trapezoid(y, dx=...)`, `simpson`, `cumulative_trapezoid` | SciPy's signature: these integrate **samples** in a `Tensor`. The function-taking forms are `numax.integrate.array`, where they differentiate |
+| `scipy.integrate.trapezoid` / `simpson` | `trapezoid(y, dx=...)`, `simpson`, `cumulative_trapezoid` | SciPy's signature: these integrate **samples** in a `Tensor`. The function-taking forms take `Array`-tier arguments, where they differentiate |
 | `scipy.integrate.fixed_quad` | `gauss_legendre[T, f, n]` | fixed nodes, GPU-launchable |
 | `scipy.integrate.quad` | `quad[f](a, b)` | adaptive, host-only, `Float64` bounds |
 | `scipy.integrate.solve_ivp` | `solve_ivp`, or `rk4` for fixed steps | |
@@ -498,7 +530,7 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `scipy.optimize.root` | `root[n, f](x0)` over `Array`, `root[f=f, jac=jac](x0)` over `Tensor` | `newton` and `lm`; check `residual_norm`, not only `converged`, since a system with no root still has points where `\|\|F\|\|` stops falling |
 | `scipy.optimize.least_squares` / `curve_fit` | `least_squares`, `curve_fit` | Jacobian from `Gradient`, so it is exact |
 | `scipy.optimize.approx_fprime` | evaluate at `Dual` / `Gradient` | exact, not a difference quotient |
-| `np.fft.fft`, `np.fft.rfft`, `np.fft.irfft` | `fft`, `rfft`, `irfft` | **any length** over `Tensor`: radix-2 and radix-4 at a power of two, Bluestein's chirp-z otherwise. `numax.fft` is the `Tensor` tier, a real/imaginary pair through a few fused device launches per axis; `numax.fft.array` is `Array[Complex[T], n]`, differentiates, and stays power-of-two |
+| `np.fft.fft`, `np.fft.rfft`, `np.fft.irfft` | `fft`, `rfft`, `irfft` | **any length** over `Tensor`: radix-2 and radix-4 at a power of two, Bluestein's chirp-z otherwise. over a `Tensor` it is a real/imaginary pair through a few fused device launches per axis; over `Array[Complex[T], n]` it differentiates and stays power-of-two |
 | `np.fft.fft2` / `rfft2` / `fftshift` | `fft2`, `ifft2`, `rfft2`, `fftshift`, `ifftshift`, `next_fast_len` | rectangular, one axis at a time, device-resident between them |
 | `scipy.fft.dct` / `dst` | `dct`, `idct`, `dst`, `idst` | types I through IV, each a real projection of one complex DFT |
 | `scipy.signal.convolve` / `correlate` / `fftconvolve` | same names | `full`/`same`/`valid`. The direct form is one launch of dot products; which route is faster depends on the kernel length and [`docs/performance.md`](docs/performance.md) measures the crossover rather than guessing |
@@ -514,6 +546,11 @@ $\partial f/\partial x_i$ at once), `Compensated` (~double the precision),
 | `np.cov`, `np.corrcoef` | `cov`, `corrcoef` | plus `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore` |
 | `scipy.stats.ttest_ind`, `chisquare`, `ks_1samp` | same names, plus `ttest_1samp`/`ttest_rel`, `f_oneway`, `mannwhitneyu` | each a statistic and a tail of `t`/`chi2`/`f`/`norm`, returning `statistic` and `pvalue` |
 | `scipy.stats.describe`, `skew`, `kurtosis` | same names, plus `sem`, `gmean`, `hmean`, `entropy`, `trim_mean` | |
+| `scipy.optimize.linprog` / `milp` | `linprog`, `milp`, `Bounds`, `LinearConstraint` | SciPy's homogeneous self-dual interior point with the normal matrix factored on the device, and branch and bound over it; `minimize(method="slsqp")` takes `LinearConstraint`/`NonlinearConstraint` |
+| `scipy.spatial.distance.cdist` / `pdist` / `squareform` | same names | seven metrics, one lane per pair on the inputs' device |
+| `scipy.spatial.KDTree` | `KDTree` | `query[k]` and `query_ball_point` as device kernels, one lane per query point |
+| `scipy.cluster.vq.kmeans` / `kmeans2`, `hierarchy.linkage` / `fcluster` | `kmeans`, `kmeans2`, `linkage`, `fcluster` | all seven linkage methods; the merge order stays on the host |
+| `scipy.ndimage.gaussian_filter` / `median_filter` / `zoom` / `label` | same names, from `numax.ndimage` | rank 1 to 8 with SciPy's boundary modes; `numax.ndimage` is a qualified import because its `convolve` and `correlate` are not `numax.signal`'s |
 | `np.random.default_rng(0)` | `Generator(seed=0)` | or `seed(0)` for the global stream |
 
 Every row above is runnable: `pixi run example-scipy-surface` prints the
@@ -546,9 +583,9 @@ builtin (`sum`, `prod`, `min`, `max`, `abs`, `all`, `any`, `round`,
 `copysign`), so a star import cannot break `min(1, 2)` in your own file.
 Those stay one explicit import away (`from numax.stats import sum`). `from numax import ...` is the
 full flat surface, and `from numax.linalg import ...` is one subsystem. The
-`Array` tier of `linalg` is outside the prelude for the same reason: it
-shares its names with the `Tensor` tier, so it is
-`from numax.linalg.array import cholesky` when that is the one you want.
+`Array` tier shares its names with the `Tensor` tier, so there is no separate
+import: `cholesky(tensor)` and `cholesky[P, n](array)` are one name, and the
+argument picks the tier.
 
 `f32`/`f64` are short for `DType.float32`/`.float64` and nothing else, so the
 same name works wherever a dtype belongs, across both layers:
@@ -577,8 +614,22 @@ Sum a million nearly-equal `float32` values and the running total stops seeing
 the next one. Swap the type, not the algorithm:
 
 ```mojo
-var plain_var = variance(plain_list)           # float32 accumulation
-var comp_var = variance(comp_list).value       # ~double precision, same code
+from std.math import sin
+from numax import Compensated, Plain
+from numax.stats import variance
+
+comptime dtype = DType.float32
+
+def main() raises:
+    var plain_list = List[Plain[dtype]]()
+    var comp_list = List[Compensated[dtype, 1]]()
+    for i in range(200_000):
+        var x = Scalar[dtype](1.0 + 0.01 * sin(Float64(i)))
+        plain_list.append(Plain[dtype](x))
+        comp_list.append(Compensated[dtype, 1](x, Scalar[dtype](0)))
+
+    var plain_var = variance(plain_list)           # float32 accumulation
+    var comp_var = variance(comp_list).value       # ~double precision, same code
 ```
 
 `Compensated` carries the rounding error ordinary arithmetic discards. The
@@ -596,19 +647,27 @@ where an interval stops being an enclosure.
 Only the context and the walk differ:
 
 ```mojo
+from max.gpu.host import DeviceContext
+from numax.core.functional import map
+from numax.prelude import *
+
 comptime T = Static[f32, 1024]
 
-var cpu = DeviceContext(api="cpu")
-var xs = linspace[1024, f32](-2.0, 2.0, ctx=cpu)
-var ys = T(cpu)
-map[step=gaussian_step, width=8](xs.view(), ys.view())
+def gaussian_step[w: Int](xs: SIMD[f32, w]) -> SIMD[f32, w]:
+    return gaussian(Plain[f32, w](xs)).v
 
-var gpu = DeviceContext()
-var gxs = linspace[1024, f32](-2.0, 2.0, ctx=gpu)
-var gys = T(gpu)
-gpu.enqueue_function[map[LayoutType = T.LayoutType, step=gaussian_step, gpu=True]](
-    gxs.view(), gys.view(), grid_dim=4, block_dim=256
-)
+def main() raises:
+    var cpu = DeviceContext(api="cpu")
+    var xs = linspace[1024, f32](-2.0, 2.0, ctx=cpu)
+    var ys = T(cpu)
+    map[step=gaussian_step, width=8](xs, ys)
+
+    var gpu = DeviceContext()
+    var gxs = linspace[1024, f32](-2.0, 2.0, ctx=gpu)
+    var gys = T(gpu)
+    gpu.enqueue_function[map[LayoutType=T.LayoutType, step=gaussian_step, gpu=True]](
+        gxs, gys, grid_dim=4, block_dim=256
+    )
 ```
 
 Every conformer is built from plain `SIMD` fields with no pointers, so `Dual`
@@ -624,12 +683,20 @@ as an `Array` (a value in registers, per the map above), so BFGS evaluates it
 at `Gradient` and gets every $\partial f / \partial x_i$ *exactly*:
 
 ```mojo
+from std.collections import Array
+from numax import FloatLike
+from numax.optimize import minimize
+
 def rosenbrock[U: FloatLike](v: Array[U, 2]) -> U:
     var a = U.one() - v[0]
     var b = v[1] - v[0] * v[0]
     return a * a + U.constant(100.0) * b * b
 
-var minimized = minimize[2, rosenbrock](start)  # no `jac` argument
+def main() raises:
+    var start = Array[Float64, 2](fill=0)
+    start[0] = -1.2
+    start[1] = 1.0
+    var minimized = minimize[2, rosenbrock](start)  # no `jac` argument
 ```
 
 A central difference cannot beat about $\varepsilon^{2/3}$ relative accuracy:
@@ -643,6 +710,9 @@ finite difference ~5e-10 against AD at exactly 0.
 ### A Hessian, by nesting types
 
 ```mojo
+from numax.prelude import *
+
+comptime P = Plain[f64]
 comptime G = Gradient[Dual[P], 2]      # gradient of a dual number
 ```
 
@@ -678,9 +748,8 @@ says which it is rather than leaving you to read the body.
 Tier 1 runs a fixed number of iterations and never branches per lane, which is
 what makes it launchable on a GPU and callable at any conformer. That covers
 the conformers themselves, the tensor engine, all of `special`, and the
-`Array` tiers -- `linalg.array`, `interpolate.array`, `fft.array`,
-`signal.array`, and the fixed-step half of `optimize.array` and
-`integrate.array`. Per-lane choices are arithmetic blends built from `copysign`
+`Array` tiers of `linalg`, `interpolate`, `fft` and `signal`, and the
+fixed-step half of `optimize` and `integrate`. Per-lane choices are arithmetic blends built from `copysign`
 rather than `if`, because the lanes of one SIMD value can disagree about which
 branch they want.
 
@@ -713,11 +782,11 @@ implementations running on the same processor.
 
 | Device | numax | CuPy kernel | torch.compile | torch eager | MLX |
 |---|---|---|---|---|---|
-| NVIDIA A10G (CUDA 12.8) | **61,013** | 60,352 | 53,670 | 19,803 | n/a |
+| NVIDIA A10G (CUDA 12.8) | **60,939** | 60,275 | 53,734 | 19,801 | n/a |
 | Apple M3 Pro (Metal) | **14,465** | n/a | 13,831 | 4,807 | 4,866 |
 
-Amortizing the sync over ten launches instead: 61,653 for numax against
-61,051 for CuPy and 56,245 for `torch.compile` on the A10G, 15,755 vs. 14,380
+Amortizing the sync over ten launches instead: 61,519 for numax against
+61,037 for CuPy and 56,199 for `torch.compile` on the A10G, 15,755 vs. 14,380
 on the M3 Pro. CuPy is CUDA-only and MLX macOS-only, hence the two gaps.
 
 CuPy's column is a hand-written `cupy.ElementwiseKernel` — CUDA C for this
@@ -732,20 +801,20 @@ before the walk begins.
 
 | Host | numax `map_threaded` | numax `map` (1 thread) | torch.compile | torch eager | Rust `thermite` | NumPy |
 |---|---|---|---|---|---|---|
-| AMD EPYC (the A10G's host) | **8,733** | 1,367 | 1,880 | 468 | 1,329 (AVX2) | 316 |
+| AMD EPYC (the A10G's host) | **8,298** | 1,418 | 1,813 | 404 | 1,334 (AVX2) | 314 |
 | Apple M3 Pro | **9,026** | 2,347 | 4,046 | 1,935 | 1,632 (NEON) | 493 |
 
 MLX's CPU path measures 1,954 on the M3 Pro (it has no CUDA build, so no EPYC
 row).
 
 - **The GPU work is bandwidth-bound, not compute-bound.** The best
-  configuration on the A10G runs at **500.9 GB/s, ~83% of the card's 600 GB/s
-  spec**, and an identity copy measures 489.10 GB/s against the Gaussian's
-  489.16, so the `exp` is free.
-- **Fusing two passes into one composed `step` is worth 1.99x** on the GPU at
-  every size tested, and 1.26-1.58x on the CPU.
-- **The serial CPU walk matches hand-written Rust SIMD** (1,367 vs.
-  `thermite`'s 1,329 on the EPYC host) and is 4.3x NumPy. The `FloatLike`
+  configuration on the A10G runs at **500.8 GB/s, ~83% of the card's 600 GB/s
+  spec**, and an identity copy measures 489.3 GB/s against the Gaussian's
+  488.7, so the `exp` is free.
+- **Fusing two passes into one composed `step` is worth 2.0x** on the GPU at
+  every size tested, and 1.39-1.66x on the CPU.
+- **The serial CPU walk matches hand-written Rust SIMD** (1,418 vs.
+  `thermite`'s 1,334 on the EPYC host) and is 4.5x NumPy. The `FloatLike`
   abstraction costs 0.998x a raw-SIMD loop.
 - **The threaded CPU path is noisy.** Repeat runs on the EPYC host move by a
   factor of two at the same size, so read it as a range rather than a point.
@@ -764,12 +833,14 @@ shapes, and the methodology: [`docs/performance.md`](docs/performance.md),
 `quantile` at 0.35x, which still downloads the sample before selecting;
 `lfilter` at 0.74x; the FFT at about a third of pocketfft on a 2^20
 transform; and the spectral decompositions, `eigh` at 0.45 of LAPACK at
-`n = 1024`, `schur` 0.16, `svd` 0.056. Their eigenvectors accumulate on the
+`n = 1024`, `schur` 0.45, `svd` 0.056. Their eigenvectors accumulate on the
 device; the cost left is one whole-matrix product per column in the
 reductions and the host sweep over the band. The factorizations' ratio to
-LAPACK rises with `n`, from 0.10 at 256 to 0.41 at 4096 for `cholesky`. The
-`gpu=True` spelling of the spectral routines is wrong on Metal, a known bug.
-Every number and its harness is in `docs/performance.md`.
+LAPACK rises with `n`, from 0.10 at 256 to 0.41 at 4096 for `cholesky`. On
+the EPYC host the same ratios are 0.20 for `eigvalsh`, 0.17 for `eigh` and
+`svd`, 0.34 for `schur`, and the FFT is a third of pocketfft at 2^20 (the
+real transforms an eighth), with `fftconvolve` and `quantile` behind SciPy
+and NumPy too. Every number and its harness is in `docs/performance.md`.
 
 **Dense linalg is a separate measurement, on separate hardware** (EPYC 7R32
 host, A10G device), `float32` because MAX's `matmul` does not compile for GPU
@@ -777,10 +848,10 @@ at `float64`. GFLOP/s at `n = 1024`, higher is better:
 
 | | `matmul` (the ceiling) | `cholesky` | `lu_factor` | `solve` |
 |---|---|---|---|---|
-| numax, CPU | 656 | 15.4 | 17.2 | 17.0 |
-| SciPy (LAPACK + OpenBLAS), CPU | 833 | 99.5 | 43.9 | 52.6 |
-| numax, A10G | 20,459 | 51.0 | 30.6 | 28.1 |
-| PyTorch (cuSOLVER), A10G | 15,342 | 595.0 | 282.9 | 257.6 |
+| numax, CPU | 922 | 17.3 | 17.0 | 15.7 |
+| SciPy (LAPACK + OpenBLAS), CPU | 1,054 | 52.3 | 46.1 | 46.1 |
+| numax, A10G | 21,848 | 50.6 | 44.6 | 39.3 |
+| PyTorch (cuSOLVER), A10G | 14,924 | 598.0 | 282.3 | 256.8 |
 
 The same four on an **Apple M3 Pro** and its 18-core Metal GPU, against
 Accelerate and PyTorch's MPS backend -- a different machine, so it is a
@@ -798,7 +869,7 @@ separate table and not a column of the one above:
 
 Read those as one claim and one gap. The `matmul` row is the claim: numax's
 factorizations put their whole `O(n^3)` term through `linalg.matmul`, and
-MAX's GEMM is at 79% of OpenBLAS on the EPYC, *ahead* of cuBLAS's FP32 path
+MAX's GEMM is at 87% of OpenBLAS on the EPYC, *ahead* of cuBLAS's FP32 path
 on the A10G, and ahead of PyTorch's Metal kernel on the M3 Pro -- 1,800
 against 1,143. **The M3 Pro's CPU row is not a kernel comparison**: MAX
 dispatches to Apple's `cblas_sgemm` on macOS at `float32`, so numax and SciPy
@@ -816,8 +887,8 @@ leaving behind. [`docs/performance.md`](docs/performance.md) has both
 measurements.
 
 BLAS-1 goes the other way: `dot` and `nrm2` on `Tensor` beat OpenBLAS's own
-`sdot`/`snrm2` by 2.5-5x on the EPYC and Accelerate's by 1.7-3.2x on the M3
-Pro, because `ReduceSum` under MAX's `rowwise` scaffolder threads and they
+`sdot`/`snrm2` by 2-8x from 2^20 elements up on the EPYC and Accelerate's by
+1.7-3.2x on the M3 Pro, because `ReduceSum` under MAX's `rowwise` scaffolder threads and they
 do not. On Metal, **MLX has no GPU linalg at all** -- it refuses `cholesky`,
 `lu_factor`, `qr` and `solve` on a GPU stream -- so numax's device-resident
 factorizations have no MLX counterpart there. ROCm is reached by the same
@@ -839,14 +910,19 @@ inheriting that floor. Details:
 ## Testing
 
 ```bash
-pixi run tests           # 89 suites, 1503 tests, as 11 parallel binaries
+pixi run tests           # 157 suites, 1824 tests, as 14 parallel binaries
 pixi run examples-cpu    # every example that does not need a GPU
 pixi run bench           # map vs. a hand-rolled raw-SIMD loop
 pixi run accuracy        # max error per function vs. mpmath references
 ```
 
-`tests` and `examples-cpu` run in CI on macOS and Linux; GPU examples and
-benchmarks are a local check.
+`tests` and `examples-cpu` run in CI on macOS and Linux, and
+`tests-gpu` (each `gpu=True` routine against its host answer at `float32`) and
+the GPU examples run on a machine with a device. Through 0.3 that has been an
+Apple M3 Pro (Metal) and a Linux x86_64 host with an NVIDIA A10G (CUDA), on
+both of which the whole gate passes. CI compiles the device paths for `sm_80`
+on every push. The snippets in this README compile under `pixi run
+doc-check`.
 
 ## Documentation
 

@@ -1208,6 +1208,118 @@ be steeper than a reading of the square ceiling alone would suggest. But
 and the honest denominator for `cholesky` at `block = 32` is 248, not
 1,355.
 
+### Linux x86_64 and NVIDIA A10G, re-run for 0.3
+
+One session on one machine: AMD EPYC 7R32 (64 vCPU, AVX2), NVIDIA A10G
+(sm_86, 600 GB/s spec), CUDA 12.8 toolkit with a 580 driver, Mojo 1.1,
+`max-core` 26.6, at `31138ba`. `float32` throughout, because MAX's `matmul`
+does not compile for GPU at `float64`. CPU and GPU tables are separate, and
+none of this touches the M3 Pro sections above.
+
+Every `pixi run bench-*` task ran clean except `bench-cupy-linalg`, which
+fails here with `CUBLAS_STATUS_INVALID_VALUE` from `cupy-cuda12x` on a CUDA 13
+driver; the CuPy linalg column elsewhere on this page is from the earlier
+session. PyTorch 2.13 (`cu130`), CuPy 14.2, NumPy 2.5.2, SciPy 1.18.1 with
+OpenBLAS, and `thermite` 0.2 (`X86V3`) are the baselines.
+
+**Dense linalg, CPU, GFLOP/s** (numax at the block each bench picks; SciPy is
+LAPACK on OpenBLAS):
+
+| `n` | `cholesky` numax / SciPy | `lu_factor` | `solve` | `qr_factor` |
+|---|---|---|---|---|
+| 1024 | 17.3 / 52.3 | 17.0 / 46.1 | 15.7 / 46.1 | 4.0 / 15.5 |
+| 4096 | 65.8 / 409.3 | 79.3 / 49.5 | 66.4 / 122.1 | 17.3 / 59.5 |
+
+`lu_factor` at `n = 4096` is 1.6x SciPy's, because OpenBLAS's `getrf` falls
+to 49.5 there while numax keeps climbing. The `matmul` ceiling is 922 against
+1,054 at `n = 1024` and 1,452 against 1,921 at 4096.
+
+**Spectral, CPU, `n = 1024`, GFLOP/s** (numax / SciPy): `eigvalsh` 6.0 / 29.5,
+`eigh` 10.8 / 63.8, `svdvals` 7.7 / 18.0, `svd` 12.3 / 73.5, `eigvals`
+18.8 / 47.1, `schur` 36.5 / 108.5: ratios of 0.20, 0.17, 0.43, 0.17, 0.40 and
+0.34.
+
+**Dense linalg, A10G, GFLOP/s** (numax / PyTorch with cuSOLVER, TF32 off):
+
+| `n` | `matmul` ceiling | `cholesky` | `lu_factor` | `solve` | `qr_factor` |
+|---|---|---|---|---|---|
+| 1024 | 21,848 / 14,924 | 50.6 / 598 | 44.6 / 282 | 39.3 / 257 | 17.3 / 269 |
+| 2048 | 23,668 / 20,294 | 168.6 / 2,208 | 107.0 / 956 | 98.7 / 890 | n/a / 824 |
+
+The ceiling is the claim and the factorizations are the gap, as on Metal:
+MAX's GEMM is 1.1-1.5x cuBLAS's FP32 path, and the panels around it reach 0.06
+to 0.16 of cuSOLVER. `solve_sylvester` takes 78.9 ms at `n = 128` and 279.6
+ms at 256, against 25.9 and 62.0 ms for the two `schur` calls it is built
+from.
+
+**BLAS-1, GB/s at 2^26** (numax / baseline): CPU `dot` 110.8 / 28.5, `nrm2`
+108.8 / 13.5, `asum` 106.4 / 116.2, `axpy` 86.2 / 104.4 against SciPy's
+OpenBLAS; A10G `dot` 299 / 505, `nrm2` 168 / 493, `asum` 168 / 161, `axpy`
+444 / 475 against PyTorch. The CPU `dot` and `nrm2` still win by the threading
+argument made above; the device `dot` and `nrm2` trail PyTorch.
+
+**The Gaussian sweep, `float32`, 2^26 elements, M elem/s:**
+
+| Path | numax | baseline |
+|---|---|---|
+| CPU `map` (1 thread) | 1,418 | NumPy 314, `thermite` 1,334, `torch.compile` 1,813, torch eager 404 |
+| CPU `map_threaded` | 8,298 | |
+| A10G, per-call sync | 60,939 | CuPy kernel 60,275, `torch.compile` 53,734, torch eager 19,801 |
+| A10G, amortized sync | 61,519 | CuPy kernel 61,037, `torch.compile` 56,199, torch eager 19,921 |
+
+`bench-roofline` puts the identity copy at 489.3 GB/s and the Gaussian at
+488.7, so the `exp` is free and the kernel is at 81% of the card's spec.
+Thread coarsening is again no gain (`width = 1` fastest or tied at every
+`block_dim`), and `block_dim = 1024` is 1.8% ahead of 256. Fusion
+(`bench-fusion`) is 1.39-1.66x on the threaded CPU path and 2.0x on the
+device. `map_threaded` is 1.2x the serial walk at 65,536 and 3.2-6.3x from
+262,144 up, with the denormal flush documented on it (the 1.2e-38
+difference).
+
+**Other CPU surfaces against NumPy and SciPy** (numax / baseline, lower is
+faster):
+
+| Surface | numax | baseline |
+|---|---|---|
+| `interp`, 1024 knots, 2^20 queries | 3.07 ms | 48.2 ms |
+| `CubicSpline` evaluation, same | 2.56 ms | 43.5 ms |
+| `norm.cdf`, 2^24 | 10.0 ms | 485.8 ms |
+| `cov`, 8 x 2^20 | 6.0 ms | 26.7 ms |
+| `welch`, 2^20 | 33.7 ms | 249.4 ms |
+| `medfilt`, 2^20 | 1.02 ms | 9.34 ms |
+| `savgol_filter`, 2^20 | 3.2 ms | 16.5 ms |
+| `lfilter` fir32 / `filtfilt` butter4, 2^20 | 18.9 / 15.9 ms | 13.7 / 13.4 ms |
+| `histogram`, 2^24 | 159 ms | 122 ms |
+| `quantile`, 2^24 | 316 ms | 102 ms |
+| `fft` / `rfft`, 2^20 | 60.9 / 61.9 ms | 20.9 / 7.5 ms |
+| `fft2`, 512 x 512 | 16.8 ms | 1.4 ms |
+| `fftconvolve`, 4096 x 8 | 0.94 ms | 0.12 ms |
+| `convolve`, 4096 x 8 | 35 us | 13 us |
+
+The first six rows are the same wins the M3 Pro section reports. The last
+seven are not: on this x86 host the FFT is a third of pocketfft at best and
+the real transforms an eighth, and everything built on it inherits that. They
+are measured gaps with no fix in 0.3.
+
+**One regression found and avoided in this pass.** Making the blocked
+factorizations' wide loads and stores safe on CUDA (the TileTensor
+alignment defect in `.cursor/upstream-repros/max-feedback.md` 3.12)
+by forcing element alignment cost 20% on the A10G Cholesky, because the
+scalarized loads defeat the vectorized trailing update. The shipped fix
+checks the address at run time and takes the wide path whenever it is
+aligned, which restores the speed and leaves the CPU numbers unchanged.
+
+**What the A10G changes about reading a device result.** Two behaviors of
+the CUDA path are not Metal's, and both are logged upstream with standalone
+repros (`max-feedback.md` 3.12 and 3.13). `float32` `sin` is
+`sin.approx.ftz.f32`, so `sin(1e-10)` is exactly 0 and `cos` carries about
+1.1e-6 of absolute error; `firwin`'s center tap and `lgamma`'s reflection
+side were rewritten to avoid the two shapes that break (`quantum_well.mojo`'s
+GPU/CPU gap is 1.4e-5 on CUDA where it is bit-identical on Metal). And
+`float64` `matmul` does not compile for a device at the 26.6 pin, so every
+routine that routes through it is `float32`-only there. The spectral routines
+are checked on the A10G by `tests_gpu/` and are not benchmarked on it.
+
 ### What is not measured
 
 **ROCm is not measured anywhere on this page.** It is reached the same way

@@ -15,7 +15,8 @@ is what lets the same function answer four different questions here:
   target energy, using a derivative the caller never supplied;
 - inside `numax.core.functional.map`, a sweep over `w`, on the GPU with the whole
   eigensolve running inside a single thread, and on the CPU across SIMD
-  lanes. Both come out bit-identical.
+  lanes. Both come out bit-identical on Metal and within 1.4e-5 on CUDA,
+  where `float32` math functions are the hardware's approximations.
 
 The second half runs the other three answers the same way: `dE0/dw` at
 `Dual` for every well in the sweep, and `newton` from 256 starting guesses,

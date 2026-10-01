@@ -56,8 +56,10 @@ about:
     NumPy and SciPy provide, on MAX's tensors: special functions, dense
     linear algebra with its spectral decompositions (eigh, svd, schur and
     the matrix functions on the Schur form), optimization (minimize with
-    l-bfgs and bounds, root, nnls), quadrature and ODE solvers,
-    interpolation, FFTs at any length, signal processing, the nine
+    l-bfgs, bounds and SLSQP constraints, linprog, milp, root, nnls),
+    quadrature and ODE solvers, interpolation, FFTs at any length, signal
+    processing, spatial search (cdist, KDTree), clustering (kmeans,
+    linkage), n-d image processing (ndimage), the nine
     scipy.stats distributions over tensors, the NumPy statistics surface
     from quantile and histogram through the hypothesis tests, and a
     NumPy-named array surface with .npy interchange. The SciPy entry points
@@ -84,12 +86,13 @@ about:
     one-ulp exp, ln and erf at float64, where std.math's are far off there.
 
     Young and experimental, so APIs may change. Not here yet, each on
-    purpose: fancy indexing and owned slicing, dtype promotion (astype is
-    explicit), decompositions over run-time shapes, reverse-mode autodiff
-    (Gradient is forward and was measured against a tape), sparse matrices,
-    Krylov solvers and distributed execution. One limit is a bug rather
-    than a decision: the spectral decompositions have no working device
-    path, so gpu=True on eigh, svd and schur is a compile error rather than
-    a wrong answer. docs/why.md says what numax is for and what it does not
+    purpose: fancy indexing (take, compress and where are the spellings),
+    dtype promotion (astype is explicit), reverse-mode autodiff (Gradient
+    is forward and was measured against a tape), sparse matrices, Krylov
+    solvers and distributed execution. Two limits are not decisions:
+    hessenberg, sytrd, gebrd and the routines built on the spectral ones
+    still take a compile-time shape, and on a device everything routed
+    through matmul is float32 only, since MAX's GEMV has no float64 shuffle
+    at the 26.6 pin. docs/why.md says what numax is for and what it does not
     claim; docs/parity.md carries a disposition for every NumPy and SciPy
     name left out.

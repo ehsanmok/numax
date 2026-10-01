@@ -30,7 +30,7 @@ pixi run examples-cpu             # every example that does not need a GPU
 pixi run examples                 # + the GPU ones (needs real Metal/CUDA)
 pixi run accuracy                 # max error per function vs. checked-in mpmath refs
 pixi run typecheck                # mojo doc over the whole generic surface
-pixi run doc-check                # compile every mojo block in llms.txt and docs/quickstart.md
+pixi run doc-check                # compile every mojo block in llms.txt, docs/quickstart.md and README.md
 pixi run compile-fail-check       # each tests_compile_fail/ program fails with its `# expect:` message
 pixi run bench                    # map vs. a hand-rolled raw-SIMD loop
 pixi run -e dev format            # mojo format over numax examples tests tests_gpu tests_compile_fail bench

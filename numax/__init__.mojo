@@ -2,9 +2,10 @@
 
 A numerical computing library built on MAX -- what NumPy and SciPy
 provide, on MAX's tensors: special functions, dense linear algebra with
-its spectral decompositions, optimization, quadrature and ODE solvers,
-interpolation, FFTs, signal processing, distributions and statistics, and
-a NumPy-named array surface, written in Mojo against MAX's `TileTensor`
+its spectral decompositions, optimization (constrained and linear
+programming too), quadrature and ODE solvers, interpolation, FFTs, signal
+processing, spatial search, clustering and n-d image processing,
+distributions and statistics, and a NumPy-named array surface, written in Mojo against MAX's `TileTensor`
 and kernel infrastructure. Every `Tensor` entry point runs on the host or
 on any device MAX drives, through one `gpu` parameter.
 
@@ -57,7 +58,8 @@ disposition for every name left out rather than only the themes.
 
 **Measured, per processor.** CPU and GPU numbers are never mixed into one
 comparison, and `docs/performance.md` carries every figure with the
-harness that produced it, including where this version is slow: the
+harness that produced it, on an Apple M3 Pro (Metal) and on a Linux x86_64
+host with an NVIDIA A10G (CUDA), including where this version is slow: the
 spectral decompositions on `Tensor` run from 0.45 (`eigh`) down to 0.056
 (`svd`) of LAPACK at `n = 1024`, the cost left being one whole-matrix
 product per column in the reductions and the host sweep over the band.
@@ -66,7 +68,14 @@ product per column in the reductions and the host sweep over the band.
 `pixi run accuracy` checks it against mpmath references at 50 digits, and
 `Plain` carries its own one-ulp `exp`, `ln` and `erf` at `float64`.
 
-Young and experimental, so APIs may change.
+Young and experimental, so APIs may change. Not here yet, each on purpose:
+fancy indexing (`take`, `compress` and `where` are the spellings), dtype
+promotion (`astype` is explicit), reverse-mode autodiff (`Gradient` is
+forward and was measured against a tape), sparse matrices, Krylov solvers
+and distributed execution. Two limits are not decisions: `hessenberg`,
+`sytrd`, `gebrd` and the routines built on the spectral ones still take a
+compile-time shape, and on a device everything routed through `matmul` is
+`float32` only, since MAX's GEMV has no `float64` shuffle at the 26.6 pin.
 
 ```mojo
 from numax import Dual, FloatLike, Plain, f32
@@ -103,12 +112,15 @@ reach them.
 | `numax.core` | `FloatLike` and its conformers, `Tensor` creation and manipulation, arithmetic and operators, elementwise math, comparisons and logic, sorting and searching, `pi`/`e`. The tensor engine itself -- `map`/`reduce`/`reduce_axis`/`broadcast_op_rows`/`map_blocks` -- is `numax.core.functional`. The NumPy-named surface shares one launch policy rather than one per routine: a private launcher picks `max.algorithm.elementwise` on a device, a threaded walk on a large host tensor and a serial SIMD loop on a small one, and because `elementwise` takes a run-time extent a `Dynamic` reaches the GPU there |
 | `numax.special` | Γ and B with their incomplete forms, `erf`/`erfc`/`erfinv`/`erfcinv`, Bessel at integer (`j0`...`y1`) and arbitrary order (`jv`/`yv`/`iv`/`kv`, `spherical_jn`/`spherical_yn`), Airy, Struve, the exponential integrals `expi`/`exp1`/`expn`, `sici`/`fresnel`, `zeta`, `hyp1f1`/`hyp2f1`, Owen's T, Lambert `W`, elliptic `K`/`E`, orthogonal polynomials, `factorial`/`comb`/`perm`/`poch`, the information-theoretic `xlogy`/`rel_entr`/`kl_div`/`entr`, activations, and `logsumexp` over `Tensor` through MAX's `OnlineLogSumExp` monoid. Every one is tier 1: fixed iteration, launchable inside a kernel, with its error bound checked by `pixi run accuracy` |
 | `numax.linalg` | The `Tensor` tier, through MAX: `matmul`/`matvec`/`batched_matmul`/`inner`/`tensordot`/`cross` are MAX kernels or one GEMM each, `cholesky`/`lu_factor`/`qr_factor`/`solve` are blocked with their `O(n^3)` update in MAX's GEMM, and `solve_triangular`/`cholesky_solve`/`lstsq`/`inverse`/`det`/`slogdet`/`norm`/`trace`/`tensorsolve`/`tensorinv` build on those. The spectral decompositions are here too: `sytrd`, `eigvalsh`/`eigh`, `svdvals`/`svd` (rectangular, sorted) with `pinv`/`cond`/`matrix_rank` on top, `hessenberg`, `eigvals` (a real/imaginary pair), `schur`, and the matrix functions on the Schur form -- `expm`, `sqrtm`, `logm`, `funm`, `cosm`/`sinm`, `fractional_matrix_power`. `kron`/`matrix_power`, the `scipy.linalg` structured constructors (`toeplitz`, `hankel`, `circulant`, `companion`, `hilbert`, `pascal`, `hadamard`, `helmert`, `fiedler`, `leslie`, `block_diag`, `khatri_rao`, `convolution_matrix`, ...) and the banded and Toeplitz solves (`solve_banded`, `solveh_banded`, `cholesky_banded`, `solve_toeplitz`, `solve_circulant`) sit beside them. `numax.linalg`'s `Array` tier is the `FloatLike`-generic tier, one import away because it shares these names -- the same factorizations, spectra and solves register-resident, where the point is differentiating through them |
-| `numax.optimize` | `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, box bounds), `root`, `nnls`/`lsq_linear` and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize`'s `Array` tier is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
+| `numax.optimize` | `minimize` (`bfgs`, `l-bfgs`, `cg`, `powell`, box bounds, and `slsqp` under `LinearConstraint`/`NonlinearConstraint`), `linprog` and `milp`, `root`, `nnls`/`lsq_linear` and `least_squares`/`curve_fit` over `Tensor`, the fit's damped step through `numax.linalg.lstsq`; `numax.optimize`'s `Array` tier is the conformer tier and holds `newton`/`halley`/`bisection` at a fixed iteration count and `root_scalar` (`brentq`, `bisect_tol`, `newton_tol`, `halley_tol`, `secant`), `root`, `minimize` (`bfgs`, `cg`, `nelder_mead`), `minimize_scalar` (`brent`, `golden`, `fminbound`) and its own Jacobian-free `least_squares`/`curve_fit` to a tolerance |
 | `numax.integrate` | `trapezoid`/`simpson`/`cumulative_trapezoid` over sampled `Tensor`s with `scipy.integrate`'s signatures; `quad`, `quad_vec`, `solve_ivp`, `solve_ivp_stiff` adaptively; `numax.integrate`'s `Array` tier is the `FloatLike` tier that integrates a function -- Gauss-Legendre, Simpson and trapezoid at a fixed node count, `rk4`/`dopri5` at a fixed step -- and differentiates at `Dual` |
 | `numax.interpolate` | `interp`, `horner`, and non-uniform cubic splines -- `CubicSpline` with SciPy's boundary conditions, `PchipInterpolator`, `Akima1DInterpolator`, `CubicHermiteSpline` -- over a `Tensor` of query points, any derivative order, `integrate`; the least-squares `Chebyshev.fit(x, y)` and `chebval`; 2-D `RegularGridInterpolator`; and, over `Array[T, n]`, the `FloatLike` tier's Horner, cubic splines and Chebyshev fits of a function, which differentiate at `Dual` |
 | `numax.fft` | `fft`/`ifft`, `rfft`/`irfft`, rectangular `fft2`/`ifft2`/`rfft2`, `fftshift`/`ifftshift`, `fftfreq`/`rfftfreq` over `Tensor` at any length -- radix-2 at a power of two, Bluestein otherwise -- device-resident through a few fused launches per axis (radix-2 and radix-4); `dct`/`idct`/`dst`/`idst` types I-IV; `numax.fft`'s `Array` tier is the register-resident tier that differentiates, and adds circular convolution. MAX ships no forward transform at all |
 | `numax.signal` | `convolve`/`correlate` in NumPy's three modes and `fftconvolve` over `Tensor`, the window factories in SciPy's symmetric and periodic forms, `lfilter`/`filtfilt`/`sosfilt`, `medfilt`, `detrend`, `savgol_filter`, `resample`, the multiband `firwin`, `periodogram`/`welch`/`spectrogram`/`stft` as one batched transform each, `hilbert` (reached as `numax.signal.hilbert`: the flat surface's `hilbert` is the matrix), `find_peaks`, and the IIR design family `butter`/`cheby1`/`cheby2`/`ellip`/`iirfilter` with `freqz`; `numax.signal`'s `Array` tier is the `FloatLike` tier with the direct sums, `lfilter`, `firwin` and compile-time windows |
 | `numax.stats` | The NumPy reductions -- `sum`/`mean`/`median`/`mode`/`argmax`/`cumsum`/..., `quantile`/`percentile` under every NumPy method, the `nan*` family, `ptp`/`average`/`moment` -- plus `histogram`/`histogram2d`/`histogramdd`/`bincount`/`digitize`, the correlation family (`cov`, `corrcoef`, `pearsonr`, `spearmanr`, `kendalltau`, `linregress`, `rankdata`, `zscore`), the shape statistics (`skew`, `kurtosis`, `sem`, `gmean`, `hmean`, `entropy`, `iqr`, `trim_mean`, `describe`), the hypothesis tests (`ttest_1samp`/`ttest_ind`/`ttest_rel`, `chisquare`, `ks_1samp`, `f_oneway`, `mannwhitneyu`), the nine `scipy.stats`-shaped distribution namespaces with all eight methods over scalars and `pdf`/`cdf`/`ppf` over `Tensor` (`numax.stats.norm.cdf(x)`, ...), and sampling -- `uniform`/`normal`/`exponential`/`randint`/`randbool`/`seed` and `Generator` -- from MAX's Philox stream on the host or the device |
+| `numax.spatial` | `cdist`/`pdist`/`squareform` in seven metrics and a `KDTree` with `query` and `query_ball_point`, as device kernels |
+| `numax.cluster` | `kmeans`/`kmeans2`/`vq`/`whiten` and `hierarchy.linkage`/`fcluster` |
+| `numax.ndimage` | The n-d filters (`gaussian_filter`, `median_filter`, `correlate`, ...), B-spline `zoom`/`shift`/`map_coordinates`, `label`, binary morphology and the exact distance transform. A qualified import only: its `convolve` and `correlate` are not `numax.signal`'s |
 | `numax.io` | NumPy `.npy` interchange (`numpy.load`/`numpy.save`, byte-identical to `numpy.save`), and numax's own `NMX1` `nmx.save`/`nmx.load`. Printing is `print(a)`, since `Tensor` is `Writable` |
 
 ## The two tiers

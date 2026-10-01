@@ -84,8 +84,10 @@ def main() raises:
     print(z.on_host(), z.to_host()[1023])
 ```
 
-On Apple silicon use `float32`: Metal has no `double`, and a `float64`
-device tensor falls back to the host with a one-line notice.
+Use `float32` on a device: Metal has no `double`, and on CUDA everything
+routed through `matmul` (the factorizations, `solve`, `eigh`, `svd`) is
+`float32` only at the 26.6 pin. A `float64` device tensor falls back to the
+host with a one-line notice.
 
 ## Next
 

@@ -244,14 +244,12 @@ tests-gen = "python3 tools/gen_test_aggregates.py"
 # Mojo instantiates generics lazily, so a body no test calls is never
 # type-checked. The JSON goes to the ignored target/; only the exit code matters.
 typecheck = "mkdir -p target && mojo doc -I . numax -o target/typecheck.json"
-# Every fenced `mojo` block in the agent guide and the quickstart must
-# compile. `readme-check` runs the same over README.md, which is edited by
-# hand and not gated.
-doc-check = "python3 tools/check_snippets.py llms.txt docs/quickstart.md"
+# Every fenced `mojo` block in the agent guide, the quickstart and the
+# README must compile.
+doc-check = "python3 tools/check_snippets.py llms.txt docs/quickstart.md README.md"
 # Every program in tests_compile_fail/ must fail to build with the message
 # its `# expect:` lines name: the compile-time guards, which no test can run.
 compile-fail-check = "python3 tools/check_compile_fail.py"
-readme-check = "python3 tools/check_snippets.py README.md"
 # The `gpu=True` comparisons in `tests_gpu/`: every device routine against
 # its host answer at float32 (Metal has no double). Needs a real device, so
 # it is a local gate; CI compiles the same aggregates for `sm_80` below.

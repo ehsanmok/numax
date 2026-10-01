@@ -234,6 +234,20 @@ instead of `map[gpu=False]`. **No `FloatLike` kernel needed an edit to
 become GPU-launchable.** That's the benefit the fixed-iteration invariant
 buys.
 
+Two things differ between the devices the code has been run on (Metal on an
+M3 Pro, CUDA on an A10G) and are worth knowing before reading a device
+result. A `TileTensor` `load`/`store` of width `w` assumes vector alignment
+on CUDA, so a wide access at an odd offset faults where Metal and the host
+tolerate it; the blocked factorizations check the address at run time and
+take the wide path only when it is aligned (`numax/linalg/common.mojo`,
+`_vector_aligned`), because forcing element alignment everywhere cost 20% on
+the A10G Cholesky. And `float32` `sin`/`cos`/`log` compile to NVIDIA's
+`.approx.ftz` forms, so `sin(1e-10)` is exactly 0 and a log of an exact zero
+is `-inf` where a libm would give a finite value; kernels clamp before the
+log and `firwin`'s center tap is its defining value, not `sin(x) / x`.
+Both are logged with standalone repros in
+`.cursor/upstream-repros/max-feedback.md` (3.12, 3.13).
+
 ## The NumPy/SciPy parity surface
 
 Modules that fill NumPy/SciPy-shaped gaps, each picked because MAX ships no
