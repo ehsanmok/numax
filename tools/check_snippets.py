@@ -6,7 +6,7 @@ wrapped: its import lines are hoisted and the rest becomes the body of a
 scratch directory, and the script exits non-zero if any block fails,
 printing the file, the block's first line number and the compiler error.
 
-A block that asks for the device (`gpu=True`) is compiled with
+A block that asks for the device (`gpu=True`, or a `DeviceContext()`) is compiled with
 `--target-accelerator sm_80`, as `examples-gpu-build` compiles the GPU
 examples: nothing here runs a block, and without a named target a
 GPU-less machine -- CI's Linux runner -- cannot instantiate the device
@@ -47,7 +47,7 @@ def main():
                 src = os.path.join(scratch, f"snippet_{total}.mojo")
                 open(src, "w").write(program(code))
                 command = ["mojo", "build", "-I", ".", src, "-o", src[:-5]]
-                if "gpu=True" in code:
+                if "gpu=True" in code or "DeviceContext()" in code:
                     command[2:2] = ["--target-accelerator", "sm_80"]
                 result = subprocess.run(
                     command,
